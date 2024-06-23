@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package node_service;
+
+service NodeService {
+  rpc SendPrompt (PromptRequest) returns (Empty) {}
+  rpc SendTensor (TensorRequest) returns (Empty) {}
+  rpc ResetShard (ResetShardRequest) returns (Empty) {}
+}
+
+message PromptRequest {
+  string prompt = 1;
+  optional string target = 2;
+}
+
+message TensorRequest {
+  bytes tensor_data = 1;
+  repeated int32 shape = 2;
+  string dtype = 3;
+  optional string target = 4;
+}
+
+message ResetShardRequest {
+  string shard_id = 1;
+}
+
+message Empty {}
