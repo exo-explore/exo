@@ -3,25 +3,38 @@ syntax = "proto3";
 package node_service;
 
 service NodeService {
-  rpc SendPrompt (PromptRequest) returns (Empty) {}
-  rpc SendTensor (TensorRequest) returns (Empty) {}
+  rpc SendPrompt (PromptRequest) returns (Tensor) {}
+  rpc SendTensor (TensorRequest) returns (Tensor) {}
   rpc ResetShard (ResetShardRequest) returns (Empty) {}
 }
 
+message Shard {
+  string model_id = 1;
+  int32 start_layer = 2;
+  int32 end_layer = 3;
+  int32 n_layers = 4;
+}
+
 message PromptRequest {
-  string prompt = 1;
-  optional string target = 2;
+  Shard shard = 1;
+  string prompt = 2;
+  optional string target = 3;
 }
 
 message TensorRequest {
+  Shard shard = 1;
+  Tensor tensor = 2;
+  optional string target = 3;
+}
+
+message Tensor {
   bytes tensor_data = 1;
   repeated int32 shape = 2;
   string dtype = 3;
-  optional string target = 4;
 }
 
 message ResetShardRequest {
-  string shard_id = 1;
+  Shard shard = 1;
 }
 
 message Empty {}

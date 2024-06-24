@@ -13,10 +13,10 @@ class StandardNode(Node):
         self.peers: List[PeerHandle] = {}
         self.ring_order: List[str] = []
 
-    async def start(self) -> None:
+    async def start(self, wait_for_peers: int = 0) -> None:
         await self.server.start()
         await self.discovery.start()
-        self.peers = await self.discovery.discover_peers()
+        self.peers = await self.discovery.discover_peers(wait_for_peers)
         print(f"Starting with the following peers: {self.peers}")
         print("Connecting to peers...")
         for peer in self.peers:
@@ -27,19 +27,35 @@ class StandardNode(Node):
         await self.discovery.stop()
         await self.server.stop()
 
-    async def process_tensor(self, tensor: np.ndarray, target: Optional[str] = None) -> None:
-        result = await self.inference_engine.process_shard(tensor)
-
+    async def process_prompt(self, shard: Shard, prompt: str, target: Optional[str] = None) -> Optional[np.array]:
+        print("Process prompt", shard, prompt, target)
+        result = await self.inference_engine.infer_prompt(shard, prompt)
+        # Implement prompt processing logic
+        print(f"Got result from prompt: {prompt}. Result: {result}")
+        # You might want to initiate inference here
         if target:
-            if not filter(lambda p: p.id() == target, self.peers):
+            target_peer = next((p for p in self.peers if p.id() == target), None)
+            if not target_peer:
                 raise ValueError(f"Peer {target} not found")
 
-            await self.peers[target].send_tensor(result)
+            await target_peer.send_tensor(result)
 
-    async def process_prompt(self, prompt: str) -> None:
+        return result
+
+    async def process_tensor(self, shard: Shard, tensor: np.ndarray, target: Optional[str] = None) -> None:
+        print("Process tensor", shard, tensor)
+        result = await self.inference_engine.infer_shard(shard, tensor)
         # Implement prompt processing logic
-        print(f"Processing prompt: {prompt}")
-        # You might want to initiate inference here
+        print(f"Got result from prompt: {len(tensor)}. Result: {result}")
+
+        if target:
+            target_peer = next((p for p in self.peers if p.id() == target), None)
+            if not target_peer:
+                raise ValueError(f"Peer {target} not found")
+
+            await target_peer.send_tensor(result)
+
+        return result
 
     async def reset_shard(self, shard: Shard) -> None:
         # Implement shard reset logic

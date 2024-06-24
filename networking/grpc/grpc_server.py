@@ -4,6 +4,7 @@ import numpy as np
 
 from . import node_service_pb2
 from . import node_service_pb2_grpc
+from inference.shard import Shard
 
 from orchestration import Node
 
@@ -28,30 +29,24 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
             print("Server stopped")
 
     async def SendPrompt(self, request, context):
+        shard = Shard(model_id=request.shard.model_id, start_layer=request.shard.start_layer, end_layer=request.shard.end_layer, n_layers=request.shard.n_layers)
         prompt = request.prompt
         target = request.target if request.HasField('target') else None
-        if target and target != self.node.node_id:
-            await self.node.process_prompt(prompt, target)
-        else:
-            # Process the prompt locally
-            # You'd need to implement this method in the Node class
-            await self.node.process_prompt(prompt)
-        return node_service_pb2.Empty()
+        result = await self.node.process_prompt(shard, prompt, target)
+        tensor_data = result.tobytes() if result is not None else None
+        return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype))
 
     async def SendTensor(self, request, context):
-        tensor = np.frombuffer(request.tensor_data, dtype=np.dtype(request.dtype)).reshape(request.shape)
+        shard = Shard(model_id=request.shard.model_id, start_layer=request.shard.start_layer, end_layer=request.shard.end_layer, n_layers=request.shard.n_layers)
+        tensor = np.frombuffer(request.tensor.tensor_data, dtype=np.dtype(request.tensor.dtype)).reshape(request.tensor.shape)
         target = request.target if request.HasField('target') else None
-        if target and target != self.node.node_id:
-            await self.node.process_tensor(tensor, target)
-        else:
-            # Process the tensor locally
-            await self.node.inference_strategy.process_inference(tensor)
-        return node_service_pb2.Empty()
+        result = await self.node.process_tensor(shard, tensor, target)
+        print("SendTensor tensor result", result)
+        tensor_data = result.tobytes() if result is not None else None
+        return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype))
 
     async def ResetShard(self, request, context):
-        print(f"Received ResetShard request: {request}")
-        # TODO
-        # shard_id = request.shard_id
-        # You'd need to implement this method in the Node class
-        # await self.node.reset_shard(shard_id)
+        shard = Shard(model_id=request.shard.model_id, start_layer=request.shard.start_layer, end_layer=request.shard.end_layer, n_layers=request.shard.n_layers)
+        print(f"Received ResetShard request: {shard}")
+        await self.node.reset_shard(shard)
         return node_service_pb2.Empty()

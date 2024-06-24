@@ -5,18 +5,9 @@ import mlx.core as mx
 import mlx.nn as nn
 from orchestration.standard_node import StandardNode
 from networking.grpc.grpc_server import GRPCServer
-from inference.inference_engine import MLXFixedShardInferenceEngine
+from inference.mlx.sharded_inference_engine import MLXFixedShardInferenceEngine
 from inference.shard import Shard
 from networking.grpc.grpc_discovery import GRPCDiscovery
-
-class SimpleMLXModel(nn.Module):
-    def __init__(self):
-        super(SimpleMLXModel, self).__init__()
-        self.linear = nn.Linear(10, 5)  # Example dimensions
-
-    def forward(self, x):
-        return self.linear(x)
-
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -25,14 +16,18 @@ parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host"
 parser.add_argument("--node-port", type=int, default=8080, help="Node port")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
+parser.add_argument("--model-id", type=str, default="mlx-community/Meta-Llama-3-8B-Instruct-4bit", help="Path to the model")
+parser.add_argument("--n-layers", type=int, default=32, help="Number of layers in the model")
+parser.add_argument("--start-layer", type=int, default=0, help="Start layer index")
+parser.add_argument("--end-layer", type=int, default=31, help="End layer index")
 args = parser.parse_args()
 
-mlx_model = SimpleMLXModel()
-inference_engine = MLXFixedShardInferenceEngine(mlx_model, shard=Shard(model_id="test", n_layers=32, start_layer=0, end_layer=31))
+inference_engine = MLXFixedShardInferenceEngine(args.model_id, shard=Shard(model_id=args.model_id, n_layers=args.n_layers, start_layer=args.start_layer, end_layer=args.end_layer))
 discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port)
 node = StandardNode(args.node_id, None, inference_engine, discovery)
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
+
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""
@@ -55,10 +50,6 @@ async def main():
         loop.add_signal_handler(s, handle_exit)
 
     await node.start()
-
-    await asyncio.sleep(5)
-    print("Sending reset shard request")
-    await node.peers[0].reset_shard(f"regards from {node.id}")
 
     await asyncio.Event().wait()
 
