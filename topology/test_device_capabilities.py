@@ -34,6 +34,37 @@ Hardware:
         self.assertEqual(result.chip, "Apple M3 Max")
         self.assertEqual(result.memory, 131072)  # 16 GB in MB
 
+    @patch('subprocess.check_output')
+    def test_mac_device_capabilities(self, mock_check_output):
+        # Mock the subprocess output
+        mock_check_output.return_value = b"""
+Hardware:
+
+    Hardware Overview:
+
+      Model Name: MacBook Air
+      Model Identifier: Mac14,2
+      Model Number: MLY33B/A
+      Chip: Apple M2
+      Total Number of Cores: 8 (4 performance and 4 efficiency)
+      Memory: 8 GB
+      System Firmware Version: 10000.00.0
+      OS Loader Version: 10000.00.0
+      Serial Number (system): XXXXXXXXXX
+      Hardware UUID: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      Provisioning UDID: XXXXXXXX-XXXXXXXXXXXXXXXX
+      Activation Lock Status: Disabled
+        """
+
+        # Call the function
+        result = mac_device_capabilities()
+
+        # Check the results
+        self.assertIsInstance(result, DeviceCapabilities)
+        self.assertEqual(result.model, "MacBook Air")
+        self.assertEqual(result.chip, "Apple M2")
+        self.assertEqual(result.memory, 8192)  # 8 GB in MB
+
     @unittest.skip("Unskip this test when running on a MacBook Pro, Apple M3 Max, 128GB")
     def test_mac_device_capabilities_real(self):
         # Call the function without mocking
