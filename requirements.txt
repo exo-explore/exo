@@ -1,0 +1,6 @@
+mlx
+transformers
+numpy
+grpcio
+grpcio-tools
+mlx_lm
