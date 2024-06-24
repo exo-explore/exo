@@ -3,6 +3,7 @@ import numpy as np
 from networking import Discovery, PeerHandle, Server
 from inference.inference_engine import InferenceEngine, Shard
 from .node import Node
+from topology.topology import Topology
 
 class StandardNode(Node):
     def __init__(self, id: str, server: Server, inference_engine: InferenceEngine, discovery: Discovery):
@@ -11,7 +12,8 @@ class StandardNode(Node):
         self.server = server
         self.discovery = discovery
         self.peers: List[PeerHandle] = {}
-        self.ring_order: List[str] = []
+        self.topology: Topology = Topology()
+        self.successor: Optional[PeerHandle] = None
 
     async def start(self, wait_for_peers: int = 0) -> None:
         await self.server.start()
@@ -27,18 +29,14 @@ class StandardNode(Node):
         await self.discovery.stop()
         await self.server.stop()
 
-    async def process_prompt(self, shard: Shard, prompt: str, target: Optional[str] = None) -> Optional[np.array]:
-        print("Process prompt", shard, prompt, target)
+    async def process_prompt(self, shard: Shard, prompt: str) -> Optional[np.array]:
+        print("Process prompt", shard, prompt)
         result = await self.inference_engine.infer_prompt(shard, prompt)
         # Implement prompt processing logic
         print(f"Got result from prompt: {prompt}. Result: {result}")
         # You might want to initiate inference here
-        if target:
-            target_peer = next((p for p in self.peers if p.id() == target), None)
-            if not target_peer:
-                raise ValueError(f"Peer {target} not found")
-
-            await target_peer.send_tensor(result)
+        if self.successor:
+            await self.succesor.send_tensor()
 
         return result
 

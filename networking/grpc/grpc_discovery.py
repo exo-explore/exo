@@ -6,6 +6,7 @@ from typing import List, Dict
 from ..discovery import Discovery
 from ..peer_handle import PeerHandle
 from .grpc_peer_handle import GRPCPeerHandle
+from topology.device_capabilities import DeviceCapabilities, mac_device_capabilities
 
 class GRPCDiscovery(Discovery):
     def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1):
@@ -61,13 +62,15 @@ class GRPCDiscovery(Discovery):
         return list(self.known_peers.values())
 
     async def _broadcast_presence(self):
+        self.device_capabilities: DeviceCapabilities = mac_device_capabilities()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.settimeout(0.5)
         message = json.dumps({
             "type": "discovery",
             "node_id": self.node_id,
-            "grpc_port": self.node_port
+            "grpc_port": self.node_port,
+            "device_capabilities": self.device_capabilities.to_dict()
         }).encode('utf-8')
 
         while True:

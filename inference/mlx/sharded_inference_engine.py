@@ -1,4 +1,3 @@
-import mlx.nn as nn
 import numpy as np
 import mlx.core as mx
 from ..inference_engine import InferenceEngine

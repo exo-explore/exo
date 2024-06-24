@@ -34,7 +34,7 @@ class GRPCPeerHandle(PeerHandle):
 
         return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
-    async def send_tensor(self, shard: Shard, tensor: np.ndarray, target: Optional[str] = None) -> Optional[np.array]:
+    async def send_tensor(self, shard: Shard, tensor: np.ndarray) -> Optional[np.array]:
         request = node_service_pb2.TensorRequest(
             shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers),
             tensor = node_service_pb2.Tensor(
@@ -42,13 +42,8 @@ class GRPCPeerHandle(PeerHandle):
                 shape=tensor.shape,
                 dtype=str(tensor.dtype)
             ),
-            target=target
         )
         response = await self.stub.SendTensor(request)
-        if target:
-            print(f"Sent tensor to {self.address} with target {target}: shape {tensor.shape}")
-        else:
-            print(f"Sent tensor to {self.address}: shape {tensor.shape}")
 
         if not response.tensor_data or not response.shape or not response.dtype:
             return None

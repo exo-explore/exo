@@ -2,9 +2,15 @@ from abc import ABC, abstractmethod
 from typing import Optional
 import numpy as np
 from inference.shard import Shard
+from topology.device_capabilities import DeviceCapabilities
 
 class PeerHandle(ABC):
+    @abstractmethod
     def id(self) -> str:
+        pass
+
+    @abstractmethod
+    def device_capabilities(self) -> DeviceCapabilities:
         pass
 
     @abstractmethod

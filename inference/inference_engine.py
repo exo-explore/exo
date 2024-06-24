@@ -9,6 +9,7 @@ class InferenceEngine(ABC):
     async def infer_shard(self, shard: Shard, input_data: np.ndarray) -> np.ndarray:
         pass
 
+    @abstractmethod
     async def infer_prompt(self, shard: Shard, prompt: str) -> np.ndarray:
         pass
 

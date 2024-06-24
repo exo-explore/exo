@@ -18,13 +18,11 @@ message Shard {
 message PromptRequest {
   Shard shard = 1;
   string prompt = 2;
-  optional string target = 3;
 }
 
 message TensorRequest {
   Shard shard = 1;
   Tensor tensor = 2;
-  optional string target = 3;
 }
 
 message Tensor {
