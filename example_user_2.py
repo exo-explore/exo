@@ -22,15 +22,9 @@ peers: List[PeerHandle] = [
         "localhost:8080",
         DeviceCapabilities(model="test1", chip="test1", memory=10000)
     ),
-    GRPCPeerHandle(
-        "node2",
-        "localhost:8081",
-        DeviceCapabilities(model="test2", chip="test2", memory=20000)
-    )
 ]
 shards: List[Shard] = [
     Shard(model_id=path_or_hf_repo, start_layer=0, end_layer=15, n_layers=32),
-    Shard(model_id=path_or_hf_repo, start_layer=16, end_layer=31, n_layers=32),
     # Shard(model_id=path_or_hf_repo, start_layer=0, end_layer=30, n_layers=32),
     # Shard(model_id=path_or_hf_repo, start_layer=31, end_layer=31, n_layers=32),
 ]

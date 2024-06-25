@@ -6,7 +6,7 @@ from .shard import Shard
 
 class InferenceEngine(ABC):
     @abstractmethod
-    async def infer_shard(self, shard: Shard, input_data: np.ndarray) -> np.ndarray:
+    async def infer_tensor(self, shard: Shard, input_data: np.ndarray) -> np.ndarray:
         pass
 
     @abstractmethod

@@ -19,11 +19,11 @@ class MLXFixedShardInferenceEngine(InferenceEngine):
         output_data = self.stateful_sharded_model.step(mx.array(self.tokenizer.encode(prompt)))
         return np.array(output_data)
 
-    async def infer_shard(self, shard: Shard, input_data: np.ndarray) -> np.ndarray:
+    async def infer_tensor(self, shard: Shard, input_data: np.ndarray) -> np.ndarray:
         if shard != self.shard:
             raise ValueError(f"Shard mismatch: {shard} != {self.shard}")
 
-        print("infer_shard", shard, input_data)
+        print("infer_tensor", shard, input_data)
 
         output_data = self.stateful_sharded_model.step(mx.array(input_data))
         return np.array(output_data)

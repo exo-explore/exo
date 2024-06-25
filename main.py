@@ -8,6 +8,7 @@ from networking.grpc.grpc_server import GRPCServer
 from inference.mlx.sharded_inference_engine import MLXFixedShardInferenceEngine
 from inference.shard import Shard
 from networking.grpc.grpc_discovery import GRPCDiscovery
+from topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -20,11 +21,12 @@ parser.add_argument("--model-id", type=str, default="mlx-community/Meta-Llama-3-
 parser.add_argument("--n-layers", type=int, default=32, help="Number of layers in the model")
 parser.add_argument("--start-layer", type=int, default=0, help="Start layer index")
 parser.add_argument("--end-layer", type=int, default=31, help="End layer index")
+parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
 args = parser.parse_args()
 
 inference_engine = MLXFixedShardInferenceEngine(args.model_id, shard=Shard(model_id=args.model_id, n_layers=args.n_layers, start_layer=args.start_layer, end_layer=args.end_layer))
 discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port)
-node = StandardNode(args.node_id, None, inference_engine, discovery)
+node = StandardNode(args.node_id, None, inference_engine, discovery, partitioning_strategy=RingMemoryWeightedPartitioningStrategy())
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 
@@ -49,7 +51,7 @@ async def main():
     for s in [signal.SIGINT, signal.SIGTERM]:
         loop.add_signal_handler(s, handle_exit)
 
-    await node.start()
+    await node.start(wait_for_peers=args.wait_for_peers)
 
     await asyncio.Event().wait()
 

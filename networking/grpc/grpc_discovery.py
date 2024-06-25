@@ -6,12 +6,13 @@ from typing import List, Dict
 from ..discovery import Discovery
 from ..peer_handle import PeerHandle
 from .grpc_peer_handle import GRPCPeerHandle
-from topology.device_capabilities import DeviceCapabilities, mac_device_capabilities
+from topology.device_capabilities import DeviceCapabilities, device_capabilities
 
 class GRPCDiscovery(Discovery):
-    def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1):
+    def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1, device_capabilities=None):
         self.node_id = node_id
         self.node_port = node_port
+        self.device_capabilities = device_capabilities
         self.listen_port = listen_port
         self.broadcast_port = broadcast_port if broadcast_port is not None else listen_port
         self.broadcast_interval = broadcast_interval
@@ -62,7 +63,9 @@ class GRPCDiscovery(Discovery):
         return list(self.known_peers.values())
 
     async def _broadcast_presence(self):
-        self.device_capabilities: DeviceCapabilities = mac_device_capabilities()
+        if not self.device_capabilities:
+            self.device_capabilities = device_capabilities()
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.settimeout(0.5)
@@ -70,7 +73,11 @@ class GRPCDiscovery(Discovery):
             "type": "discovery",
             "node_id": self.node_id,
             "grpc_port": self.node_port,
-            "device_capabilities": self.device_capabilities.to_dict()
+            "device_capabilities": {
+                "model": self.device_capabilities.model,
+                "chip": self.device_capabilities.chip,
+                "memory": self.device_capabilities.memory
+            }
         }).encode('utf-8')
 
         while True:
@@ -90,7 +97,8 @@ class GRPCDiscovery(Discovery):
                     peer_id = message['node_id']
                     peer_host = addr[0]
                     peer_port = message['grpc_port']
-                    self.known_peers[peer_id] = GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}")
+                    device_capabilities = DeviceCapabilities(**message['device_capabilities'])
+                    self.known_peers[peer_id] = GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
                     self.peer_last_seen[peer_id] = time.time()
             except Exception as e:
                 print(f"Error in peer discovery: {e}")

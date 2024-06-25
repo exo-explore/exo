@@ -1,11 +1,23 @@
 from dataclasses import dataclass
 import subprocess
+import platform
 
 @dataclass
 class DeviceCapabilities:
     model: str
     chip: str
     memory: int
+
+def device_capabilities() -> DeviceCapabilities:
+    system = platform.system()
+    if system == 'Darwin':
+        return mac_device_capabilities()
+    # elif system == 'Linux':
+    #     return linux_device_capabilities()
+    # elif system == 'Windows':
+    #     return windows_device_capabilities()
+    else:
+        return DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0)
 
 def mac_device_capabilities() -> DeviceCapabilities:
     # Fetch the model of the Mac using system_profiler

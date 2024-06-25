@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 from inference.shard import Shard
 from topology.device_capabilities import DeviceCapabilities
+from topology.topology import Topology
 
 class PeerHandle(ABC):
     @abstractmethod
@@ -31,4 +32,7 @@ class PeerHandle(ABC):
 
     @abstractmethod
     async def reset_shard(self, shard: Shard) -> None:
+        pass
+
+    async def collect_topology(self, max_depth: int) -> Topology:
         pass

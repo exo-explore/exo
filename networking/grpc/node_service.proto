@@ -6,6 +6,7 @@ service NodeService {
   rpc SendPrompt (PromptRequest) returns (Tensor) {}
   rpc SendTensor (TensorRequest) returns (Tensor) {}
   rpc ResetShard (ResetShardRequest) returns (Empty) {}
+  rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
 }
 
 message Shard {
@@ -33,6 +34,25 @@ message Tensor {
 
 message ResetShardRequest {
   Shard shard = 1;
+}
+
+message CollectTopologyRequest {
+  int32 max_depth = 1;
+}
+
+message Topology {
+  map<string, DeviceCapabilities> nodes = 1;
+  map<string, Peers> peer_graph = 2;
+}
+
+message Peers {
+    repeated string peer_ids = 1;
+}
+
+message DeviceCapabilities {
+  string model = 1;
+  string chip = 2;
+  int32 memory = 3;
 }
 
 message Empty {}

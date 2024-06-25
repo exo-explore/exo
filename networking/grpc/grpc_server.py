@@ -48,3 +48,10 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         print(f"Received ResetShard request: {shard}")
         await self.node.reset_shard(shard)
         return node_service_pb2.Empty()
+
+    async def CollectTopology(self, request, context):
+        max_depth = request.max_depth
+        topology = await self.node.collect_topology(max_depth)
+        nodes = {node_id: node_service_pb2.DeviceCapabilities(model=cap.model, chip=cap.chip, memory=cap.memory) for node_id, cap in topology.nodes.items()}
+        peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
+        return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)

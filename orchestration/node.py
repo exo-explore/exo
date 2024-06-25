@@ -2,24 +2,28 @@ from typing import Optional
 import numpy as np
 from abc import ABC, abstractmethod
 from inference.shard import Shard
+from topology.topology import Topology
 
 class Node(ABC):
     @abstractmethod
-    def start(self, wait_for_peers: int = 0) -> None:
+    async def start(self, wait_for_peers: int = 0) -> None:
         pass
 
     @abstractmethod
-    def stop(self) -> None:
+    async def stop(self) -> None:
         pass
 
     @abstractmethod
-    def process_tensor(self, shard: Shard, tensor: np.ndarray) -> None:
+    async def process_tensor(self, shard: Shard, tensor: np.ndarray) -> None:
         pass
 
     @abstractmethod
-    def process_prompt(self, shard: Shard, prompt: str) -> None:
+    async def process_prompt(self, shard: Shard, prompt: str) -> None:
         pass
 
     @abstractmethod
-    def reset_shard(self, shard: Shard) -> None:
+    async def reset_shard(self, shard: Shard) -> None:
+        pass
+
+    async def collect_topology(self, max_depth: int = 2) -> Topology:
         pass
