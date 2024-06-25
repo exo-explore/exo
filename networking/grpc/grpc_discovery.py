@@ -93,6 +93,7 @@ class GRPCDiscovery(Discovery):
             try:
                 data, addr = await asyncio.get_event_loop().sock_recvfrom(sock, 1024)
                 message = json.loads(data.decode('utf-8'))
+                print(f"received from peer {addr}: {message}")
                 if message['type'] == 'discovery' and message['node_id'] != self.node_id:
                     peer_id = message['node_id']
                     peer_host = addr[0]
@@ -107,7 +108,7 @@ class GRPCDiscovery(Discovery):
     async def _cleanup_peers(self):
         while True:
             current_time = time.time()
-            timeout = 5 * self.broadcast_interval
+            timeout = 15 * self.broadcast_interval
             peers_to_remove = [peer_id for peer_id, last_seen in self.peer_last_seen.items() if current_time - last_seen > timeout]
             for peer_id in peers_to_remove:
                 del self.known_peers[peer_id]

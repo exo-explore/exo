@@ -14,11 +14,11 @@ class Node(ABC):
         pass
 
     @abstractmethod
-    async def process_tensor(self, shard: Shard, tensor: np.ndarray) -> None:
+    async def process_prompt(self, shard: Shard, prompt: str) -> Optional[np.ndarray]:
         pass
 
     @abstractmethod
-    async def process_prompt(self, shard: Shard, prompt: str) -> None:
+    async def process_tensor(self, shard: Shard, tensor: np.ndarray) -> Optional[np.ndarray]:
         pass
 
     @abstractmethod

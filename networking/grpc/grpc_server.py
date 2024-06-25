@@ -16,7 +16,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         self.server = None
 
     async def start(self) -> None:
-        self.server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=10))
+        self.server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=10), options=[
+            ('grpc.max_metadata_size', 128*1024)
+        ])
         node_service_pb2_grpc.add_NodeServiceServicer_to_server(self, self.server)
         listen_addr = f'{self.host}:{self.port}'
         self.server.add_insecure_port(listen_addr)

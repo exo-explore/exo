@@ -6,11 +6,11 @@ from .shard import Shard
 
 class InferenceEngine(ABC):
     @abstractmethod
-    async def infer_tensor(self, shard: Shard, input_data: np.ndarray) -> np.ndarray:
+    async def infer_tensor(self, shard: Shard, input_data: np.ndarray) -> (np.ndarray, bool):
         pass
 
     @abstractmethod
-    async def infer_prompt(self, shard: Shard, prompt: str) -> np.ndarray:
+    async def infer_prompt(self, shard: Shard, prompt: str) -> (np.ndarray, bool):
         pass
 
     @abstractmethod

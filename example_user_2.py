@@ -16,18 +16,12 @@ model_path = get_model_path(path_or_hf_repo)
 tokenizer_config = {}
 tokenizer = load_tokenizer(model_path, tokenizer_config)
 
-peers: List[PeerHandle] = [
-    GRPCPeerHandle(
-        "node1",
-        "localhost:8080",
-        DeviceCapabilities(model="test1", chip="test1", memory=10000)
-    ),
-]
-shards: List[Shard] = [
-    Shard(model_id=path_or_hf_repo, start_layer=0, end_layer=15, n_layers=32),
-    # Shard(model_id=path_or_hf_repo, start_layer=0, end_layer=30, n_layers=32),
-    # Shard(model_id=path_or_hf_repo, start_layer=31, end_layer=31, n_layers=32),
-]
+peer = GRPCPeerHandle(
+    "node1",
+    "localhost:8080",
+    DeviceCapabilities(model="test1", chip="test1", memory=10000)
+)
+shard = Shard(model_id=path_or_hf_repo, start_layer=0, end_layer=0, n_layers=32)
 
 async def run_prompt(prompt: str):
     if tokenizer.chat_template is None:
@@ -41,28 +35,11 @@ async def run_prompt(prompt: str):
             messages, tokenize=False, add_generation_prompt=True
         )
 
-    for peer, shard in zip(peers, shards):
-        await peer.connect()
-        await peer.reset_shard(shard)
+    await peer.connect()
+    await peer.reset_shard(shard)
 
-    tokens = []
-    last_output = prompt
-
-    for _ in range(20):
-        for peer, shard in zip(peers, shards):
-            if isinstance(last_output, str):
-                last_output = await peer.send_prompt(shard, last_output)
-                print("prompt output:", last_output)
-            else:
-                last_output = await peer.send_tensor(shard, last_output)
-                print("tensor output:", last_output)
-
-        if not last_output:
-            break
-
-        tokens.append(last_output.item())
-
-    print(tokenizer.decode(tokens))
+    result = await peer.send_prompt(shard, prompt)
+    print(tokenizer.decode(result))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run prompt")
