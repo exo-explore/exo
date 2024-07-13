@@ -1,4 +1,4 @@
-from typing import Dict, Generator, Optional, Tuple
+from typing import Any, Dict, Generator, Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -46,6 +46,15 @@ class StatefulShardedModel:
             return y
         else:
             return output
+
+    def __call__(
+            self,
+            x,
+            temp: float = 0.0,
+            top_p: float = 1.0,
+        logit_bias: Optional[Dict[int, float]] = None,
+    ) -> Generator[Tuple[mx.array, mx.array], None, None]:
+        return self.step(x, temp, top_p, logit_bias)
 
     def reset(self):
         kv_heads = (
