@@ -39,7 +39,7 @@ async def shutdown(signal, loop):
     [task.cancel() for task in server_tasks]
     print(f"Cancelling {len(server_tasks)} outstanding tasks")
     await asyncio.gather(*server_tasks, return_exceptions=True)
-    await server.shutdown()
+    await server.stop()
     loop.stop()
 
 async def main():
@@ -61,6 +61,8 @@ if __name__ == "__main__":
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Received keyboard interrupt. Shutting down...")
     finally:
+        loop.run_until_complete(shutdown(signal.SIGTERM, loop))
         loop.close()
-
