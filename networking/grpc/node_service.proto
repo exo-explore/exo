@@ -6,6 +6,7 @@ service NodeService {
   rpc SendPrompt (PromptRequest) returns (Tensor) {}
   rpc SendTensor (TensorRequest) returns (Tensor) {}
   rpc ResetShard (ResetShardRequest) returns (Empty) {}
+  rpc GetInferenceResult (GetInferenceResultRequest) returns (InferenceResult) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
 }
 
@@ -19,11 +20,22 @@ message Shard {
 message PromptRequest {
   Shard shard = 1;
   string prompt = 2;
+  optional string request_id = 3;
 }
 
 message TensorRequest {
   Shard shard = 1;
   Tensor tensor = 2;
+  optional string request_id = 3;
+}
+
+message GetInferenceResultRequest {
+  string request_id = 1;
+}
+
+message InferenceResult {
+  optional Tensor tensor = 1;
+  bool is_finished = 2;
 }
 
 message Tensor {

@@ -1,6 +1,6 @@
 import grpc
 import numpy as np
-from typing import Optional
+from typing import Optional, Tuple
 
 # These would be generated from the .proto file
 from . import node_service_pb2
@@ -16,6 +16,8 @@ class GRPCPeerHandle(PeerHandle):
         self._id = id
         self.address = address
         self._device_capabilities = device_capabilities
+        self.channel = None
+        self.stub = None
 
     def id(self) -> str:
         return self._id
@@ -24,23 +26,30 @@ class GRPCPeerHandle(PeerHandle):
         return self._device_capabilities
 
     async def connect(self):
-        self.channel = grpc.aio.insecure_channel(self.address)
+        self.channel = grpc.aio.insecure_channel(self.address, options=[
+            ('grpc.max_metadata_size', 32*1024*1024)
+        ])
         self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
 
-    async def disconnect(self):
-        await self.channel.close()
+    async def is_connected(self) -> bool:
+        return self.channel is not None and self.channel.get_state() == grpc.ChannelConnectivity.READY
 
-    async def send_prompt(self, shard: Shard, prompt: str) -> Optional[np.array]:
-        request = node_service_pb2.PromptRequest(prompt=prompt, shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers))
+    async def disconnect(self):
+        if self.channel:
+            await self.channel.close()
+        self.channel = None
+        self.stub = None
+
+    async def send_prompt(self, shard: Shard, prompt: str, request_id: Optional[str] = None) -> Optional[np.array]:
+        request = node_service_pb2.PromptRequest(prompt=prompt, shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers), request_id=request_id)
         response = await self.stub.SendPrompt(request)
-        print(f"Sent prompt to {self.address}: {prompt}")
 
         if not response.tensor_data or not response.shape or not response.dtype:
             return None
 
         return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
-    async def send_tensor(self, shard: Shard, tensor: np.ndarray) -> Optional[np.array]:
+    async def send_tensor(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None) -> Optional[np.array]:
         request = node_service_pb2.TensorRequest(
             shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers),
             tensor = node_service_pb2.Tensor(
@@ -48,6 +57,7 @@ class GRPCPeerHandle(PeerHandle):
                 shape=tensor.shape,
                 dtype=str(tensor.dtype)
             ),
+            request_id=request_id
         )
         response = await self.stub.SendTensor(request)
 
@@ -56,10 +66,16 @@ class GRPCPeerHandle(PeerHandle):
 
         return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
+    async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
+        request = node_service_pb2.GetInferenceResultRequest(request_id=request_id)
+        response = await self.stub.GetInferenceResult(request)
+        if response.tensor is None:
+            return None, response.is_finished
+        return np.frombuffer(response.tensor.tensor_data, dtype=np.dtype(response.tensor.dtype)).reshape(response.tensor.shape), response.is_finished
+
     async def reset_shard(self, shard: Shard) -> None:
         request = node_service_pb2.ResetShardRequest(shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers))
         await self.stub.ResetShard(request)
-        print(f"Reset shard {shard} on {self.address}")
 
     async def collect_topology(self, max_depth: int) -> Topology:
         request = node_service_pb2.CollectTopologyRequest(max_depth=max_depth)

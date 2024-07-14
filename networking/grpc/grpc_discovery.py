@@ -99,7 +99,8 @@ class GRPCDiscovery(Discovery):
                     peer_host = addr[0]
                     peer_port = message['grpc_port']
                     device_capabilities = DeviceCapabilities(**message['device_capabilities'])
-                    self.known_peers[peer_id] = GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
+                    if peer_id not in self.known_peers:
+                        self.known_peers[peer_id] = GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
                     self.peer_last_seen[peer_id] = time.time()
             except Exception as e:
                 print(f"Error in peer discovery: {e}")

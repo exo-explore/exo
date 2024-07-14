@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 from abc import ABC, abstractmethod
 from inference.shard import Shard
@@ -25,5 +25,10 @@ class Node(ABC):
     async def reset_shard(self, shard: Shard) -> None:
         pass
 
+    @abstractmethod
     async def collect_topology(self, max_depth: int = 2) -> Topology:
+        pass
+
+    @abstractmethod
+    async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
         pass

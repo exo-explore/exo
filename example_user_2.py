@@ -16,9 +16,14 @@ model_path = get_model_path(path_or_hf_repo)
 tokenizer_config = {}
 tokenizer = load_tokenizer(model_path, tokenizer_config)
 
-peer = GRPCPeerHandle(
+peer1 = GRPCPeerHandle(
     "node1",
     "localhost:8080",
+    DeviceCapabilities(model="test1", chip="test1", memory=10000)
+)
+peer2 = GRPCPeerHandle(
+    "node2",
+    "localhost:8081",
     DeviceCapabilities(model="test1", chip="test1", memory=10000)
 )
 shard = Shard(model_id=path_or_hf_repo, start_layer=0, end_layer=0, n_layers=32)
@@ -35,11 +40,30 @@ async def run_prompt(prompt: str):
             messages, tokenize=False, add_generation_prompt=True
         )
 
-    await peer.connect()
-    await peer.reset_shard(shard)
+    for peer in [peer1, peer2]:
+        await peer.connect()
+        await peer.reset_shard(shard)
 
-    result = await peer.send_prompt(shard, prompt)
-    print(tokenizer.decode(result))
+    try:
+        await peer1.send_prompt(shard, prompt, "request-id-1")
+    except Exception as e:
+        print(e)
+
+    import sys
+    # poll 10 times per second for result (even though generation is faster, any more than this it's not nice for the user)
+    previous_length = 0
+    while True:
+        result, is_finished = await peer2.get_inference_result("request-id-1")
+        await asyncio.sleep(0.1)
+
+        # Print the updated string in place
+        updated_string = tokenizer.decode(result)
+        print(updated_string[previous_length:], end='', flush=True)
+        previous_length = len(updated_string)
+
+        if is_finished:
+            print("\nDone")
+            break
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run prompt")
