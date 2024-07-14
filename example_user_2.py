@@ -50,20 +50,26 @@ async def run_prompt(prompt: str):
         print(e)
 
     import sys
+    import time
     # poll 10 times per second for result (even though generation is faster, any more than this it's not nice for the user)
     previous_length = 0
+    n_tokens = 0
+    start_time = time.perf_counter()
     while True:
         result, is_finished = await peer2.get_inference_result("request-id-1")
         await asyncio.sleep(0.1)
 
         # Print the updated string in place
         updated_string = tokenizer.decode(result)
+        n_tokens = len(result)
         print(updated_string[previous_length:], end='', flush=True)
         previous_length = len(updated_string)
 
         if is_finished:
             print("\nDone")
             break
+    end_time = time.perf_counter()
+    print(f"\nDone. Processed {n_tokens} tokens in {end_time - start_time:.2f} seconds ({n_tokens / (end_time - start_time):.2f} tokens/second)")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run prompt")

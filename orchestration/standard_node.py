@@ -44,7 +44,9 @@ class StandardNode(Node):
 
         print(f"[{request_id}] process prompt: {shard}, {prompt}")
         result, is_finished = await self.inference_engine.infer_prompt(self.get_current_shard(shard), prompt)
-        self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], is_finished)
+        is_finished = is_finished or len(self.buffered_token_output[request_id]) >= self.max_generate_tokens
+        if is_finished:
+            self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
 
         if result.size == 1:
             self.buffered_token_output[request_id][0].append(result.item())
@@ -52,7 +54,7 @@ class StandardNode(Node):
 
         print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id])}")
 
-        if not is_finished and len(self.buffered_token_output[request_id]) < self.max_generate_tokens:
+        if not is_finished:
             asyncio.create_task(self.forward_tensor_to_next_shard(shard, result, request_id))
 
         return np.array(self.buffered_token_output[request_id]) if len(self.buffered_token_output[request_id]) > 0 else None
@@ -66,14 +68,16 @@ class StandardNode(Node):
         try:
             print(f"[{request_id}] process_tensor: {shard}, {tensor}")
             result, is_finished = await self.inference_engine.infer_tensor(self.get_current_shard(shard), tensor)
-            self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], is_finished)
+            is_finished = is_finished or len(self.buffered_token_output[request_id]) >= self.max_generate_tokens
+            if is_finished:
+                self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
 
             if result.size == 1:  # we got a new token out
                 self.buffered_token_output[request_id][0].append(result.item())
                 self.on_token(self.buffered_token_output[request_id][0])
             print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id])}")
 
-            if not is_finished and len(self.buffered_token_output[request_id]) < self.max_generate_tokens:
+            if not is_finished:
                 asyncio.create_task(self.forward_tensor_to_next_shard(shard, result, request_id))
 
             return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
