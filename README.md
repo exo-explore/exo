@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="https://pbs.twimg.com/profile_images/1772318997569998848/si2_A2yj_400x400.jpg">
-  <img alt="exo logo" src="https://pbs.twimg.com/profile_images/1772318997569998848/si2_A2yj_400x400.jpg" width="50%" height="50%">
+  <source media="(prefers-color-scheme: light)" srcset="/docs/exo-logo-black-bg.jpg">
+  <img alt="exo logo" src="/docs/exo-logo-transparent.png" width="50%" height="50%">
 </picture>
 
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
