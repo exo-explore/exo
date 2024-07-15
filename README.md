@@ -28,11 +28,11 @@ We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/
 
 ### Wide Model Support
 
-exo supports LLaMA and many other popular models.
+exo supports LLaMA and other popular models.
 
 ### Dynamic Model Partitioning
 
-exo optimally splits up models based on the current network topology and device resources available.
+exo optimally splits up models based on the current network topology and device resources available. This enables you to run larger models than you would be able to on any single device.
 
 ### Automatic Device Discovery
 
