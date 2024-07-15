@@ -10,7 +10,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 <h3>
 
-[Homepage](https://github.com/exo-explore/exo) | [Documentation](https://github.com/exo-explore/exo/docs) | [Discord](TODO)
+[Homepage](https://github.com/exo-explore/exo) | [Documentation](https://github.com/exo-explore/exo) | [Discord](https://discord.gg/FGPsrrkd)
 
 </h3>
 
