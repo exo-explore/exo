@@ -3,9 +3,10 @@ import asyncio
 import signal
 import mlx.core as mx
 import mlx.nn as nn
+from typing import List
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
-from exo.inference.mlx.sharded_inference_engine import MLXFixedShardInferenceEngine
+from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 from exo.inference.shard import Shard
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
@@ -17,16 +18,16 @@ parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host"
 parser.add_argument("--node-port", type=int, default=8080, help="Node port")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
-parser.add_argument("--model-id", type=str, default="mlx-community/Meta-Llama-3-8B-Instruct-4bit", help="Path to the model")
-parser.add_argument("--n-layers", type=int, default=32, help="Number of layers in the model")
-parser.add_argument("--start-layer", type=int, default=0, help="Start layer index")
-parser.add_argument("--end-layer", type=int, default=31, help="End layer index")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
 args = parser.parse_args()
 
-inference_engine = MLXFixedShardInferenceEngine(args.model_id, shard=Shard(model_id=args.model_id, n_layers=args.n_layers, start_layer=args.start_layer, end_layer=args.end_layer))
+
+inference_engine = MLXDynamicShardInferenceEngine()
+def on_token(tokens: List[int]):
+    if inference_engine.tokenizer:
+        print(inference_engine.tokenizer.decode(tokens))
 discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port)
-node = StandardNode(args.node_id, None, inference_engine, discovery, partitioning_strategy=RingMemoryWeightedPartitioningStrategy())
+node = StandardNode(args.node_id, None, inference_engine, discovery, partitioning_strategy=RingMemoryWeightedPartitioningStrategy(), on_token=on_token)
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 
@@ -38,7 +39,7 @@ async def shutdown(signal, loop):
     [task.cancel() for task in server_tasks]
     print(f"Cancelling {len(server_tasks)} outstanding tasks")
     await asyncio.gather(*server_tasks, return_exceptions=True)
-    await server.shutdown()
+    await server.stop()
     loop.stop()
 
 async def main():
@@ -60,5 +61,8 @@ if __name__ == "__main__":
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Received keyboard interrupt. Shutting down...")
     finally:
+        loop.run_until_complete(shutdown(signal.SIGTERM, loop))
         loop.close()
