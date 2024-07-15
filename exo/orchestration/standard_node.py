@@ -67,7 +67,7 @@ class StandardNode(Node):
             self.buffered_token_output[request_id] = ([], False)
 
         try:
-            if DEBUG >= 2: print(f"[{request_id}] process_tensor: {shard}, {tensor}")
+            if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
             result, is_finished = await self.inference_engine.infer_tensor(self.get_current_shard(shard), tensor)
             is_finished = is_finished or len(self.buffered_token_output[request_id]) >= self.max_generate_tokens
             if is_finished:
@@ -95,7 +95,7 @@ class StandardNode(Node):
 
         partitions = self.partitioning_strategy.partition(self.topology)
         current_partition_index = next((i for i, p in enumerate(partitions) if p.node_id == self.id), None)
-        if DEBUG >= 2: print(f"Current partition index: {current_partition_index}")
+        if DEBUG >= 1: print(f"Current partition index: {current_partition_index}")
         if current_partition_index is not None:
             next_partition_index = (current_partition_index + 1) % len(partitions)
             next_partition: Partition = partitions[next_partition_index]
@@ -114,7 +114,7 @@ class StandardNode(Node):
                 end_layer = int(next_partition.end * shard.n_layers) - 1
                 next_shard = Shard(shard.model_id, start_layer, end_layer, shard.n_layers)
 
-                if DEBUG >= 2: print(f"Sending tensor to {target_peer.id()} for shard: {next_shard}: {tensor}")
+                if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor.size=} {tensor.shape=}")
 
                 await target_peer.send_tensor(next_shard, tensor, request_id)
 
