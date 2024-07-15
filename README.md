@@ -48,13 +48,25 @@ exo supports the following inference engines:
 
 - [x] [MLX](inference/mlx/sharded_inference_engine.py)
 - [x] [tinygrad](inference/tinygrad/inference.py)
-- [] [llama.cpp](TODO)
+- 🚧 [llama.cpp](TODO)
 
 ## Networking Modules
 
-- [x] [GRPC](networking/grpc)
-- [] [Radio](TODO)
-- [] [Bluetooth](TODO)
+- ✅ [GRPC](networking/grpc)
+- 🚧 [Radio](TODO)
+- 🚧 [Bluetooth](TODO)
+
+## Installation
+
+The current recommended way to install exo is from source.
+
+### From source
+
+```sh
+git clone https://github.com/exo-explore/exo.git
+cd exo
+pip install -r requirements.txt
+```
 
 ## Documentation
 
