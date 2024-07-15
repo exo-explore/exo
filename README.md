@@ -48,8 +48,13 @@ exo supports the following inference engines:
 
 - [x] [MLX](inference/mlx/sharded_inference_engine.py)
 - [x] [tinygrad](inference/tinygrad/inference.py)
+- [] [llama.cpp](TODO)
 
-## Usage
+## Networking Modules
+
+- [x] [GRPC](networking/grpc)
+- [] [Radio](TODO)
+- [] [Bluetooth](TODO)
 
 ## Documentation
 
