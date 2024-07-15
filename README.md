@@ -5,9 +5,9 @@
   <img alt="exo logo" src="https://pbs.twimg.com/profile_images/1772318997569998848/si2_A2yj_400x400.jpg" width="50%" height="50%">
 </picture>
 
-exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://exolabs.net).
+exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
 
-Supports iPhone, iPad, Android, Mac, Linux, pretty much any device!
+Turns all your devices into a powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 <h3>
 
@@ -36,11 +36,11 @@ exo optimally splits up models based on the current network topology and device 
 
 ### Automatic Device Discovery
 
-Zero manual configuration. exo will automatically discover other devices using the best method available.
+exo will automatically discover other devices using the best method available. Zero manual configuration. 
 
 ### ChatGPT-compatible API
 
-exo provides a ChatGPT-compatible API for running models. This means it's a one-line change in your application to run models on exo.
+exo provides a ChatGPT-compatible API for running models. It's a one-line change in your application to run models on your own hardware using exo.
 
 ## Inference Engines
 
