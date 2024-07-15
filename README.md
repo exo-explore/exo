@@ -7,7 +7,7 @@
 
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
 
-Turns all your devices into a powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
+Forget NVIDIA, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 <h3>
 
