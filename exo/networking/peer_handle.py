@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 import numpy as np
-from inference.shard import Shard
-from topology.device_capabilities import DeviceCapabilities
-from topology.topology import Topology
+from exo.inference.shard import Shard
+from exo.topology.device_capabilities import DeviceCapabilities
+from exo.topology.topology import Topology
 
 class PeerHandle(ABC):
     @abstractmethod

@@ -4,12 +4,12 @@ import signal
 import mlx.core as mx
 import mlx.nn as nn
 from typing import List
-from orchestration.standard_node import StandardNode
-from networking.grpc.grpc_server import GRPCServer
-from inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
-from inference.shard import Shard
-from networking.grpc.grpc_discovery import GRPCDiscovery
-from topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
+from exo.orchestration.standard_node import StandardNode
+from exo.networking.grpc.grpc_server import GRPCServer
+from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+from exo.inference.shard import Shard
+from exo.networking.grpc.grpc_discovery import GRPCDiscovery
+from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")

@@ -1,7 +1,7 @@
 import mlx.core as mx
-from inference.mlx.sharded_model import StatefulShardedModel
-from inference.mlx.sharded_utils import load_shard
-from inference.shard import Shard
+from exo.inference.mlx.sharded_model import StatefulShardedModel
+from exo.inference.mlx.sharded_utils import load_shard
+from exo.inference.shard import Shard
 
 shard_full = Shard("llama", 0, 31, 32)
 shard1 = Shard("llama", 0, 12, 32)

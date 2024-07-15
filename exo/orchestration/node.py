@@ -1,8 +1,8 @@
 from typing import Optional, Tuple
 import numpy as np
 from abc import ABC, abstractmethod
-from inference.shard import Shard
-from topology.topology import Topology
+from exo.inference.shard import Shard
+from exo.topology.topology import Topology
 
 class Node(ABC):
     @abstractmethod

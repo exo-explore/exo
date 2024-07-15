@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from topology.device_capabilities import mac_device_capabilities, DeviceCapabilities
+from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapabilities
 
 class TestMacDeviceCapabilities(unittest.TestCase):
     @patch('subprocess.check_output')

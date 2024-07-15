@@ -2,11 +2,11 @@
 # They are prompting the cluster to generate a response to a question.
 # The cluster is given the question, and the user is given the response.
 
-from inference.mlx.sharded_utils import get_model_path, load_tokenizer
-from inference.shard import Shard
-from networking.peer_handle import PeerHandle
-from networking.grpc.grpc_peer_handle import GRPCPeerHandle
-from topology.device_capabilities import DeviceCapabilities
+from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
+from exo.inference.shard import Shard
+from exo.networking.peer_handle import PeerHandle
+from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
+from exo.topology.device_capabilities import DeviceCapabilities
 from typing import List
 import asyncio
 import argparse

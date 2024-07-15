@@ -3,7 +3,7 @@ from unittest.mock import Mock, AsyncMock
 import numpy as np
 
 from .standard_node import StandardNode
-from networking.peer_handle import PeerHandle
+from exo.networking.peer_handle import PeerHandle
 
 class TestNode(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

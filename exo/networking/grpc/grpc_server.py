@@ -4,9 +4,9 @@ import numpy as np
 
 from . import node_service_pb2
 from . import node_service_pb2_grpc
-from inference.shard import Shard
+from exo.inference.shard import Shard
 
-from orchestration import Node
+from exo.orchestration import Node
 
 import uuid
 

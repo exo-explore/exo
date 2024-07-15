@@ -4,12 +4,12 @@ from typing import List
 import json, argparse, random, time
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
-from inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
+from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from tinygrad.nn.state import safe_load, torch_load, load_state_dict, get_parameters
 from tinygrad import Tensor, dtypes, nn, Context, Device, GlobalCounters
 from tinygrad.helpers import Profiling, Timing, DEBUG, colored, fetch, tqdm
-from inference.shard import Shard
-from inference.inference_engine import InferenceEngine
+from exo.inference.shard import Shard
+from exo.inference.inference_engine import InferenceEngine
 import numpy as np
 
 MODEL_PARAMS = {

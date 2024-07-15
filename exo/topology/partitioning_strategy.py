@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from dataclasses import dataclass
-from inference.shard import Shard
-from networking.peer_handle import PeerHandle
+from exo.inference.shard import Shard
+from exo.networking.peer_handle import PeerHandle
 from .topology import Topology
 
 # Partitions shard-space into pieces of contiguous shards, represented by floating point range [start, end) between 0 and 1

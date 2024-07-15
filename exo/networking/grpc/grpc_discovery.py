@@ -6,7 +6,7 @@ from typing import List, Dict
 from ..discovery import Discovery
 from ..peer_handle import PeerHandle
 from .grpc_peer_handle import GRPCPeerHandle
-from topology.device_capabilities import DeviceCapabilities, device_capabilities
+from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities
 
 class GRPCDiscovery(Discovery):
     def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1, device_capabilities=None):

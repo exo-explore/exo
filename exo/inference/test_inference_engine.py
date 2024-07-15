@@ -1,7 +1,7 @@
-from inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
-from inference.inference_engine import InferenceEngine
-from inference.shard import Shard
-from inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
+from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+from exo.inference.inference_engine import InferenceEngine
+from exo.inference.shard import Shard
+from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
 import numpy as np
 
 # An inference engine should work the same for any number of Shards, as long as the Shards are continuous.

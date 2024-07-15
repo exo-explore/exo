@@ -7,9 +7,9 @@ from . import node_service_pb2
 from . import node_service_pb2_grpc
 
 from ..peer_handle import PeerHandle
-from inference.shard import Shard
-from topology.topology import Topology
-from topology.device_capabilities import DeviceCapabilities
+from exo.inference.shard import Shard
+from exo.topology.topology import Topology
+from exo.topology.device_capabilities import DeviceCapabilities
 
 class GRPCPeerHandle(PeerHandle):
     def __init__(self, id: str, address: str, device_capabilities: DeviceCapabilities):

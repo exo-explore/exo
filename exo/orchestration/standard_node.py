@@ -1,12 +1,12 @@
 from typing import List, Dict, Optional, Callable, Tuple
 import numpy as np
-from networking import Discovery, PeerHandle, Server
-from inference.inference_engine import InferenceEngine, Shard
+from exo.networking import Discovery, PeerHandle, Server
+from exo.inference.inference_engine import InferenceEngine, Shard
 from .node import Node
-from topology.topology import Topology
-from topology.device_capabilities import device_capabilities
-from topology.partitioning_strategy import PartitioningStrategy
-from topology.partitioning_strategy import Partition
+from exo.topology.topology import Topology
+from exo.topology.device_capabilities import device_capabilities
+from exo.topology.partitioning_strategy import PartitioningStrategy
+from exo.topology.partitioning_strategy import Partition
 import asyncio
 import uuid
 
