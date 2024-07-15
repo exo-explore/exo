@@ -3,6 +3,7 @@ import asyncio
 import signal
 import mlx.core as mx
 import mlx.nn as nn
+import uuid
 from typing import List
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
@@ -13,7 +14,7 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
-parser.add_argument("--node-id", type=str, default="node1", help="Node ID")
+parser.add_argument("--node-id", type=str, default=str(uuid.uuid4()), help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=8080, help="Node port")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
