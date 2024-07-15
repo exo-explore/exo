@@ -64,12 +64,12 @@ pip install -r requirements.txt
 #### Device 1:
 
 ```sh
-./run.sh
+python3 main.py
 ```
 
 #### Device 2:
 ```sh
-./run.sh
+python3 main.py
 ```
 
 That's it! No configuration required - exo will automatically discover the other device(s).
