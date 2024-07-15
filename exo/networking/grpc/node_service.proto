@@ -49,7 +49,8 @@ message ResetShardRequest {
 }
 
 message CollectTopologyRequest {
-  int32 max_depth = 1;
+  repeated string visited = 1;
+  int32 max_depth = 2;
 }
 
 message Topology {

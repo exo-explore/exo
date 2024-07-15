@@ -42,5 +42,5 @@ class PeerHandle(ABC):
     async def reset_shard(self, shard: Shard) -> None:
         pass
 
-    async def collect_topology(self, max_depth: int) -> Topology:
+    async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
         pass

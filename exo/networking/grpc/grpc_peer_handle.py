@@ -77,8 +77,8 @@ class GRPCPeerHandle(PeerHandle):
         request = node_service_pb2.ResetShardRequest(shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers))
         await self.stub.ResetShard(request)
 
-    async def collect_topology(self, max_depth: int) -> Topology:
-        request = node_service_pb2.CollectTopologyRequest(max_depth=max_depth)
+    async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
+        request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
         response = await self.stub.CollectTopology(request)
         topology = Topology()
         for node_id, capabilities in response.nodes.items():
