@@ -42,20 +42,6 @@ exo will automatically discover other devices using the best method available. Z
 
 exo provides a ChatGPT-compatible API for running models. It's a one-line change in your application to run models on your own hardware using exo.
 
-## Inference Engines
-
-exo supports the following inference engines:
-
-- [x] [MLX](inference/mlx/sharded_inference_engine.py)
-- [x] [tinygrad](inference/tinygrad/inference.py)
-- 🚧 [llama.cpp](TODO)
-
-## Networking Modules
-
-- ✅ [GRPC](networking/grpc)
-- 🚧 [Radio](TODO)
-- 🚧 [Bluetooth](TODO)
-
 ## Installation
 
 The current recommended way to install exo is from source.
@@ -92,3 +78,17 @@ An API endpoint will be available on port 8001. Example usage:
 ```sh
 curl -X POST http://localhost:8001/api/v1/chat -H "Content-Type: application/json" -d '{"messages": [{"role": "user", "content": "What is the meaning of life?"}]}'
 ```
+
+## Inference Engines
+
+exo supports the following inference engines:
+
+- [x] [MLX](inference/mlx/sharded_inference_engine.py)
+- [x] [tinygrad](inference/tinygrad/inference.py)
+- 🚧 [llama.cpp](TODO)
+
+## Networking Modules
+
+- ✅ [GRPC](networking/grpc)
+- 🚧 [Radio](TODO)
+- 🚧 [Bluetooth](TODO)
