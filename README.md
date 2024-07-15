@@ -7,7 +7,6 @@
 
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
 
-Forget NVIDIA, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 <h3>
 
@@ -20,7 +19,11 @@ Forget NVIDIA, unify your existing devices into one powerful GPU: iPhone, iPad, 
 
 ---
 
+Forget NVIDIA, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
+
 ## Get Involved
+
+exo is **experimental** software. We welcome contributions from the community.
 
 We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/d/1cTCpTIp48UnnIvHeLEUNg1iMy_Q6lRybgECSFCoVJpE/edit?usp=sharing).
 
