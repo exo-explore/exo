@@ -12,4 +12,5 @@ tinygrad @ git+https://github.com/tinygrad/tinygrad.git@a9f5a764dc640a5e5cbaaeee
 tokenizers==0.19.1
 tqdm==4.66.4
 transformers==4.41.2
+uuid==1.30
 
