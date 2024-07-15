@@ -28,7 +28,6 @@ for _ in range(max_tokens):
 
 print("full response: ", full_tokenizer.decode(full_generated_tokens))
 
-
 sharded_generated_tokens = []
 sharded_resp = prompt_tokens
 for _ in range(max_tokens):
