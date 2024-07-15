@@ -3,6 +3,7 @@ from exo.inference.mlx.sharded_model import StatefulShardedModel
 from exo.inference.mlx.sharded_utils import load_shard
 from exo.inference.shard import Shard
 
+# 79, 80 for Llama-3-70B
 shard_full = Shard("llama", 0, 31, 32)
 shard1 = Shard("llama", 0, 12, 32)
 shard2 = Shard("llama", 13, 31, 32)
@@ -16,7 +17,7 @@ m1 = StatefulShardedModel(shard1, model_shard1)
 m2 = StatefulShardedModel(shard2, model_shard2)
 
 prompt = "write a beautiful haiku about a utopia where people own their AI with edge intelligence:"
-prompt_tokens = mx.array(tokenizer1.encode(prompt))
+prompt_tokens = mx.array(full_tokenizer.encode(prompt))
 max_tokens = 50
 
 resp = prompt_tokens
@@ -25,7 +26,7 @@ for _ in range(max_tokens):
     resp = full.step(resp)
     full_generated_tokens.append(resp.item())
 
-print("full response: ", tokenizer1.decode(full_generated_tokens))
+print("full response: ", full_tokenizer.decode(full_generated_tokens))
 
 
 sharded_generated_tokens = []
