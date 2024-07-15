@@ -42,7 +42,7 @@ class GRPCDiscovery(Discovery):
         if DEBUG >= 2: print("Starting peer discovery process...")
 
         if wait_for_peers > 0:
-            while not self.known_peers:
+            while len(self.known_peers) == 0:
                 if DEBUG >= 2: print("No peers discovered yet, retrying in 1 second...")
                 await asyncio.sleep(1)  # Keep trying to find peers
             if DEBUG >= 2: print(f"Discovered first peer: {next(iter(self.known_peers.values()))}")
@@ -102,6 +102,7 @@ class GRPCDiscovery(Discovery):
                     device_capabilities = DeviceCapabilities(**message['device_capabilities'])
                     if peer_id not in self.known_peers:
                         self.known_peers[peer_id] = GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
+                        if DEBUG >= 2: print(f"Discovered new peer {peer_id} at {peer_host}:{peer_port}")
                     self.peer_last_seen[peer_id] = time.time()
             except Exception as e:
                 print(f"Error in peer discovery: {e}")
