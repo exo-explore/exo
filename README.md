@@ -74,9 +74,9 @@ python3 main.py
 
 That's it! No configuration required - exo will automatically discover the other device(s).
 
-A ChatGPT-like web interface will be available on each device on port 8000 http://localhost:8000.
+Until the below is fixed, the only way to access inference is via peer handles. See how it's done in [this example for Llama 3](examples/llama3_distributed.py).
 
-An API endpoint will be available on port 8001. Example usage:
+// A ChatGPT-like web interface will be available on each device on port 8000 http://localhost:8000 and Chat-GPT-compatible API on port 8001 (currently doesn't work see https://github.com/exo-explore/exo/issues/6).
 
 ```sh
 curl -X POST http://localhost:8001/api/v1/chat -H "Content-Type: application/json" -d '{"messages": [{"role": "user", "content": "What is the meaning of life?"}]}'
