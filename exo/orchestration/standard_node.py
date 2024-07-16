@@ -12,7 +12,7 @@ import asyncio
 import uuid
 
 class StandardNode(Node):
-    def __init__(self, id: str, server: Server, inference_engine: InferenceEngine, discovery: Discovery, partitioning_strategy: PartitioningStrategy = None, on_token: Callable[[List[int]], None] = None, max_generate_tokens: int = 50):
+    def __init__(self, id: str, server: Server, inference_engine: InferenceEngine, discovery: Discovery, partitioning_strategy: PartitioningStrategy = None, on_token: Callable[[List[int]], None] = None, max_generate_tokens: int = 256):
         self.id = id
         self.inference_engine = inference_engine
         self.server = server
@@ -50,7 +50,7 @@ class StandardNode(Node):
             return
 
         result, is_finished = await self.inference_engine.infer_prompt(self.get_current_shard(shard), prompt)
-        is_finished = is_finished or len(self.buffered_token_output[request_id]) >= self.max_generate_tokens
+        is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
         if is_finished:
             self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
 
@@ -74,7 +74,7 @@ class StandardNode(Node):
         try:
             if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
             result, is_finished = await self.inference_engine.infer_tensor(self.get_current_shard(shard), tensor)
-            is_finished = is_finished or len(self.buffered_token_output[request_id]) >= self.max_generate_tokens
+            is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
             if is_finished:
                 self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
 

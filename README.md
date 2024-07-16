@@ -74,7 +74,19 @@ python3 main.py
 
 That's it! No configuration required - exo will automatically discover the other device(s).
 
-Until the below is fixed, the only way to access inference is via peer handles. See how it's done in [this example for Llama 3](examples/llama3_distributed.py).
+The native way to access models running on exo is using the exo library with peer handles. See how in [this example for Llama 3](examples/llama3_distributed.py).
+
+exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000. Note: this is currently only supported by tail nodes (i.e. nodes selected to be at the end of the ring topology). Example request:
+
+```
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "llama-3-70b",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
 
 // A ChatGPT-like web interface will be available on each device on port 8000 http://localhost:8000 and Chat-GPT-compatible API on port 8001 (currently doesn't work see https://github.com/exo-explore/exo/issues/6).
 

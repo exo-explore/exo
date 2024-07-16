@@ -11,6 +11,8 @@ from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceE
 from exo.inference.shard import Shard
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
+from exo.api import ChatGPTAPI
+
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -20,6 +22,7 @@ parser.add_argument("--node-port", type=int, default=8080, help="Node port")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
+parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
 args = parser.parse_args()
 
 
@@ -32,6 +35,7 @@ node = StandardNode(args.node_id, None, inference_engine, discovery, partitionin
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 
+api = ChatGPTAPI(node)
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""
@@ -54,6 +58,7 @@ async def main():
         loop.add_signal_handler(s, handle_exit)
 
     await node.start(wait_for_peers=args.wait_for_peers)
+    asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
 
     await asyncio.Event().wait()
 
