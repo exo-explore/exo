@@ -101,9 +101,16 @@ curl http://localhost:8000/v1/chat/completions \
    }'
 ```
 
-
 ```sh
 curl -X POST http://localhost:8001/api/v1/chat -H "Content-Type: application/json" -d '{"messages": [{"role": "user", "content": "What is the meaning of life?"}]}'
+```
+
+## Debugging
+
+Enable debug logs with the DEBUG environment variable (0-9).
+
+```sh
+DEBUG=9 python3 main.py
 ```
 
 ## Inference Engines
