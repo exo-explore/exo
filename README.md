@@ -39,7 +39,7 @@ exo optimally splits up models based on the current network topology and device 
 
 ### Automatic Device Discovery
 
-exo will automatically discover other devices using the best method available. Zero manual configuration. 
+exo will automatically discover other devices using the best method available. Zero manual configuration.
 
 ### ChatGPT-compatible API
 
