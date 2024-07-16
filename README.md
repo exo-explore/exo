@@ -86,8 +86,8 @@ curl -X POST http://localhost:8001/api/v1/chat -H "Content-Type: application/jso
 
 exo supports the following inference engines:
 
-- [x] [MLX](inference/mlx/sharded_inference_engine.py)
-- [x] [tinygrad](inference/tinygrad/inference.py)
+- ✅ [MLX](inference/mlx/sharded_inference_engine.py)
+- ✅ [tinygrad](inference/tinygrad/inference.py)
 - 🚧 [llama.cpp](TODO)
 
 ## Networking Modules
@@ -95,3 +95,7 @@ exo supports the following inference engines:
 - ✅ [GRPC](networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+## Known Issues
+
+- [] As the library is evolving so quickly, the iOS implementation has fallen behind Python. This is being addressed, and longer term we will push out an approach that will unify the implementations so we don't have to maintain separate implementations.
