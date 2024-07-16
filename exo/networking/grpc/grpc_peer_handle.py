@@ -88,3 +88,7 @@ class GRPCPeerHandle(PeerHandle):
             for peer_id in peers.peer_ids:
                 topology.add_edge(node_id, peer_id)
         return topology
+
+    async def global_reset(self, base_shard: Shard, visited: set[str], max_depth: int) -> None:
+        request = node_service_pb2.GlobalResetRequest(base_shard=node_service_pb2.Shard(model_id=base_shard.model_id, start_layer=base_shard.start_layer, end_layer=base_shard.end_layer, n_layers=base_shard.n_layers), visited=visited, max_depth=max_depth)
+        await self.stub.GlobalReset(request)

@@ -106,6 +106,8 @@ class GRPCDiscovery(Discovery):
                     self.peer_last_seen[peer_id] = time.time()
             except Exception as e:
                 print(f"Error in peer discovery: {e}")
+                import traceback
+                print(traceback.format_exc())
                 await asyncio.sleep(self.broadcast_interval / 2)
 
     async def _cleanup_peers(self):

@@ -147,32 +147,6 @@ class StandardNode(Node):
                 await peer.connect()
                 if DEBUG >= 2: print(f"Connected to peer {peer.id()}")
 
-    async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
-        self.topology.update_node(self.id, self.device_capabilities)
-
-        if DEBUG >= 2: print(f"Collecting topoloy {max_depth=} {visited=}")
-        for peer in self.peers:
-            self.topology.update_node(peer.id(), peer.device_capabilities())
-            self.topology.add_edge(self.id, peer.id())
-
-            if peer.id() in visited:
-                if DEBUG >= 2: print(f"Already visited {peer.id()}. Skipping...")
-                continue
-            visited.add(peer.id())
-
-            if max_depth <= 0:
-                if DEBUG >= 2: print(f"Max depth reached. Skipping...")
-                continue
-
-            try:
-                other_topology = await peer.collect_topology(visited, max_depth = max_depth - 1)
-                if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
-                self.topology.merge(other_topology)
-            except Exception as e:
-                print(f"Error collecting topology from {peer.id()}: {e}")
-
-        return self.topology
-
     async def periodic_topology_collection(self, interval: int):
         while True:
             await asyncio.sleep(interval)
@@ -190,5 +164,55 @@ class StandardNode(Node):
             return None, False
         return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
 
-    async def global_reset(self, max_depth: int = 2) -> None:
-        pass
+    async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
+        self.topology.update_node(self.id, self.device_capabilities)
+
+        if DEBUG >= 2: print(f"Collecting topoloy {max_depth=} {visited=}")
+
+        prev_visited = visited.copy()
+        visited.update(p.id() for p in self.peers)
+
+        for peer in self.peers:
+            self.topology.update_node(peer.id(), peer.device_capabilities())
+            self.topology.add_edge(self.id, peer.id())
+
+            if peer.id() in prev_visited:
+                if DEBUG >= 2: print(f"Already visited {peer.id()}. Skipping...")
+                continue
+
+            if max_depth <= 0:
+                if DEBUG >= 2: print(f"Max depth reached. Skipping...")
+                continue
+
+            try:
+                other_topology = await peer.collect_topology(visited, max_depth = max_depth - 1)
+                if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
+                self.topology.merge(other_topology)
+            except Exception as e:
+                print(f"Error collecting topology from {peer.id()}: {e}")
+
+        return self.topology
+
+    # TODO: unify this and collect_topology as global actions
+    async def global_reset(self, base_shard: Shard, visited: set[str] = set(), max_depth: int = 2) -> None:
+        await self.reset_shard(self.get_current_shard(base_shard))
+
+        if DEBUG >= 2: print(f"Global reset {base_shard=} {max_depth=} {visited=}")
+
+        prev_visited = visited.copy()
+        visited.update(p.id() for p in self.peers)
+
+        for peer in self.peers:
+            if peer.id() in prev_visited:
+                if DEBUG >= 2: print(f"Already visited {peer.id()}. Skipping...")
+                continue
+
+            if max_depth <= 0:
+                if DEBUG >= 2: print(f"Max depth reached. Skipping...")
+                continue
+
+            try:
+                print(f"Forwarding global reset to peer {peer.id()}")
+                await peer.global_reset(base_shard, visited, max_depth = max_depth - 1)
+            except Exception as e:
+                print(f"Error collecting topology from {peer.id()}: {e}")

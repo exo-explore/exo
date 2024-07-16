@@ -17,19 +17,20 @@ models = {
     "mlx-community/Meta-Llama-3-70B-Instruct-4bit": Shard(model_id="mlx-community/Meta-Llama-3-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80)
 }
 
-path_or_hf_repo = "mlx-community/Meta-Llama-3-70B-Instruct-4bit"
+path_or_hf_repo = "mlx-community/Meta-Llama-3-8B-Instruct-4bit"
 model_path = get_model_path(path_or_hf_repo)
 tokenizer_config = {}
 tokenizer = load_tokenizer(model_path, tokenizer_config)
 
-peer2 = GRPCPeerHandle(
+peer1 = GRPCPeerHandle(
     "node1",
     "localhost:8080",
     DeviceCapabilities(model="placeholder", chip="placeholder", memory=0)
 )
-peer1 = GRPCPeerHandle(
+peer2 = GRPCPeerHandle(
     "node2",
-    "10.0.0.161:8080",
+    # "10.0.0.161:8080",
+    "localhost:8081",
     DeviceCapabilities(model="placeholder", chip="placeholder", memory=0)
 )
 shard = models[path_or_hf_repo]
@@ -49,7 +50,8 @@ async def run_prompt(prompt: str):
 
     for peer in [peer1, peer2]:
         await peer.connect()
-        await peer.reset_shard(shard)
+
+    await peer.global_reset(shard, set(), 2)
 
     try:
         await peer1.send_prompt(shard, prompt, request_id)

@@ -8,6 +8,7 @@ service NodeService {
   rpc ResetShard (ResetShardRequest) returns (Empty) {}
   rpc GetInferenceResult (GetInferenceResultRequest) returns (InferenceResult) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
+  rpc GlobalReset (GlobalResetRequest) returns (Empty) {}
 }
 
 message Shard {
@@ -51,6 +52,12 @@ message ResetShardRequest {
 message CollectTopologyRequest {
   repeated string visited = 1;
   int32 max_depth = 2;
+}
+
+message GlobalResetRequest {
+  Shard base_shard = 1;
+  repeated string visited = 2;
+  int32 max_depth = 3;
 }
 
 message Topology {

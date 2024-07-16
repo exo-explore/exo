@@ -64,6 +64,11 @@ class NodeServiceStub(object):
                 request_serializer=node__service__pb2.CollectTopologyRequest.SerializeToString,
                 response_deserializer=node__service__pb2.Topology.FromString,
                 _registered_method=True)
+        self.GlobalReset = channel.unary_unary(
+                '/node_service.NodeService/GlobalReset',
+                request_serializer=node__service__pb2.GlobalResetRequest.SerializeToString,
+                response_deserializer=node__service__pb2.Empty.FromString,
+                _registered_method=True)
 
 
 class NodeServiceServicer(object):
@@ -99,6 +104,12 @@ class NodeServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GlobalReset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_NodeServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -126,6 +137,11 @@ def add_NodeServiceServicer_to_server(servicer, server):
                     servicer.CollectTopology,
                     request_deserializer=node__service__pb2.CollectTopologyRequest.FromString,
                     response_serializer=node__service__pb2.Topology.SerializeToString,
+            ),
+            'GlobalReset': grpc.unary_unary_rpc_method_handler(
+                    servicer.GlobalReset,
+                    request_deserializer=node__service__pb2.GlobalResetRequest.FromString,
+                    response_serializer=node__service__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -263,6 +279,33 @@ class NodeService(object):
             '/node_service.NodeService/CollectTopology',
             node__service__pb2.CollectTopologyRequest.SerializeToString,
             node__service__pb2.Topology.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GlobalReset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/node_service.NodeService/GlobalReset',
+            node__service__pb2.GlobalResetRequest.SerializeToString,
+            node__service__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

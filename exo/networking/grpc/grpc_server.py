@@ -70,3 +70,10 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         nodes = {node_id: node_service_pb2.DeviceCapabilities(model=cap.model, chip=cap.chip, memory=cap.memory) for node_id, cap in topology.nodes.items()}
         peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
         return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
+
+    async def GlobalReset(self, request, context):
+        base_shard = Shard(model_id=request.base_shard.model_id, start_layer=request.base_shard.start_layer, end_layer=request.base_shard.end_layer, n_layers=request.base_shard.n_layers)
+        visited = set(request.visited)
+        max_depth = request.max_depth
+        await self.node.global_reset(base_shard, visited, max_depth)
+        return node_service_pb2.Empty()

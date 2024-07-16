@@ -159,7 +159,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         toks = [self.tokenizer.bos_id] + encode_message("user", prompt) + encode_role("assistant")
         start_pos = prefill(self.model, toks[:-1])
         last_tok = toks[-1]
-        
+
         output_data = np.array(self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist())
         start_pos += 1
 
