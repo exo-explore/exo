@@ -110,13 +110,13 @@ curl -X POST http://localhost:8001/api/v1/chat -H "Content-Type: application/jso
 
 exo supports the following inference engines:
 
-- ✅ [MLX](inference/mlx/sharded_inference_engine.py)
-- ✅ [tinygrad](inference/tinygrad/inference.py)
+- ✅ [MLX](exo/inference/mlx/sharded_inference_engine.py)
+- ✅ [tinygrad](exo/inference/tinygrad/inference.py)
 - 🚧 [llama.cpp](TODO)
 
 ## Networking Modules
 
-- ✅ [GRPC](networking/grpc)
+- ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
 
