@@ -57,7 +57,6 @@ class ChatGPTAPI:
         timeout = 90
         start_time = time.time()
         while time.time() - start_time < timeout:
-            print("poll")
             try:
                 result, is_finished = await self.node.get_inference_result(request_id)
             except Exception as e:
@@ -96,7 +95,7 @@ class ChatGPTAPI:
         await runner.setup()
         site = web.TCPSite(runner, host, port)
         await site.start()
-        print(f"Starting ChatGPT API server at {host}:{port}")
+        if DEBUG >= 1: print(f"Starting ChatGPT API server at {host}:{port}")
 
 # Usage example
 if __name__ == "__main__":
