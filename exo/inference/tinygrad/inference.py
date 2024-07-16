@@ -52,7 +52,8 @@ class Tokenizer:
   @property
   def stop_tokens(self): return {self.special_tokens["<|end_of_text|>"], self.special_tokens["<|eot_id|>"]}
 
-  def decode(self, toks): return self.model.decode([t for t in toks if t < self.num_base_tokens])
+  def decode(self, toks):
+     return self.model.decode([t for t in toks if t < self.num_base_tokens])
   def encode(self, text, allow_special=False):
     return self.model.encode(text, allowed_special="all" if allow_special else set(), disallowed_special=set())
 
@@ -77,11 +78,11 @@ def load(fn:str):
   else:
     return torch_load(fn)
 
-def build_transformer(model_path: Path, model_size="8B", quantize=None, device=None):
+def build_transformer(model_path: Path, shard: Shard, model_size="8B", quantize=None, device=None):
   # build model
   linear = nn.Linear
   with Context(THREEFRY=0):
-    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True)
+    model = Transformer(**MODEL_PARAMS[model_size]["args"], shard=shard, linear=linear, max_context=8192, jit=False)
 
   # load weights
   if model_path.is_dir():
@@ -91,7 +92,7 @@ def build_transformer(model_path: Path, model_size="8B", quantize=None, device=N
   else:
     weights = load(str(model_path))
   if "model.embed_tokens.weight" in weights:
-    weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
+    weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"], shard=shard)
   weights = fix_bf16(weights)
 
   with Context(BEAM=0):
@@ -117,7 +118,7 @@ def build_transformer(model_path: Path, model_size="8B", quantize=None, device=N
   return model
 
 # default settings
-TEMPERATURE = 0.85
+TEMPERATURE = 0 # 0.85
 TOP_K = 25
 TOP_P = 0.9
 ALPHA_F = 0.1
@@ -154,14 +155,12 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
             return encode_role(role) + self.tokenizer.encode(content.strip()) + [self.tokenizer.special_tokens["<|eot_id|>"]]
 
         await self.ensure_shard(shard)
-        print([self.tokenizer.encode(prompt)])
 
         toks = [self.tokenizer.bos_id] + encode_message("user", prompt) + encode_role("assistant")
         start_pos = prefill(self.model, toks[:-1])
         last_tok = toks[-1]
 
-        output_data = np.array(self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist())
-        print(f"{output_data.size=}")
+        output_data = np.array([self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()])
         if output_data.size == 1:
            start_pos += 1
 
@@ -171,8 +170,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
 
         start_pos = json.loads(inference_state)["start_pos"] if inference_state else 0
-        output_data: np.ndarray = np.array(self.model(Tensor([input_data]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist())
-        print(f"{output_data.size=}")
+        output_data: np.ndarray = np.array([self.model(Tensor([input_data]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()])
         if output_data.size == 1:
            start_pos += 1
 
@@ -181,7 +179,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     async def reset_shard(self, shard: Shard):
         await self.ensure_shard(shard)
 
-        print(f"Resetting shard: {shard}")
         self.model.reset()
 
     async def ensure_shard(self, shard: Shard):
@@ -190,10 +187,9 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
         model_path = Path(shard.model_id)
         size = "8B" # one of 8B or 70B for now
-        model = build_transformer(model_path, model_size=size)
+        model = build_transformer(model_path, shard=shard, model_size=size)
         tokenizer = Tokenizer(str((model_path if model_path.is_dir() else model_path.parent) / "tokenizer.model"))
 
         self.shard = shard
         self.model = model
         self.tokenizer = tokenizer
-

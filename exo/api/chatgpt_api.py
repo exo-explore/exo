@@ -52,7 +52,7 @@ class ChatGPTAPI:
         except Exception as e:
             pass # TODO
             # return web.json_response({'detail': str(e)}, status=500)
-        
+
         # poll for the response. TODO: implement callback for specific request id
         timeout = 90
         start_time = time.time()
