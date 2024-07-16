@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12node_service.proto\x12\x0cnode_service\"S\n\x05Shard\x12\x10\n\x08model_id\x18\x01 \x01(\t\x12\x13\n\x0bstart_layer\x18\x02 \x01(\x05\x12\x11\n\tend_layer\x18\x03 \x01(\x05\x12\x10\n\x08n_layers\x18\x04 \x01(\x05\"k\n\rPromptRequest\x12\"\n\x05shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x17\n\nrequest_id\x18\x03 \x01(\tH\x00\x88\x01\x01\x42\r\n\x0b_request_id\"\x81\x01\n\rTensorRequest\x12\"\n\x05shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\x12$\n\x06tensor\x18\x02 \x01(\x0b\x32\x14.node_service.Tensor\x12\x17\n\nrequest_id\x18\x03 \x01(\tH\x00\x88\x01\x01\x42\r\n\x0b_request_id\"/\n\x19GetInferenceResultRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"\\\n\x0fInferenceResult\x12)\n\x06tensor\x18\x01 \x01(\x0b\x32\x14.node_service.TensorH\x00\x88\x01\x01\x12\x13\n\x0bis_finished\x18\x02 \x01(\x08\x42\t\n\x07_tensor\";\n\x06Tensor\x12\x13\n\x0btensor_data\x18\x01 \x01(\x0c\x12\r\n\x05shape\x18\x02 \x03(\x05\x12\r\n\x05\x64type\x18\x03 \x01(\t\"7\n\x11ResetShardRequest\x12\"\n\x05shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\"<\n\x16\x43ollectTopologyRequest\x12\x0f\n\x07visited\x18\x01 \x03(\t\x12\x11\n\tmax_depth\x18\x02 \x01(\x05\"a\n\x12GlobalResetRequest\x12\'\n\nbase_shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\x12\x0f\n\x07visited\x18\x02 \x03(\t\x12\x11\n\tmax_depth\x18\x03 \x01(\x05\"\x8e\x02\n\x08Topology\x12\x30\n\x05nodes\x18\x01 \x03(\x0b\x32!.node_service.Topology.NodesEntry\x12\x39\n\npeer_graph\x18\x02 \x03(\x0b\x32%.node_service.Topology.PeerGraphEntry\x1aN\n\nNodesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12/\n\x05value\x18\x02 \x01(\x0b\x32 .node_service.DeviceCapabilities:\x02\x38\x01\x1a\x45\n\x0ePeerGraphEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.node_service.Peers:\x02\x38\x01\"\x19\n\x05Peers\x12\x10\n\x08peer_ids\x18\x01 \x03(\t\"A\n\x12\x44\x65viceCapabilities\x12\r\n\x05model\x18\x01 \x01(\t\x12\x0c\n\x04\x63hip\x18\x02 \x01(\t\x12\x0e\n\x06memory\x18\x03 \x01(\x05\"\x07\n\x05\x45mpty2\xd4\x03\n\x0bNodeService\x12\x41\n\nSendPrompt\x12\x1b.node_service.PromptRequest\x1a\x14.node_service.Tensor\"\x00\x12\x41\n\nSendTensor\x12\x1b.node_service.TensorRequest\x1a\x14.node_service.Tensor\"\x00\x12\x44\n\nResetShard\x12\x1f.node_service.ResetShardRequest\x1a\x13.node_service.Empty\"\x00\x12^\n\x12GetInferenceResult\x12\'.node_service.GetInferenceResultRequest\x1a\x1d.node_service.InferenceResult\"\x00\x12Q\n\x0f\x43ollectTopology\x12$.node_service.CollectTopologyRequest\x1a\x16.node_service.Topology\"\x00\x12\x46\n\x0bGlobalReset\x12 .node_service.GlobalResetRequest\x1a\x13.node_service.Empty\"\x00\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12node_service.proto\x12\x0cnode_service\"S\n\x05Shard\x12\x10\n\x08model_id\x18\x01 \x01(\t\x12\x13\n\x0bstart_layer\x18\x02 \x01(\x05\x12\x11\n\tend_layer\x18\x03 \x01(\x05\x12\x10\n\x08n_layers\x18\x04 \x01(\x05\"\x9d\x01\n\rPromptRequest\x12\"\n\x05shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x1c\n\x0finference_state\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x17\n\nrequest_id\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\x12\n\x10_inference_stateB\r\n\x0b_request_id\"\xb3\x01\n\rTensorRequest\x12\"\n\x05shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\x12$\n\x06tensor\x18\x02 \x01(\x0b\x32\x14.node_service.Tensor\x12\x1c\n\x0finference_state\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x17\n\nrequest_id\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\x12\n\x10_inference_stateB\r\n\x0b_request_id\"/\n\x19GetInferenceResultRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"\\\n\x0fInferenceResult\x12)\n\x06tensor\x18\x01 \x01(\x0b\x32\x14.node_service.TensorH\x00\x88\x01\x01\x12\x13\n\x0bis_finished\x18\x02 \x01(\x08\x42\t\n\x07_tensor\";\n\x06Tensor\x12\x13\n\x0btensor_data\x18\x01 \x01(\x0c\x12\r\n\x05shape\x18\x02 \x03(\x05\x12\r\n\x05\x64type\x18\x03 \x01(\t\"7\n\x11ResetShardRequest\x12\"\n\x05shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\"<\n\x16\x43ollectTopologyRequest\x12\x0f\n\x07visited\x18\x01 \x03(\t\x12\x11\n\tmax_depth\x18\x02 \x01(\x05\"a\n\x12GlobalResetRequest\x12\'\n\nbase_shard\x18\x01 \x01(\x0b\x32\x13.node_service.Shard\x12\x0f\n\x07visited\x18\x02 \x03(\t\x12\x11\n\tmax_depth\x18\x03 \x01(\x05\"\x8e\x02\n\x08Topology\x12\x30\n\x05nodes\x18\x01 \x03(\x0b\x32!.node_service.Topology.NodesEntry\x12\x39\n\npeer_graph\x18\x02 \x03(\x0b\x32%.node_service.Topology.PeerGraphEntry\x1aN\n\nNodesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12/\n\x05value\x18\x02 \x01(\x0b\x32 .node_service.DeviceCapabilities:\x02\x38\x01\x1a\x45\n\x0ePeerGraphEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.node_service.Peers:\x02\x38\x01\"\x19\n\x05Peers\x12\x10\n\x08peer_ids\x18\x01 \x03(\t\"A\n\x12\x44\x65viceCapabilities\x12\r\n\x05model\x18\x01 \x01(\t\x12\x0c\n\x04\x63hip\x18\x02 \x01(\t\x12\x0e\n\x06memory\x18\x03 \x01(\x05\"\x07\n\x05\x45mpty2\xd4\x03\n\x0bNodeService\x12\x41\n\nSendPrompt\x12\x1b.node_service.PromptRequest\x1a\x14.node_service.Tensor\"\x00\x12\x41\n\nSendTensor\x12\x1b.node_service.TensorRequest\x1a\x14.node_service.Tensor\"\x00\x12\x44\n\nResetShard\x12\x1f.node_service.ResetShardRequest\x1a\x13.node_service.Empty\"\x00\x12^\n\x12GetInferenceResult\x12\'.node_service.GetInferenceResultRequest\x1a\x1d.node_service.InferenceResult\"\x00\x12Q\n\x0f\x43ollectTopology\x12$.node_service.CollectTopologyRequest\x1a\x16.node_service.Topology\"\x00\x12\x46\n\x0bGlobalReset\x12 .node_service.GlobalResetRequest\x1a\x13.node_service.Empty\"\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -27,34 +27,34 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_TOPOLOGY_PEERGRAPHENTRY']._serialized_options = b'8\001'
   _globals['_SHARD']._serialized_start=36
   _globals['_SHARD']._serialized_end=119
-  _globals['_PROMPTREQUEST']._serialized_start=121
-  _globals['_PROMPTREQUEST']._serialized_end=228
-  _globals['_TENSORREQUEST']._serialized_start=231
-  _globals['_TENSORREQUEST']._serialized_end=360
-  _globals['_GETINFERENCERESULTREQUEST']._serialized_start=362
-  _globals['_GETINFERENCERESULTREQUEST']._serialized_end=409
-  _globals['_INFERENCERESULT']._serialized_start=411
-  _globals['_INFERENCERESULT']._serialized_end=503
-  _globals['_TENSOR']._serialized_start=505
-  _globals['_TENSOR']._serialized_end=564
-  _globals['_RESETSHARDREQUEST']._serialized_start=566
-  _globals['_RESETSHARDREQUEST']._serialized_end=621
-  _globals['_COLLECTTOPOLOGYREQUEST']._serialized_start=623
-  _globals['_COLLECTTOPOLOGYREQUEST']._serialized_end=683
-  _globals['_GLOBALRESETREQUEST']._serialized_start=685
-  _globals['_GLOBALRESETREQUEST']._serialized_end=782
-  _globals['_TOPOLOGY']._serialized_start=785
-  _globals['_TOPOLOGY']._serialized_end=1055
-  _globals['_TOPOLOGY_NODESENTRY']._serialized_start=906
-  _globals['_TOPOLOGY_NODESENTRY']._serialized_end=984
-  _globals['_TOPOLOGY_PEERGRAPHENTRY']._serialized_start=986
-  _globals['_TOPOLOGY_PEERGRAPHENTRY']._serialized_end=1055
-  _globals['_PEERS']._serialized_start=1057
-  _globals['_PEERS']._serialized_end=1082
-  _globals['_DEVICECAPABILITIES']._serialized_start=1084
-  _globals['_DEVICECAPABILITIES']._serialized_end=1149
-  _globals['_EMPTY']._serialized_start=1151
-  _globals['_EMPTY']._serialized_end=1158
-  _globals['_NODESERVICE']._serialized_start=1161
-  _globals['_NODESERVICE']._serialized_end=1629
+  _globals['_PROMPTREQUEST']._serialized_start=122
+  _globals['_PROMPTREQUEST']._serialized_end=279
+  _globals['_TENSORREQUEST']._serialized_start=282
+  _globals['_TENSORREQUEST']._serialized_end=461
+  _globals['_GETINFERENCERESULTREQUEST']._serialized_start=463
+  _globals['_GETINFERENCERESULTREQUEST']._serialized_end=510
+  _globals['_INFERENCERESULT']._serialized_start=512
+  _globals['_INFERENCERESULT']._serialized_end=604
+  _globals['_TENSOR']._serialized_start=606
+  _globals['_TENSOR']._serialized_end=665
+  _globals['_RESETSHARDREQUEST']._serialized_start=667
+  _globals['_RESETSHARDREQUEST']._serialized_end=722
+  _globals['_COLLECTTOPOLOGYREQUEST']._serialized_start=724
+  _globals['_COLLECTTOPOLOGYREQUEST']._serialized_end=784
+  _globals['_GLOBALRESETREQUEST']._serialized_start=786
+  _globals['_GLOBALRESETREQUEST']._serialized_end=883
+  _globals['_TOPOLOGY']._serialized_start=886
+  _globals['_TOPOLOGY']._serialized_end=1156
+  _globals['_TOPOLOGY_NODESENTRY']._serialized_start=1007
+  _globals['_TOPOLOGY_NODESENTRY']._serialized_end=1085
+  _globals['_TOPOLOGY_PEERGRAPHENTRY']._serialized_start=1087
+  _globals['_TOPOLOGY_PEERGRAPHENTRY']._serialized_end=1156
+  _globals['_PEERS']._serialized_start=1158
+  _globals['_PEERS']._serialized_end=1183
+  _globals['_DEVICECAPABILITIES']._serialized_start=1185
+  _globals['_DEVICECAPABILITIES']._serialized_end=1250
+  _globals['_EMPTY']._serialized_start=1252
+  _globals['_EMPTY']._serialized_end=1259
+  _globals['_NODESERVICE']._serialized_start=1262
+  _globals['_NODESERVICE']._serialized_end=1730
 # @@protoc_insertion_point(module_scope)

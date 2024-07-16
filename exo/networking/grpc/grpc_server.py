@@ -44,8 +44,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         shard = Shard(model_id=request.shard.model_id, start_layer=request.shard.start_layer, end_layer=request.shard.end_layer, n_layers=request.shard.n_layers)
         tensor = np.frombuffer(request.tensor.tensor_data, dtype=np.dtype(request.tensor.dtype)).reshape(request.tensor.shape)
         request_id = request.request_id
+        inference_state = request.inference_state
 
-        result = await self.node.process_tensor(shard, tensor, request_id)
+        result = await self.node.process_tensor(shard, tensor, request_id, inference_state)
         if DEBUG >= 2: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
         tensor_data = result.tobytes() if result is not None else None
         return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()

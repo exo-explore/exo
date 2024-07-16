@@ -21,13 +21,15 @@ message Shard {
 message PromptRequest {
   Shard shard = 1;
   string prompt = 2;
-  optional string request_id = 3;
+  optional string inference_state = 3;
+  optional string request_id = 4;
 }
 
 message TensorRequest {
   Shard shard = 1;
   Tensor tensor = 2;
-  optional string request_id = 3;
+  optional string inference_state = 3;
+  optional string request_id = 4;
 }
 
 message GetInferenceResultRequest {

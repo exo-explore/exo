@@ -1,6 +1,6 @@
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import json, argparse, random, time
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
@@ -147,7 +147,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     def __init__(self):
         self.shard = None
 
-    async def infer_prompt(self, shard: Shard, prompt: str) -> (np.ndarray, bool):
+    async def infer_prompt(self, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
         def encode_role(role: str):
             return [self.tokenizer.special_tokens["<|start_header_id|>"]] + self.tokenizer.encode(role) + [self.tokenizer.special_tokens["<|end_header_id|>"]] + self.tokenizer.encode("\n\n")
         def encode_message(role: str, content: str):
@@ -161,14 +161,22 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         last_tok = toks[-1]
 
         output_data = np.array(self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist())
-        start_pos += 1
+        print(f"{output_data.size=}")
+        if output_data.size == 1:
+           start_pos += 1
 
-        return output_data, output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens
+        return output_data, json.dumps({"start_pos": start_pos}), output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens
 
-    async def infer_tensor(self, shard: Shard, input_data: np.ndarray) -> (np.ndarray, bool):
+    async def infer_tensor(self, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
         await self.ensure_shard(shard)
-        output_data: np.ndarray = np.array(self.model(Tensor([input_data]), 0, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist())
-        return output_data, output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens
+
+        start_pos = json.loads(inference_state)["start_pos"] if inference_state else 0
+        output_data: np.ndarray = np.array(self.model(Tensor([input_data]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist())
+        print(f"{output_data.size=}")
+        if output_data.size == 1:
+           start_pos += 1
+
+        return output_data, json.dumps({"start_pos": start_pos}), output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens
 
     async def reset_shard(self, shard: Shard):
         await self.ensure_shard(shard)
