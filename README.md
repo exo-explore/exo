@@ -52,7 +52,7 @@ Unlike other distributed inference frameworks, exo does not use a master-worker 
 Exo supports different partitioning strategies to split up a model across devices. The default partitioning strategy is [ring memory weighted partitioning](topology/ring_memory_weighted_partitioning.py). This runs an inference in a ring where each device runs a number of model layers proportional to the memory of the device.
 
 <picture>
-  <img alt="ring topology" src="docs/ring-topology.png" width="50%" height="50%">
+  <img alt="ring topology" src="docs/ring-topology.png" width="30%" height="30%">
 </picture>
 
 
