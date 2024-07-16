@@ -22,14 +22,15 @@ model_path = get_model_path(path_or_hf_repo)
 tokenizer_config = {}
 tokenizer = load_tokenizer(model_path, tokenizer_config)
 
-peer1 = GRPCPeerHandle(
-    "node1",
-    "localhost:8080",
-    DeviceCapabilities(model="placeholder", chip="placeholder", memory=0)
-)
+# we intentionally leave out peer1 to demonstrate equality of nodes in exo.
+# there is no "master" node in exo, all nodes are equal and can take on any role.
+# peer1 = GRPCPeerHandle(
+#     "node1",
+#     "localhost:8080",
+#     DeviceCapabilities(model="placeholder", chip="placeholder", memory=0)
+# )
 peer2 = GRPCPeerHandle(
     "node2",
-    # "10.0.0.161:8080",
     "localhost:8081",
     DeviceCapabilities(model="placeholder", chip="placeholder", memory=0)
 )
@@ -48,17 +49,14 @@ async def run_prompt(prompt: str):
             messages, tokenize=False, add_generation_prompt=True
         )
 
-    for peer in [peer1, peer2]:
-        await peer.connect()
-
-    await peer.global_reset(shard, set(), 2)
+    await peer2.connect()
+    await peer2.global_reset(shard, set(), 2)
 
     try:
-        await peer1.send_prompt(shard, prompt, request_id)
+        await peer2.send_prompt(shard, prompt, request_id)
     except Exception as e:
         print(e)
 
-    import sys
     import time
     # poll 10 times per second for result (even though generation is faster, any more than this it's not nice for the user)
     previous_length = 0
