@@ -1,3 +1,4 @@
+aiohttp==3.9.5
 grpcio==1.64.1
 grpcio-tools==1.64.1
 huggingface-hub==0.23.4
