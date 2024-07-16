@@ -62,6 +62,8 @@ The current recommended way to install exo is from source.
 
 ### From source
 
+Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
+
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
