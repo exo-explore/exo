@@ -98,4 +98,4 @@ exo supports the following inference engines:
 
 ## Known Issues
 
-- [] As the library is evolving so quickly, the iOS implementation has fallen behind Python. This is being addressed, and longer term we will push out an approach that will unify the implementations so we don't have to maintain separate implementations.
+- 🚧 As the library is evolving so quickly, the iOS implementation has fallen behind Python. This is being addressed, and longer term we will push out an approach that will unify the implementations so we don't have to maintain separate implementations.
