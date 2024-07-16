@@ -64,6 +64,8 @@ class ChatGPTAPI:
                 continue
             await asyncio.sleep(0.1)
             if is_finished:
+                if result[-1] == tokenizer._tokenizer.eos_token_id:
+                    result = result[:-1]
                 return web.json_response({
                     "id": f"chatcmpl-{request_id}",
                     "object": "chat.completion",
