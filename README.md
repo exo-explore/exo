@@ -62,15 +62,22 @@ Exo supports different partitioning strategies to split up a model across device
 
 The current recommended way to install exo is from source.
 
+### Prerequisites
+
+- Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
+
 ### From source
 
-Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
 
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
 pip install .
 ```
+
+### Troubleshooting
+
+- If running on Mac, MLX has an [install guide](https://ml-explore.github.io/mlx/build/html/install.html) with troubleshooting steps
 
 ## Documentation
 
