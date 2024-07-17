@@ -186,7 +186,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
             return
 
         model_path = Path(shard.model_id)
-
         models_dir = Path(_cache_dir) / "downloads"
         model_path = models_dir / shard.model_id
         if model_path.exists():
@@ -194,7 +193,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         else:
             from tinygrad.helpers import fetch
 
-            if DEBUG >= 2: print(f"Fetching configuration for model {shard.model_id}...")
+            if DEBUG >= 2: print(f"Downloading tinygrad model {shard.model_id}...")
             if shard.model_id == "llama3-8b-sfr":
                 fetch("https://huggingface.co/bofenghuang/Meta-Llama-3-8B/resolve/main/original/tokenizer.model", "tokenizer.model", subdir=shard.model_id)
                 fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00001-of-00004.safetensors", "model-00001-of-00004.safetensors", subdir=shard.model_id)
