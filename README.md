@@ -69,7 +69,7 @@ Python>=3.12.0 is required because of [issues with asyncio](https://github.com/e
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
-pip install -r requirements.txt
+pip install .
 ```
 
 ## Documentation
