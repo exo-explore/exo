@@ -14,6 +14,8 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 </h3>
 
+[![GitHub Repo stars](https://img.shields.io/github/stars/exo-explore/exo)](https://github.com/exo-explore/exo/stargazers)
+
 </div>
 
 
