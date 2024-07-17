@@ -98,7 +98,7 @@ That's it! No configuration required - exo will automatically discover the other
 
 The native way to access models running on exo is using the exo library with peer handles. See how in [this example for Llama 3](examples/llama3_distributed.py).
 
-exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000. Note: this is currently only supported by tail nodes (i.e. nodes selected to be at the end of the ring topology). Example request:
+exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000. Note: this is currently only supported by tail nodes (i.e. nodes selected to be at the end of the ring topology). If you want to force a node to be the tail, set its node-id to be sorted last alphabetically on start e.g. `python3 main.py --node-id xxxnode-mac-mini" Example request:
 
 ```
 curl http://localhost:8000/v1/chat/completions \
