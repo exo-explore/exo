@@ -8,11 +8,12 @@ from exo.topology.device_capabilities import device_capabilities
 from exo.topology.partitioning_strategy import PartitioningStrategy
 from exo.topology.partitioning_strategy import Partition
 from exo import DEBUG
+from exo.helpers import AsyncCallback, AsyncCallbackSystem
 import asyncio
 import uuid
 
 class StandardNode(Node):
-    def __init__(self, id: str, server: Server, inference_engine: InferenceEngine, discovery: Discovery, partitioning_strategy: PartitioningStrategy = None, on_token: Callable[[List[int]], None] = None, max_generate_tokens: int = 256):
+    def __init__(self, id: str, server: Server, inference_engine: InferenceEngine, discovery: Discovery, partitioning_strategy: PartitioningStrategy = None, max_generate_tokens: int = 256):
         self.id = id
         self.inference_engine = inference_engine
         self.server = server
@@ -22,7 +23,7 @@ class StandardNode(Node):
         self.topology: Topology = Topology()
         self.device_capabilities = device_capabilities()
         self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
-        self.on_token = on_token
+        self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
         self.max_generate_tokens = max_generate_tokens
 
     async def start(self, wait_for_peers: int = 0) -> None:
@@ -56,14 +57,14 @@ class StandardNode(Node):
 
         if result.size == 1:
             self.buffered_token_output[request_id][0].append(result.item())
-            self.on_token(self.buffered_token_output[request_id][0])
+            self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
 
-        if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id])}")
+        if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
         if not is_finished:
             asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state))
 
-        return np.array(self.buffered_token_output[request_id]) if len(self.buffered_token_output[request_id]) > 0 else None
+        return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
 
     async def process_tensor(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
         if request_id is None:
@@ -80,7 +81,7 @@ class StandardNode(Node):
 
             if result.size == 1:  # we got a new token out
                 self.buffered_token_output[request_id][0].append(result.item())
-                self.on_token(self.buffered_token_output[request_id][0])
+                self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
             if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id])}")
 
             if not is_finished:
@@ -227,3 +228,11 @@ class StandardNode(Node):
                 await peer.global_reset(base_shard, visited, max_depth = max_depth - 1)
             except Exception as e:
                 print(f"Error collecting topology from {peer.id()}: {e}")
+
+    @property
+    def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
+        return self._on_token
+
+    def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
+        if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} num_tokens={len(tokens)} {is_finished=}")
+        self.on_token.trigger_all(request_id, tokens, is_finished)

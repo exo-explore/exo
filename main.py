@@ -30,15 +30,13 @@ else:
     from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
     inference_engine = TinygradDynamicShardInferenceEngine()
 
-def on_token(tokens: List[int]):
-    if inference_engine.tokenizer:
-        print(inference_engine.tokenizer.decode(tokens))
 discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port)
-node = StandardNode(args.node_id, None, inference_engine, discovery, partitioning_strategy=RingMemoryWeightedPartitioningStrategy(), on_token=on_token)
+node = StandardNode(args.node_id, None, inference_engine, discovery, partitioning_strategy=RingMemoryWeightedPartitioningStrategy())
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
-
 api = ChatGPTAPI(node, inference_engine.__class__.__name__)
+
+node.on_token.register("main_log").on_next(lambda _, tokens , __: print(inference_engine.tokenizer.decode(tokens) if inference_engine.tokenizer else tokens))
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""

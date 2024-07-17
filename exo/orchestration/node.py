@@ -1,6 +1,7 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Callable
 import numpy as np
 from abc import ABC, abstractmethod
+from exo.helpers import AsyncCallbackSystem
 from exo.inference.shard import Shard
 from exo.topology.topology import Topology
 
@@ -35,4 +36,9 @@ class Node(ABC):
 
     @abstractmethod
     async def global_reset(self, base_shard: Shard, visited: set[str] = set(), max_depth: int = 2) -> None:
+        pass
+
+    @property
+    @abstractmethod
+    def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
         pass

@@ -7,7 +7,7 @@ from ..discovery import Discovery
 from ..peer_handle import PeerHandle
 from .grpc_peer_handle import GRPCPeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities
-from exo import DEBUG
+from exo import DEBUG_DISCOVERY
 
 class GRPCDiscovery(Discovery):
     def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1, device_capabilities=None):
@@ -39,26 +39,26 @@ class GRPCDiscovery(Discovery):
             await asyncio.gather(self.broadcast_task, self.listen_task, self.cleanup_task, return_exceptions=True)
 
     async def discover_peers(self, wait_for_peers: int = 0) -> List[PeerHandle]:
-        if DEBUG >= 2: print("Starting peer discovery process...")
+        if DEBUG_DISCOVERY >= 2: print("Starting peer discovery process...")
 
         if wait_for_peers > 0:
             while len(self.known_peers) == 0:
-                if DEBUG >= 2: print("No peers discovered yet, retrying in 1 second...")
+                if DEBUG_DISCOVERY >= 2: print("No peers discovered yet, retrying in 1 second...")
                 await asyncio.sleep(1)  # Keep trying to find peers
-            if DEBUG >= 2: print(f"Discovered first peer: {next(iter(self.known_peers.values()))}")
+            if DEBUG_DISCOVERY >= 2: print(f"Discovered first peer: {next(iter(self.known_peers.values()))}")
 
         grace_period = 5  # seconds
         while True:
             initial_peer_count = len(self.known_peers)
-            if DEBUG >= 2: print(f"Current number of known peers: {initial_peer_count}. Waiting {grace_period} seconds to discover more...")
+            if DEBUG_DISCOVERY >= 2: print(f"Current number of known peers: {initial_peer_count}. Waiting {grace_period} seconds to discover more...")
             await asyncio.sleep(grace_period)
             if len(self.known_peers) == initial_peer_count:
                 if wait_for_peers > 0:
-                    if DEBUG >= 2: print(f"Waiting additional {wait_for_peers} seconds for more peers.")
+                    if DEBUG_DISCOVERY >= 2: print(f"Waiting additional {wait_for_peers} seconds for more peers.")
                     await asyncio.sleep(wait_for_peers)
                     wait_for_peers = 0
                 else:
-                    if DEBUG >= 2: print("No new peers discovered in the last grace period. Ending discovery process.")
+                    if DEBUG_DISCOVERY >= 2: print("No new peers discovered in the last grace period. Ending discovery process.")
                     break  # No new peers found in the grace period, we are done
 
         return list(self.known_peers.values())
@@ -94,7 +94,7 @@ class GRPCDiscovery(Discovery):
             try:
                 data, addr = await asyncio.get_event_loop().sock_recvfrom(sock, 1024)
                 message = json.loads(data.decode('utf-8'))
-                if DEBUG >= 2: print(f"received from peer {addr}: {message}")
+                if DEBUG_DISCOVERY >= 2: print(f"received from peer {addr}: {message}")
                 if message['type'] == 'discovery' and message['node_id'] != self.node_id:
                     peer_id = message['node_id']
                     peer_host = addr[0]
@@ -102,7 +102,7 @@ class GRPCDiscovery(Discovery):
                     device_capabilities = DeviceCapabilities(**message['device_capabilities'])
                     if peer_id not in self.known_peers:
                         self.known_peers[peer_id] = GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
-                        if DEBUG >= 2: print(f"Discovered new peer {peer_id} at {peer_host}:{peer_port}")
+                        if DEBUG_DISCOVERY >= 2: print(f"Discovered new peer {peer_id} at {peer_host}:{peer_port}")
                     self.peer_last_seen[peer_id] = time.time()
             except Exception as e:
                 print(f"Error in peer discovery: {e}")
@@ -118,5 +118,5 @@ class GRPCDiscovery(Discovery):
             for peer_id in peers_to_remove:
                 del self.known_peers[peer_id]
                 del self.peer_last_seen[peer_id]
-                if DEBUG >= 2: print(f"Removed peer {peer_id} due to inactivity.")
+                if DEBUG_DISCOVERY >= 2: print(f"Removed peer {peer_id} due to inactivity.")
             await asyncio.sleep(self.broadcast_interval)
