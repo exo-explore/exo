@@ -6,6 +6,8 @@ mlx==0.15.1; sys.platform == "darwin"
 mlx-lm==0.14.3; sys.platform == "darwin"
 numpy==2.0.0
 protobuf==5.27.1
+psutil==6.0.0
+pynvml==11.5.3
 requests==2.32.3
 safetensors==0.4.3
 tiktoken==0.7.0

@@ -12,8 +12,8 @@ def device_capabilities() -> DeviceCapabilities:
     system = platform.system()
     if system == 'Darwin':
         return mac_device_capabilities()
-    # elif system == 'Linux':
-    #     return linux_device_capabilities()
+    elif system == 'Linux':
+        return linux_device_capabilities()
     # elif system == 'Windows':
     #     return windows_device_capabilities()
     else:
@@ -37,3 +37,24 @@ def mac_device_capabilities() -> DeviceCapabilities:
 
     # Assuming static values for other attributes for demonstration
     return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory)
+
+def linux_device_capabilities() -> DeviceCapabilities:
+    import psutil
+    from tinygrad import Device
+    
+    print(f"tinygrad {Device.DEFAULT=}")
+    if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT="GPU":
+        import pynvml, pynvml_utils
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        gpu_name = pynvml.nvmlDeviceGetName(handle)
+        gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+
+        print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
+
+        return DeviceCapabilities(model=f"Linux Box ({gpu_name})", chip=gpu_name, memory=gpu_memory_info.total)
+    elif Device.DEFAULT == "AMD":
+        # TODO AMD support
+        return DeviceCapabilities(model="Linux Box (AMD)", chip="Unknown AMD", memory=psutil.virtual_memory().total)
+    else:
+        return DeviceCapabilities(model=f"Linux Box (Device: {Device.DEFAULT})", chip=f"Unknown Chip (Device: {Device.DEFAULT})", memory=psutil.virtual_memory().total // 2**20)

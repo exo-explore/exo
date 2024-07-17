@@ -3,6 +3,7 @@ import asyncio
 import signal
 import uuid
 import platform
+import psutil
 from typing import List
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
@@ -21,8 +22,8 @@ parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of pee
 parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
 args = parser.parse_args()
 
-print(f"Starting {platform.system()=}")
-if platform.system() == "Darwin":
+print(f"Starting {platform.system()=} {psutil.virtual_memory()=}")
+if psutil.MACOS:
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
     inference_engine = MLXDynamicShardInferenceEngine()
 else:
