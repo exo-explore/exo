@@ -1,7 +1,7 @@
 from exo import DEBUG
 from dataclasses import dataclass
 import subprocess
-import platform
+import psutil
 
 @dataclass
 class DeviceCapabilities:
@@ -10,15 +10,12 @@ class DeviceCapabilities:
     memory: int
 
 def device_capabilities() -> DeviceCapabilities:
-    system = platform.system()
-    if system == 'Darwin':
+    if psutil.MACOS:
         return mac_device_capabilities()
-    elif system == 'Linux':
+    elif psutil.LINUX:
         return linux_device_capabilities()
-    # elif system == 'Windows':
-    #     return windows_device_capabilities()
     else:
-        return DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0)
+        return DeviceCapabilities(model=f"Unknown Device", chip=f"Unknown Chip", memory=psutil.virtual_memory().total // 2**20)
 
 def mac_device_capabilities() -> DeviceCapabilities:
     # Fetch the model of the Mac using system_profiler
