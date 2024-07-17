@@ -19,7 +19,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
-Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
+Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device*!
 
 ## Get Involved
 
@@ -129,4 +129,4 @@ exo supports the following inference engines:
 
 ## Known Issues
 
-- 🚧 As the library is evolving so quickly, the iOS implementation has fallen behind Python. This is being worked on, and longer term we will push out an approach that will unify the implementations so we don't have to maintain separate implementations.
+- 🚧 *As the library is evolving so quickly, the iOS implementation has fallen behind Python. We have decided for now not to put out the buggy iOS version and receive a bunch of GitHub issues for outdated code. We are working on solving this properly and will make an announcement when it's ready. If you would like access to the iOS implementation now, please email alex@exolabs.net with your GitHub username explaining your use-case and I can give you access on GitHub.
