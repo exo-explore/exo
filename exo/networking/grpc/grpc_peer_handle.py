@@ -1,6 +1,6 @@
 import grpc
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 # These would be generated from the .proto file
 from . import node_service_pb2
@@ -92,3 +92,7 @@ class GRPCPeerHandle(PeerHandle):
     async def global_reset(self, base_shard: Shard, visited: set[str], max_depth: int) -> None:
         request = node_service_pb2.GlobalResetRequest(base_shard=node_service_pb2.Shard(model_id=base_shard.model_id, start_layer=base_shard.start_layer, end_layer=base_shard.end_layer, n_layers=base_shard.n_layers), visited=visited, max_depth=max_depth)
         await self.stub.GlobalReset(request)
+
+    async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+        request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, is_finished=is_finished)
+        await self.stub.SendResult(request)

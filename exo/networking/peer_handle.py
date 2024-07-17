@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import numpy as np
 from exo.inference.shard import Shard
 from exo.topology.device_capabilities import DeviceCapabilities
@@ -48,4 +48,8 @@ class PeerHandle(ABC):
 
     @abstractmethod
     async def global_reset(self, base_shard: Shard, visited: set[str], max_depth: int) -> None:
+        pass
+
+    @abstractmethod
+    async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
         pass

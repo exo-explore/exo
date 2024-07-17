@@ -54,6 +54,7 @@ class StandardNode(Node):
         is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
         if is_finished:
             self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+            asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))
 
         if result.size == 1:
             self.buffered_token_output[request_id][0].append(result.item())
@@ -78,6 +79,7 @@ class StandardNode(Node):
             is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
             if is_finished:
                 self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+                asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))
 
             if result.size == 1:  # we got a new token out
                 self.buffered_token_output[request_id][0].append(result.item())
@@ -236,3 +238,12 @@ class StandardNode(Node):
     def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
         if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} num_tokens={len(tokens)} {is_finished=}")
         self.on_token.trigger_all(request_id, tokens, is_finished)
+
+    async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+        for peer in self.peers:
+            try:
+                await peer.send_result(request_id, result, is_finished)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"Error broadcasting result to {peer.id()}: {e}")

@@ -9,6 +9,7 @@ service NodeService {
   rpc GetInferenceResult (GetInferenceResultRequest) returns (InferenceResult) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
   rpc GlobalReset (GlobalResetRequest) returns (Empty) {}
+  rpc SendResult (SendResultRequest) returns (Empty) {}
 }
 
 message Shard {
@@ -75,6 +76,12 @@ message DeviceCapabilities {
   string model = 1;
   string chip = 2;
   int32 memory = 3;
+}
+
+message SendResultRequest {
+  string request_id = 1;
+  repeated int32 result = 2;
+  bool is_finished = 3;
 }
 
 message Empty {}

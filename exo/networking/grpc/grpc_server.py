@@ -70,11 +70,21 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         topology = await self.node.collect_topology(visited, max_depth)
         nodes = {node_id: node_service_pb2.DeviceCapabilities(model=cap.model, chip=cap.chip, memory=cap.memory) for node_id, cap in topology.nodes.items()}
         peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
+        if DEBUG >= 2: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
         return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 
     async def GlobalReset(self, request, context):
         base_shard = Shard(model_id=request.base_shard.model_id, start_layer=request.base_shard.start_layer, end_layer=request.base_shard.end_layer, n_layers=request.base_shard.n_layers)
         visited = set(request.visited)
         max_depth = request.max_depth
+        if DEBUG >= 2: print(f"Received GlobalReset request: {base_shard=} {visited=} {max_depth=}")
         await self.node.global_reset(base_shard, visited, max_depth)
+        return node_service_pb2.Empty()
+
+    async def SendResult(self, request, context):
+        request_id = request.request_id
+        result = request.result
+        is_finished = request.is_finished
+        if DEBUG >= 2: print(f"Received SendResult request: {request_id=} {result=} {is_finished=}")
+        self.node.on_token.trigger_all(request_id, result, is_finished)
         return node_service_pb2.Empty()
