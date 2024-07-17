@@ -1,13 +1,11 @@
 import uuid
 import time
 import asyncio
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import List
 from aiohttp import web
 from exo import DEBUG
 from exo.inference.shard import Shard
 from exo.orchestration import Node
-from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
 
 shard_mappings = {
     "llama-3-8b": Shard(model_id="mlx-community/Meta-Llama-3-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
@@ -41,6 +39,8 @@ class ChatGPTAPI:
             return web.json_response({'detail': f"Invalid model: {chat_request.model}. Supported: {list(shard_mappings.keys())}"}, status=400)
         request_id = str(uuid.uuid4())
 
+        # TODO equivalent for non-mlx since the user can't install this on non-macs even though the tokenizer itself
+        from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
         tokenizer = load_tokenizer(get_model_path(shard.model_id))
         prompt = tokenizer.apply_chat_template(
             chat_request.messages, tokenize=False, add_generation_prompt=True
