@@ -1,1 +1,1 @@
-from tinygrad.helpers import DEBUG
+from exo.helpers import DEBUG
