@@ -178,7 +178,7 @@ class StandardNode(Node):
     async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
         self.topology.update_node(self.id, self.device_capabilities)
 
-        if DEBUG >= 2: print(f"Collecting topoloy {max_depth=} {visited=}")
+        if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
         prev_visited = visited.copy()
         visited.update(p.id() for p in self.peers)

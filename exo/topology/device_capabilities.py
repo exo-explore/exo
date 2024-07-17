@@ -1,3 +1,4 @@
+from exo import DEBUG
 from dataclasses import dataclass
 import subprocess
 import platform
@@ -41,8 +42,8 @@ def mac_device_capabilities() -> DeviceCapabilities:
 def linux_device_capabilities() -> DeviceCapabilities:
     import psutil
     from tinygrad import Device
-    
-    print(f"tinygrad {Device.DEFAULT=}")
+
+    if DEBUG >= 2: print(f"tinygrad {Device.DEFAULT=}")
     if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT=="GPU":
         import pynvml, pynvml_utils
         pynvml.nvmlInit()

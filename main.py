@@ -38,7 +38,7 @@ node = StandardNode(args.node_id, None, inference_engine, discovery, partitionin
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 
-api = ChatGPTAPI(node)
+api = ChatGPTAPI(node, inference_engine.__class__.__name__)
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""
