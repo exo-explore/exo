@@ -2,7 +2,7 @@ aiohttp==3.9.5
 grpcio==1.64.1
 grpcio-tools==1.64.1
 huggingface-hub==0.23.4
-Jinja2=3.1.4
+Jinja2==3.1.4
 mlx==0.15.1; sys.platform == "darwin"
 mlx-lm==0.14.3; sys.platform == "darwin"
 numpy==2.0.0
