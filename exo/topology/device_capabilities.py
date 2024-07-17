@@ -43,7 +43,7 @@ def linux_device_capabilities() -> DeviceCapabilities:
     from tinygrad import Device
     
     print(f"tinygrad {Device.DEFAULT=}")
-    if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT="GPU":
+    if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT=="GPU":
         import pynvml, pynvml_utils
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
