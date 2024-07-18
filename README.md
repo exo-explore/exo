@@ -33,25 +33,25 @@ We also welcome contributions from the community. We have a list of bounties in 
 
 ### Wide Model Support
 
-exo supports LLaMA and other popular models.
+exo supports LLaMA ([MLX](exo/inference/mlx/models/sharded_llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
 
 ### Dynamic Model Partitioning
 
-exo optimally splits up models based on the current network topology and device resources available. This enables you to run larger models than you would be able to on any single device.
+exo [optimally splits up models](exo/topology/ring_memory_weighted_partitioning_strategy.py) based on the current network topology and device resources available. This enables you to run larger models than you would be able to on any single device.
 
 ### Automatic Device Discovery
 
-exo will automatically discover other devices using the best method available. Zero manual configuration.
+exo will [automatically discover](https://github.com/exo-explore/exo/blob/945f90f676182a751d2ad7bcf20987ab7fe0181e/exo/orchestration/standard_node.py#L154) other devices using the best method available. Zero manual configuration.
 
 ### ChatGPT-compatible API
 
-exo provides a ChatGPT-compatible API for running models. It's a one-line change in your application to run models on your own hardware using exo.
+exo provides a [ChatGPT-compatible API](exo/api/chatgpt_api.py) for running models. It's a [one-line change](examples/chatgpt_api.py) in your application to run models on your own hardware using exo.
 
 ### Device Equality
 
-Unlike other distributed inference frameworks, exo does not use a master-worker architecture. Instead, exo devices connect p2p. As long as a device is connected somewhere in the network, it can be used to run models.
+Unlike other distributed inference frameworks, exo does not use a master-worker architecture. Instead, exo devices [connect p2p](https://github.com/exo-explore/exo/blob/945f90f676182a751d2ad7bcf20987ab7fe0181e/exo/orchestration/standard_node.py#L161). As long as a device is connected somewhere in the network, it can be used to run models.
 
-Exo supports different partitioning strategies to split up a model across devices. The default partitioning strategy is [ring memory weighted partitioning](exo/topology/ring_memory_weighted_partitioning_strategy.py). This runs an inference in a ring where each device runs a number of model layers proportional to the memory of the device.
+Exo supports different [partitioning strategies](exo/topology/partitioning_strategy.py) to split up a model across devices. The default partitioning strategy is [ring memory weighted partitioning](exo/topology/ring_memory_weighted_partitioning_strategy.py). This runs an inference in a ring where each device runs a number of model layers proportional to the memory of the device.
 
 <p>
     <picture>
