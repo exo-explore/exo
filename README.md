@@ -21,7 +21,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
-Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device*!
+Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 ## Get Involved
 
@@ -126,6 +126,11 @@ Enable debug logs with the DEBUG environment variable (0-9).
 DEBUG=9 python3 main.py
 ```
 
+## Known Issues
+
+- 🚧 As the library is evolving so quickly, the iOS implementation has fallen behind Python. We have decided for now not to put out the buggy iOS version and receive a bunch of GitHub issues for outdated code. We are working on solving this properly and will make an announcement when it's ready. If you would like access to the iOS implementation now, please email alex@exolabs.net with your GitHub username explaining your use-case and you will be granted access on GitHub.
+- 
+
 ## Inference Engines
 
 exo supports the following inference engines:
@@ -140,6 +145,3 @@ exo supports the following inference engines:
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
 
-## Known Issues
-
-- 🚧 *As the library is evolving so quickly, the iOS implementation has fallen behind Python. We have decided for now not to put out the buggy iOS version and receive a bunch of GitHub issues for outdated code. We are working on solving this properly and will make an announcement when it's ready. If you would like access to the iOS implementation now, please email alex@exolabs.net with your GitHub username explaining your use-case and you will be granted access on GitHub.
