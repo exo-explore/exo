@@ -91,8 +91,8 @@ class StandardNode(Node):
 
             return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
         except Exception as e:
-            import traceback
             print(f"Error processing tensor for shard {shard}: {e}")
+            import traceback
             traceback.print_exc()
             return None
 

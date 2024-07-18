@@ -175,7 +175,7 @@ class ChatGPTAPI:
             if DEBUG >= 2:
                 import traceback
                 traceback.print_exc()
-            return web.json_response({'detail': f"Error processing prompt (see logs): {str(e)}"}, status=500)
+            return web.json_response({'detail': f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
 
         try:
             if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout_secs}s")

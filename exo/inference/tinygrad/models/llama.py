@@ -165,6 +165,8 @@ class Transformer:
 
     for i, layer in enumerate(self.layers):
       h = layer(h, start_pos, freqs_cis, mask)
+      # if i == 0 or i == len(self.layers) - 1:
+      #   print(f"layer {i}: {str(h.numpy())[:60]}")
 
     if self.shard.is_last_layer():
         logits = self.output(self.norm(h)).float()[:, -1, :]

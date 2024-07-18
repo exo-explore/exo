@@ -5,6 +5,7 @@ import sys
 install_requires = [
     "aiohttp==3.9.5",
     "aiohttp_cors==0.7.0",
+    "blobfile==2.1.1",
     "grpcio==1.64.1",
     "grpcio-tools==1.64.1",
     "huggingface-hub==0.23.4",

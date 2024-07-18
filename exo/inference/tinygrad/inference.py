@@ -124,19 +124,7 @@ TOP_P = 0.9
 ALPHA_F = 0.1
 ALPHA_P = 0.0
 
-last_seen_toks = []
 def prefill(model, toks, start_pos=0):
-  global last_seen_toks
-
-  # we can skip part of the prompt if it is the same as last and start_pos=0
-  if start_pos == 0:
-    for i, (a, b) in enumerate(zip(toks, last_seen_toks)):
-      if a != b: break
-    else: i = min(len(toks), len(last_seen_toks))
-    start_pos += i
-    last_seen_toks = toks
-    toks = toks[i:]
-
   # prefill the model
   for tok in tqdm(toks):
     GlobalCounters.reset()
@@ -155,9 +143,10 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
             return encode_role(role) + self.tokenizer.encode(content.strip()) + [self.tokenizer.special_tokens["<|eot_id|>"]]
 
         await self.ensure_shard(shard)
+        start_pos = json.loads(inference_state)["start_pos"] if inference_state else 0
 
         toks = [self.tokenizer.bos_id] + encode_message("user", prompt) + encode_role("assistant")
-        start_pos = prefill(self.model, toks[:-1])
+        start_pos = prefill(self.model, toks[:-1], start_pos=start_pos)
         last_tok = toks[-1]
 
         output_data = np.array([self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()])
@@ -186,15 +175,16 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
             return
 
         model_path = Path(shard.model_id)
-        models_dir = Path(_cache_dir) / "downloads"
+        models_dir = Path(_cache_dir) / "tinygrad" / "downloads"
         model_path = models_dir / shard.model_id
+        size = "8B"
         if model_path.exists():
             model = model_path
         else:
             from tinygrad.helpers import fetch
 
             if DEBUG >= 2: print(f"Downloading tinygrad model {shard.model_id}...")
-            if shard.model_id == "llama3-8b-sfr":
+            if shard.model_id.lower().find("llama3-8b-sfr") != -1:
                 fetch("https://huggingface.co/bofenghuang/Meta-Llama-3-8B/resolve/main/original/tokenizer.model", "tokenizer.model", subdir=shard.model_id)
                 fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00001-of-00004.safetensors", "model-00001-of-00004.safetensors", subdir=shard.model_id)
                 fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00002-of-00004.safetensors", "model-00002-of-00004.safetensors", subdir=shard.model_id)
@@ -202,7 +192,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
                 fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00004-of-00004.safetensors", "model-00004-of-00004.safetensors", subdir=shard.model_id)
                 model = fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/raw/main/model.safetensors.index.json", "model.safetensors.index.json", subdir=shard.model_id)
                 size = "8B"
-            elif shard.model_id == "llama3-70b-sfr":
+            elif shard.model_id.lower().find("llama3-70b-sfr") != -1:
                 raise NotImplementedError("llama3-70b-sfr is not implemented for tinygrad")
                 # fetch("https://huggingface.co/bofenghuang/Meta-Llama-3-70B/resolve/main/original/tokenizer.model", "tokenizer.model", subdir=shard.model_id)
                 # fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/resolve/main/model-00001-of-00004.safetensors", "model-00001-of-00004.safetensors", subdir=shard.model_id)
