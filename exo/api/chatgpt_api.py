@@ -127,7 +127,7 @@ class ChatGPTAPI:
         })
         self.static_dir = Path(__file__).parent.parent.parent / 'tinychat/examples/tinychat'
         self.app.router.add_get('/', self.handle_root)
-        self.app.router.add_static('/', self.static_dir, name='static', show_index=False)
+        self.app.router.add_static('/', self.static_dir, name='static')
 
     async def handle_root(self, request):
         return web.FileResponse(self.static_dir / 'index.html')
@@ -236,10 +236,3 @@ class ChatGPTAPI:
         site = web.TCPSite(runner, host, port)
         await site.start()
         if DEBUG >= 0: print(f"ChatGPT API server started at http://{host}:{port}")
-
-# Usage example
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    node = Node()  # Assuming Node is properly defined elsewhere
-    api = ChatGPTAPI(node)
-    loop.run_until_complete(api.run())
