@@ -7,11 +7,12 @@ DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
 VERSION = "0.0.1"
 
 exo_text = """
-  _____  _____
- / _ \ \/ / _ \
+  _____  _____  
+ / _ \ \/ / _ \ 
 |  __/>  < (_) |
- \___/_/\_\___/
+ \___/_/\_\___/ 
     """
+
 
 def print_exo():
     print(exo_text)
@@ -19,10 +20,7 @@ def print_exo():
 def print_yellow_exo():
     yellow = "\033[93m"  # ANSI escape code for yellow
     reset = "\033[0m"    # ANSI escape code to reset color
-    exo = f"""{yellow}
-{exo_text}
-{reset}"""
-    print(exo)
+    print(f"{yellow}{exo_text}{reset}")
 
 def terminal_link(uri, label=None):
     if label is None: 
