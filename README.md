@@ -75,6 +75,8 @@ The current recommended way to install exo is from source.
 git clone https://github.com/exo-explore/exo.git
 cd exo
 pip install .
+# alternatively, with venv
+source install.sh
 ```
 
 ### Troubleshooting
