@@ -200,7 +200,10 @@ class ChatGPTAPI:
                 _, tokens, _ = await callback.wait(on_result, timeout=self.response_timeout_secs)
                 if stream_task: # in case there is still a stream task running, wait for it to complete
                     if DEBUG >= 2: print(f"Pending stream task. Waiting for stream task to complete.")
-                    await stream_task
+                    try:
+                        await asyncio.wait_for(stream_task, timeout=30)
+                    except asyncio.TimeoutError:
+                        print("WARNING: Stream task timed out. This should not happen.")
                 await response.write_eof()
                 return response
             else:
