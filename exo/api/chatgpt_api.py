@@ -2,6 +2,7 @@ import uuid
 import time
 import asyncio
 import json
+from pathlib import Path
 from transformers import AutoTokenizer
 from typing import List, Literal, Union
 from aiohttp import web
@@ -124,6 +125,12 @@ class ChatGPTAPI:
                 allow_methods="*",
             )
         })
+        self.static_dir = Path(__file__).parent.parent.parent / 'tinychat/examples/tinychat'
+        self.app.router.add_get('/', self.handle_root)
+        self.app.router.add_static('/', self.static_dir, name='static', show_index=False)
+
+    async def handle_root(self, request):
+        return web.FileResponse(self.static_dir / 'index.html')
 
     async def handle_post(self, request):
         data = await request.json()
