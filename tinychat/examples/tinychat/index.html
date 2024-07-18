@@ -58,7 +58,7 @@
           <template x-for="_state in histories.toSorted((a, b) => b.time - a.time)">
             <div x-data="{ otx: 0, trigger: 75 }" class="history" @click="
             cstate = _state;
-            updateTotalTokens(cstate.messages);
+            // updateTotalTokens(cstate.messages);
             home = 1;
             // ensure that going back in history will go back to home
             window.history.pushState({}, '', '/');
@@ -154,10 +154,10 @@
             if ($el.value !== '') {
               const messages = [...cstate.messages];
               messages.push({ role: 'user', content: $el.value });
-              updateTotalTokens(messages);
+              // updateTotalTokens(messages);
             } else {
               if (cstate.messages.length === 0) total_tokens = 0;
-              else updateTotalTokens(cstate.messages);
+              // else updateTotalTokens(cstate.messages);
             }
           " x-effect="
             console.log(generating);
