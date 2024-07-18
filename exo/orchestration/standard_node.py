@@ -156,10 +156,10 @@ class StandardNode(Node):
         if DEBUG >= 2: print("Connecting to new peers...")
         for peer in self.peers:
             is_connected = await peer.is_connected()
-            if DEBUG >= 2: print(f"Connected to {peer.id()}: {is_connected}")
+            if DEBUG >= 2 and is_connected: print(f"Already connected to {peer.id()}: {is_connected}")
             if not is_connected:
                 await peer.connect()
-                if DEBUG >= 2: print(f"Connected to peer {peer.id()}")
+                if DEBUG >= 0: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")
 
     async def periodic_topology_collection(self, interval: int):
         while True:

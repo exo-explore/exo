@@ -10,6 +10,7 @@ from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
+from exo.helpers import print_yellow_exo
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -22,7 +23,8 @@ parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of pee
 parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
 args = parser.parse_args()
 
-print(f"Starting {platform.system()=} {psutil.virtual_memory()=}")
+print_yellow_exo()
+print(f"Starting exo {platform.system()=} {psutil.virtual_memory()=}")
 if psutil.MACOS:
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
     inference_engine = MLXDynamicShardInferenceEngine()
@@ -41,6 +43,8 @@ node.on_token.register("main_log").on_next(lambda _, tokens , __: print(inferenc
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""
     print(f"Received exit signal {signal.name}...")
+    print("Thank you for using exo.")
+    print_yellow_exo()
     server_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     [task.cancel() for task in server_tasks]
     print(f"Cancelling {len(server_tasks)} outstanding tasks")
