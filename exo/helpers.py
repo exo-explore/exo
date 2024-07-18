@@ -4,6 +4,7 @@ from typing import Any, Callable, Coroutine, TypeVar, Optional, Dict, Generic, T
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
+VERSION = "0.0.1"
 
 T = TypeVar('T')
 K = TypeVar('K')

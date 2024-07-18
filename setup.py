@@ -4,6 +4,7 @@ import sys
 # Base requirements for all platforms
 install_requires = [
     "aiohttp==3.9.5",
+    "aiohttp_cors==0.7.0",
     "grpcio==1.64.1",
     "grpcio-tools==1.64.1",
     "huggingface-hub==0.23.4",
