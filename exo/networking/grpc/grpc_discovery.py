@@ -51,11 +51,10 @@ class GRPCDiscovery(Discovery):
         while True:
             initial_peer_count = len(self.known_peers)
             if DEBUG_DISCOVERY >= 2: print(f"Current number of known peers: {initial_peer_count}. Waiting {grace_period} seconds to discover more...")
-            await asyncio.sleep(grace_period)
             if len(self.known_peers) == initial_peer_count:
                 if wait_for_peers > 0:
+                    await asyncio.sleep(grace_period)
                     if DEBUG_DISCOVERY >= 2: print(f"Waiting additional {wait_for_peers} seconds for more peers.")
-                    await asyncio.sleep(wait_for_peers)
                     wait_for_peers = 0
                 else:
                     if DEBUG_DISCOVERY >= 2: print("No new peers discovered in the last grace period. Ending discovery process.")
