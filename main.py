@@ -36,7 +36,7 @@ server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 api = ChatGPTAPI(node, inference_engine.__class__.__name__)
 
-node.on_token.register("main_log").on_next(lambda _, tokens , __: print(inference_engine.tokenizer.decode(tokens) if inference_engine.tokenizer else tokens))
+node.on_token.register("main_log").on_next(lambda _, tokens , __: print(inference_engine.tokenizer.decode(tokens) if hasattr(inference_engine, "tokenizer") else tokens))
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""
