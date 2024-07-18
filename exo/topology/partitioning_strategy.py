@@ -13,10 +13,6 @@ class Partition:
     end: float
 
 class PartitioningStrategy(ABC):
-    def node_id(self) -> str:
-        pass
-
-class PartitioningStrategy(ABC):
     @abstractmethod
     def partition(self, topology: Topology) -> List[Partition]:
         pass
