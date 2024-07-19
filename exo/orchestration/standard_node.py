@@ -84,7 +84,7 @@ class StandardNode(Node):
             if result.size == 1:  # we got a new token out
                 self.buffered_token_output[request_id][0].append(result.item())
                 self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
-            if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id])}")
+            if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
             if not is_finished:
                 asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state))
@@ -179,7 +179,8 @@ class StandardNode(Node):
         return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
 
     async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
-        self.topology.update_node(self.id, self.device_capabilities)
+        next_topology = Topology()
+        next_topology.update_node(self.id, self.device_capabilities)
 
         if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
@@ -187,8 +188,8 @@ class StandardNode(Node):
         visited.update(p.id() for p in self.peers)
 
         for peer in self.peers:
-            self.topology.update_node(peer.id(), peer.device_capabilities())
-            self.topology.add_edge(self.id, peer.id())
+            next_topology.update_node(peer.id(), peer.device_capabilities())
+            next_topology.add_edge(self.id, peer.id())
 
             if peer.id() in prev_visited:
                 if DEBUG >= 2: print(f"Already visited {peer.id()}. Skipping...")
@@ -205,7 +206,8 @@ class StandardNode(Node):
             except Exception as e:
                 print(f"Error collecting topology from {peer.id()}: {e}")
 
-        return self.topology
+        self.topology = next_topology
+        return next_topology
 
     # TODO: unify this and collect_topology as global actions
     async def global_reset(self, base_shard: Shard, visited: set[str] = set(), max_depth: int = 2) -> None:

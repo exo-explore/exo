@@ -1,6 +1,8 @@
 import os
 import asyncio
 from typing import Any, Callable, Coroutine, TypeVar, Optional, Dict, Generic, Tuple
+import socket
+import random
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -13,6 +15,36 @@ exo_text = """
  \___/_/\_\___/ 
     """
 
+def find_available_port(host: str = '', min_port: int = 49152, max_port: int = 65535) -> int:
+    used_ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.exo_used_ports')
+
+    def read_used_ports():
+        if os.path.exists(used_ports_file):
+            with open(used_ports_file, 'r') as f:
+                return [int(line.strip()) for line in f if line.strip().isdigit()]
+        return []
+
+    def write_used_port(port, used_ports):
+        with open(used_ports_file, 'w') as f:
+            print(used_ports[-19:])
+            for p in used_ports[-19:] + [port]:
+                f.write(f"{p}\n")
+
+    used_ports = read_used_ports()
+    available_ports = set(range(min_port, max_port + 1)) - set(used_ports)
+
+    while available_ports:
+        port = random.choice(list(available_ports))
+        if DEBUG >= 2: print(f"Trying to find available port {port=}")
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind((host, port))
+            write_used_port(port, used_ports)
+            return port
+        except socket.error:
+            available_ports.remove(port)
+
+    raise RuntimeError("No available ports in the specified range")
 
 def print_exo():
     print(exo_text)

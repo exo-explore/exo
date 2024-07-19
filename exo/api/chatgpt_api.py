@@ -187,9 +187,6 @@ class ChatGPTAPI:
                     headers={
                         "Content-Type": "application/json",
                         "Cache-Control": "no-cache",
-                        # "Access-Control-Allow-Origin": "*",
-                        # "Access-Control-Allow-Methods": "*",
-                        # "Access-Control-Allow-Headers": "*",
                     }
                 )
                 await response.prepare(request)

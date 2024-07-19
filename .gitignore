@@ -1,6 +1,7 @@
 __pycache__/
 .venv
 test_weights.npz
+.exo_used_ports
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

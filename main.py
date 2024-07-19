@@ -11,13 +11,13 @@ from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
-from exo.helpers import print_yellow_exo
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
 parser.add_argument("--node-id", type=str, default=str(uuid.uuid4()), help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
-parser.add_argument("--node-port", type=int, default=8080, help="Node port")
+parser.add_argument("--node-port", type=int, default=None, help="Node port")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
@@ -49,6 +49,10 @@ else:
         raise ValueError(f"Inference engine {args.inference_engine} not supported")
 print(f"Using inference engine {inference_engine.__class__.__name__}")
 
+
+if args.node_port is None:
+    args.node_port = find_available_port(args.node_host)
+    if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port)
 node = StandardNode(args.node_id, None, inference_engine, discovery, partitioning_strategy=RingMemoryWeightedPartitioningStrategy())
 server = GRPCServer(node, args.node_host, args.node_port)
