@@ -12,10 +12,13 @@ from rich.style import Style
 from exo.topology.device_capabilities import DeviceCapabilities, UNKNOWN_DEVICE_CAPABILITIES
 
 class TopologyViz:
-    def __init__(self):
-        self.console = Console()
+    def __init__(self, chatgpt_api_endpoint: str = None, web_chat_url: str = None):
+        self.chatgpt_api_endpoint = chatgpt_api_endpoint
+        self.web_chat_url = web_chat_url
         self.topology = Topology()
         self.partitions: List[Partition] = []
+
+        self.console = Console()
         self.panel = Panel(self._generate_layout(), title=f"Exo Cluster (0 nodes)", border_style="bright_yellow")
         self.live_panel = Live(self.panel, auto_refresh=False, console=self.console)
         self.live_panel.start()
@@ -52,6 +55,19 @@ class TopologyViz:
             for j, char in enumerate(str(colored_line)):
                 if 0 <= start_x + j < 90 and i < len(visualization):  # Ensure we don't exceed the width and height
                     visualization[i][start_x + j] = char
+
+        # Display chatgpt_api_endpoint and web_chat_url if set
+        info_lines = []
+        if self.web_chat_url:
+            info_lines.append(f"Web Chat URL (tinychat): {self.web_chat_url}")
+        if self.chatgpt_api_endpoint:
+            info_lines.append(f"ChatGPT API endpoint: {self.chatgpt_api_endpoint}")
+
+        for i, line in enumerate(info_lines):
+            start_x = 0
+            for j, char in enumerate(line):
+                if j < 90 and i + len(exo_lines) < 45:  # Ensure we don't exceed the width and height
+                    visualization[i + len(exo_lines)][j] = char
 
         for i, partition in enumerate(self.partitions):
             device_capabilities = self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES)
