@@ -79,7 +79,7 @@ class TopologyViz:
         # Add GPU poor/rich bar
         bar_width = 30  # Increased bar width
         bar_start_x = (100 - bar_width) // 2  # Center the bar
-        bar_y = info_start_y + len(info_lines) + 4  # Position the bar below the info section with two cells of space
+        bar_y = info_start_y + len(info_lines) + 1  # Position the bar below the info section with two cells of space
         
         # Create a gradient bar using emojis
         gradient_bar = Text()
