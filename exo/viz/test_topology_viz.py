@@ -4,7 +4,6 @@ from exo.viz.topology_viz import TopologyViz
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
 from exo.topology.partitioning_strategy import Partition
-from exo.helpers import AsyncCallbackSystem
 
 class TestNodeViz(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -26,15 +25,15 @@ class TestNodeViz(unittest.IsolatedAsyncioTestCase):
             Partition("node1", 0, 0.2),
             Partition("node4", 0.2, 0.4),
             Partition("node2", 0.4, 0.8),
-            Partition("node3", 0.8, 1),
+            Partition("node3", 0.8, 0.9),
         ])
         time.sleep(2)
         self.topology.active_node_id = "node3"
         self.top_viz.update_visualization(self.topology, [
             Partition("node1", 0, 0.3),
-            Partition("node2", 0.3, 0.7),
+            Partition("node5", 0.3, 0.5),
+            Partition("node2", 0.5, 0.7),
             Partition("node4", 0.7, 0.9),
-            Partition("node3", 0.9, 1),
         ])
         time.sleep(2)
 
