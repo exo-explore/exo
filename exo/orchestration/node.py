@@ -40,5 +40,15 @@ class Node(ABC):
 
     @property
     @abstractmethod
+    def current_topology(self) -> Topology:
+        pass
+
+    @property
+    @abstractmethod
     def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
+        pass
+
+    @property
+    @abstractmethod
+    def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
         pass

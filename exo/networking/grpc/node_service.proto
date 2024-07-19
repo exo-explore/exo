@@ -10,6 +10,7 @@ service NodeService {
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
   rpc GlobalReset (GlobalResetRequest) returns (Empty) {}
   rpc SendResult (SendResultRequest) returns (Empty) {}
+  rpc SendOpaqueStatus (SendOpaqueStatusRequest) returns (Empty) {}
 }
 
 message Shard {
@@ -89,6 +90,11 @@ message SendResultRequest {
   string request_id = 1;
   repeated int32 result = 2;
   bool is_finished = 3;
+}
+
+message SendOpaqueStatusRequest {
+  string request_id = 1;
+  string status = 2;
 }
 
 message Empty {}

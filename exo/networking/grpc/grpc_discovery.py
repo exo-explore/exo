@@ -30,7 +30,7 @@ class GRPCDiscovery(Discovery):
         self.listen_port = listen_port
         self.broadcast_port = broadcast_port if broadcast_port is not None else listen_port
         self.broadcast_interval = broadcast_interval
-        self.known_peers: Dict[str, Tuple[GRPCPeerHandle, float]] = {}
+        self.known_peers: Dict[str, Tuple[GRPCPeerHandle, float, float]] = {}
         self.broadcast_task = None
         self.listen_task = None
         self.cleanup_task = None
@@ -73,7 +73,7 @@ class GRPCDiscovery(Discovery):
                     if DEBUG_DISCOVERY >= 2: print("No new peers discovered in the last grace period. Ending discovery process.")
                     break  # No new peers found in the grace period, we are done
 
-        return [peer_handle for peer_handle, _ in self.known_peers.values()]
+        return [peer_handle for peer_handle, _, _ in self.known_peers.values()]
 
     async def task_broadcast_presence(self):
         transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(
@@ -109,9 +109,9 @@ class GRPCDiscovery(Discovery):
             peer_port = message['grpc_port']
             device_capabilities = DeviceCapabilities(**message['device_capabilities'])
             if peer_id not in self.known_peers:
-                self.known_peers[peer_id] = (GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities), time.time())
+                self.known_peers[peer_id] = (GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities), time.time(), time.time())
                 if DEBUG_DISCOVERY >= 2: print(f"Discovered new peer {peer_id} at {peer_host}:{peer_port}")
-            self.known_peers[peer_id] = (self.known_peers[peer_id][0], time.time())
+            self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], time.time())
 
     async def task_listen_for_peers(self):
         await asyncio.get_event_loop().create_datagram_endpoint(lambda: ListenProtocol(self.on_listen_message), local_addr=('0.0.0.0', self.listen_port))
@@ -122,8 +122,11 @@ class GRPCDiscovery(Discovery):
             try:
                 current_time = time.time()
                 timeout = 15 * self.broadcast_interval
-                peers_to_remove = [peer_handle.id() for peer_handle, last_seen in self.known_peers.values() if not await peer_handle.is_connected() or current_time - last_seen > timeout]
-                if DEBUG_DISCOVERY >= 2: print("Peer statuses:", {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, last_seen={last_seen}" for peer_handle, last_seen in self.known_peers.values()})
+                peers_to_remove = [
+                    peer_handle.id() for peer_handle, connected_at, last_seen in self.known_peers.values() if
+                    (not await peer_handle.is_connected() and current_time - connected_at > timeout) or current_time - last_seen > timeout
+                ]
+                if DEBUG_DISCOVERY >= 2: print("Peer statuses:", {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}" for peer_handle, connected_at, last_seen in self.known_peers.values()})
                 if DEBUG_DISCOVERY >= 2 and len(peers_to_remove) > 0: print(f"Cleaning up peers: {peers_to_remove}")
                 for peer_id in peers_to_remove:
                     if peer_id in self.known_peers: del self.known_peers[peer_id]

@@ -15,6 +15,7 @@ install_requires = [
     "psutil==6.0.0",
     "pynvml==11.5.3",
     "requests==2.32.3",
+    "rich==13.7.1",
     "safetensors==0.4.3",
     "tiktoken==0.7.0",
     "tokenizers==0.19.1",

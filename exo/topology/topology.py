@@ -1,10 +1,11 @@
 from .device_capabilities import DeviceCapabilities
-from typing import Dict, Set
+from typing import Dict, Set, Optional
 
 class Topology:
     def __init__(self):
         self.nodes: Dict[str, DeviceCapabilities] = {}  # Maps node IDs to DeviceCapabilities
         self.peer_graph: Dict[str, Set[str]] = {}  # Adjacency list representing the graph
+        self.active_node_id: Optional[str] = None
 
     def update_node(self, node_id: str, device_capabilities: DeviceCapabilities):
         self.nodes[node_id] = device_capabilities
