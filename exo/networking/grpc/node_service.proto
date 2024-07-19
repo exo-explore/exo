@@ -72,10 +72,17 @@ message Peers {
     repeated string peer_ids = 1;
 }
 
+message DeviceFlops {
+  float fp32 = 1;
+  float fp16 = 2;
+  float int8 = 3;
+}
+
 message DeviceCapabilities {
   string model = 1;
   string chip = 2;
   int32 memory = 3;
+  DeviceFlops flops = 4;
 }
 
 message SendResultRequest {

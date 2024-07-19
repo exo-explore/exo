@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapabilities
+from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapabilities, DeviceFlops, TFLOPS
 
 class TestMacDeviceCapabilities(unittest.TestCase):
     @patch('subprocess.check_output')
@@ -33,6 +33,7 @@ Hardware:
         self.assertEqual(result.model, "MacBook Pro")
         self.assertEqual(result.chip, "Apple M3 Max")
         self.assertEqual(result.memory, 131072)  # 16 GB in MB
+        self.assertEqual(str(result), "Model: MacBook Pro. Chip: Apple M3 Max. Memory: 131072MB. Flops: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS")
 
     @patch('subprocess.check_output')
     def test_mac_device_capabilities(self, mock_check_output):
@@ -75,6 +76,8 @@ Hardware:
         self.assertEqual(result.model, "MacBook Pro")
         self.assertEqual(result.chip, "Apple M3 Max")
         self.assertEqual(result.memory, 131072)  # 128 GB in MB
+        self.assertEqual(result.flops, DeviceFlops(fp32=14.20*TFLOPS, fp16=28.40*TFLOPS, int8=56.80*TFLOPS))
+        self.assertEqual(str(result), "Model: MacBook Pro. Chip: Apple M3 Max. Memory: 131072MB. Flops: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS")
 
 if __name__ == '__main__':
     unittest.main()

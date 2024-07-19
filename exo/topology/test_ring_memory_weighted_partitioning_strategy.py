@@ -1,7 +1,6 @@
 import unittest
-from unittest.mock import MagicMock
 from .ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
-from .topology import Topology, DeviceCapabilities
+from .topology import Topology, DeviceCapabilities, DeviceFlops
 from .partitioning_strategy import Partition
 
 class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
@@ -9,9 +8,9 @@ class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
         # triangle
         # node1 -> node2 -> node3 -> node1
         topology = Topology()
-        topology.update_node('node1', DeviceCapabilities(model="test1", chip="test1", memory=3000))
-        topology.update_node('node2', DeviceCapabilities(model="test2", chip="test2", memory=1000))
-        topology.update_node('node3', DeviceCapabilities(model="test3", chip="test3", memory=6000))
+        topology.update_node('node1', DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=0, fp16=0, int8=0)))
+        topology.update_node('node2', DeviceCapabilities(model="test2", chip="test2", memory=1000, flops=DeviceFlops(fp32=0, fp16=0, int8=0)))
+        topology.update_node('node3', DeviceCapabilities(model="test3", chip="test3", memory=6000, flops=DeviceFlops(fp32=0, fp16=0, int8=0)))
         topology.add_edge('node1', 'node2')
         topology.add_edge('node2', 'node3')
         topology.add_edge('node3', 'node1')

@@ -6,7 +6,7 @@ from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
 from exo.inference.shard import Shard
 from exo.networking.peer_handle import PeerHandle
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
-from exo.topology.device_capabilities import DeviceCapabilities
+from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
 from typing import List
 import asyncio
 import argparse
@@ -32,7 +32,7 @@ tokenizer = load_tokenizer(model_path, tokenizer_config)
 peer2 = GRPCPeerHandle(
     "node2",
     "localhost:8081",
-    DeviceCapabilities(model="placeholder", chip="placeholder", memory=0)
+    DeviceCapabilities(model="placeholder", chip="placeholder", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
 )
 shard = models[path_or_hf_repo]
 request_id = str(uuid.uuid4())
