@@ -295,7 +295,6 @@ class StandardNode(Node):
                 import traceback
                 traceback.print_exc()
 
-        print(f"Broadcast result: {request_id=} {result=} {is_finished=}")
         await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
     async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
