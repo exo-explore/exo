@@ -108,7 +108,7 @@ def linux_device_capabilities() -> DeviceCapabilities:
         gpu_name = pynvml.nvmlDeviceGetName(handle)
         gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
-        print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
+        if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
         return DeviceCapabilities(model=f"Linux Box ({gpu_name})", chip=gpu_name, memory=gpu_memory_info.total // 2**20, flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)))
     elif Device.DEFAULT == "AMD":
