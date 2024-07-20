@@ -40,8 +40,7 @@ class StandardNode(Node):
                 elif status_data.get("status", "").startswith("end_"):
                     if status_data.get("node_id") == self.current_topology.active_node_id:
                         self.current_topology.active_node_id = None
-            if self.topology_viz:
-              self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
+            if self.topology_viz: self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
         except json.JSONDecodeError:
             pass
 
@@ -243,8 +242,7 @@ class StandardNode(Node):
 
         next_topology.active_node_id = self.topology.active_node_id # this is not so clean.
         self.topology = next_topology
-        if self.topology_viz:
-            self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
+        if self.topology_viz: self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
         return next_topology
 
     # TODO: unify this and collect_topology as global actions
