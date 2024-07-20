@@ -121,6 +121,7 @@ jobs:
               "messages": [{"role": "user", "content": "Placeholder to load model..."}],
               "temperature": 0.7
             }'
+
         curl -s http://localhost:8001/v1/chat/completions \
             -H "Content-Type: application/json" \
             -d '{
@@ -150,6 +151,7 @@ jobs:
         if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
           echo "Test failed: Response does not contain 'Michael Jackson'"
           echo "Response 1: $response_1"
+          echo ""
           echo "Response 2: $response_2"
           exit 1
         else
@@ -167,6 +169,7 @@ jobs:
           echo "Test failed: Devices did not discover each other"
           echo "Output of first instance:"
           cat output1.log
+          echo ""
           echo "Output of second instance:"
           cat output2.log
           exit 1
