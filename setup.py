@@ -22,6 +22,7 @@ install_requires = [
     "tqdm==4.66.4",
     "transformers==4.41.2",
     "uuid==1.30",
+    "netifaces==0.11.0",
     "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@a9f5a764dc640a5e5cbaaeeee21df7c8ca37da38",
 ]
 
