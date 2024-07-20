@@ -22,7 +22,7 @@ jobs:
     - name: Run tests
       run: python3 -m exo.inference.test_inference_engine
 
-  integration_test:
+  discovery_integration_test:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v2
@@ -34,7 +34,7 @@ jobs:
       run: |
         python3 -m pip install --upgrade pip
         pip install .
-    - name: Run integration test
+    - name: Run discovery integration test
       run: |
         # Start first instance
         DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
