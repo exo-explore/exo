@@ -82,10 +82,10 @@ jobs:
     - name: Cache huggingface hub models
       uses: actions/cache@v3
       with:
-        path: ~/.cache/huggingface
-        key: ${{ runner.os }}-huggingface-${{ hashFiles('~/.cache/huggingface/hub/**/*') }}
+        path: ~/.cache/huggingface/hub
+        key: ${{ runner.os }}-huggingface-hub-${{ hashFiles('~/.cache/huggingface/hub/**/*') }}
         restore-keys: |
-          ${{ runner.os }}-huggingface-
+          ${{ runner.os }}-huggingface-hub-
 
     - name: Cache tinygrad downloaded models
       uses: actions/cache@v3
