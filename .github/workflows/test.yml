@@ -51,7 +51,7 @@ jobs:
         kill $PID1 $PID2
 
         # Check outputs
-        if grep -q "Discovered new peer" output1.log && grep -q "Device discovered" output2.log; then
+        if grep -q "Connected to peer" output1.log && grep -q "Connected to peer" output2.log; then
           echo "Test passed: Both instances discovered each other"
           exit 0
         else

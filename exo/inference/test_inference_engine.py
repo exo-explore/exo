@@ -30,8 +30,9 @@ asyncio.run(test_inference_engine(
     "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
 ))
 
-asyncio.run(test_inference_engine(
-    TinygradDynamicShardInferenceEngine(),
-    TinygradDynamicShardInferenceEngine(),
-    "llama3-8b-sfr",
-))
+# TODO: Waiting on https://github.com/tinygrad/tinygrad/issues/5549
+# asyncio.run(test_inference_engine(
+#     TinygradDynamicShardInferenceEngine(),
+#     TinygradDynamicShardInferenceEngine(),
+#     "llama3-8b-sfr",
+# ))
