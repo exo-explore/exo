@@ -23,7 +23,7 @@ jobs:
         pip install .
 
     - name: Run tests
-      run: python3 -m exo.inference.test_inference_engine
+      run: METAL_XCODE=1 python3 -m exo.inference.test_inference_engine
 
   discovery_integration_test:
     runs-on: macos-latest

@@ -31,8 +31,8 @@ asyncio.run(test_inference_engine(
 ))
 
 # TODO: Waiting on https://github.com/tinygrad/tinygrad/issues/5549
-# asyncio.run(test_inference_engine(
-#     TinygradDynamicShardInferenceEngine(),
-#     TinygradDynamicShardInferenceEngine(),
-#     "llama3-8b-sfr",
-# ))
+asyncio.run(test_inference_engine(
+    TinygradDynamicShardInferenceEngine(),
+    TinygradDynamicShardInferenceEngine(),
+    "llama3-8b-sfr",
+))
