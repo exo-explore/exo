@@ -104,18 +104,14 @@ The native way to access models running on exo is using the exo library with pee
 
 exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000. Note: this is currently only supported by tail nodes (i.e. nodes selected to be at the end of the ring topology). Example request:
 
-```
+```sh
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-     "model": "llama-3-70b",
+     "model": "llama-3-8b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
-```
-
-```sh
-curl -X POST http://localhost:8001/api/v1/chat -H "Content-Type: application/json" -d '{"messages": [{"role": "user", "content": "What is the meaning of life?"}]}'
 ```
 
 ## Debugging
