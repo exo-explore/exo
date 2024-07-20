@@ -8,7 +8,7 @@ DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
 VERSION = "0.0.1"
 
-exo_text = """
+exo_text = r"""
   _____  _____  
  / _ \ \/ / _ \ 
 |  __/>  < (_) |
