@@ -78,11 +78,11 @@ jobs:
     - name: Run chatgpt api integration test
       run: |
         # Start first instance
-        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
+        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 1200 > output1.log 2>&1 &
         PID1=$!
 
         # Start second instance
-        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 > output2.log 2>&1 &
+        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout-secs 1200 > output2.log 2>&1 &
         PID2=$!
 
         # Wait for discovery
@@ -96,22 +96,39 @@ jobs:
               "messages": [{"role": "user", "content": "Placeholder to load model..."}],
               "temperature": 0.7
             }'
+        curl -s http://localhost:8001/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "llama-3-8b",
+              "messages": [{"role": "user", "content": "Placeholder to load model..."}],
+              "temperature": 0.7
+            }'
 
-        response=$(curl -s http://localhost:8000/v1/chat/completions \
+        response_1=$(curl -s http://localhost:8000/v1/chat/completions \
           -H "Content-Type: application/json" \
           -d '{
             "model": "llama-3-8b",
             "messages": [{"role": "user", "content": "Who was the king of pop?"}],
             "temperature": 0.7
           }')
-        echo "Response: $response"
+        echo "Response 1: $response_1"
 
-        if ! echo "$response" | grep -q "Michael Jackson"; then
+        response_2=$(curl -s http://localhost:8000/v1/chat/completions \
+          -H "Content-Type: application/json" \
+          -d '{
+            "model": "llama-3-8b",
+            "messages": [{"role": "user", "content": "Who was the king of pop?"}],
+            "temperature": 0.7
+          }')
+        echo "Response 2: $response_2"
+
+        if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
           echo "Test failed: Response does not contain 'Michael Jackson'"
-          echo "Response: $response"
+          echo "Response 1: $response_1"
+          echo "Response 2: $response_2"
           exit 1
         else
-          echo "Test passed: Response contains 'Michael Jackson'"
+          echo "Test passed: Response from both nodes contains 'Michael Jackson'"
         fi
 
         # Stop both instances

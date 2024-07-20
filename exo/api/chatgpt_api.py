@@ -117,10 +117,10 @@ def build_prompt(tokenizer, messages: List[Message]):
 
 
 class ChatGPTAPI:
-    def __init__(self, node: Node, inference_engine_classname: str):
+    def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90):
         self.node = node
         self.inference_engine_classname = inference_engine_classname
-        self.response_timeout_secs = 90
+        self.response_timeout_secs = response_timeout_secs
         self.app = web.Application()
         self.prev_token_lens: Dict[str, int] = {}
         self.stream_tasks: Dict[str, asyncio.Task] = {}
