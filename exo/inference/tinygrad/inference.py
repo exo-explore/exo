@@ -137,15 +137,10 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         self.shard = None
 
     async def infer_prompt(self, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
-        def encode_role(role: str):
-            return [self.tokenizer.special_tokens["<|start_header_id|>"]] + self.tokenizer.encode(role) + [self.tokenizer.special_tokens["<|end_header_id|>"]] + self.tokenizer.encode("\n\n")
-        def encode_message(role: str, content: str):
-            return encode_role(role) + self.tokenizer.encode(content.strip()) + [self.tokenizer.special_tokens["<|eot_id|>"]]
-
         await self.ensure_shard(shard)
-        start_pos = json.loads(inference_state)["start_pos"] if inference_state else 0
+        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        toks = [self.tokenizer.bos_id] + encode_message("user", prompt) + encode_role("assistant")
+        toks = self.tokenizer.encode(prompt)
         start_pos = prefill(self.model, toks[:-1], start_pos=start_pos)
         last_tok = toks[-1]
 
@@ -157,8 +152,8 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     async def infer_tensor(self, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
         await self.ensure_shard(shard)
+        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        start_pos = json.loads(inference_state)["start_pos"] if inference_state else 0
         output_data: np.ndarray = np.array([self.model(Tensor([input_data]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()])
         if output_data.size == 1:
            start_pos += 1

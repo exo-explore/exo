@@ -166,9 +166,9 @@ class StandardNode(Node):
             if DEBUG >= 1: print(f"Sending tensor_or_prompt to {target_peer.id()}: {tensor_or_prompt}")
 
             if isinstance(tensor_or_prompt, np.ndarray):
-                await target_peer.send_tensor(next_shard, tensor_or_prompt, request_id)
+                await target_peer.send_tensor(next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state)
             else:
-                await target_peer.send_prompt(next_shard, tensor_or_prompt, request_id)
+                await target_peer.send_prompt(next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state)
 
     def get_current_shard(self, base_shard: Shard) -> Shard:
         partitions = self.partitioning_strategy.partition(self.topology)
