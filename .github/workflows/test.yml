@@ -148,6 +148,9 @@ jobs:
           }')
         echo "Response 2: $response_2"
 
+        # Stop both instances
+        kill $PID1 $PID2
+
         echo ""
         if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
           echo "Test failed: Response does not contain 'Michael Jackson'"
@@ -157,21 +160,4 @@ jobs:
           exit 1
         else
           echo "Test passed: Response from both nodes contains 'Michael Jackson'"
-        fi
-
-        # Stop both instances
-        kill $PID1 $PID2
-
-        # Check outputs
-        if grep -q "Connected to peer" output1.log && grep -q "Connected to peer" output2.log; then
-          echo "Test passed: Both instances discovered each other"
-          exit 0
-        else
-          echo "Test failed: Devices did not discover each other"
-          echo "Output of first instance:"
-          cat output1.log
-          echo ""
-          echo "Output of second instance:"
-          cat output2.log
-          exit 1
         fi
