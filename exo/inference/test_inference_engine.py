@@ -24,15 +24,15 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     assert np.array_equal(resp_full, resp2)
     assert np.array_equal(next_resp_full, resp4)
 
-# asyncio.run(test_inference_engine(
-#     MLXDynamicShardInferenceEngine(),
-#     MLXDynamicShardInferenceEngine(),
-#     "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
-# ))
+asyncio.run(test_inference_engine(
+    MLXDynamicShardInferenceEngine(),
+    MLXDynamicShardInferenceEngine(),
+    "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
+))
 
 # TODO: Waiting on https://github.com/tinygrad/tinygrad/issues/5549
-asyncio.run(test_inference_engine(
-    TinygradDynamicShardInferenceEngine(),
-    TinygradDynamicShardInferenceEngine(),
-    "llama3-8b-sfr",
-))
+# asyncio.run(test_inference_engine(
+#     TinygradDynamicShardInferenceEngine(),
+#     TinygradDynamicShardInferenceEngine(),
+#     "llama3-8b-sfr",
+# ))
