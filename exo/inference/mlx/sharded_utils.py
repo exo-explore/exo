@@ -4,6 +4,8 @@ import glob
 import importlib
 import json
 import logging
+import asyncio
+from functools import partial
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -151,7 +153,11 @@ def load_model_shard(
     model.eval()
     return model
 
-def get_model_path(path_or_hf_repo: str, revision: Optional[str] = None) -> Path:
+async def snapshot_download_async(*args, **kwargs):
+    func = partial(snapshot_download, *args, **kwargs)
+    return await asyncio.get_event_loop().run_in_executor(None, func)
+
+async def get_model_path(path_or_hf_repo: str, revision: Optional[str] = None) -> Path:
     """
     Ensures the model is available locally. If the path does not exist locally,
     it is downloaded from the Hugging Face Hub.
@@ -167,7 +173,7 @@ def get_model_path(path_or_hf_repo: str, revision: Optional[str] = None) -> Path
     if not model_path.exists():
         try:
             model_path = Path(
-                snapshot_download(
+                await snapshot_download_async(
                     repo_id=path_or_hf_repo,
                     revision=revision,
                     allow_patterns=[
@@ -191,7 +197,7 @@ def get_model_path(path_or_hf_repo: str, revision: Optional[str] = None) -> Path
     return model_path
 
 
-def load_shard(
+async def load_shard(
     path_or_hf_repo: str,
     shard: Shard,
     tokenizer_config={},
@@ -220,7 +226,7 @@ def load_shard(
         FileNotFoundError: If config file or safetensors are not found.
         ValueError: If model class or args class are not found.
     """
-    model_path = get_model_path(path_or_hf_repo)
+    model_path = await get_model_path(path_or_hf_repo)
 
     model = load_model_shard(model_path, shard, lazy, model_config)
     if adapter_path is not None:

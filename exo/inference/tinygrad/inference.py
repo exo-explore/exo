@@ -1,16 +1,18 @@
-
+import asyncio
+from functools import partial
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 import json, argparse, random, time
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from tinygrad.nn.state import safe_load, torch_load, load_state_dict, get_parameters
 from tinygrad import Tensor, dtypes, nn, Context, Device, GlobalCounters
-from tinygrad.helpers import DEBUG, tqdm, _cache_dir
+from tinygrad.helpers import DEBUG, tqdm, _cache_dir, fetch
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 import numpy as np
+import os
 
 MODEL_PARAMS = {
   "8B": {
@@ -58,6 +60,11 @@ class Tokenizer:
     return self.model.encode(text, allowed_special="all" if allow_special else set(), disallowed_special=set())
 
 # **** helper functions ****
+async def fetch_async(url: str, name: Optional[Union[Path, str]] = None, subdir: Optional[str] = None,
+                      allow_caching=not os.getenv("DISABLE_HTTP_CACHE")) -> Path:
+    func = partial(fetch, url, name, subdir, allow_caching)
+    return await asyncio.get_event_loop().run_in_executor(None, func)
+
 def concat_weights(models, device=None):
   def convert(name) -> Tensor:
     disk_tensors: List[Tensor] = [model[name] for model in models]
@@ -176,16 +183,15 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         if Path(model_path / "model.safetensors.index.json").exists():
             model = model_path
         else:
-            from tinygrad.helpers import fetch
 
             if DEBUG >= 2: print(f"Downloading tinygrad model {shard.model_id}...")
             if shard.model_id.lower().find("llama3-8b-sfr") != -1:
-                fetch("https://huggingface.co/bofenghuang/Meta-Llama-3-8B/resolve/main/original/tokenizer.model", "tokenizer.model", subdir=shard.model_id)
-                fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00001-of-00004.safetensors", "model-00001-of-00004.safetensors", subdir=shard.model_id)
-                fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00002-of-00004.safetensors", "model-00002-of-00004.safetensors", subdir=shard.model_id)
-                fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00003-of-00004.safetensors", "model-00003-of-00004.safetensors", subdir=shard.model_id)
-                fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00004-of-00004.safetensors", "model-00004-of-00004.safetensors", subdir=shard.model_id)
-                model = fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/raw/main/model.safetensors.index.json", "model.safetensors.index.json", subdir=shard.model_id)
+                await fetch_async("https://huggingface.co/bofenghuang/Meta-Llama-3-8B/resolve/main/original/tokenizer.model", "tokenizer.model", subdir=shard.model_id)
+                await fetch_async("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00001-of-00004.safetensors", "model-00001-of-00004.safetensors", subdir=shard.model_id)
+                await fetch_async("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00002-of-00004.safetensors", "model-00002-of-00004.safetensors", subdir=shard.model_id)
+                await fetch_async("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00003-of-00004.safetensors", "model-00003-of-00004.safetensors", subdir=shard.model_id)
+                await fetch_async("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/resolve/main/model-00004-of-00004.safetensors", "model-00004-of-00004.safetensors", subdir=shard.model_id)
+                model = await fetch_async("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R/raw/main/model.safetensors.index.json", "model.safetensors.index.json", subdir=shard.model_id)
                 size = "8B"
             elif shard.model_id.lower().find("llama3-70b-sfr") != -1:
                 raise NotImplementedError("llama3-70b-sfr is not implemented for tinygrad")
