@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  unit_test:
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v2
@@ -21,3 +21,44 @@ jobs:
         pip install .
     - name: Run tests
       run: python3 -m exo.inference.test_inference_engine
+
+  integration_test:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Run integration test
+      run: |
+        # Start first instance
+        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5678 --broadcast-port 5679 > output1.log 2>&1 &
+        PID1=$!
+
+        # Start second instance
+        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5679 --broadcast-port 5678 > output2.log 2>&1 &
+        PID2=$!
+
+        # Wait for discovery
+        sleep 10
+
+        # Stop both instances
+        kill $PID1 $PID2
+
+        # Check outputs
+        if grep -q "Discovered new peer" output1.log && grep -q "Device discovered" output2.log; then
+          echo "Test passed: Both instances discovered each other"
+          exit 0
+        else
+          echo "Test failed: Devices did not discover each other"
+          echo "Output of first instance:"
+          cat output1.log
+          echo "Output of second instance:"
+          cat output2.log
+          exit 1
+        fi
