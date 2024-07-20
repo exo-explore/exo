@@ -39,5 +39,5 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
 asyncio.run(test_inference_engine(
     TinygradDynamicShardInferenceEngine(),
     TinygradDynamicShardInferenceEngine(),
-    "/Users/alex/Library/Caches/tinygrad/downloads/llama3-8b-sfr",
+    "llama3-8b-sfr",
 ))
