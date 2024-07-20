@@ -117,12 +117,11 @@ class TopologyViz:
             else:
                 visualization[y][x] = '🔵'  # Blue circle for inactive nodes
 
-            # Place node info (ID, start_layer, end_layer)
+            # Place node info (model, memory, TFLOPS, partition) on three lines
             node_info = [
-                f"Model: {device_capabilities.model}",
-                f"Mem: {device_capabilities.memory // 1024}GB",
-                f"FLOPS: {device_capabilities.flops.fp16}T",
-                f"Part: {partition.start:.2f}-{partition.end:.2f}"
+                f"{device_capabilities.model} {device_capabilities.memory // 1024}GB",
+                f"{device_capabilities.flops.fp16}TFLOPS",
+                f"[{partition.start:.2f}-{partition.end:.2f}]"
             ]
 
             # Calculate info position based on angle
