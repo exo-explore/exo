@@ -173,7 +173,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         models_dir = Path(_cache_dir) / "tinygrad" / "downloads"
         model_path = models_dir / shard.model_id
         size = "8B"
-        if model_path.exists():
+        if Path(model_path / "model.safetensors.index.json").exists():
             model = model_path
         else:
             from tinygrad.helpers import fetch
