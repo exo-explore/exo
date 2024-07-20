@@ -148,6 +148,7 @@ jobs:
           }')
         echo "Response 2: $response_2"
 
+        echo ""
         if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
           echo "Test failed: Response does not contain 'Michael Jackson'"
           echo "Response 1: $response_1"
