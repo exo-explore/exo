@@ -62,3 +62,69 @@ jobs:
           cat output2.log
           exit 1
         fi
+
+  chatgpt_api_integration_test:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install .
+    - name: Run discovery integration test
+      run: |
+        # Start first instance
+        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
+        PID1=$!
+
+        # Start second instance
+        DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 > output2.log 2>&1 &
+        PID2=$!
+
+        # Wait for discovery
+        sleep 10
+
+        curl http://localhost:8000/v1/chat/completions \
+          -H "Content-Type: application/json" \
+          -d '{
+            "model": "llama-3-8b",
+            "messages": [{"role": "user", "content": "Who was the king of pop?"}],
+            "temperature": 0.7
+          }'
+
+        # Wait for up to 15 minutes for "exo" to appear in logs
+        timeout=900  # 15 minutes in seconds
+        start_time=$(date +%s)
+        while true; do
+          if grep -q "Michael Jackson" output1.log || grep -q "Michael Jackson" output2.log; then
+            echo "Found 'Michael Jackson' in logs"
+            break
+          fi
+          current_time=$(date +%s)
+          elapsed=$((current_time - start_time))
+          if [ $elapsed -ge $timeout ]; then
+            echo "Timeout: 'exo' not found in logs after 15 minutes"
+            exit 1
+          fi
+          sleep 10  # Check every 10 seconds
+        done
+
+        # Stop both instances
+        kill $PID1 $PID2
+
+        # Check outputs
+        if grep -q "Connected to peer" output1.log && grep -q "Connected to peer" output2.log; then
+          echo "Test passed: Both instances discovered each other"
+          exit 0
+        else
+          echo "Test failed: Devices did not discover each other"
+          echo "Output of first instance:"
+          cat output1.log
+          echo "Output of second instance:"
+          cat output2.log
+          exit 1
+        fi
