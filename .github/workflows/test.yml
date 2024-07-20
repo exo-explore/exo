@@ -11,14 +11,17 @@ jobs:
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v2
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.12'
+
     - name: Install dependencies
       run: |
         python3 -m pip install --upgrade pip
         pip install .
+
     - name: Run tests
       run: python3 -m exo.inference.test_inference_engine
 
@@ -26,14 +29,17 @@ jobs:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v2
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.x'
+
     - name: Install dependencies
       run: |
         python3 -m pip install --upgrade pip
         pip install .
+
     - name: Run discovery integration test
       run: |
         # Start first instance
@@ -67,14 +73,33 @@ jobs:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v2
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.x'
+
+    - name: Cache huggingface hub models
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('~/.cache/huggingface/hub/**/*') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Cache tinygrad downloaded models
+      uses: actions/cache@v3
+      with:
+        path: ~/Library/Caches/tinygrad/downloads
+        key: ${{ runner.os }}-tinygrad-downloads-${{ hashFiles('~/Library/Caches/tinygrad/downloads/**/*') }}
+        restore-keys: |
+          ${{ runner.os }}-tinygrad-downloads-
+
     - name: Install dependencies
       run: |
         python3 -m pip install --upgrade pip
         pip install .
+
     - name: Run chatgpt api integration test
       run: |
         # Start first instance
