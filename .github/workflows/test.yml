@@ -42,6 +42,9 @@ jobs:
 
     - name: Run discovery integration test
       run: |
+        # Check if cached files are present
+        ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3-8B-Instruct-4bit/**/*
+
         # Start first instance
         DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
         PID1=$!
@@ -115,14 +118,6 @@ jobs:
 
         # first one to load the model
         curl -s http://localhost:8000/v1/chat/completions \
-            -H "Content-Type: application/json" \
-            -d '{
-              "model": "llama-3-8b",
-              "messages": [{"role": "user", "content": "Placeholder to load model..."}],
-              "temperature": 0.7
-            }'
-
-        curl -s http://localhost:8001/v1/chat/completions \
             -H "Content-Type: application/json" \
             -d '{
               "model": "llama-3-8b",
