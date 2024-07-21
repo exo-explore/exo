@@ -132,7 +132,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "model": "llama-3-8b",
-              "messages": [{"role": "user", "content": "Placeholder to load model..."}],
+              "messages": [{"role": "user", "content": "Keep responses concise. Placeholder to load model..."}],
               "temperature": 0.7
             }'
 
@@ -140,7 +140,7 @@ jobs:
           -H "Content-Type: application/json" \
           -d '{
             "model": "llama-3-8b",
-            "messages": [{"role": "user", "content": "Who was the king of pop?"}],
+            "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
             "temperature": 0.7
           }')
         echo "Response 1: $response_1"
@@ -149,7 +149,7 @@ jobs:
           -H "Content-Type: application/json" \
           -d '{
             "model": "llama-3-8b",
-            "messages": [{"role": "user", "content": "Who was the king of pop?"}],
+            "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
             "temperature": 0.7
           }')
         echo "Response 2: $response_2"
