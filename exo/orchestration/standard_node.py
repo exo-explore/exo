@@ -28,7 +28,7 @@ class StandardNode(Node):
         self.topology_viz = TopologyViz(chatgpt_api_endpoint=chatgpt_api_endpoint, web_chat_url=web_chat_url) if not disable_tui else None
         self.max_generate_tokens = max_generate_tokens
         self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
-        self._on_opaque_status = AsyncCallbackSystem[str, str]()
+        self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
         self._on_opaque_status.register("node_status").on_next(self.on_node_status)
 
     def on_node_status(self, request_id, opaque_status):
@@ -275,7 +275,7 @@ class StandardNode(Node):
         return self._on_token
 
     @property
-    def on_opaque_status(self) -> AsyncCallbackSystem[str, str]:
+    def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
         return self._on_opaque_status
 
     def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
@@ -296,8 +296,19 @@ class StandardNode(Node):
         await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
     async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
-        for peer in self.peers:
-            await peer.send_opaque_status(request_id, status)
+        async def send_status_to_peer(peer):
+            try:
+                await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)
+            except asyncio.TimeoutError:
+                print(f"Timeout sending opaque status to {peer.id()}")
+            except Exception as e:
+                print(f"Error sending opaque status to {peer.id()}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)
+        # in the case of opaque status, we also want to receive our own opaque statuses
+        self.on_opaque_status.trigger_all(request_id, status)
 
     @property
     def current_topology(self) -> Topology:

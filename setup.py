@@ -11,6 +11,7 @@ install_requires = [
     "huggingface-hub==0.23.4",
     "Jinja2==3.1.4",
     "numpy==2.0.0",
+    "prometheus-client==0.20.0",
     "protobuf==5.27.1",
     "psutil==6.0.0",
     "pynvml==11.5.3",

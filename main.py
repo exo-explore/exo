@@ -16,6 +16,7 @@ parser.add_argument("--node-id", type=str, default=str(uuid.uuid4()), help="Node
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=None, help="Node port")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
+parser.add_argument("--prometheus-client-port", type=int, default=None, help="Prometheus client port")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
 parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
@@ -41,8 +42,10 @@ node = StandardNode(args.node_id, None, inference_engine, discovery, partitionin
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 api = ChatGPTAPI(node, inference_engine.__class__.__name__, response_timeout_secs=args.chatgpt_api_response_timeout_secs)
-
 node.on_token.register("main_log").on_next(lambda _, tokens , __: print(inference_engine.tokenizer.decode(tokens) if hasattr(inference_engine, "tokenizer") else tokens))
+if args.prometheus_client_port:
+    from exo.stats.metrics import start_metrics_server
+    start_metrics_server(node, args.prometheus_client_port)
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""
