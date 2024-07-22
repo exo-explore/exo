@@ -3,6 +3,8 @@ import asyncio
 from typing import Any, Callable, Coroutine, TypeVar, Optional, Dict, Generic, Tuple
 import socket
 import random
+import platform
+import psutil
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -14,6 +16,28 @@ exo_text = r"""
 |  __/>  < (_) |
  \___/_/\_\___/ 
     """
+
+def get_system_info():
+    if psutil.MACOS:
+        if platform.machine() == 'arm64':
+            return "Apple Silicon Mac"
+        elif platform.machine() in ['x86_64', 'i386']:
+            return "Intel Mac"
+        else:
+            return "Unknown Mac architecture"
+    elif psutil.LINUX:
+        return "Linux"
+    else:
+        return "Non-Mac, non-Linux system"
+
+def get_inference_engine():
+    system_info = get_system_info()
+    if system_info == "Apple Silicon Mac":
+        from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+        return MLXDynamicShardInferenceEngine()
+    else:
+        from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
+        return TinygradDynamicShardInferenceEngine()
 
 def find_available_port(host: str = '', min_port: int = 49152, max_port: int = 65535) -> int:
     used_ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.exo_used_ports')
