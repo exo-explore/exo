@@ -30,7 +30,8 @@ print_yellow_exo()
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
-inference_engine = get_inference_engine()
+inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
+inference_engine = get_inference_engine(inference_engine_name)
 print(f"Using inference engine: {inference_engine.__class__.__name__}")
 
 if args.node_port is None:
