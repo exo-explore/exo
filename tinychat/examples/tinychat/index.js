@@ -57,7 +57,7 @@ document.addEventListener("alpine:init", () => {
       // start receiving server sent events
       let gottenFirstChunk = false;
       for await (
-        const chunk of this.openaiChatCompletion(this.cstate.messages)
+        const chunk of this.openaiChatCompletion(this.cstate.selectedModel, this.cstate.messages)
       ) {
         if (!gottenFirstChunk) {
           this.cstate.messages.push({ role: "assistant", content: "" });
@@ -116,14 +116,16 @@ document.addEventListener("alpine:init", () => {
       }).catch(console.error);
     },
 
-    async *openaiChatCompletion(messages) {
+    async *openaiChatCompletion(model, messages) {
       // stream response
+      console.log("model", model)
       const response = await fetch(`${this.endpoint}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          "model": model,
           "messages": messages,
           "stream": true,
         }),

@@ -34,6 +34,15 @@
 
 <body>
   <main x-data="state" x-init="console.log(endpoint)">
+    <div class="model-selector">
+      <select x-model="cstate.selectedModel" @change="if (cstate) cstate.selectedModel = $event.target.value">
+        <option value="llama-3.1-8b" selected>Llama 3.1 8B</option>
+        <option value="llama-3.1-70b">Llama 3.1 70B</option>
+        <option value="llama-3.1-405b">Llama 3.1 405B</option>
+        <option value="llama-3-8b">Llama 3 8B</option>
+        <option value="llama-3-70b">Llama 3 70B</option>
+      </select>
+    </div>
     <div class="home centered" x-show="home === 0" x-transition x-effect="
       $refs.inputForm.focus();
       if (home === 1) setTimeout(() => home = 2, 100);
@@ -41,7 +50,7 @@
     " @popstate.window="
       if (home === 2) {
         home = -1;
-        cstate = { time: null, messages: [] };
+        cstate = { time: null, messages: [], selectedModel: 'llama-3.1-8b' };
         time_till_first = 0;
         tokens_per_second = 0;
         total_tokens = 0;
@@ -58,6 +67,7 @@
           <template x-for="_state in histories.toSorted((a, b) => b.time - a.time)">
             <div x-data="{ otx: 0, trigger: 75 }" class="history" @click="
             cstate = _state;
+            if (cstate) cstate.selectedModel = document.querySelector('.model-selector select').value
             // updateTotalTokens(cstate.messages);
             home = 1;
             // ensure that going back in history will go back to home
