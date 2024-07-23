@@ -20,10 +20,15 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 </div>
 
-
 ---
 
 Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
+
+<div align="center">
+  <h2>Update: Exo Supports Llama 3.1</h2>
+  <p>Now the default models, run 8B, 70B and 405B parameter models on your own devices</p>
+  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/sharded_llama.py">See the code</a></p>
+</div>
 
 ## Get Involved
 
