@@ -17,6 +17,15 @@ shard_mappings = {
         "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
         "TinygradDynamicShardInferenceEngine": Shard(model_id="llama3-8b-sfr", start_layer=0, end_layer=0, n_layers=32),
     },
+    "llama-3.1-8b": {
+        "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
+    },
+    "llama-3.1-70b": {
+        "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
+    },
+    "llama-3.1-405b": {
+        "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-405B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=126),
+    },
     "llama-3-70b": {
         "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
         "TinygradDynamicShardInferenceEngine": Shard(model_id="llama3-70b-sfr", start_layer=0, end_layer=0, n_layers=80),
@@ -42,7 +51,7 @@ def resolve_tinygrad_tokenizer(model_id: str):
     else:
         raise ValueError(f"tinygrad doesnt currently support arbitrary model downloading. unsupported model: {model_id}")
 
-def resolve_tokenizer(model_id: str):
+async def resolve_tokenizer(model_id: str):
     try:
         if DEBUG >= 2: print(f"Trying AutoTokenizer for {model_id}")
         return AutoTokenizer.from_pretrained(model_id)
@@ -61,7 +70,7 @@ def resolve_tokenizer(model_id: str):
 
     if DEBUG >= 2: print(f"Trying mlx tokenizer for {model_id}")
     from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
-    return load_tokenizer(get_model_path(model_id))
+    return load_tokenizer(await get_model_path(model_id))
 
 def generate_completion(
         chat_request: ChatCompletionRequest,
@@ -146,24 +155,24 @@ class ChatGPTAPI:
 
     async def handle_post_chat_token_encode(self, request):
         data = await request.json()
-        shard = shard_mappings.get(data.get('model', 'llama-3-8b'), {}).get(self.inference_engine_classname)
+        shard = shard_mappings.get(data.get('model', 'llama-3.1-8b'), {}).get(self.inference_engine_classname)
         messages = data.get('messages', [])
-        tokenizer = resolve_tokenizer(shard.model_id)
+        tokenizer = await resolve_tokenizer(shard.model_id)
         return web.json_response({'length': len(build_prompt(tokenizer, messages))})
 
     async def handle_post_chat_completions(self, request):
         data = await request.json()
         stream = data.get('stream', False)
         messages = [Message(**msg) for msg in data['messages']]
-        chat_request = ChatCompletionRequest(data.get('model', 'llama-3-8b'), messages, data.get('temperature', 0.0))
+        chat_request = ChatCompletionRequest(data.get('model', 'llama-3.1-8b'), messages, data.get('temperature', 0.0))
         if chat_request.model and chat_request.model.startswith("gpt-"): # to be compatible with ChatGPT tools, point all gpt- model requests to llama instead
-            chat_request.model = "llama-3-8b"
+            chat_request.model = "llama-3.1-8b"
         shard = shard_mappings.get(chat_request.model, {}).get(self.inference_engine_classname)
         if not shard:
             return web.json_response({'detail': f"Invalid model: {chat_request.model}. Supported: {list(shard_mappings.keys())}"}, status=400)
         request_id = str(uuid.uuid4())
 
-        tokenizer = resolve_tokenizer(shard.model_id)
+        tokenizer = await resolve_tokenizer(shard.model_id)
         if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
         prompt = build_prompt(tokenizer, messages)

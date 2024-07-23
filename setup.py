@@ -30,8 +30,8 @@ install_requires = [
 if sys.platform.startswith("darwin"):
     install_requires.extend(
         [
-            "mlx==0.15.1",
-            "mlx-lm==0.14.3",
+            "mlx==0.16.0",
+            "mlx-lm==0.16.1",
         ]
     )
 
