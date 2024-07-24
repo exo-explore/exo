@@ -23,7 +23,7 @@ class ListenProtocol(asyncio.DatagramProtocol):
 
 
 class GRPCDiscovery(Discovery):
-    def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1, device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES):
+    def __init__(self, node_id: str, node_port: int, listen_port: int, broadcast_port: int = None, broadcast_interval: int = 1, device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES, discovery_timeout: int = 30):
         self.node_id = node_id
         self.node_port = node_port
         self.device_capabilities = device_capabilities
@@ -34,6 +34,7 @@ class GRPCDiscovery(Discovery):
         self.broadcast_task = None
         self.listen_task = None
         self.cleanup_task = None
+        self.discovery_timeout = discovery_timeout
 
     async def start(self):
         self.device_capabilities = device_capabilities()
@@ -121,10 +122,9 @@ class GRPCDiscovery(Discovery):
         while True:
             try:
                 current_time = time.time()
-                timeout = 15 * self.broadcast_interval
                 peers_to_remove = [
                     peer_handle.id() for peer_handle, connected_at, last_seen in self.known_peers.values() if
-                    (not await peer_handle.is_connected() and current_time - connected_at > timeout) or current_time - last_seen > timeout
+                    (not await peer_handle.is_connected() and current_time - connected_at > self.discovery_timeout) or current_time - last_seen > self.discovery_timeout
                 ]
                 if DEBUG_DISCOVERY >= 2: print("Peer statuses:", {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}" for peer_handle, connected_at, last_seen in self.known_peers.values()})
                 if DEBUG_DISCOVERY >= 2 and len(peers_to_remove) > 0: print(f"Cleaning up peers: {peers_to_remove}")
