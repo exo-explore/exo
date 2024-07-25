@@ -24,7 +24,7 @@ parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT 
 parser.add_argument("--chatgpt-api-response-timeout-secs", type=int, default=90, help="ChatGPT API response timeout in seconds")
 parser.add_argument("--max-generate-tokens", type=int, default=256, help="Max tokens to generate in each request")
 parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use")
-parser.add_argument("--disable-tui", action='store_true', help="Disable TUI")
+parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 args = parser.parse_args()
 
 print_yellow_exo()
