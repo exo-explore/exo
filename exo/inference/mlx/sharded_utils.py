@@ -25,8 +25,8 @@ class ModelNotFoundError(Exception):
         super().__init__(self.message)
 
 MODEL_REMAPPING = {
-    "mistral": "llama",  # mistral is compatible with llama
-    "phi-msft": "phixtral",
+    "sharded_mistral": "sharded_llama",  # mistral is compatible with llama
+    "sharded_phi-msft": "sharded_phixtral",
 }
 
 def _get_classes(config: dict):
@@ -122,16 +122,10 @@ def load_model_shard(
         weights = model.sanitize(weights)
 
     if (quantization := config.get("quantization", None)) is not None:
-        # Handle legacy models which may not have everything quantized
-        def class_predicate(p, m):
-            if not hasattr(m, "to_quantized"):
-                return False
-            return f"{p}.scales" in all_weights_keys
-
         nn.quantize(
             model,
             **quantization,
-            class_predicate=class_predicate,
+            class_predicate=None,
         )
 
     filtered_weights = {}
