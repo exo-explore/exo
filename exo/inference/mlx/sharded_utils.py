@@ -13,11 +13,13 @@ import mlx.core as mx
 import mlx.nn as nn
 from huggingface_hub import snapshot_download
 from huggingface_hub.utils._errors import RepositoryNotFoundError
+from transformers import AutoProcessor
 
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
 from mlx_lm.tuner.utils import apply_lora_layers
 
 from ..shard import Shard
+from exo.inference.mlx.models.sharded_llava import LlavaModel, LlaVAConfig, VisionConfig, VisionModel, TextConfig, LanguageModel
 
 class ModelNotFoundError(Exception):
     def __init__(self, message):
@@ -229,3 +231,59 @@ async def load_shard(
     tokenizer = load_tokenizer(model_path, tokenizer_config)
 
     return model, tokenizer
+
+
+async def load_shard_llava(
+    path_or_hf_repo: str,
+    shard: Shard,
+    tokenizer_config={},
+    model_config={},
+    adapter_path: Optional[str] = None,
+    lazy: bool = False,
+) -> Tuple[nn.Module, TokenizerWrapper]:
+    """
+    Load the model and tokenizer from a given path or a huggingface repository.
+
+    Args:
+        path_or_hf_repo (Path): The path or the huggingface repository to load the model from.
+        tokenizer_config (dict, optional): Configuration parameters specifically for the tokenizer.
+            Defaults to an empty dictionary.
+        model_config(dict, optional): Configuration parameters specifically for the model.
+            Defaults to an empty dictionary.
+        adapter_path (str, optional): Path to the LoRA adapters. If provided, applies LoRA layers
+            to the model. Default: ``None``.
+        lazy (bool): If False eval the model parameters to make sure they are
+            loaded in memory before returning, otherwise they will be loaded
+            when needed. Default: ``False``
+    Returns:
+        Tuple[nn.Module, TokenizerWrapper]: A tuple containing the loaded model and tokenizer.
+
+    Raises:
+        FileNotFoundError: If config file or safetensors are not found.
+        ValueError: If model class or args class are not found.
+    """
+    model_path = await get_model_path(path_or_hf_repo)
+    processor = AutoProcessor.from_pretrained(model_path)
+
+    with open(model_path / "config.json", "r") as f:
+        model_config = json.load(f)
+
+    model_config = LlaVAConfig.from_dict(model_config)
+
+    model_config.vision_config = VisionConfig.from_dict(model_config.vision_config)
+    model_config.text_config = TextConfig.from_dict(model_config.text_config)
+
+    model = LlavaModel(model_config)
+    weight_files = glob.glob(str(model_path / "*.safetensors"))
+    if not weight_files:
+        raise FileNotFoundError(f"No safetensors found in {model_path}")
+
+    weights = {}
+    for wf in weight_files:
+        weights.update(mx.load(wf))
+
+    weights = VisionModel.sanitize(weights)
+    weights = LanguageModel.sanitize(weights)
+
+    model.load_weights(list(weights.items()))
+    return model, processor
