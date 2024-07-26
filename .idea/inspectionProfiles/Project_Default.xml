@@ -1,0 +1,24 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="DuplicatedCode" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <Languages>
+        <language minSize="56" name="Python" />
+      </Languages>
+    </inspection_tool>
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <value>
+          <list size="6">
+            <item index="0" class="java.lang.String" itemvalue="chromadb" />
+            <item index="1" class="java.lang.String" itemvalue="bs4" />
+            <item index="2" class="java.lang.String" itemvalue="jq" />
+            <item index="3" class="java.lang.String" itemvalue="langchain_core" />
+            <item index="4" class="java.lang.String" itemvalue="langchain_openai" />
+            <item index="5" class="java.lang.String" itemvalue="langchain_community" />
+          </list>
+        </value>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

@@ -1,6 +1,8 @@
 from exo import DEBUG
 from dataclasses import dataclass, asdict
 import psutil
+import subprocess
+import json
 
 TFLOPS = 1.00
 
@@ -16,6 +18,7 @@ class DeviceFlops:
 
     def to_dict(self):
         return asdict(self)
+
 
 @dataclass
 class DeviceCapabilities:
@@ -68,6 +71,7 @@ CHIP_FLOPS = {
     ### Qualcomm embedded chips: TODO
 }
 
+
 def device_capabilities() -> DeviceCapabilities:
     if psutil.MACOS:
         return mac_device_capabilities()
@@ -77,19 +81,17 @@ def device_capabilities() -> DeviceCapabilities:
         return DeviceCapabilities(model=f"Unknown Device", chip=f"Unknown Chip", memory=psutil.virtual_memory().total // 2**20, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
 
 
-import subprocess
-import re
-
-
 def mac_device_capabilities() -> DeviceCapabilities:
-    # Fetch the model of the Mac using system_profiler
-    hw_info = subprocess.check_output(['system_profiler', 'SPHardwareDataType']).decode('utf-8')
+    hw_info_json = subprocess.check_output(['system_profiler', 'SPHardwareDataType', '-json']).decode('utf-8')
+    hw_info = json.loads(hw_info_json)
 
-    # Extract relevant information
-    model_id = re.search(r"Model Name: (.*)", hw_info).group(1).strip()
+    # Extract relevant information from the JSON
+    hardware_data = hw_info['SPHardwareDataType'][0]
+    model_id = hardware_data.get('machine_model', 'Unknown Model')
     chip_id = "Unknown Chip"
-    cores = int(re.search(r"Total Number of Cores: (\d+)", hw_info).group(1))
-    memory = int(re.search(r"Memory: (\d+) GB", hw_info).group(1)) * 1024
+    cores = hardware_data.get('number_processors', 0)
+    memory = hardware_data.get('physical_memory', '0 GB').split()[0]
+    memory = int(memory) * 1024  # Convert GB to MB
 
     # Try to identify the chip using sysctl
     try:
@@ -130,6 +132,7 @@ def mac_device_capabilities() -> DeviceCapabilities:
             print(f"Note: Chip was not directly identified. TFLOPS values are estimates.")
 
     return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=flops)
+
 
 def linux_device_capabilities() -> DeviceCapabilities:
     import psutil
