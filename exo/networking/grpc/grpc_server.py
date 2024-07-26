@@ -60,12 +60,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         tensor_data = result[0].tobytes() if result[0] is not None else None
         return node_service_pb2.InferenceResult(tensor=node_service_pb2.Tensor(tensor_data=tensor_data, shape=result[0].shape, dtype=str(result[0].dtype)), is_finished=result[1]) if result[0] is not None else node_service_pb2.InferenceResult(is_finished=result[1])
 
-    async def ResetShard(self, request, context):
-        shard = Shard(model_id=request.shard.model_id, start_layer=request.shard.start_layer, end_layer=request.shard.end_layer, n_layers=request.shard.n_layers)
-        if DEBUG >= 2: print(f"Received ResetShard request: {shard}")
-        await self.node.reset_shard(shard)
-        return node_service_pb2.Empty()
-
     async def CollectTopology(self, request, context):
         max_depth = request.max_depth
         visited = set(request.visited)
@@ -74,14 +68,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
         if DEBUG >= 2: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
         return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
-
-    async def GlobalReset(self, request, context):
-        base_shard = Shard(model_id=request.base_shard.model_id, start_layer=request.base_shard.start_layer, end_layer=request.base_shard.end_layer, n_layers=request.base_shard.n_layers)
-        visited = set(request.visited)
-        max_depth = request.max_depth
-        if DEBUG >= 2: print(f"Received GlobalReset request: {base_shard=} {visited=} {max_depth=}")
-        await self.node.global_reset(base_shard, visited, max_depth)
-        return node_service_pb2.Empty()
 
     async def SendResult(self, request, context):
         request_id = request.request_id

@@ -13,7 +13,7 @@ from exo.inference.shard import Shard
 from exo.orchestration import Node
 
 shard_mappings = {
-    # llama
+    ### llama
     "llama-3.1-8b": {
         "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
     },
@@ -31,7 +31,7 @@ shard_mappings = {
         "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
         "TinygradDynamicShardInferenceEngine": Shard(model_id="llama3-70b-sfr", start_layer=0, end_layer=0, n_layers=80),
     },
-    # mistral
+    ### mistral
     "mistral-nemo": {
         "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Nemo-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=40),
     },

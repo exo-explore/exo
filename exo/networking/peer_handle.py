@@ -39,15 +39,7 @@ class PeerHandle(ABC):
         pass
 
     @abstractmethod
-    async def reset_shard(self, shard: Shard) -> None:
-        pass
-
-    @abstractmethod
     async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
-        pass
-
-    @abstractmethod
-    async def global_reset(self, base_shard: Shard, visited: set[str], max_depth: int) -> None:
         pass
 
     @abstractmethod

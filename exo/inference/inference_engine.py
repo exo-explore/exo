@@ -6,13 +6,9 @@ from .shard import Shard
 
 class InferenceEngine(ABC):
     @abstractmethod
-    async def infer_tensor(self, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+    async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         pass
 
     @abstractmethod
-    async def infer_prompt(self, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
-        pass
-
-    @abstractmethod
-    async def reset_shard(self, shard: Shard):
+    async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         pass
