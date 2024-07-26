@@ -74,10 +74,6 @@ class GRPCPeerHandle(PeerHandle):
             return None, response.is_finished
         return np.frombuffer(response.tensor.tensor_data, dtype=np.dtype(response.tensor.dtype)).reshape(response.tensor.shape), response.is_finished
 
-    async def reset_shard(self, shard: Shard) -> None:
-        request = node_service_pb2.ResetShardRequest(shard=node_service_pb2.Shard(model_id=shard.model_id, start_layer=shard.start_layer, end_layer=shard.end_layer, n_layers=shard.n_layers))
-        await self.stub.ResetShard(request)
-
     async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
         request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
         response = await self.stub.CollectTopology(request)
@@ -89,10 +85,6 @@ class GRPCPeerHandle(PeerHandle):
             for peer_id in peers.peer_ids:
                 topology.add_edge(node_id, peer_id)
         return topology
-
-    async def global_reset(self, base_shard: Shard, visited: set[str], max_depth: int) -> None:
-        request = node_service_pb2.GlobalResetRequest(base_shard=node_service_pb2.Shard(model_id=base_shard.model_id, start_layer=base_shard.start_layer, end_layer=base_shard.end_layer, n_layers=base_shard.n_layers), visited=visited, max_depth=max_depth)
-        await self.stub.GlobalReset(request)
 
     async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
         request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, is_finished=is_finished)

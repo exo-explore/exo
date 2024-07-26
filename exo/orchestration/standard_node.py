@@ -79,7 +79,7 @@ class StandardNode(Node):
             await self.forward_to_next_shard(shard, prompt, request_id)
             return
 
-        result, inference_state, is_finished = await self.inference_engine.infer_prompt(shard, prompt, inference_state=inference_state)
+        result, inference_state, is_finished = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state=inference_state)
         is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
         if is_finished:
             self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
@@ -115,7 +115,7 @@ class StandardNode(Node):
 
         try:
             if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
-            result, inference_state, is_finished = await self.inference_engine.infer_tensor(shard, tensor, inference_state=inference_state)
+            result, inference_state, is_finished = await self.inference_engine.infer_tensor(request_id, shard, tensor, inference_state=inference_state)
             is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
             if is_finished:
                 self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
@@ -178,12 +178,6 @@ class StandardNode(Node):
             raise ValueError(f"No current partition found for node: {self.id}")
         return shards[current_partition_index]
 
-    async def reset_shard(self, base_shard: Shard) -> None:
-        # Implement shard reset logic
-        if DEBUG >= 2: print(f"Resetting shard: {base_shard}")
-        self.buffered_token_output = {}
-        await self.inference_engine.reset_shard(self.get_current_shard(base_shard))
-
     async def update_peers(self, wait_for_peers: int = 0) -> None:
         self.peers = await self.discovery.discover_peers(wait_for_peers)
         if DEBUG >= 2: print(f"Starting with the following peers: {self.peers}")
@@ -244,31 +238,6 @@ class StandardNode(Node):
         self.topology = next_topology
         if self.topology_viz: self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
         return next_topology
-
-    # TODO: unify this and collect_topology as global actions
-    async def global_reset(self, base_shard: Shard, visited: set[str] = set(), max_depth: int = 2) -> None:
-        shard = self.get_current_shard(base_shard)
-        await self.reset_shard(shard)
-
-        if DEBUG >= 2: print(f"Global reset {base_shard=} {max_depth=} {visited=}")
-
-        prev_visited = visited.copy()
-        visited.update(p.id() for p in self.peers)
-
-        for peer in self.peers:
-            if peer.id() in prev_visited:
-                if DEBUG >= 2: print(f"Already visited {peer.id()}. Skipping...")
-                continue
-
-            if max_depth <= 0:
-                if DEBUG >= 2: print(f"Max depth reached. Skipping...")
-                continue
-
-            try:
-                print(f"Forwarding global reset to peer {peer.id()}")
-                await peer.global_reset(base_shard, visited, max_depth = max_depth - 1)
-            except Exception as e:
-                print(f"Error collecting topology from {peer.id()}: {e}")
 
     @property
     def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:

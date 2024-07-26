@@ -50,7 +50,6 @@ async def run_prompt(prompt: str):
         )
 
     await peer2.connect()
-    await peer2.global_reset(shard, set(), 2)
 
     try:
         await peer2.send_prompt(shard, prompt, request_id)
