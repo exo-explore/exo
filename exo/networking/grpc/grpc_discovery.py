@@ -102,8 +102,6 @@ class GRPCDiscovery(Discovery):
                 print(traceback.format_exc())
 
     async def on_listen_message(self, data, addr):
-        if DEBUG_DISCOVERY >= 2: print(f"received from peer {addr}: {data}")
-        
         if not data:
             return
 
@@ -116,6 +114,7 @@ class GRPCDiscovery(Discovery):
 
         decoder = json.JSONDecoder(strict=False)
         message = decoder.decode(decoded_data)
+        if DEBUG_DISCOVERY >= 2: print(f"received from peer {addr}: {message}")
 
         if message['type'] == 'discovery' and message['node_id'] != self.node_id:
             peer_id = message['node_id']
