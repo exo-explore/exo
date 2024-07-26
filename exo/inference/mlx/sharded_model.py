@@ -57,9 +57,14 @@ class StatefulShardedModel:
         return self.step(x, temp, top_p, logit_bias)
 
     def reset(self):
+        if hasattr(self.model.config, "vision_config"):
+            model = self.model.language_model.model
+        else:
+            model = self.model
+
         kv_heads = (
-            [self.model.n_kv_heads] * len(self.model.layers)
-            if isinstance(self.model.n_kv_heads, int)
-            else self.model.n_kv_heads
+            [model.n_kv_heads] * len(model.layers)
+            if isinstance(model.n_kv_heads, int)
+            else model.n_kv_heads
         )
-        self.cache = [KVCache(self.model.head_dim, n) for n in kv_heads]
+        self.cache = [KVCache(model.head_dim, n) for n in kv_heads]
