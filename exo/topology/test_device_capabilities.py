@@ -13,13 +13,18 @@ class TestMacDeviceCapabilities(unittest.TestCase):
                 {
                     "machine_model": "Mac15,9",
                     "machine_name": "MacBook Pro",
-                    "cpu_type": "Apple M3 Max",
+                    "chip_type": "Apple M3 Max",  # Changed from cpu_type to chip_type
                     "number_processors": 16,
                     "physical_memory": "128 GB"
                 }
             ]
         }
-        mock_check_output.return_value = json.dumps(mock_json_output).encode('utf-8')
+
+        # Mock both system_profiler and sysctl outputs
+        mock_check_output.side_effect = [
+            json.dumps(mock_json_output).encode('utf-8'),  # For system_profiler
+            b"Apple M3 Max"  # For sysctl, in case it's needed
+        ]
 
         # Call the function
         result = mac_device_capabilities()
@@ -29,9 +34,9 @@ class TestMacDeviceCapabilities(unittest.TestCase):
         self.assertEqual(result.model, "Mac15,9")
         self.assertEqual(result.chip, "Apple M3 Max")
         self.assertEqual(result.memory, 131072)  # 128 GB in MB
-        self.assertEqual(result.flops, DeviceFlops(fp32=14.20*TFLOPS, fp16=28.40*TFLOPS, int8=56.80*TFLOPS))
-        self.assertEqual(str(result), "Model: Mac15,9. Chip: Apple M3 Max. Memory: 131072MB. Flops: fp32: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS")
-
+        self.assertEqual(result.flops, DeviceFlops(fp32=14.20 * TFLOPS, fp16=28.40 * TFLOPS, int8=56.80 * TFLOPS))
+        self.assertEqual(str(result),
+                         "Model: Mac15,9. Chip: Apple M3 Max. Memory: 131072MB. Flops: fp32: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS")
 
     @patch('subprocess.check_output')
     def test_mac_device_capabilities_m2(self, mock_check_output):
