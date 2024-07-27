@@ -112,8 +112,13 @@ class GRPCDiscovery(Discovery):
             if DEBUG_DISCOVERY >= 2: print(f"Received invalid JSON data from {addr}: {decoded_data[:100]}")
             return
 
-        decoder = json.JSONDecoder(strict=False)
-        message = decoder.decode(decoded_data)
+        try:
+            decoder = json.JSONDecoder(strict=False)
+            message = decoder.decode(decoded_data)
+        except json.JSONDecodeError as e:
+            if DEBUG_DISCOVERY >= 2: print(f"Error decoding JSON data from {addr}: {e}")
+            return
+
         if DEBUG_DISCOVERY >= 2: print(f"received from peer {addr}: {message}")
 
         if message['type'] == 'discovery' and message['node_id'] != self.node_id:
