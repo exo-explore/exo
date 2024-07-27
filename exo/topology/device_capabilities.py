@@ -88,35 +88,25 @@ def mac_device_capabilities() -> DeviceCapabilities:
     # Extract relevant information from the JSON
     hardware_data = hw_info['SPHardwareDataType'][0]
     model_id = hardware_data.get('machine_model', 'Unknown Model')
-    chip_id = "Unknown Chip"
+    chip_id = hardware_data.get('chip_type', 'Unknown Chip')
     cores = hardware_data.get('number_processors', 0)
-    memory = hardware_data.get('physical_memory', '0 GB').split()[0]
-    memory = int(memory) * 1024  # Convert GB to MB
+    memory_str = hardware_data.get('physical_memory', '0 GB')
+    memory = int(memory_str.split()[0]) * 1024  # Convert GB to MB
 
-    # Try to identify the chip using sysctl
-    try:
+    # If chip_type is not available, try to infer it
+    if chip_id == 'Unknown Chip':
         sysctl_output = subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string']).decode('utf-8').strip()
-        if "Apple M1" in sysctl_output:
+        if "Apple M" in sysctl_output:
+            chip_id = sysctl_output.split("Apple M")[1].split()[0]
+            chip_id = f"Apple M{chip_id}"
             if "Max" in sysctl_output:
-                chip_id = "Apple M1 Max"
+                chip_id += " Max"
             elif "Pro" in sysctl_output:
-                chip_id = "Apple M1 Pro"
-            else:
-                chip_id = "Apple M1"
-    except subprocess.CalledProcessError:
-        pass
+                chip_id += " Pro"
+            elif "Ultra" in sysctl_output:
+                chip_id += " Ultra"
 
-    # If sysctl didn't work, infer based on cores and memory
-    if chip_id == "Unknown Chip":
-        if "MacBook Pro" in model_id:
-            if cores == 10 and memory >= 64 * 1024:
-                chip_id = "Apple M1 Max"
-            elif cores == 10:
-                chip_id = "Apple M1 Pro"
-            elif cores > 10:
-                chip_id = "Apple M1 Max"
-
-    flops = CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=10.4 * TFLOPS, fp16=20.8 * TFLOPS, int8=41.6 * TFLOPS))
+    flops = CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0))
 
     if DEBUG >= 1:
         print(f"\nDetailed Mac Device Capabilities:")
@@ -128,8 +118,6 @@ def mac_device_capabilities() -> DeviceCapabilities:
         print(f"  FP32: {flops.fp32 / TFLOPS:.2f} TFLOPS")
         print(f"  FP16: {flops.fp16 / TFLOPS:.2f} TFLOPS")
         print(f"  INT8: {flops.int8 / TFLOPS:.2f} TFLOPS")
-        if chip_id == "Unknown Chip":
-            print(f"Note: Chip was not directly identified. TFLOPS values are estimates.")
 
     return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=flops)
 
