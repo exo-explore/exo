@@ -163,6 +163,10 @@ jobs:
           echo "Response 1: $response_1"
           echo ""
           echo "Response 2: $response_2"
+          echo "Output of first instance:"
+          cat output1.log
+          echo "Output of second instance:"
+          cat output2.log
           exit 1
         else
           echo "Test passed: Response from both nodes contains 'Michael Jackson'"
