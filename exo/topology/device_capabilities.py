@@ -94,7 +94,7 @@ def mac_device_capabilities() -> DeviceCapabilities:
     memory = int(memory_str.split()[0]) * 1024  # Convert GB to MB
 
     # If chip_type is not available, try to infer it
-    if chip_id == 'Unknown Chip':
+    if chip_id == 'Unknown':
         sysctl_output = subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string']).decode('utf-8').strip()
         if "Apple M" in sysctl_output:
             chip_id = sysctl_output.split("Apple M")[1].split()[0]

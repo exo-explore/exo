@@ -103,5 +103,50 @@ class TestMacDeviceCapabilities(unittest.TestCase):
         self.assertIn("Flops: fp32: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS", result_str)
 
 
+    @patch('subprocess.check_output')
+    @patch('psutil.virtual_memory')
+    def test_mac_device_capabilities_macbook_pro_18_2(self, mock_virtual_memory, mock_check_output):
+        # Mock the system_profiler JSON output, an Unknown chip type is actually returned on MacBook Pro 18,2 !!
+        mock_system_profiler_output = {
+            "SPHardwareDataType": [
+                {
+                    "_name": "hardware_overview",
+                    "activation_lock_status": "activation_lock_disabled",
+                    "boot_rom_version": "10151.101.3",
+                    "chip_type": "Unknown",
+                    "machine_model": "MacBookPro18,2",
+                    "machine_name": "MacBook Pro",
+                    "number_processors": "proc 10:8:2",
+                    "os_loader_version": "10151.101.3",
+                    "physical_memory": "64 GB"
+                }
+            ]
+        }
+        mock_check_output.side_effect = [
+            json.dumps(mock_system_profiler_output).encode('utf-8'),  # For system_profiler
+            b"Apple M1 Pro"  # For sysctl, assuming it's an M1 Pro based on the model
+        ]
+
+        # Mock the virtual memory
+        mock_virtual_memory.return_value.total = 64 * 1024 * 1024 * 1024  # 64 GB in bytes
+
+        # Call the function
+        result = mac_device_capabilities()
+
+        # Check the results
+        self.assertIsInstance(result, DeviceCapabilities)
+        self.assertEqual(result.model, "MacBookPro18,2")
+        self.assertEqual(result.chip, "Apple M1 Pro")
+        self.assertEqual(result.memory, 65536)  # 64 GB in MB
+        self.assertEqual(result.flops, DeviceFlops(fp32=4.5 * TFLOPS, fp16=9.0 * TFLOPS, int8=18.0 * TFLOPS))
+
+        # Check the string representation
+        result_str = str(result)
+        self.assertIn("Model: MacBookPro18,2", result_str)
+        self.assertIn("Chip: Apple M1 Pro", result_str)
+        self.assertIn("Memory: 65536MB", result_str)
+        self.assertIn("Flops: fp32: 4.50 TFLOPS, fp16: 9.00 TFLOPS, int8: 18.00 TFLOPS", result_str)
+
+
 if __name__ == '__main__':
     unittest.main()
