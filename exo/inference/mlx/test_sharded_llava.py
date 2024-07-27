@@ -34,11 +34,11 @@ pixel_values = mx.array(inputs["pixel_values"])
 input_ids = mx.array(inputs["input_ids"])
 
 print(prompt)
-y = full.step(input_ids, pixel_values, temp=0)
+y = full.step("full", input_ids, pixel_values, temp=0)
 full_generated_tokens = [y.item()]
 
 for _ in range(13):
-    y = full.step(y, temp=0)
+    y = full.step("full", y, temp=0)
     full_generated_tokens.append(y.item())
 
 full_response = full_processor.tokenizer.decode(full_generated_tokens)
@@ -48,13 +48,13 @@ inputs = processor1(prompt, img, return_tensors="np")
 pixel_values = mx.array(inputs["pixel_values"])
 input_ids = mx.array(inputs["input_ids"])
 
-y = m1.step(input_ids, pixel_values, temp=0)
-y = m2.step(y, temp=0)
+y = m1.step("shard", input_ids, pixel_values, temp=0)
+y = m2.step("shard", y, temp=0)
 full_generated_tokens = [y.item()]
 
 for _ in range(13):
-    y = m1.step(y, temp=0)
-    y = m2.step(y, temp=0)
+    y = m1.step("shard", y, temp=0)
+    y = m2.step("shard", y, temp=0)
     full_generated_tokens.append(y.item())
 
 sharded_response = processor2.tokenizer.decode(full_generated_tokens)
