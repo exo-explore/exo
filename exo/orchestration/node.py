@@ -23,19 +23,11 @@ class Node(ABC):
         pass
 
     @abstractmethod
-    async def reset_shard(self, shard: Shard) -> None:
-        pass
-
-    @abstractmethod
     async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
         pass
 
     @abstractmethod
     async def collect_topology(self, visited: set[str] = set(), max_depth: int = 2) -> Topology:
-        pass
-
-    @abstractmethod
-    async def global_reset(self, base_shard: Shard, visited: set[str] = set(), max_depth: int = 2) -> None:
         pass
 
     @property

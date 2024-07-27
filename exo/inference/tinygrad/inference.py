@@ -143,7 +143,8 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     def __init__(self):
         self.shard = None
 
-    async def infer_prompt(self, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+    async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+        # TODO: we need to refactor models/llamaa to handle per-request-kv-cache. right now it's shared between requests.
         await self.ensure_shard(shard)
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
@@ -157,7 +158,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
         return output_data, json.dumps({"start_pos": start_pos}), output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens
 
-    async def infer_tensor(self, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+    async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
         await self.ensure_shard(shard)
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
@@ -166,11 +167,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
            start_pos += 1
 
         return output_data, json.dumps({"start_pos": start_pos}), output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens
-
-    async def reset_shard(self, shard: Shard):
-        await self.ensure_shard(shard)
-
-        self.model.reset()
 
     async def ensure_shard(self, shard: Shard):
         if self.shard == shard:
