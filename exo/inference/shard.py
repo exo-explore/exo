@@ -13,6 +13,9 @@ class Shard:
     def is_last_layer(self) -> bool:
         return self.end_layer == self.n_layers - 1
 
+    def get_layer_count(self) -> int:
+        return self.end_layer - self.start_layer + 1
+
     def to_dict(self) -> dict:
         return {
             "model_id": self.model_id,

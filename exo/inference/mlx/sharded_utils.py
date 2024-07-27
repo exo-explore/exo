@@ -19,7 +19,6 @@ from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
 from mlx_lm.tuner.utils import apply_lora_layers
 
 from ..shard import Shard
-from exo.inference.mlx.models.sharded_llava import LlavaModel, LlaVAConfig, VisionConfig, VisionModel, TextConfig, LanguageModel
 
 class ModelNotFoundError(Exception):
     def __init__(self, message):
@@ -29,6 +28,7 @@ class ModelNotFoundError(Exception):
 MODEL_REMAPPING = {
     "sharded_mistral": "sharded_llama",  # mistral is compatible with llama
     "sharded_phi-msft": "sharded_phixtral",
+    "sharded_llava": "sharded_llava"
 }
 
 def _get_classes(config: dict):
@@ -113,6 +113,7 @@ def load_model_shard(
     for wf in weight_files:
         weights_dict = mx.load(wf)
         all_weights_keys.update(weights_dict.keys())
+        weights.update({k: v for k, v in weights_dict.items() if not k.startswith("language_model.model.layers.") or shard.start_layer <= int(k.split('.')[3]) <= shard.end_layer})
         weights.update({k: v for k, v in weights_dict.items() if not k.startswith("model.layers.") or shard.start_layer <= int(k.split('.')[2]) <= shard.end_layer})
 
     model_class, model_args_class = _get_classes(config=config)
@@ -136,6 +137,11 @@ def load_model_shard(
             layer_num = int(k.split('.')[2])
             if shard.start_layer <= layer_num <= shard.end_layer:
                 new_key = f"model.layers.{layer_num - shard.start_layer}." + '.'.join(k.split('.')[3:])
+                filtered_weights[new_key] = v
+        elif k.startswith("language_model.model.layers."):
+            layer_num = int(k.split('.')[3])
+            if shard.start_layer <= layer_num <= shard.end_layer:
+                new_key = f"language_model.model.layers.{layer_num - shard.start_layer}." + '.'.join(k.split('.')[4:])
                 filtered_weights[new_key] = v
         else:
             filtered_weights[k] = v
@@ -228,62 +234,11 @@ async def load_shard(
     if adapter_path is not None:
         model = apply_lora_layers(model, adapter_path)
         model.eval()
-    tokenizer = load_tokenizer(model_path, tokenizer_config)
 
-    return model, tokenizer
-
-
-async def load_shard_llava(
-    path_or_hf_repo: str,
-    shard: Shard,
-    tokenizer_config={},
-    model_config={},
-    adapter_path: Optional[str] = None,
-    lazy: bool = False,
-) -> Tuple[nn.Module, TokenizerWrapper]:
-    """
-    Load the model and tokenizer from a given path or a huggingface repository.
-
-    Args:
-        path_or_hf_repo (Path): The path or the huggingface repository to load the model from.
-        tokenizer_config (dict, optional): Configuration parameters specifically for the tokenizer.
-            Defaults to an empty dictionary.
-        model_config(dict, optional): Configuration parameters specifically for the model.
-            Defaults to an empty dictionary.
-        adapter_path (str, optional): Path to the LoRA adapters. If provided, applies LoRA layers
-            to the model. Default: ``None``.
-        lazy (bool): If False eval the model parameters to make sure they are
-            loaded in memory before returning, otherwise they will be loaded
-            when needed. Default: ``False``
-    Returns:
-        Tuple[nn.Module, TokenizerWrapper]: A tuple containing the loaded model and tokenizer.
-
-    Raises:
-        FileNotFoundError: If config file or safetensors are not found.
-        ValueError: If model class or args class are not found.
-    """
-    model_path = await get_model_path(path_or_hf_repo)
-    processor = AutoProcessor.from_pretrained(model_path)
-
-    with open(model_path / "config.json", "r") as f:
-        model_config = json.load(f)
-
-    model_config = LlaVAConfig.from_dict(model_config)
-
-    model_config.vision_config = VisionConfig.from_dict(model_config.vision_config)
-    model_config.text_config = TextConfig.from_dict(model_config.text_config)
-
-    model = LlavaModel(model_config)
-    weight_files = glob.glob(str(model_path / "*.safetensors"))
-    if not weight_files:
-        raise FileNotFoundError(f"No safetensors found in {model_path}")
-
-    weights = {}
-    for wf in weight_files:
-        weights.update(mx.load(wf))
-
-    weights = VisionModel.sanitize(weights)
-    weights = LanguageModel.sanitize(weights)
-
-    model.load_weights(list(weights.items()))
-    return model, processor
+    # TODO: figure out a better way
+    if "llama" in str(model_path):
+        tokenizer = load_tokenizer(model_path, tokenizer_config)
+        return model, tokenizer
+    elif "llava" in str(model_path):
+        processor = AutoProcessor.from_pretrained(model_path)
+        return model, processor

@@ -1,18 +1,15 @@
 # Copyright © 2024 Apple Inc.
 
 import math
-import glob
 import inspect
-import json
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Dict, Union, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Union
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models.base import KVCache
+from mlx_lm.models.base import BaseModelArgs, KVCache
+from exo.inference.shard import Shard
 import numpy as np
-from huggingface_hub import snapshot_download
 
 
 @dataclass
@@ -42,15 +39,15 @@ class VisionConfig:
 
 class VisionAttention(nn.Module):
     def __init__(
-        self,
-        dims: int,
-        num_heads: int,
-        query_input_dims: Optional[int] = None,
-        key_input_dims: Optional[int] = None,
-        value_input_dims: Optional[int] = None,
-        value_dims: Optional[int] = None,
-        value_output_dims: Optional[int] = None,
-        bias: bool = False,
+            self,
+            dims: int,
+            num_heads: int,
+            query_input_dims: Optional[int] = None,
+            key_input_dims: Optional[int] = None,
+            value_input_dims: Optional[int] = None,
+            value_dims: Optional[int] = None,
+            value_output_dims: Optional[int] = None,
+            bias: bool = False,
     ):
         super().__init__()
 
@@ -206,7 +203,7 @@ class VisionModel(nn.Module):
         self.vision_model = ClipVisionModel(config)
 
     def __call__(
-        self, x: mx.array, output_hidden_states: Optional[bool] = None
+            self, x: mx.array, output_hidden_states: Optional[bool] = None
     ) -> mx.array:
         return self.vision_model(x, output_hidden_states)
 
@@ -228,6 +225,7 @@ class VisionModel(nn.Module):
 
         return sanitized_weights
 
+
 @dataclass
 class TextConfig:
     model_type: str
@@ -235,10 +233,10 @@ class TextConfig:
     num_hidden_layers: int = 32
     intermediate_size: int = 11008
     num_attention_heads: int = 32
+    head_dim: int = None
     rms_norm_eps: float = 1e-6
     vocab_size: int = 32000
-    n_kv_heads: int = None
-    head_dim: Optional[int] = None
+    num_key_value_heads: int = None
     rope_theta: float = 10000
     rope_traditional: bool = False
     rope_scaling: Optional[Dict[str, Union[float, str]]] = None
@@ -254,11 +252,14 @@ class TextConfig:
         )
 
     def __post_init__(self):
-        if self.n_kv_heads is None:
-            self.n_kv_heads = self.num_attention_heads
+        if self.num_key_value_heads is None:
+            self.num_key_value_heads = self.num_attention_heads
 
         if self.head_dim is None:
             self.head_dim = self.hidden_size // self.num_attention_heads
+
+        if self.model_type is None:
+            self.model_type = "llama"
 
         if self.rope_scaling:
             required_keys = {"factor", "type"}
@@ -275,12 +276,12 @@ class TextAttention(nn.Module):
 
         dim = config.hidden_size
         self.n_heads = n_heads = config.num_attention_heads
-        self.n_kv_heads = n_kv_heads = config.n_kv_heads
+        self.n_kv_heads = n_kv_heads = config.num_key_value_heads
 
         self.repeats = n_heads // n_kv_heads
 
         head_dim = config.hidden_size // n_heads
-        self.scale = head_dim**-0.5
+        self.scale = head_dim ** -0.5
 
         self.q_proj = nn.Linear(dim, n_heads * head_dim, bias=False)
         self.k_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=False)
@@ -290,7 +291,7 @@ class TextAttention(nn.Module):
         rope_scale = (
             1 / config.rope_scaling["factor"]
             if config.rope_scaling is not None
-            and config.rope_scaling["type"] == "linear"
+               and config.rope_scaling["type"] == "linear"
             else 1
         )
         self.rope = nn.RoPE(
@@ -301,10 +302,10 @@ class TextAttention(nn.Module):
         )
 
     def __call__(
-        self,
-        x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None,
+            self,
+            x: mx.array,
+            mask: Optional[mx.array] = None,
+            cache: Optional[KVCache] = None,
     ) -> mx.array:
         B, L, D = x.shape
 
@@ -355,10 +356,10 @@ class TransformerBlock(nn.Module):
         self.config = config
 
     def __call__(
-        self,
-        x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None,
+            self,
+            x: mx.array,
+            mask: Optional[mx.array] = None,
+            cache: Optional[KVCache] = None,
     ) -> mx.array:
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
@@ -368,12 +369,15 @@ class TransformerBlock(nn.Module):
 
 
 class Llama(nn.Module):
-    def __init__(self, config: TextConfig):
+    def __init__(self, config: TextConfig, is_first_layer, is_last_layer):
         super().__init__()
         self.config = config
+        self.is_first_layer = is_first_layer
+        self.is_last_layer = is_last_layer
         self.vocab_size = config.vocab_size
+        self.model_type = config.model_type
         self.num_hidden_layers = config.num_hidden_layers
-        self.n_kv_heads = config.n_kv_heads
+        self.num_key_value_heads = config.num_key_value_heads
         self.head_dim = config.head_dim
         assert self.vocab_size > 0
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -383,14 +387,17 @@ class Llama(nn.Module):
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def __call__(
-        self,
-        inputs: mx.array,
-        cache=None,
-        inputs_embeds=None,
+            self,
+            inputs: mx.array,
+            cache=None,
+            inputs_embeds=None,
     ):
         # for passing merged input embeddings
         if inputs_embeds is None:
-            h = self.embed_tokens(inputs)
+            if self.is_first_layer:
+                h = self.embed_tokens(inputs)
+            else:
+                h = inputs
         else:
             h = inputs_embeds
 
@@ -406,18 +413,20 @@ class Llama(nn.Module):
         for layer, c in zip(self.layers, cache):
             h = layer(h, mask, c)
 
-        return self.norm(h)
-
+        if self.is_last_layer:
+            h = self.norm(h)
+        return h
 
 class LanguageModel(nn.Module):
-    def __init__(self, config: TextConfig):
+    def __init__(self, config: TextConfig, is_first_layer, is_last_layer):
         super().__init__()
         self.model_type = config.model_type
         if self.model_type != "llama":
             raise ValueError(
                 f"Model type {self.model_type} not supported. Currently only 'llama' is supported"
             )
-        self.model = Llama(config)
+        self.is_last_layer = is_last_layer
+        self.model = Llama(config, is_first_layer, is_last_layer)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
     def __call__(
@@ -427,7 +436,9 @@ class LanguageModel(nn.Module):
         inputs_embeds=None,
     ):
         out = self.model(inputs, cache, inputs_embeds)
-        return self.lm_head(out)
+        if self.is_last_layer:
+            out = self.lm_head(out)
+        return out
 
     @staticmethod
     def sanitize(weights):
@@ -436,11 +447,10 @@ class LanguageModel(nn.Module):
             k: v for k, v in weights.items() if "self_attn.rotary_emb.inv_freq" not in k
         }
 
-
 @dataclass
-class LlaVAConfig:
+class LlaVAConfig(BaseModelArgs):
     text_config: TextConfig
-    vision_config: VisionConfig
+    vision_config: VisionConfig = None
     model_type: str = "llava"
     ignore_index: int = -100
     image_token_index: int = 32000
@@ -450,13 +460,32 @@ class LlaVAConfig:
 
     @classmethod
     def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
+        updated_params = {}
+        class_params = inspect.signature(cls).parameters
+        for k, v in params.items():
+            if k in class_params:
+                if k in ["text_config", "vision_config"]:
+                    v = class_params[k].annotation.from_dict(v)
+                updated_params.update({k: v})
+
+        return cls(**updated_params)
+
+
+@dataclass
+class ModelArgs(LlaVAConfig):
+    shard: Shard = field(default_factory=lambda: Shard("", 0, 0, 0))
+
+    def __post_init__(self):
+        if isinstance(self.shard, dict):
+            self.shard = Shard(**self.shard)
+
+        if not isinstance(self.shard, Shard):
+            raise TypeError(f"Expected shard to be a Shard instance or a dict, got {type(self.shard)} instead")
+
+        if not self.shard.is_first_layer():
+            self.vision_config = None
+
+        self.text_config.num_hidden_layers = self.shard.get_layer_count()
 
 
 class LlavaMultiModalProjector(nn.Module):
@@ -477,19 +506,22 @@ class LlavaMultiModalProjector(nn.Module):
         return x
 
 
-class LlavaModel(nn.Module):
-    def __init__(self, config: LlaVAConfig):
+class Model(nn.Module):
+    def __init__(self, config: ModelArgs):
+        super().__init__()
         self.config = config
-        self.vision_tower = VisionModel(config.vision_config)
-        self.language_model = LanguageModel(config.text_config)
-        self.multi_modal_projector = LlavaMultiModalProjector(config)
-        self.vision_feature_layer = config.vision_feature_layer
-        self.vision_feature_select_strategy = config.vision_feature_select_strategy
+        self.model_type = config.model_type
+        if config.vision_config:
+            self.vision_tower = VisionModel(config.vision_config)
+            self.multi_modal_projector = LlavaMultiModalProjector(config)
+            self.vision_feature_layer = config.vision_feature_layer
+            self.vision_feature_select_strategy = config.vision_feature_select_strategy
+        self.language_model = LanguageModel(config.text_config, config.shard.is_first_layer(), config.shard.is_last_layer())
 
     def get_input_embeddings(
-        self,
-        input_ids: Optional[mx.array] = None,
-        pixel_values: Optional[mx.array] = None,
+            self,
+            input_ids: Optional[mx.array] = None,
+            pixel_values: Optional[mx.array] = None,
     ):
         if pixel_values is None:
             return self.language_model(input_ids)
@@ -525,7 +557,7 @@ class LlavaModel(nn.Module):
         return final_inputs_embeds
 
     def _merge_input_ids_with_image_features(
-        self, image_features, inputs_embeds, input_ids
+            self, image_features, inputs_embeds, input_ids
     ):
         image_token_index = self.config.image_token_index
         num_images, num_image_patches, embed_dim = image_features.shape
@@ -554,49 +586,32 @@ class LlavaModel(nn.Module):
         # (1, num_image_patches*num_images + sequence_len, embed_dim)
         return mx.concatenate(final_embeddings, axis=1)
 
-    def __call__(self, input_ids: mx.array, pixel_values: mx.array, cache=None):
-        input_embddings = self.get_input_embeddings(input_ids, pixel_values)
+    def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None):
+        input_embddings = None
+        if pixel_values is not None:
+            input_embddings = self.get_input_embeddings(input_ids, pixel_values)
         logits = self.language_model(
             input_ids, cache=cache, inputs_embeds=input_embddings
         )
         return logits
 
-    @staticmethod
-    def from_pretrained(path_or_hf_repo: str):
-        path = Path(path_or_hf_repo)
-        if not path.exists():
-            path = Path(
-                snapshot_download(
-                    repo_id=path_or_hf_repo,
-                    allow_patterns=[
-                        "*.json",
-                        "*.safetensors",
-                        "*.py",
-                        "tokenizer.model",
-                        "*.tiktoken",
-                    ],
-                )
-            )
+    def sanitize(self, weights):
+        if self.config.vision_config:
+            weights = self.vision_tower.sanitize(weights)
+        weights = self.language_model.sanitize(weights)
 
-        with open(path / "config.json", "r") as f:
-            model_config = json.load(f)
+        return weights
 
-        model_config = LlaVAConfig.from_dict(model_config)
+    @property
+    def layers(self):
+        return self.language_model.model.layers
 
-        model_config.vision_config = VisionConfig.from_dict(model_config.vision_config)
-        model_config.text_config = TextConfig.from_dict(model_config.text_config)
+    @property
+    def head_dim(self):
+        return (
+                self.language_model.model.head_dim or self.language_model.model.hidden_size // self.language_model.model.num_attention_heads
+        )
 
-        model = LlavaModel(model_config)
-        weight_files = glob.glob(str(path / "*.safetensors"))
-        if not weight_files:
-            raise FileNotFoundError(f"No safetensors found in {path}")
-
-        weights = {}
-        for wf in weight_files:
-            weights.update(mx.load(wf))
-
-        weights = VisionModel.sanitize(weights)
-        weights = LanguageModel.sanitize(weights)
-
-        model.load_weights(list(weights.items()))
-        return model
+    @property
+    def n_kv_heads(self):
+        return self.language_model.model.num_key_value_heads
