@@ -102,8 +102,25 @@ class GRPCDiscovery(Discovery):
                 print(traceback.format_exc())
 
     async def on_listen_message(self, data, addr):
-        message = json.loads(data.decode('utf-8'))
+        if not data:
+            return
+
+        decoded_data = data.decode('utf-8', errors='ignore')
+        
+        # Check if the decoded data starts with a valid JSON character
+        if not (decoded_data.strip() and decoded_data.strip()[0] in '{['):
+            if DEBUG_DISCOVERY >= 2: print(f"Received invalid JSON data from {addr}: {decoded_data[:100]}")
+            return
+
+        try:
+            decoder = json.JSONDecoder(strict=False)
+            message = decoder.decode(decoded_data)
+        except json.JSONDecodeError as e:
+            if DEBUG_DISCOVERY >= 2: print(f"Error decoding JSON data from {addr}: {e}")
+            return
+
         if DEBUG_DISCOVERY >= 2: print(f"received from peer {addr}: {message}")
+
         if message['type'] == 'discovery' and message['node_id'] != self.node_id:
             peer_id = message['node_id']
             peer_host = addr[0]
