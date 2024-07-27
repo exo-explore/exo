@@ -127,6 +127,23 @@ jobs:
         # Wait for discovery
         sleep 10
 
+        # Function to check if processes are still running
+        check_processes() {
+          if ! kill -0 $PID1 2>/dev/null; then
+            echo "First instance (PID $PID1) died unexpectedly. Log output:"
+            cat output1.log
+            exit 1
+          fi
+          if ! kill -0 $PID2 2>/dev/null; then
+            echo "Second instance (PID $PID2) died unexpectedly. Log output:"
+            cat output2.log
+            exit 1
+          fi
+        }
+
+        # Check processes before proceeding
+        check_processes
+
         # first one to load the model
         curl -s http://localhost:8000/v1/chat/completions \
             -H "Content-Type: application/json" \
@@ -135,6 +152,9 @@ jobs:
               "messages": [{"role": "user", "content": "Keep responses concise. Placeholder to load model..."}],
               "temperature": 0.7
             }'
+
+        # Check processes after model load
+        check_processes
 
         response_1=$(curl -s http://localhost:8000/v1/chat/completions \
           -H "Content-Type: application/json" \
@@ -145,6 +165,9 @@ jobs:
           }')
         echo "Response 1: $response_1"
 
+        # Check processes after first response
+        check_processes
+
         response_2=$(curl -s http://localhost:8000/v1/chat/completions \
           -H "Content-Type: application/json" \
           -d '{
@@ -153,6 +176,9 @@ jobs:
             "temperature": 0.7
           }')
         echo "Response 2: $response_2"
+
+        # Check processes after second response
+        check_processes
 
         # Stop both instances
         kill $PID1 $PID2
