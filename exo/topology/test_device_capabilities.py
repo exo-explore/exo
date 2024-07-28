@@ -5,7 +5,7 @@ from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapa
 
 class TestMacDeviceCapabilities(unittest.TestCase):
   @patch("subprocess.check_output")
-  def test_mac_device_capabilities(self, mock_check_output):
+  def test_mac_device_capabilities_pro(self, mock_check_output):
     # Mock the subprocess output
     mock_check_output.return_value = b"""
 Hardware:
@@ -40,7 +40,7 @@ Activation Lock Status: Enabled
     )
 
   @patch("subprocess.check_output")
-  def test_mac_device_capabilities(self, mock_check_output):
+  def test_mac_device_capabilities_air(self, mock_check_output):
     # Mock the subprocess output
     mock_check_output.return_value = b"""
 Hardware:

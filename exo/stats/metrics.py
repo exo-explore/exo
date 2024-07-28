@@ -1,7 +1,6 @@
 from exo.orchestration import Node
 from prometheus_client import start_http_server, Counter, Histogram
 import json
-from typing import List
 
 # Create metrics to track time spent and requests made.
 PROCESS_PROMPT_COUNTER = Counter("process_prompt_total", "Total number of prompts processed", ["node_id"])
@@ -14,9 +13,9 @@ def start_metrics_server(node: Node, port: int):
 
   def _on_opaque_status(request_id, opaque_status: str):
     status_data = json.loads(opaque_status)
-    type = status_data.get("type", "")
+    _type = status_data.get("type", "")
     node_id = status_data.get("node_id", "")
-    if type != "node_status":
+    if _type != "node_status":
       return
     status = status_data.get("status", "")
 

@@ -8,7 +8,6 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.live import Live
 from rich.style import Style
-from rich.color import Color
 from exo.topology.device_capabilities import UNKNOWN_DEVICE_CAPABILITIES
 
 
@@ -20,7 +19,7 @@ class TopologyViz:
     self.partitions: List[Partition] = []
 
     self.console = Console()
-    self.panel = Panel(self._generate_layout(), title=f"Exo Cluster (0 nodes)", border_style="bright_yellow")
+    self.panel = Panel(self._generate_layout(), title="Exo Cluster (0 nodes)", border_style="bright_yellow")
     self.live_panel = Live(self.panel, auto_refresh=False, console=self.console)
     self.live_panel.start()
 

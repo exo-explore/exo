@@ -1,5 +1,4 @@
 from exo.inference.shard import Shard
-from exo.inference.mlx.sharded_model import StatefulShardedModel
 import mlx.core as mx
 import mlx.nn as nn
 from typing import Optional

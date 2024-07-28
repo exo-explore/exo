@@ -47,9 +47,9 @@ def adjust_indentation(content):
 def process_file(file_path, process_func):
     with open(file_path, 'r') as file:
         content = file.read()
-    
+
     modified_content = process_func(content)
-    
+
     if content != modified_content:
         with open(file_path, 'w') as file:
             file.write(modified_content)

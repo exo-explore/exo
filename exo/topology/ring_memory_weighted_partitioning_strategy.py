@@ -1,6 +1,5 @@
 from typing import List
 from .partitioning_strategy import PartitioningStrategy
-from exo.inference.shard import Shard
 from .topology import Topology
 from .partitioning_strategy import Partition
 

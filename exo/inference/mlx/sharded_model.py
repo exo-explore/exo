@@ -1,4 +1,4 @@
-from typing import Any, Dict, Generator, Optional, Tuple
+from typing import Dict, Generator, Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn

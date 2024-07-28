@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, List, Callable
+from typing import Optional, Tuple, List
 import numpy as np
 from abc import ABC, abstractmethod
 from exo.helpers import AsyncCallbackSystem

@@ -116,8 +116,8 @@ def device_capabilities() -> DeviceCapabilities:
     return linux_device_capabilities()
   else:
     return DeviceCapabilities(
-      model=f"Unknown Device",
-      chip=f"Unknown Chip",
+      model="Unknown Device",
+      chip="Unknown Chip",
       memory=psutil.virtual_memory().total // 2**20,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
     )
@@ -151,7 +151,7 @@ def linux_device_capabilities() -> DeviceCapabilities:
 
   if DEBUG >= 2: print(f"tinygrad {Device.DEFAULT=}")
   if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
-    import pynvml, pynvml_utils
+    import pynvml
 
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(0)

@@ -2,12 +2,12 @@ import asyncio
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Union
-import json, argparse, random, time
+import json
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
-from tinygrad.nn.state import safe_load, torch_load, load_state_dict, get_parameters
-from tinygrad import Tensor, dtypes, nn, Context, Device, GlobalCounters
+from tinygrad.nn.state import safe_load, torch_load, load_state_dict
+from tinygrad import Tensor, nn, Context, GlobalCounters
 from tinygrad.helpers import DEBUG, tqdm, _cache_dir, fetch
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine

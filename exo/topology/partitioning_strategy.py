@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from typing import List
 from dataclasses import dataclass
 from .topology import Topology
 from exo.inference.shard import Shard

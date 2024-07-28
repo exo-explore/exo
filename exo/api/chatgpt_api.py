@@ -85,20 +85,18 @@ async def resolve_tokenizer(model_id: str):
   try:
     if DEBUG >= 2: print(f"Trying AutoTokenizer for {model_id}")
     return AutoTokenizer.from_pretrained(model_id)
-  except:
+  except Exception as e:
+    if DEBUG >= 2: print(f"Failed to load tokenizer for {model_id}. Falling back to tinygrad tokenizer. Error: {e}")
     import traceback
-
     if DEBUG >= 2: print(traceback.format_exc())
-    if DEBUG >= 2: print(f"Failed to load tokenizer for {model_id}. Falling back to tinygrad tokenizer")
 
   try:
     if DEBUG >= 2: print(f"Trying tinygrad tokenizer for {model_id}")
     return resolve_tinygrad_tokenizer(model_id)
-  except:
+  except Exception as e:
+    if DEBUG >= 2: print(f"Failed again to load tokenizer for {model_id}. Falling back to mlx tokenizer. Error: {e}")
     import traceback
-
     if DEBUG >= 2: print(traceback.format_exc())
-    if DEBUG >= 2: print(f"Failed again to load tokenizer for {model_id}. Falling back to mlx tokenizer")
 
   if DEBUG >= 2: print(f"Trying mlx tokenizer for {model_id}")
   from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
@@ -312,7 +310,7 @@ class ChatGPTAPI:
         if (
           request_id in self.stream_tasks
         ):  # in case there is still a stream task running, wait for it to complete
-          if DEBUG >= 2: print(f"Pending stream task. Waiting for stream task to complete.")
+          if DEBUG >= 2: print("Pending stream task. Waiting for stream task to complete.")
           try:
             await asyncio.wait_for(self.stream_tasks[request_id], timeout=30)
           except asyncio.TimeoutError:

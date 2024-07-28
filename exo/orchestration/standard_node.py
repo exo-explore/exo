@@ -18,7 +18,7 @@ from exo.viz.topology_viz import TopologyViz
 class StandardNode(Node):
   def __init__(
     self,
-    id: str,
+    _id: str,
     server: Server,
     inference_engine: InferenceEngine,
     discovery: Discovery,
@@ -28,7 +28,7 @@ class StandardNode(Node):
     web_chat_url: Optional[str] = None,
     disable_tui: Optional[bool] = False,
   ):
-    self.id = id
+    self.id = _id
     self.inference_engine = inference_engine
     self.server = server
     self.discovery = discovery
@@ -358,7 +358,7 @@ class StandardNode(Node):
         continue
 
       if max_depth <= 0:
-        if DEBUG >= 2: print(f"Max depth reached. Skipping...")
+        if DEBUG >= 2: print("Max depth reached. Skipping...")
         continue
 
       try:

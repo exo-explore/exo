@@ -1,4 +1,3 @@
-from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
 from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
@@ -19,7 +18,7 @@ async def test_inference_engine(
   resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt(
     "A", shard=Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32), prompt=prompt
   )
-  next_resp_full, next_inference_state_full, _ = await inference_engine_1.infer_tensor(
+  next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
     "A",
     shard=Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32),
     input_data=resp_full,
@@ -41,7 +40,7 @@ async def test_inference_engine(
     input_data=resp2,
     inference_state=inference_state_2,
   )
-  resp4, inference_state_4, _ = await inference_engine_2.infer_tensor(
+  resp4, _inference_state_4, _ = await inference_engine_2.infer_tensor(
     "B",
     shard=Shard(model_id=model_id, start_layer=31, end_layer=31, n_layers=32),
     input_data=resp3,
