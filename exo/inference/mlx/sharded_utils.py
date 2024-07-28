@@ -129,7 +129,7 @@ def load_model_shard(
       class_predicate=None,
     )
 
-  model.load_weights(list(weights.items()))
+  model.load_weights(list(weights.items()), strict=True)
 
   if not lazy:
     mx.eval(model.parameters())
