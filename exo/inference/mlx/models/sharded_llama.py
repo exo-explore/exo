@@ -108,19 +108,13 @@ class DynamicNTKScalingRoPE(nn.Module):
     return new_base_freqs.mean().item()
 
   def extra_repr(self):
-    return (
-      f"{self.dims}, traditional={self.traditional}, "
-      f"max_position_embeddings={self.max_position_embeddings}, "
-      f"scaling_factor={self.scale}, rope_type={self.rope_type}"
-    )
+    return f"{self.dims}, traditional={self.traditional}, " f"max_position_embeddings={self.max_position_embeddings}, " f"scaling_factor={self.scale}, rope_type={self.rope_type}"
 
   def __call__(self, x, offset: int = 0):
     seq_len = x.shape[1] + offset
     base = self.base
     if self.max_position_embeddings and seq_len > self.max_position_embeddings:
-      base *= ((self.scale * seq_len / self.max_position_embeddings) - (self.scale - 1)) ** (
-        self.dims / (self.dims - 2)
-      )
+      base *= ((self.scale * seq_len / self.max_position_embeddings) - (self.scale - 1)) ** (self.dims / (self.dims - 2))
 
     return mx.fast.rope(
       x,

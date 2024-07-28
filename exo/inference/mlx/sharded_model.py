@@ -61,9 +61,5 @@ class StatefulShardedModel:
     return self.step(x, temp, top_p, logit_bias)
 
   def init_cache(self, request_id: str):
-    kv_heads = (
-      [self.model.n_kv_heads] * len(self.model.layers)
-      if isinstance(self.model.n_kv_heads, int)
-      else self.model.n_kv_heads
-    )
+    kv_heads = [self.model.n_kv_heads] * len(self.model.layers) if isinstance(self.model.n_kv_heads, int) else self.model.n_kv_heads
     self.request_cache[request_id] = [KVCache(self.model.head_dim, n) for n in kv_heads]

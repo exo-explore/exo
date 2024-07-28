@@ -59,7 +59,7 @@ def run_black(target):
     exclude_patterns = '|'.join(f'({pattern.replace("*", ".*")})' for pattern in IGNORE_PATTERNS)
     command = [
         "black",
-        "--line-length", "120",
+        "--line-length", "200",
         "--extend-exclude", exclude_patterns,
         target
     ]

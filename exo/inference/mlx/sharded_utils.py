@@ -116,13 +116,7 @@ def load_model_shard(
   for wf in weight_files:
     weights_dict = mx.load(wf)
     all_weights_keys.update(weights_dict.keys())
-    weights.update(
-      {
-        k: v
-        for k, v in weights_dict.items()
-        if not k.startswith("model.layers.") or shard.start_layer <= int(k.split(".")[2]) <= shard.end_layer
-      }
-    )
+    weights.update({k: v for k, v in weights_dict.items() if not k.startswith("model.layers.") or shard.start_layer <= int(k.split(".")[2]) <= shard.end_layer})
 
   model_class, model_args_class = _get_classes(config=config)
 
