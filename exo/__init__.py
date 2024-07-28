@@ -1,1 +1,1 @@
-from exo.helpers import DEBUG, DEBUG_DISCOVERY, VERSION
+from exo.helpers import DEBUG as DEBUG, DEBUG_DISCOVERY as DEBUG_DISCOVERY, VERSION as VERSION

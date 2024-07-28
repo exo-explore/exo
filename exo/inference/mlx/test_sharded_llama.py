@@ -23,17 +23,17 @@ max_tokens = 50
 resp = prompt_tokens
 full_generated_tokens = []
 for _ in range(max_tokens):
-    resp = full.step(resp)
-    full_generated_tokens.append(resp.item())
+  resp = full.step(resp)
+  full_generated_tokens.append(resp.item())
 
 print("full response: ", full_tokenizer.decode(full_generated_tokens))
 
 sharded_generated_tokens = []
 sharded_resp = prompt_tokens
 for _ in range(max_tokens):
-    resp1 = m1.step(sharded_resp)
-    sharded_resp = m2.step(resp1)
-    sharded_generated_tokens.append(sharded_resp.item())
+  resp1 = m1.step(sharded_resp)
+  sharded_resp = m2.step(resp1)
+  sharded_generated_tokens.append(sharded_resp.item())
 
 print("sharded response: ", tokenizer1.decode(sharded_generated_tokens))
 

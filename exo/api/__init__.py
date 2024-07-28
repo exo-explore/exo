@@ -1,1 +1,1 @@
-from exo.api.chatgpt_api import ChatGPTAPI
+from exo.api.chatgpt_api import ChatGPTAPI as ChatGPTAPI
