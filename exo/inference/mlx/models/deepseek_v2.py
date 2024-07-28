@@ -106,14 +106,11 @@ class Model(nn.Module):
       for n, m in [("w1", "gate_proj"), ("w2", "down_proj"), ("w3", "up_proj")]:
         for k in ["weight", "scales", "biases"]:
           if f"{prefix}.mlp.experts.0.{m}.{k}" in shard_state_dict:
-            to_join = [
-              shard_state_dict.pop(f"{prefix}.mlp.experts.{e}.{m}.{k}") for e in range(self.args.n_routed_experts)
-            ]
+            to_join = [shard_state_dict.pop(f"{prefix}.mlp.experts.{e}.{m}.{k}") for e in range(self.args.n_routed_experts)]
             shard_state_dict[
               f"{prefix}.mlp.switch_mlp.{
-              m}.{k}"
+       m}.{k}"
             ] = mx.stack(to_join)
-
 
     return shard_state_dict
 
