@@ -41,6 +41,9 @@ extras_require = {
         "pylint==3.2.6",
         "ruff==0.5.5",
         "mypy==1.11.0",
+    ],
+    "testing": [
+        "pillow==10.4.0"
     ]
 }
 
