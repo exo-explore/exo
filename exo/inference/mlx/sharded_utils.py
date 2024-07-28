@@ -27,8 +27,8 @@ class ModelNotFoundError(Exception):
 
 
 MODEL_REMAPPING = {
-  "sharded_mistral": "sharded_llama",  # mistral is compatible with llama
-  "sharded_phi-msft": "sharded_phixtral",
+    "mistral": "llama",  # mistral is compatible with llama
+    "phi-msft": "phixtral",
 }
 
 
@@ -84,22 +84,20 @@ def load_model_shard(
   Returns:
   nn.Module: The loaded and initialized model.
 
-  Raises:
-  FileNotFoundError: If the weight files (.safetensors) are not found.
-  ValueError: If the model class or args class are not found or cannot be instantiated.
-  """
+    Raises:
+        FileNotFoundError: If the weight files (.safetensors) are not found.
+        ValueError: If the model class or args class are not found or cannot be instantiated.
+    """
+    config = load_config(model_path)
+    config.update(model_config)
 
-  config = load_config(model_path)
-  config.update(model_config)
-
-  # TODO hack
-  config["model_type"] = f"sharded_{config['model_type']}"
-  config["shard"] = {
-    "model_id": model_path.name,
-    "start_layer": shard.start_layer,
-    "end_layer": shard.end_layer,
-    "n_layers": shard.n_layers,
-  }
+    # TODO hack
+    config["shard"] = {
+        "model_id": model_path.name,
+        "start_layer": shard.start_layer,
+        "end_layer": shard.end_layer,
+        "n_layers": shard.n_layers
+    }
 
   weight_files = glob.glob(str(model_path / "model*.safetensors"))
 
@@ -111,26 +109,17 @@ def load_model_shard(
     logging.error(f"No safetensors found in {model_path}")
     raise FileNotFoundError(f"No safetensors found in {model_path}")
 
-  weights = {}
-  all_weights_keys = set()
-  for wf in weight_files:
-    weights_dict = mx.load(wf)
-    all_weights_keys.update(weights_dict.keys())
-    weights.update(
-      {
-        k: v
-        for k, v in weights_dict.items()
-        if not k.startswith("model.layers.") or shard.start_layer <= int(k.split(".")[2]) <= shard.end_layer
-      }
-    )
+    weights = {}
+    for wf in weight_files:
+        weights.update(mx.load(wf))
 
   model_class, model_args_class = _get_classes(config=config)
 
-  model_args = model_args_class.from_dict(config)
-  model = model_class(model_args)
-
-  if hasattr(model, "sanitize"):
-    weights = model.sanitize(weights)
+    model_args = model_args_class.from_dict(config)
+    model = model_class(model_args)
+    
+    if hasattr(model, "sanitize"):
+        weights = model.sanitize(weights)
 
   if (quantization := config.get("quantization", None)) is not None:
     nn.quantize(
@@ -139,18 +128,7 @@ def load_model_shard(
       class_predicate=None,
     )
 
-  filtered_weights = {}
-  for k, v in weights.items():
-    if k.startswith("model.layers."):
-      layer_num = int(k.split(".")[2])
-      if shard.start_layer <= layer_num <= shard.end_layer:
-        new_key = f"model.layers.{layer_num - shard.start_layer}." + ".".join(k.split(".")[3:])
-        filtered_weights[new_key] = v
-    else:
-      filtered_weights[k] = v
-  weights = filtered_weights
-
-  model.load_weights(list(weights.items()), strict=False)
+    model.load_weights(list(weights.items()))
 
   if not lazy:
     mx.eval(model.parameters())

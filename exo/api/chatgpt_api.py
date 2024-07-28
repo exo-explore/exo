@@ -54,6 +54,12 @@ shard_mappings = {
       model_id="mlx-community/Mistral-Large-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=88
     ),
   },
+  # deepseek v2
+  "deepseek-coder-v2-lite": {
+    "MLXDynamicShardInferenceEngine": Shard(
+      model_id="mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", start_layer=0, end_layer=0, n_layers=27
+    ),
+  },
 }
 
 
@@ -157,6 +163,7 @@ def parse_message(data: dict):
   if "role" not in data or "content" not in data:
     raise ValueError(f"Invalid message: {data}. Must have 'role' and 'content'")
   return Message(data["role"], data["content"])
+
 
 
 def parse_chat_request(data: dict):
