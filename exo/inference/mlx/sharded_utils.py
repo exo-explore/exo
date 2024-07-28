@@ -27,8 +27,8 @@ class ModelNotFoundError(Exception):
 
 
 MODEL_REMAPPING = {
-  "sharded_mistral": "sharded_llama",  # mistral is compatible with llama
-  "sharded_phi-msft": "sharded_phixtral",
+  "mistral": "llama",  # mistral is compatible with llama
+  "phi-msft": "phixtral",
 }
 
 
@@ -37,10 +37,10 @@ def _get_classes(config: dict):
   Retrieve the model and model args classes based on the configuration.
 
   Args:
-  config (dict): The model configuration.
+   config (dict): The model configuration.
 
   Returns:
-  A tuple containing the Model class and the ModelArgs class.
+   A tuple containing the Model class and the ModelArgs class.
   """
   model_type = config["model_type"]
   model_type = MODEL_REMAPPING.get(model_type, model_type)
@@ -74,26 +74,24 @@ def load_model_shard(
   Load and initialize the model from a given path.
 
   Args:
-  model_path (Path): The path to load the model from.
-  lazy (bool): If False eval the model parameters to make sure they are
-  loaded in memory before returning, otherwise they will be loaded
-  when needed. Default: ``False``
-  model_config(dict, optional): Configuration parameters for the model.
-  Defaults to an empty dictionary.
+   model_path (Path): The path to load the model from.
+   lazy (bool): If False eval the model parameters to make sure they are
+    loaded in memory before returning, otherwise they will be loaded
+    when needed. Default: ``False``
+   model_config(dict, optional): Configuration parameters for the model.
+    Defaults to an empty dictionary.
 
   Returns:
-  nn.Module: The loaded and initialized model.
+   nn.Module: The loaded and initialized model.
 
   Raises:
-  FileNotFoundError: If the weight files (.safetensors) are not found.
-  ValueError: If the model class or args class are not found or cannot be instantiated.
+   FileNotFoundError: If the weight files (.safetensors) are not found.
+   ValueError: If the model class or args class are not found or cannot be instantiated.
   """
-
   config = load_config(model_path)
   config.update(model_config)
 
   # TODO hack
-  config["model_type"] = f"sharded_{config['model_type']}"
   config["shard"] = {
     "model_id": model_path.name,
     "start_layer": shard.start_layer,
@@ -112,11 +110,8 @@ def load_model_shard(
     raise FileNotFoundError(f"No safetensors found in {model_path}")
 
   weights = {}
-  all_weights_keys = set()
   for wf in weight_files:
-    weights_dict = mx.load(wf)
-    all_weights_keys.update(weights_dict.keys())
-    weights.update({k: v for k, v in weights_dict.items() if not k.startswith("model.layers.") or shard.start_layer <= int(k.split(".")[2]) <= shard.end_layer})
+    weights.update(mx.load(wf))
 
   model_class, model_args_class = _get_classes(config=config)
 
@@ -133,18 +128,7 @@ def load_model_shard(
       class_predicate=None,
     )
 
-  filtered_weights = {}
-  for k, v in weights.items():
-    if k.startswith("model.layers."):
-      layer_num = int(k.split(".")[2])
-      if shard.start_layer <= layer_num <= shard.end_layer:
-        new_key = f"model.layers.{layer_num - shard.start_layer}." + ".".join(k.split(".")[3:])
-        filtered_weights[new_key] = v
-    else:
-      filtered_weights[k] = v
-  weights = filtered_weights
-
-  model.load_weights(list(weights.items()), strict=False)
+  model.load_weights(list(weights.items()))
 
   if not lazy:
     mx.eval(model.parameters())
@@ -164,11 +148,11 @@ async def get_model_path(path_or_hf_repo: str, revision: Optional[str] = None) -
   it is downloaded from the Hugging Face Hub.
 
   Args:
-  path_or_hf_repo (str): The local path or Hugging Face repository ID of the model.
-  revision (str, optional): A revision id which can be a branch name, a tag, or a commit hash.
+   path_or_hf_repo (str): The local path or Hugging Face repository ID of the model.
+   revision (str, optional): A revision id which can be a branch name, a tag, or a commit hash.
 
   Returns:
-  Path: The path to the model.
+   Path: The path to the model.
   """
   model_path = Path(path_or_hf_repo)
   if not model_path.exists():
@@ -210,22 +194,22 @@ async def load_shard(
   Load the model and tokenizer from a given path or a huggingface repository.
 
   Args:
-  path_or_hf_repo (Path): The path or the huggingface repository to load the model from.
-  tokenizer_config (dict, optional): Configuration parameters specifically for the tokenizer.
-  Defaults to an empty dictionary.
-  model_config(dict, optional): Configuration parameters specifically for the model.
-  Defaults to an empty dictionary.
-  adapter_path (str, optional): Path to the LoRA adapters. If provided, applies LoRA layers
-  to the model. Default: ``None``.
-  lazy (bool): If False eval the model parameters to make sure they are
-  loaded in memory before returning, otherwise they will be loaded
-  when needed. Default: ``False``
+   path_or_hf_repo (Path): The path or the huggingface repository to load the model from.
+   tokenizer_config (dict, optional): Configuration parameters specifically for the tokenizer.
+    Defaults to an empty dictionary.
+   model_config(dict, optional): Configuration parameters specifically for the model.
+    Defaults to an empty dictionary.
+   adapter_path (str, optional): Path to the LoRA adapters. If provided, applies LoRA layers
+    to the model. Default: ``None``.
+   lazy (bool): If False eval the model parameters to make sure they are
+    loaded in memory before returning, otherwise they will be loaded
+    when needed. Default: ``False``
   Returns:
-  Tuple[nn.Module, TokenizerWrapper]: A tuple containing the loaded model and tokenizer.
+   Tuple[nn.Module, TokenizerWrapper]: A tuple containing the loaded model and tokenizer.
 
   Raises:
-  FileNotFoundError: If config file or safetensors are not found.
-  ValueError: If model class or args class are not found.
+   FileNotFoundError: If config file or safetensors are not found.
+   ValueError: If model class or args class are not found.
   """
   model_path = await get_model_path(path_or_hf_repo)
 
