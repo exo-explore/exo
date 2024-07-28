@@ -8,6 +8,9 @@ import asyncio
 from functools import partial
 from pathlib import Path
 from typing import Optional, Tuple
+import requests
+from PIL import Image
+from io import BytesIO
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -222,7 +225,18 @@ async def load_shard(
   # TODO: figure out a generic solution
   if model.model_type == "llava":
     processor = AutoProcessor.from_pretrained(model_path)
+    processor.eos_token_id = processor.tokenizer.eos_token_id
+    processor.encode = processor.tokenizer.encode
     return model, processor
   else:
     tokenizer = load_tokenizer(model_path, tokenizer_config)
     return model, tokenizer
+
+def get_image_from_str(image_str: str):
+  if image_str.startswith("http"):
+    response = requests.get(image_str, timeout=10)
+    image = Image.open(BytesIO(response.content)).convert("RGB")
+  else:
+    imgdata = base64.b64decode(image_str)
+    image = Image.open(io.BytesIO(imgdata))
+  return image

@@ -15,9 +15,11 @@ shard_full = Shard("llava", 0, 31, 32)
 shard1 = Shard("llava", 0, 12, 32)
 shard2 = Shard("llava", 13, 31, 32)
 
-full_model_shard, full_processor = asyncio.run(load_shard("llava-hf/llava-1.5-7b-hf", shard=shard_full))
-model_shard1, processor1 = asyncio.run(load_shard("llava-hf/llava-1.5-7b-hf", shard=shard1))
-model_shard2, processor2 = asyncio.run(load_shard("llava-hf/llava-1.5-7b-hf", shard=shard2))
+model_path = "llava-hf/llava-1.5-7b-hf"
+
+full_model_shard, full_processor = asyncio.run(load_shard(model_path, shard=shard_full))
+model_shard1, processor1 = asyncio.run(load_shard(model_path, shard=shard1))
+model_shard2, processor2 = asyncio.run(load_shard(model_path, shard=shard2))
 
 full = StatefulShardedModel(shard_full, full_model_shard)
 m1 = StatefulShardedModel(shard1, model_shard1)

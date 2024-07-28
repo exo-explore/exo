@@ -3,7 +3,7 @@ import time
 import asyncio
 import json
 from pathlib import Path
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoProcessor
 from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
@@ -42,11 +42,15 @@ shard_mappings = {
   "deepseek-coder-v2-lite": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", start_layer=0, end_layer=0, n_layers=27),
   },
+  ### llava
+  "llava-1.5-7b-hf": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="llava-hf/llava-1.5-7b-hf", start_layer=0, end_layer=0, n_layers=32),
+  },
 }
 
 
 class Message:
-  def __init__(self, role: str, content: str):
+  def __init__(self, role: str, content: Union[str, list]):
     self.role = role
     self.content = content
 
@@ -68,6 +72,18 @@ def resolve_tinygrad_tokenizer(model_id: str):
 
 
 async def resolve_tokenizer(model_id: str):
+  try:
+    if DEBUG >= 2: print(f"Trying to AutoProcessor for {model_id}")
+    processor = AutoProcessor.from_pretrained(model_id)
+    processor.eos_token_id = processor.tokenizer.eos_token_id
+    processor.encode = processor.tokenizer.encode
+    return processor
+  except Exception as e:
+    if DEBUG >= 2: print(f"Failed to load processor for {model_id}. Error: {e}")
+    import traceback
+
+    if DEBUG >= 2: print(traceback.format_exc())
+
   try:
     if DEBUG >= 2: print(f"Trying AutoTokenizer for {model_id}")
     return AutoTokenizer.from_pretrained(model_id)
@@ -138,7 +154,18 @@ def generate_completion(
 
 
 def build_prompt(tokenizer, messages: List[Message]):
-  return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+  prompt =  tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+  image_str = None
+  for message in messages:
+    if not isinstance(message.content, list):
+      continue
+
+    for content in message.content:
+      if content.get("type", None) == "image":
+        image_str = content.get("image", None)
+        break
+
+  return prompt, image_str
 
 
 def parse_message(data: dict):
@@ -195,7 +222,7 @@ class ChatGPTAPI:
     shard = shard_mappings.get(data.get("model", "llama-3.1-8b"), {}).get(self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
     tokenizer = await resolve_tokenizer(shard.model_id)
-    return web.json_response({"length": len(build_prompt(tokenizer, messages))})
+    return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
 
   async def handle_post_chat_completions(self, request):
     data = await request.json()
@@ -219,13 +246,13 @@ class ChatGPTAPI:
     tokenizer = await resolve_tokenizer(shard.model_id)
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
-    prompt = build_prompt(tokenizer, chat_request.messages)
+    prompt, image_str = build_prompt(tokenizer, chat_request.messages)
     callback_id = f"chatgpt-api-wait-response-{request_id}"
     callback = self.node.on_token.register(callback_id)
 
-    if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=}")
+    if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {image_str=}")
     try:
-      await self.node.process_prompt(shard, prompt, request_id=request_id)
+      await self.node.process_prompt(shard, prompt, image_str, request_id=request_id)
     except Exception as e:
       if DEBUG >= 2:
         import traceback
@@ -294,7 +321,7 @@ class ChatGPTAPI:
         )
 
         finish_reason = "length"
-        eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if isinstance(tokenizer._tokenizer, AutoTokenizer) else tokenizer.eos_token_id
+        eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if isinstance(getattr(tokenizer, "_tokenizer", None), AutoTokenizer) else tokenizer.eos_token_id
         if DEBUG >= 2: print(f"Checking if end of tokens result {tokens[-1]=} is {eos_token_id=}")
         if tokens[-1] == eos_token_id:
           tokens = tokens[:-1]
