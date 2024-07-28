@@ -27,7 +27,7 @@ Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU:
 <div align="center">
   <h2>Update: Exo Supports Llama 3.1</h2>
   <p>Now the default models, run 8B, 70B and 405B parameter models on your own devices</p>
-  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/sharded_llama.py">See the code</a></p>
+  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/llama.py">See the code</a></p>
 </div>
 
 ## Get Involved
@@ -40,7 +40,7 @@ We also welcome contributions from the community. We have a list of bounties in 
 
 ### Wide Model Support
 
-exo supports LLaMA ([MLX](exo/inference/mlx/models/sharded_llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
+exo supports LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
 
 ### Dynamic Model Partitioning
 
