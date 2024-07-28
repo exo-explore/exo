@@ -21,14 +21,12 @@ def get_system_info():
   if psutil.MACOS:
     if platform.machine() == "arm64":
       return "Apple Silicon Mac"
-    elif platform.machine() in ["x86_64", "i386"]:
+    if platform.machine() in ["x86_64", "i386"]:
       return "Intel Mac"
-    else:
-      return "Unknown Mac architecture"
-  elif psutil.LINUX:
+    return "Unknown Mac architecture"
+  if psutil.LINUX:
     return "Linux"
-  else:
-    return "Non-Mac, non-Linux system"
+  return "Non-Mac, non-Linux system"
 
 
 def get_inference_engine(inference_engine_name):
