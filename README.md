@@ -111,7 +111,7 @@ The native way to access models running on exo is using the exo library with pee
 
 exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:8000
 
-For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Example with curl:
+For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Example with curls:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
@@ -120,6 +120,30 @@ curl http://localhost:8000/v1/chat/completions \
      "model": "llama-3-8b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
+   }'
+```
+
+```sh
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "llava-1.5-7b-hf",
+     "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What are these?"
+          },
+          {
+            "type": "image",
+            "image": "http://images.cocodataset.org/val2017/000000039769.jpg"
+          }
+        ]
+      }
+    ],
+     "temperature": 0.0
    }'
 ```
 
