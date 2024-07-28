@@ -1,4 +1,3 @@
-import torch
 import codecs
 import asyncio
 import requests
