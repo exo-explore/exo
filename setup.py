@@ -1,5 +1,6 @@
-from setuptools import setup, find_packages
 import sys
+
+from setuptools import find_packages, setup
 
 # Base requirements for all platforms
 install_requires = [
@@ -35,10 +36,18 @@ if sys.platform.startswith("darwin"):
         ]
     )
 
+extras_require = {
+    "linting": [
+        "pylint==3.2.6",
+        "ruff==0.5.5",
+        "mypy==1.11.0",
+    ]
+}
 
 setup(
     name="exo",
     version="0.0.1",
     packages=find_packages(),
     install_requires=install_requires,
+    extras_require=extras_require,
 )
