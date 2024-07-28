@@ -21,9 +21,7 @@ class TestNode(unittest.IsolatedAsyncioTestCase):
     mock_peer2.id.return_value = "peer2"
     self.mock_discovery.discover_peers = AsyncMock(return_value=[mock_peer1, mock_peer2])
 
-    self.node = StandardNode(
-      "test_node", self.mock_server, self.mock_inference_engine, "localhost", 50051, self.mock_discovery
-    )
+    self.node = StandardNode("test_node", self.mock_server, self.mock_inference_engine, "localhost", 50051, self.mock_discovery)
 
   async def asyncSetUp(self):
     await self.node.start()

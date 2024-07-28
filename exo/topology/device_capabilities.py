@@ -38,9 +38,7 @@ class DeviceCapabilities:
     return {"model": self.model, "chip": self.chip, "memory": self.memory, "flops": self.flops.to_dict()}
 
 
-UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(
-  model="Unknown Model", chip="Unknown Chip", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0)
-)
+UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
 
 CHIP_FLOPS = {
   # Source: https://www.cpu-monkey.com
@@ -140,9 +138,7 @@ def mac_device_capabilities() -> DeviceCapabilities:
     memory = memory_value
 
   # Assuming static values for other attributes for demonstration
-  return DeviceCapabilities(
-    model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0))
-  )
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0)))
 
 
 def linux_device_capabilities() -> DeviceCapabilities:

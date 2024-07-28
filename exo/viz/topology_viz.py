@@ -72,10 +72,7 @@ class TopologyViz:
           visualization[info_start_y + i][start_x + j] = char
 
     # Calculate total FLOPS and position on the bar
-    total_flops = sum(
-      self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16
-      for partition in self.partitions
-    )
+    total_flops = sum(self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16 for partition in self.partitions)
     bar_pos = (math.tanh(total_flops / 20 - 2) + 1) / 2
 
     # Add GPU poor/rich bar
@@ -104,9 +101,7 @@ class TopologyViz:
     pos_x = bar_start_x + int(bar_pos * bar_width)
     flops_str = f"{total_flops:.2f} TFLOPS"
     visualization[bar_y - 1][pos_x] = "▼"
-    visualization[bar_y + 1][
-      pos_x - len(flops_str) // 2 : pos_x + len(flops_str) // 2 + len(flops_str) % 2
-    ] = flops_str
+    visualization[bar_y + 1][pos_x - len(flops_str) // 2 : pos_x + len(flops_str) // 2 + len(flops_str) % 2] = flops_str
     visualization[bar_y + 2][pos_x] = "▲"
 
     for i, partition in enumerate(self.partitions):

@@ -78,9 +78,7 @@ class GRPCDiscovery(Discovery):
     while True:
       initial_peer_count = len(self.known_peers)
       if DEBUG_DISCOVERY >= 2:
-        print(
-          f"Current number of known peers: {initial_peer_count}. Waiting {grace_period} seconds to discover more..."
-        )
+        print(f"Current number of known peers: {initial_peer_count}. Waiting {grace_period} seconds to discover more...")
       if len(self.known_peers) == initial_peer_count:
         if wait_for_peers > 0:
           await asyncio.sleep(grace_period)
@@ -95,9 +93,7 @@ class GRPCDiscovery(Discovery):
     return [peer_handle for peer_handle, _, _ in self.known_peers.values()]
 
   async def task_broadcast_presence(self):
-    transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(
-      lambda: asyncio.DatagramProtocol(), local_addr=("0.0.0.0", 0), family=socket.AF_INET
-    )
+    transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(lambda: asyncio.DatagramProtocol(), local_addr=("0.0.0.0", 0), family=socket.AF_INET)
     sock = transport.get_extra_info("socket")
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
@@ -161,9 +157,7 @@ class GRPCDiscovery(Discovery):
       self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], time.time())
 
   async def task_listen_for_peers(self):
-    await asyncio.get_event_loop().create_datagram_endpoint(
-      lambda: ListenProtocol(self.on_listen_message), local_addr=("0.0.0.0", self.listen_port)
-    )
+    await asyncio.get_event_loop().create_datagram_endpoint(lambda: ListenProtocol(self.on_listen_message), local_addr=("0.0.0.0", self.listen_port))
     if DEBUG_DISCOVERY >= 2:
       print("Started listen task")
 
@@ -174,16 +168,12 @@ class GRPCDiscovery(Discovery):
         peers_to_remove = [
           peer_handle.id()
           for peer_handle, connected_at, last_seen in self.known_peers.values()
-          if (not await peer_handle.is_connected() and current_time - connected_at > self.discovery_timeout)
-          or current_time - last_seen > self.discovery_timeout
+          if (not await peer_handle.is_connected() and current_time - connected_at > self.discovery_timeout) or current_time - last_seen > self.discovery_timeout
         ]
         if DEBUG_DISCOVERY >= 2:
           print(
             "Peer statuses:",
-            {
-              peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}"
-              for peer_handle, connected_at, last_seen in self.known_peers.values()
-            },
+            {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}" for peer_handle, connected_at, last_seen in self.known_peers.values()},
           )
         if DEBUG_DISCOVERY >= 2 and len(peers_to_remove) > 0:
           print(f"Cleaning up peers: {peers_to_remove}")

@@ -64,9 +64,7 @@ class Tokenizer:
     ] + [f"<|reserved_special_token_{i}|>" for i in range(5, 256 - 5)]
     self.special_tokens = {token: len(mergeable_ranks) + i for i, token in enumerate(special_tokens)}
 
-    self.model = tiktoken.Encoding(
-      name=model_path, pat_str=self.pat_str, mergeable_ranks=mergeable_ranks, special_tokens=self.special_tokens
-    )
+    self.model = tiktoken.Encoding(name=model_path, pat_str=self.pat_str, mergeable_ranks=mergeable_ranks, special_tokens=self.special_tokens)
 
   @property
   def bos_id(self):
@@ -200,9 +198,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self):
     self.shard = None
 
-  async def infer_prompt(
-    self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None
-  ) -> (np.ndarray, str, bool):
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     # TODO: we need to refactor models/llamaa to handle per-request-kv-cache. right now it's shared between requests.
     await self.ensure_shard(shard)
     start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
@@ -211,9 +207,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     start_pos = prefill(self.model, toks[:-1], start_pos=start_pos)
     last_tok = toks[-1]
 
-    output_data = np.array(
-      [self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()]
-    )
+    output_data = np.array([self.model(Tensor([[last_tok]]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()])
     if output_data.size == 1:
       start_pos += 1
 
@@ -223,15 +217,11 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       output_data.size == 1 and output_data.item() in self.tokenizer.stop_tokens,
     )
 
-  async def infer_tensor(
-    self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None
-  ) -> (np.ndarray, str, bool):
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     await self.ensure_shard(shard)
     start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-    output_data: np.ndarray = np.array(
-      [self.model(Tensor([input_data]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()]
-    )
+    output_data: np.ndarray = np.array([self.model(Tensor([input_data]), start_pos, TEMPERATURE, TOP_K, TOP_P, ALPHA_F, ALPHA_P).tolist()])
     if output_data.size == 1:
       start_pos += 1
 
@@ -296,9 +286,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
         # model = fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/raw/main/model.safetensors.index.json", "model.safetensors.index.json", subdir=shard.model_id)
         # size = "70B"
       else:
-        raise ValueError(
-          f"tinygrad doesnt currently support arbitrary model downloading. unsupported model: {shard.model_id}"
-        )
+        raise ValueError(f"tinygrad doesnt currently support arbitrary model downloading. unsupported model: {shard.model_id}")
 
     model = build_transformer(model_path, shard=shard, model_size=size)
     tokenizer = Tokenizer(str((model_path if model_path.is_dir() else model_path.parent) / "tokenizer.model"))

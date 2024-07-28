@@ -37,11 +37,7 @@ class StandardNode(Node):
     self.topology: Topology = Topology()
     self.device_capabilities = device_capabilities()
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
-    self.topology_viz = (
-      TopologyViz(chatgpt_api_endpoint=chatgpt_api_endpoint, web_chat_url=web_chat_url)
-      if not disable_tui
-      else None
-    )
+    self.topology_viz = TopologyViz(chatgpt_api_endpoint=chatgpt_api_endpoint, web_chat_url=web_chat_url) if not disable_tui else None
     self.max_generate_tokens = max_generate_tokens
     self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
@@ -57,9 +53,7 @@ class StandardNode(Node):
           if status_data.get("node_id") == self.current_topology.active_node_id:
             self.current_topology.active_node_id = None
       if self.topology_viz:
-        self.topology_viz.update_visualization(
-          self.current_topology, self.partitioning_strategy.partition(self.current_topology)
-        )
+        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
     except json.JSONDecodeError:
       pass
 
@@ -75,9 +69,7 @@ class StandardNode(Node):
     await self.discovery.stop()
     await self.server.stop()
 
-  async def process_prompt(
-    self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[str] = None
-  ) -> Optional[np.ndarray]:
+  async def process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
@@ -121,9 +113,7 @@ class StandardNode(Node):
     )
     return resp
 
-  async def _process_prompt(
-    self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[str] = None
-  ) -> Optional[np.ndarray]:
+  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
     if request_id not in self.buffered_token_output:
@@ -136,15 +126,11 @@ class StandardNode(Node):
       await self.forward_to_next_shard(shard, prompt, request_id)
       return
 
-    result, inference_state, is_finished = await self.inference_engine.infer_prompt(
-      request_id, shard, prompt, inference_state=inference_state
-    )
+    result, inference_state, is_finished = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state=inference_state)
     is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
     if is_finished:
       self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
-    asyncio.create_task(
-      self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished)
-    )  # TODO: this is n^2 communication complexity
+    asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))  # TODO: this is n^2 communication complexity
 
     if result.size == 1:
       self.buffered_token_output[request_id][0].append(result.item())
@@ -155,11 +141,7 @@ class StandardNode(Node):
     if not is_finished:
       asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state))
 
-    return (
-      np.array(self.buffered_token_output[request_id][0])
-      if len(self.buffered_token_output[request_id][0]) > 0
-      else None
-    )
+    return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
 
   async def process_tensor(
     self,
@@ -225,15 +207,11 @@ class StandardNode(Node):
 
     try:
       if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
-      result, inference_state, is_finished = await self.inference_engine.infer_tensor(
-        request_id, shard, tensor, inference_state=inference_state
-      )
+      result, inference_state, is_finished = await self.inference_engine.infer_tensor(request_id, shard, tensor, inference_state=inference_state)
       is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
       if is_finished:
         self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
-      asyncio.create_task(
-        self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished)
-      )  # TODO: this is n^2 communication complexity
+      asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))  # TODO: this is n^2 communication complexity
 
       if result.size == 1:  # we got a new token out
         self.buffered_token_output[request_id][0].append(result.item())
@@ -241,15 +219,9 @@ class StandardNode(Node):
       if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
       if not is_finished:
-        asyncio.create_task(
-          self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state)
-        )
+        asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state))
 
-      return (
-        np.array(self.buffered_token_output[request_id][0])
-        if len(self.buffered_token_output[request_id][0]) > 0
-        else None
-      )
+      return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
     except Exception as e:
       print(f"Error processing tensor for shard {shard}: {e}")
       import traceback
@@ -270,9 +242,7 @@ class StandardNode(Node):
     shard = self.get_current_shard(base_shard)
 
     partitions = self.partitioning_strategy.partition(self.topology)
-    shards = map_partitions_to_shards(
-      self.partitioning_strategy.partition(self.topology), base_shard.n_layers, base_shard.model_id
-    )
+    shards = map_partitions_to_shards(self.partitioning_strategy.partition(self.topology), base_shard.n_layers, base_shard.model_id)
     current_partition_index = next((i for i, p in enumerate(partitions) if p.node_id == self.id), None)
     if DEBUG >= 1: print(f"Current partition index: {current_partition_index}")
     if current_partition_index is not None:
@@ -295,13 +265,9 @@ class StandardNode(Node):
       if DEBUG >= 1: print(f"Sending tensor_or_prompt to {target_peer.id()}: {tensor_or_prompt}")
 
       if isinstance(tensor_or_prompt, np.ndarray):
-        await target_peer.send_tensor(
-          next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state
-        )
+        await target_peer.send_tensor(next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state)
       else:
-        await target_peer.send_prompt(
-          next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state
-        )
+        await target_peer.send_prompt(next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state)
 
   def get_current_shard(self, base_shard: Shard) -> Shard:
     partitions = self.partitioning_strategy.partition(self.topology)
@@ -371,9 +337,7 @@ class StandardNode(Node):
     next_topology.active_node_id = self.topology.active_node_id  # this is not so clean.
     self.topology = next_topology
     if self.topology_viz:
-      self.topology_viz.update_visualization(
-        self.current_topology, self.partitioning_strategy.partition(self.current_topology)
-      )
+      self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
     return next_topology
 
   @property
