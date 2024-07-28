@@ -94,6 +94,7 @@ async def resolve_tokenizer(model_id: str):
   except Exception as e:
     if DEBUG >= 2: print(f"Failed to load tokenizer for {model_id}. Falling back to tinygrad tokenizer. Error: {e}")
     import traceback
+
     if DEBUG >= 2: print(traceback.format_exc())
 
   try:
@@ -102,6 +103,7 @@ async def resolve_tokenizer(model_id: str):
   except Exception as e:
     if DEBUG >= 2: print(f"Failed again to load tokenizer for {model_id}. Falling back to mlx tokenizer. Error: {e}")
     import traceback
+
     if DEBUG >= 2: print(traceback.format_exc())
 
   if DEBUG >= 2: print(f"Trying mlx tokenizer for {model_id}")
