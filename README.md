@@ -137,8 +137,10 @@ curl http://localhost:8000/v1/chat/completions \
             "text": "What are these?"
           },
           {
-            "type": "image",
-            "image": "http://images.cocodataset.org/val2017/000000039769.jpg"
+            "type": "image_url",
+            "image_url": {
+              "url": "http://images.cocodataset.org/val2017/000000039769.jpg"
+            }
           }
         ]
       }

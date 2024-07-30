@@ -153,14 +153,45 @@ def generate_completion(
   return completion
 
 
-def build_prompt(tokenizer, messages: List[Message]):
-  prompt =  tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+def remap_messages(messages: List[Message]) -> List[Message]:
+    remapped_messages = []
+    last_image = None
+    for message in messages:
+        remapped_content = []
+        for content in message.content:
+            if isinstance(content, dict):
+                if content.get("type") in ["image_url", "image"]:
+                    image_url = content.get("image_url", {}).get("url") or content.get("image")
+                    if image_url:
+                        last_image = {"type": "image", "image": image_url}
+                        remapped_content.append({"type": "text", "text": "[An image was uploaded but is not displayed here]"})
+                else:
+                    remapped_content.append(content)
+            else:
+                remapped_content.append({"type": "text", "text": content})
+        remapped_messages.append(Message(role=message.role, content=remapped_content))
+
+    if last_image:
+        # Replace the last image placeholder with the actual image content
+        for message in reversed(remapped_messages):
+            for i, content in enumerate(message.content):
+                if content.get("type") == "text" and content.get("text") == "[An image was uploaded but is not displayed here]":
+                    message.content[i] = last_image
+                    return remapped_messages
+
+    return remapped_messages
+
+def build_prompt(tokenizer, _messages: List[Message]):
+  messages = remap_messages(_messages)
+  prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
   image_str = None
   for message in messages:
     if not isinstance(message.content, list):
       continue
 
     for content in message.content:
+      # note: we only support one image at a time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
+      # follows the convention in https://platform.openai.com/docs/guides/vision
       if content.get("type", None) == "image":
         image_str = content.get("image", None)
         break
@@ -187,7 +218,7 @@ class ChatGPTAPI:
     self.node = node
     self.inference_engine_classname = inference_engine_classname
     self.response_timeout_secs = response_timeout_secs
-    self.app = web.Application()
+    self.app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB to support image upload
     self.prev_token_lens: Dict[str, int] = {}
     self.stream_tasks: Dict[str, asyncio.Task] = {}
     cors = aiohttp_cors.setup(self.app)
@@ -214,7 +245,6 @@ class ChatGPTAPI:
     return middleware
 
   async def handle_root(self, request):
-    print(f"Handling root request from {request.remote}")
     return web.FileResponse(self.static_dir / "index.html")
 
   async def handle_post_chat_token_encode(self, request):
@@ -279,7 +309,7 @@ class ChatGPTAPI:
           self.prev_token_lens[request_id] = max(prev_last_tokens_len, len(tokens))
           new_tokens = tokens[prev_last_tokens_len:]
           finish_reason = None
-          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if isinstance(tokenizer._tokenizer, AutoTokenizer) else tokenizer.eos_token_id
+          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer, AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
           if len(new_tokens) > 0 and new_tokens[-1] == eos_token_id:
             new_tokens = new_tokens[:-1]
             if is_finished:

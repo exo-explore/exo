@@ -14,7 +14,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     await self.ensure_shard(shard)
     if image_str:
-      image = get_image_from_str(image_str)
+      image = await get_image_from_str(image_str)
       inputs = self.tokenizer(prompt, image, return_tensors="np")
       pixel_values = mx.array(inputs["pixel_values"])
       input_ids = mx.array(inputs["input_ids"])
