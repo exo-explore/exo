@@ -12,6 +12,7 @@ install_requires = [
     "huggingface-hub==0.23.4",
     "Jinja2==3.1.4",
     "numpy==2.0.0",
+    "pillow==10.4.0",
     "prometheus-client==0.20.0",
     "protobuf==5.27.1",
     "psutil==6.0.0",
@@ -22,7 +23,7 @@ install_requires = [
     "tiktoken==0.7.0",
     "tokenizers==0.19.1",
     "tqdm==4.66.4",
-    "transformers==4.41.2",
+    "transformers==4.43.3",
     "uuid==1.30",
     "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@639af3f823cf242a1945dc24183e52a9df0af2b7",
 ]
@@ -41,7 +42,7 @@ extras_require = {
         "pylint==3.2.6",
         "ruff==0.5.5",
         "mypy==1.11.0",
-    ]
+    ],
 }
 
 setup(

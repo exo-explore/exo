@@ -2,6 +2,7 @@ __pycache__/
 .venv
 test_weights.npz
 .exo_used_ports
+.idea
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -82,6 +83,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+Untitled.ipynb
 
 # IPython
 profile_default/

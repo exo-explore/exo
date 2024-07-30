@@ -5,14 +5,21 @@ import importlib
 import json
 import logging
 import asyncio
+import aiohttp
 from functools import partial
 from pathlib import Path
 from typing import Optional, Tuple
+import requests
+from PIL import Image
+from io import BytesIO
+import base64
 
+from exo import DEBUG
 import mlx.core as mx
 import mlx.nn as nn
 from huggingface_hub import snapshot_download
 from huggingface_hub.utils._errors import RepositoryNotFoundError
+from transformers import AutoProcessor
 
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
 from mlx_lm.tuner.utils import apply_lora_layers
@@ -128,7 +135,7 @@ def load_model_shard(
       class_predicate=None,
     )
 
-  model.load_weights(list(weights.items()))
+  model.load_weights(list(weights.items()), strict=True)
 
   if not lazy:
     mx.eval(model.parameters())
@@ -217,6 +224,37 @@ async def load_shard(
   if adapter_path is not None:
     model = apply_lora_layers(model, adapter_path)
     model.eval()
-  tokenizer = load_tokenizer(model_path, tokenizer_config)
 
-  return model, tokenizer
+  # TODO: figure out a generic solution
+  if model.model_type == "llava":
+    processor = AutoProcessor.from_pretrained(model_path)
+    processor.eos_token_id = processor.tokenizer.eos_token_id
+    processor.encode = processor.tokenizer.encode
+    return model, processor
+  else:
+    tokenizer = load_tokenizer(model_path, tokenizer_config)
+    return model, tokenizer
+
+async def get_image_from_str(_image_str: str):
+    image_str = _image_str.strip()
+
+    if image_str.startswith("http"):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_str, timeout=10) as response:
+                content = await response.read()
+                return Image.open(BytesIO(content)).convert("RGB")
+    elif image_str.startswith("data:image/"):
+        # Extract the image format and base64 data
+        format_prefix, base64_data = image_str.split(";base64,")
+        image_format = format_prefix.split("/")[1].lower()
+        if DEBUG >= 2: print(f"{image_str=} {image_format=}")
+        imgdata = base64.b64decode(base64_data)
+        img = Image.open(BytesIO(imgdata))
+
+        # Convert to RGB if not already
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+
+        return img
+    else:
+        raise ValueError("Invalid image_str format. Must be a URL or a base64 encoded image.")

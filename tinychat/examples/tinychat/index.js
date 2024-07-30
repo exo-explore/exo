@@ -4,6 +4,7 @@ document.addEventListener("alpine:init", () => {
     cstate: {
       time: null,
       messages: [],
+      selectedModel: 'llama-3.1-8b',
     },
 
     // historical state
@@ -18,6 +19,9 @@ document.addEventListener("alpine:init", () => {
     tokens_per_second: 0,
     total_tokens: 0,
 
+    // image handling
+    imagePreview: null,
+
     removeHistory(cstate) {
       const index = this.histories.findIndex((state) => {
         return state.time === cstate.time;
@@ -28,10 +32,28 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    async handleImageUpload(event) {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          this.imagePreview = e.target.result;
+          this.imageUrl = e.target.result; // Store the image URL
+          // Add image preview to the chat
+          this.cstate.messages.push({
+            role: "user",
+            content: `![Uploaded Image](${this.imagePreview})`,
+          });
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+
+
     async handleSend() {
       const el = document.getElementById("input-form");
       const value = el.value.trim();
-      if (!value) return;
+      if (!value && !this.imagePreview) return;
 
       if (this.generating) return;
       this.generating = true;
@@ -41,7 +63,9 @@ document.addEventListener("alpine:init", () => {
       window.history.pushState({}, "", "/");
 
       // add message to list
-      this.cstate.messages.push({ role: "user", content: value });
+      if (value) {
+        this.cstate.messages.push({ role: "user", content: value });
+      }
 
       // clear textarea
       el.value = "";
@@ -54,10 +78,51 @@ document.addEventListener("alpine:init", () => {
       let tokens = 0;
       this.tokens_per_second = 0;
 
+      // prepare messages for API request
+      const apiMessages = this.cstate.messages.map(msg => {
+        if (msg.content.startsWith('![Uploaded Image]')) {
+          return {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: {
+                  url: this.imageUrl
+                }
+              }
+            ]
+          };
+        } else {
+          return {
+            role: msg.role,
+            content: [
+              {
+                type: "text",
+                text: msg.content
+              }
+            ]
+          };
+        }
+      });
+
+      // If there's an image URL, add it to all messages
+      if (this.imageUrl) {
+        apiMessages.forEach(msg => {
+          if (!msg.content.some(content => content.type === "image_url")) {
+            msg.content.push({
+              type: "image_url",
+              image_url: {
+                url: this.imageUrl
+              }
+            });
+          }
+        });
+      }
+
       // start receiving server sent events
       let gottenFirstChunk = false;
       for await (
-        const chunk of this.openaiChatCompletion(this.cstate.selectedModel, this.cstate.messages)
+        const chunk of this.openaiChatCompletion(this.cstate.selectedModel, apiMessages)
       ) {
         if (!gottenFirstChunk) {
           this.cstate.messages.push({ role: "assistant", content: "" });

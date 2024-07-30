@@ -18,6 +18,7 @@ class StatefulShardedModel:
     self,
     request_id: str,
     x,
+    pixel_values=None,
     temp: float = 0.0,
     top_p: float = 1.0,
     logit_bias: Optional[Dict[int, float]] = None,
@@ -42,7 +43,11 @@ class StatefulShardedModel:
 
     if request_id not in self.request_cache:
       self.init_cache(request_id)
-    output = self.model(y[None] if self.shard.is_first_layer() else y, cache=self.request_cache[request_id])
+
+    if pixel_values is None:
+      output = self.model(y[None] if self.shard.is_first_layer() else y, cache=self.request_cache[request_id])
+    else:
+      output = self.model(y, pixel_values=pixel_values, cache=self.request_cache[request_id])
 
     if self.shard.is_last_layer():
       logits = output[:, -1, :]

@@ -30,27 +30,6 @@
 
   <link rel="stylesheet" href="index.css">
   <link rel="stylesheet" href="common.css">
-
-  <style>
-    .model-selector {
-      display: flex;
-      justify-content: center;
-      padding: 20px 0;
-    }
-    .model-selector select {
-      padding: 10px 20px;
-      font-size: 16px;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      background-color: #f8f8f8;
-      cursor: pointer;
-    }
-    .model-selector select:focus {
-      outline: none;
-      border-color: #007bff;
-      box-shadow: 0 0 0 2px rgba(0,123,255,.25);
-    }
-  </style>
 </head>
 
 <body>
@@ -65,6 +44,7 @@
         <option value="mistral-nemo">Mistral Nemo</option>
         <option value="mistral-large">Mistral Large</option>
         <option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
+        <option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
       </select>
     </div>
     <div class="home centered" x-show="home === 0" x-transition x-effect="
@@ -180,6 +160,16 @@
         </span>
       </div>
       <div class="input">
+        <button x-show="cstate.selectedModel === 'llava-1.5-7b-hf'" class="image-input-button" @click="$refs.imageUpload.click()">
+          <i class="fas fa-image"></i>
+        </button>
+        <input x-ref="imageUpload" type="file" id="image-upload" accept="image/*" @change="$data.handleImageUpload($event)" style="display: none;">
+        <div x-show="imagePreview" class="image-preview-container">
+          <img :src="imagePreview" alt="Uploaded Image" class="image-preview">
+          <button @click="imagePreview = null; imageUrl = null;" class="remove-image-button">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
         <textarea x-ref="inputForm" id="input-form" class="input-form" autofocus rows=1 x-autosize
           :placeholder="generating ? 'Generating...' : 'Say something'" :disabled="generating" @input="
             home = (home === 0) ? 1 : home

@@ -27,7 +27,7 @@ Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU:
 <div align="center">
   <h2>Update: Exo Supports Llama 3.1</h2>
   <p>Now the default models, run 8B, 70B and 405B parameter models on your own devices</p>
-  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/sharded_llama.py">See the code</a></p>
+  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/llama.py">See the code</a></p>
 </div>
 
 ## Get Involved
@@ -40,7 +40,7 @@ We also welcome contributions from the community. We have a list of bounties in 
 
 ### Wide Model Support
 
-exo supports LLaMA ([MLX](exo/inference/mlx/models/sharded_llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
+exo supports LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
 
 ### Dynamic Model Partitioning
 
@@ -111,7 +111,7 @@ The native way to access models running on exo is using the exo library with pee
 
 exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:8000
 
-For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Example with curl:
+For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Example with curls:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
@@ -120,6 +120,32 @@ curl http://localhost:8000/v1/chat/completions \
      "model": "llama-3-8b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
+   }'
+```
+
+```sh
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "llava-1.5-7b-hf",
+     "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What are these?"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "http://images.cocodataset.org/val2017/000000039769.jpg"
+            }
+          }
+        ]
+      }
+    ],
+     "temperature": 0.0
    }'
 ```
 
