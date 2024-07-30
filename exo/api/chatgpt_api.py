@@ -73,8 +73,8 @@ def resolve_tinygrad_tokenizer(model_id: str):
 
 async def resolve_tokenizer(model_id: str):
   try:
-    if DEBUG >= 2: print(f"Trying to AutoProcessor for {model_id}")
-    processor = AutoProcessor.from_pretrained(model_id)
+    if DEBUG >= 2: print(f"Trying AutoProcessor for {model_id}")
+    processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
     processor.eos_token_id = processor.tokenizer.eos_token_id
     processor.encode = processor.tokenizer.encode
     return processor
