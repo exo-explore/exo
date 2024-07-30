@@ -79,7 +79,7 @@ document.addEventListener("alpine:init", () => {
       this.tokens_per_second = 0;
 
       // prepare messages for API request
-      const apiMessages = this.cstate.messages.map(msg => {
+      let apiMessages = this.cstate.messages.map(msg => {
         if (msg.content.startsWith('![Uploaded Image]')) {
           return {
             role: "user",
@@ -89,35 +89,39 @@ document.addEventListener("alpine:init", () => {
                 image_url: {
                   url: this.imageUrl
                 }
+              },
+              {
+                type: "text",
+                text: value // Use the actual text the user typed
               }
             ]
           };
         } else {
           return {
             role: msg.role,
-            content: [
-              {
-                type: "text",
-                text: msg.content
-              }
-            ]
+            content: msg.content
           };
         }
       });
-
-      // If there's an image URL, add it to all messages
-      if (this.imageUrl) {
-        apiMessages.forEach(msg => {
-          if (!msg.content.some(content => content.type === "image_url")) {
-            msg.content.push({
-              type: "image_url",
-              image_url: {
-                url: this.imageUrl
-              }
-            });
+      const containsImage = apiMessages.some(msg => Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url'));
+      if (containsImage) {
+        // Map all messages with string content to object with type text
+        apiMessages = apiMessages.map(msg => {
+          if (typeof msg.content === 'string') {
+            return {
+              ...msg,
+              content: [
+                {
+                  type: "text",
+                  text: msg.content
+                }
+              ]
+            };
           }
+          return msg;
         });
       }
+
 
       // start receiving server sent events
       let gottenFirstChunk = false;
@@ -146,19 +150,37 @@ document.addEventListener("alpine:init", () => {
         }
       }
 
-      // update the state in histories or add it if it doesn't exist
-      const index = this.histories.findIndex((cstate) => {
-        return cstate.time === this.cstate.time;
+      // Clean the cstate before adding it to histories
+      const cleanedCstate = JSON.parse(JSON.stringify(this.cstate));
+      cleanedCstate.messages = cleanedCstate.messages.map(msg => {
+        if (Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map(item =>
+              item.type === 'image_url' ? { type: 'image_url', image_url: { url: '[IMAGE_PLACEHOLDER]' } } : item
+            )
+          };
+        }
+        return msg;
       });
-      this.cstate.time = Date.now();
+
+      // Update the state in histories or add it if it doesn't exist
+      const index = this.histories.findIndex((cstate) => cstate.time === cleanedCstate.time);
+      cleanedCstate.time = Date.now();
       if (index !== -1) {
-        // update the time
-        this.histories[index] = this.cstate;
+        // Update the existing entry
+        this.histories[index] = cleanedCstate;
       } else {
-        this.histories.push(this.cstate);
+        // Add a new entry
+        this.histories.push(cleanedCstate);
       }
+      console.log(this.histories)
       // update in local storage
-      localStorage.setItem("histories", JSON.stringify(this.histories));
+      try {
+        localStorage.setItem("histories", JSON.stringify(this.histories));
+      } catch (error) {
+        console.error("Failed to save histories to localStorage:", error);
+      }
 
       this.generating = false;
     },

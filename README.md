@@ -117,7 +117,7 @@ For developers, exo also starts a ChatGPT-compatible API endpoint on http://loca
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-     "model": "llama-3-8b",
+     "model": "llama-3.1-8b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
