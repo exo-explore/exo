@@ -12,6 +12,7 @@ install_requires = [
     "huggingface-hub==0.23.4",
     "Jinja2==3.1.4",
     "numpy==2.0.0",
+    "pillow==10.4.0",
     "prometheus-client==0.20.0",
     "protobuf==5.27.1",
     "psutil==6.0.0",
@@ -42,9 +43,6 @@ extras_require = {
         "ruff==0.5.5",
         "mypy==1.11.0",
     ],
-    "testing": [
-        "pillow==10.4.0"
-    ]
 }
 
 setup(
