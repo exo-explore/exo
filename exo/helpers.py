@@ -1,7 +1,6 @@
 import os
 import asyncio
-from typing import Any, Callable, TypeVar, Optional, Dict, Generic, Tuple, List
-from collections import defaultdict
+from typing import Callable, TypeVar, Optional, Dict, Generic, Tuple, List
 import socket
 import random
 import platform

@@ -52,8 +52,13 @@ class StandardNode(Node):
         elif status_data.get("status", "").startswith("end_"):
           if status_data.get("node_id") == self.current_topology.active_node_id:
             self.current_topology.active_node_id = None
+      download_progress = None
+      if status_data.get("type", "") == "download_progress":
+        if DEBUG >= 5: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('current')}/{status_data.get('total')} ({round(status_data.get('current') / status_data.get('total') * 100, 2)}%)")
+        if status_data.get("node_id") == self.id:
+          download_progress = (status_data.get('current'), status_data.get('total'))
       if self.topology_viz:
-        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
+        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), download_progress)
     except json.JSONDecodeError:
       pass
 
@@ -370,6 +375,7 @@ class StandardNode(Node):
     await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
+    if DEBUG >= 5: print(f"Broadcasting opaque status: {request_id=} {status=}")
     async def send_status_to_peer(peer):
       try:
         await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)
