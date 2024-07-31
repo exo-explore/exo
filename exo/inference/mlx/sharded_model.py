@@ -1,4 +1,4 @@
-from typing import Dict, Generator, Optional, Tuple
+from typing import Dict, Generator, Optional, Tuple, Union, List
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -8,6 +8,12 @@ from mlx_lm.sample_utils import top_p_sampling
 from ..shard import Shard
 
 
+def custom_reshape(array):
+  if array.ndim == 1:
+    return array.reshape(-1, 1)
+  else:
+    return array
+
 class StatefulShardedModel:
   def __init__(self, shard: Shard, model: nn.Module):
     self.shard = shard
@@ -16,7 +22,7 @@ class StatefulShardedModel:
 
   def step(
     self,
-    request_id: str,
+    request_id: Union[str, List[str]],
     x,
     pixel_values=None,
     temp: float = 0.0,
@@ -45,7 +51,7 @@ class StatefulShardedModel:
       self.init_cache(request_id)
 
     if pixel_values is None:
-      output = self.model(y[None] if self.shard.is_first_layer() else y, cache=self.request_cache[request_id])
+      output = self.model(custom_reshape(y), cache=self.request_cache[request_id])
     else:
       output = self.model(y, pixel_values=pixel_values, cache=self.request_cache[request_id])
 
