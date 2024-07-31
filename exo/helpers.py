@@ -36,6 +36,8 @@ def get_inference_engine(inference_engine_name):
     return MLXDynamicShardInferenceEngine()
   elif inference_engine_name == "tinygrad":
     from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
+    import tinygrad.helpers
+    tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine()
   else:
