@@ -177,9 +177,7 @@ async def download_async_with_progress(repo_id: str, revision: Optional[str] = N
   # os.environ['HF_HUB_ENABLE_HF_TRANSFER'] = '1'
   # os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 
-  print(f"Estimating size of repository: {repo_id}")
   total_size = await get_repo_size(repo_id)
-  print(f"Estimated total size: {total_size} bytes")
 
   # Create tasks for download and progress checking
   download_task = asyncio.create_task(download_repo(repo_id, revision=revision, allow_patterns=allow_patterns, repo_type=repo_type))
