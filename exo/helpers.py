@@ -1,6 +1,7 @@
 import os
 import asyncio
-from typing import Any, Callable, Coroutine, TypeVar, Optional, Dict, Generic, Tuple
+from typing import Any, Callable, TypeVar, Optional, Dict, Generic, Tuple, List
+from collections import defaultdict
 import socket
 import random
 import platform
@@ -97,8 +98,6 @@ def terminal_link(uri, label=None):
 
 T = TypeVar("T")
 K = TypeVar("K")
-
-
 class AsyncCallback(Generic[T]):
   def __init__(self) -> None:
     self.condition: asyncio.Condition = asyncio.Condition()
@@ -147,3 +146,23 @@ class AsyncCallbackSystem(Generic[K, T]):
   def trigger_all(self, *args: T) -> None:
     for callback in self.callbacks.values():
       callback.set(*args)
+
+
+K = TypeVar('K', bound=str)
+V = TypeVar('V')
+class PrefixDict(Generic[K, V]):
+    def __init__(self):
+        self.items: Dict[K, V] = {}
+
+    def add(self, key: K, value: V) -> None:
+        self.items[key] = value
+
+    def find_prefix(self, argument: str) -> List[Tuple[K, V]]:
+        return [(key, value) for key, value in self.items.items() if argument.startswith(key)]
+
+    def find_longest_prefix(self, argument: str) -> Optional[Tuple[K, V]]:
+        matches = self.find_prefix(argument)
+        if len(matches) == 0:
+            return None
+
+        return max(matches, key=lambda x: len(x[0]))
