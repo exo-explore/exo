@@ -1,7 +1,7 @@
 import asyncio
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 import json
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
@@ -294,3 +294,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard = shard
     self.model = model
     self.tokenizer = tokenizer
+
+  def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
+    pass
