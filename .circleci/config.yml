@@ -89,7 +89,7 @@ commands:
 jobs:
   unit_test:
     macos:
-      xcode: "15.2.0"
+      xcode: "15.4.0"
     resource_class: macos.m1.medium.gen1
     steps:
       - checkout
@@ -113,7 +113,7 @@ jobs:
 
   discovery_integration_test:
     macos:
-      xcode: "15.2.0"
+      xcode: "15.4.0"
     steps:
       - checkout
       - run:
@@ -152,7 +152,7 @@ jobs:
 
   chatgpt_api_integration_test_mlx:
     macos:
-      xcode: "15.2.0"
+      xcode: "15.4.0"
     steps:
       - checkout
       - run:
@@ -171,13 +171,13 @@ jobs:
           inference_engine: mlx
           model_id: llama-3.1-8b
 
-  test_cuda:
-    docker:
-      - image: nvidia/cuda:11.4.3-base-ubuntu20.04
-    resource_class: gpu.nvidia.medium
+  test_macos_m1:
+    macos:
+      xcode: "15.4.0"
+    resource_class: macos.m1.large.gen1
     steps:
       - checkout
-      - run: nvidia-smi
+      - run: system_profiler SPHardwareDataType
 
   chatgpt_api_integration_test_tinygrad:
     docker:
