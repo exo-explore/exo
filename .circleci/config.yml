@@ -185,7 +185,6 @@ jobs:
     resource_class: xlarge
     steps:
       - checkout
-      - run: nvidia-smi
       - run:
           name: Set up Python
           command: |
