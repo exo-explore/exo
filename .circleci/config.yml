@@ -1,54 +1,123 @@
-# This config was automatically generated from your source code
-# Stacks detected: cicd:github-actions:.github/workflows,deps:python:.,file:setup.py:.
 version: 2.1
+
 orbs:
-  python: circleci/python@2
+  apple: ml-explore/pr-approval@0.1.0
+
 jobs:
-  test-python:
-    # Install dependencies and run tests
-    docker:
-      - image: cimg/python:3.12-node
+  unit_test:
+    macos:
+      xcode: "15.2.0"
+    resource_class: macos.m1.medium.gen1
     steps:
       - checkout
-      - python/install-packages:
-          pkg-manager: pip-dist
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - restore_cache:
+          keys:
+            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
       - run:
           name: Run tests
-          command: pytest --junitxml=junit.xml || ((($? == 5)) && echo 'Did not find any tests to run.')
-      - store_test_results:
-          path: junit.xml
-  build-package:
-    # build python package
-    docker:
-      - image: cimg/python:3.12-node
+          command: |
+            source env/bin/activate
+            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3-8B-Instruct-4bit/**/* || true
+            METAL_XCODE=1 python3 -m exo.inference.test_inference_engine
+      - save_cache:
+          paths:
+            - ~/.cache/huggingface/hub
+          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+
+  discovery_integration_test:
+    macos:
+      xcode: "15.2.0"
     steps:
       - checkout
       - run:
-          name: Create the ~/artifacts directory if it doesn't exist
-          command: mkdir -p ~/artifacts
-      - python/dist
-      - store_artifacts:
-          path: dist
-          destination: ~/artifacts
-  deploy:
-    # This is an example deploy job, not actually used by the workflow
-    docker:
-      - image: cimg/base:stable
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run:
+          name: Run discovery integration test
+          command: |
+            source env/bin/activate
+            DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
+            PID1=$!
+            DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 > output2.log 2>&1 &
+            PID2=$!
+            sleep 10
+            kill $PID1 $PID2
+            if grep -q "Connected to peer" output1.log && grep -q "Connected to peer" output2.log; then
+              echo "Test passed: Both instances discovered each other"
+              exit 0
+            else
+              echo "Test failed: Devices did not discover each other"
+              echo "Output of first instance:"
+              cat output1.log
+              echo "Output of second instance:"
+              cat output2.log
+              exit 1
+            fi
+
+  chatgpt_api_integration_test:
+    macos:
+      xcode: "15.2.0"
     steps:
-      # Replace this with steps to deploy to users
+      - checkout
       - run:
-          name: deploy
-          command: '#e.g. ./deploy.sh'
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - restore_cache:
+          keys:
+            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+            - huggingface-hub-
+      - restore_cache:
+          keys:
+            - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+            - tinygrad-downloads-
       - run:
-          name: found github actions config
-          command: ':'
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run:
+          name: Run chatgpt api integration test
+          command: |
+            source env/bin/activate
+            exit 0 # TODO: Implement the actual test here
+      - save_cache:
+          paths:
+            - ~/.cache/huggingface/hub
+          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+      - save_cache:
+          paths:
+            - ~/Library/Caches/tinygrad/downloads
+          key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+
 workflows:
-  build-and-test:
+  version: 2
+  build_and_test:
     jobs:
-      - test-python
-      - build-package:
-          requires:
-            - test-python
-    # - deploy:
-    #     requires:
-    #       - build-package
+      - unit_test
+      - discovery_integration_test
+      - chatgpt_api_integration_test
