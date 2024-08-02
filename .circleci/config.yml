@@ -1,7 +1,7 @@
 version: 2.1
 
 orbs:
-  apple: ml-explore/pr-approval@0.1.0
+  python: circleci/python@2
 
 jobs:
   unit_test:
