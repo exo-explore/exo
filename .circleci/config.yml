@@ -171,6 +171,14 @@ jobs:
           inference_engine: mlx
           model_id: llama-3.1-8b
 
+  test_cuda:
+    machine:
+      image: linux-cuda-12:default
+    resource_class: gpu.nvidia.medium
+    steps:
+      - checkout
+      - run: nvidia-smi
+
   chatgpt_api_integration_test_tinygrad:
     machine:
       image: linux-cuda-12:default
@@ -204,4 +212,5 @@ workflows:
       - unit_test
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
+      - test_cuda
       - chatgpt_api_integration_test_tinygrad
