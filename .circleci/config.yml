@@ -172,17 +172,17 @@ jobs:
           model_id: llama-3.1-8b
 
   test_cuda:
-    machine:
-      image: linux-cuda-12:default
-    resource_class: gpu.nvidia.medium
+    docker:
+      - image: cimg/base:current
+    resource_class: xlarge
     steps:
       - checkout
-      - run: nvidia-smi
+      - run: echo "hi"
 
   chatgpt_api_integration_test_tinygrad:
-    machine:
-      image: linux-cuda-12:default
-    resource_class: gpu.nvidia.medium
+    docker:
+      - image: cimg/base:current
+    resource_class: xlarge
     steps:
       - checkout
       - run: nvidia-smi
