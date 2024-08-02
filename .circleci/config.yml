@@ -16,12 +16,6 @@ jobs:
             brew install python@3.12
             python3.12 -m venv env
             source env/bin/activate
-      - restore_cache:
-          keys:
-            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
-      - restore_cache:
-          keys:
-            - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
       - run:
           name: Install dependencies
           command: |
@@ -32,16 +26,7 @@ jobs:
           name: Run tests
           command: |
             source env/bin/activate
-            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3.1-8B-Instruct-4bit/**/* || true
             METAL_XCODE=1 python3 -m exo.inference.test_inference_engine
-      - save_cache:
-          paths:
-            - ~/.cache/huggingface/hub
-          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
-      - save_cache:
-          paths:
-            - ~/Library/Caches/tinygrad/downloads
-          key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
 
   discovery_integration_test:
     macos:
@@ -93,14 +78,6 @@ jobs:
             brew install python@3.12
             python3.12 -m venv env
             source env/bin/activate
-      - restore_cache:
-          keys:
-            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
-            - huggingface-hub-
-      - restore_cache:
-          keys:
-            - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
-            - tinygrad-downloads-
       - run:
           name: Install dependencies
           command: |
@@ -111,8 +88,6 @@ jobs:
           name: Run chatgpt api integration test
           command: |
             source env/bin/activate
-            # Check if cached files are present
-            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3.1-8B-Instruct-4bit/**/* || true
 
             # Start first instance
             DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --inference-engine mlx --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900 > output1.log 2>&1 &
@@ -195,14 +170,6 @@ jobs:
             else
               echo "Test passed: Response from both nodes contains 'Michael Jackson'"
             fi
-      - save_cache:
-          paths:
-            - ~/.cache/huggingface/hub
-          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
-      - save_cache:
-          paths:
-            - ~/Library/Caches/tinygrad/downloads
-          key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
 
 workflows:
   version: 2
