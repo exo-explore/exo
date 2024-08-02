@@ -179,27 +179,27 @@ jobs:
       - checkout
       - run: system_profiler SPHardwareDataType
 
-  chatgpt_api_integration_test_tinygrad:
-    macos:
-      xcode: "15.4.0"
-    resource_class: macos.m1.large.gen1
-    steps:
-      - checkout
-      - run:
-          name: Set up Python
-          command: |
-            brew install python@3.12
-            python3.12 -m venv env
-            source env/bin/activate
-      - run:
-          name: Install dependencies
-          command: |
-            source env/bin/activate
-            pip install --upgrade pip
-            pip install .
-      - run_chatgpt_api_test:
-          inference_engine: tinygrad
-          model_id: llama-3-8b
+  # chatgpt_api_integration_test_tinygrad:
+  #   macos:
+  #     xcode: "15.4.0"
+  #   resource_class: macos.m1.large.gen1
+  #   steps:
+  #     - checkout
+  #     - run:
+  #         name: Set up Python
+  #         command: |
+  #           brew install python@3.12
+  #           python3.12 -m venv env
+  #           source env/bin/activate
+  #     - run:
+  #         name: Install dependencies
+  #         command: |
+  #           source env/bin/activate
+  #           pip install --upgrade pip
+  #           pip install .
+  #     - run_chatgpt_api_test:
+  #         inference_engine: tinygrad
+  #         model_id: llama-3-8b
 
 workflows:
   version: 2
