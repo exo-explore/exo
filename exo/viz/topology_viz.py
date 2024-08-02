@@ -1,5 +1,5 @@
 import math
-from typing import List
+from typing import List, Optional, Tuple
 from exo.helpers import exo_text
 from exo.topology.topology import Topology
 from exo.topology.partitioning_strategy import Partition
@@ -17,22 +17,24 @@ class TopologyViz:
     self.web_chat_url = web_chat_url
     self.topology = Topology()
     self.partitions: List[Partition] = []
+    self.download_progress = None
 
     self.console = Console()
     self.panel = Panel(self._generate_layout(), title="Exo Cluster (0 nodes)", border_style="bright_yellow")
     self.live_panel = Live(self.panel, auto_refresh=False, console=self.console)
     self.live_panel.start()
 
-  def update_visualization(self, topology: Topology, partitions: List[Partition]):
+  def update_visualization(self, topology: Topology, partitions: List[Partition], download_progress: Optional[Tuple[int, int]] = None):
     self.topology = topology
     self.partitions = partitions
+    self.download_progress = download_progress
     self.refresh()
 
   def refresh(self):
     self.panel.renderable = self._generate_layout()
     # Update the panel title with the number of nodes and partitions
     node_count = len(self.topology.nodes)
-    self.panel.title = f"Exo Cluster ({node_count} node{'s' if node_count != 1 else ''})"
+    self.panel.title = f"Exo Cluster ({node_count} node{'s' if node_count != 1 else ''}){f' {self.download_progress[0]/self.download_progress[1]:.2%} Downloaded' if self.download_progress else ''}"
     self.live_panel.update(self.panel, refresh=True)
 
   def _generate_layout(self) -> str:

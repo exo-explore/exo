@@ -1,11 +1,12 @@
 import os
 import asyncio
-from typing import Any, Callable, TypeVar, Optional, Dict, Generic, Tuple, List
-from collections import defaultdict
+from typing import Callable, TypeVar, Optional, Dict, Generic, Tuple, List
 import socket
 import random
 import platform
 import psutil
+import uuid
+from pathlib import Path
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -37,6 +38,8 @@ def get_inference_engine(inference_engine_name):
     return MLXDynamicShardInferenceEngine()
   elif inference_engine_name == "tinygrad":
     from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
+    import tinygrad.helpers
+    tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine()
   else:
@@ -166,3 +169,35 @@ class PrefixDict(Generic[K, V]):
             return None
 
         return max(matches, key=lambda x: len(x[0]))
+
+def is_valid_uuid(val):
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
+
+def get_or_create_node_id():
+    NODE_ID_FILE = Path(os.path.dirname(os.path.abspath(__file__))) / ".exo_node_id"
+    try:
+        if NODE_ID_FILE.is_file():
+            with open(NODE_ID_FILE, "r") as f:
+                stored_id = f.read().strip()
+            if is_valid_uuid(stored_id):
+                if DEBUG >= 2: print(f"Retrieved existing node ID: {stored_id}")
+                return stored_id
+            else:
+                if DEBUG >= 2: print("Stored ID is not a valid UUID. Generating a new one.")
+
+        new_id = str(uuid.uuid4())
+        with open(NODE_ID_FILE, "w") as f:
+            f.write(new_id)
+
+        if DEBUG >= 2: print(f"Generated and stored new node ID: {new_id}")
+        return new_id
+    except IOError as e:
+        if DEBUG >= 2: print(f"IO error creating node_id: {e}")
+        return str(uuid.uuid4())
+    except Exception as e:
+        if DEBUG >= 2: print(f"Unexpected error creating node_id: {e}")
+        return str(uuid.uuid4())

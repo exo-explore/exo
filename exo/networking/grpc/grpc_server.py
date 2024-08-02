@@ -48,7 +48,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     image_str = request.image_str
     request_id = request.request_id
     result = await self.node.process_prompt(shard, prompt, image_str, request_id)
-    if DEBUG >= 2: print(f"SendPrompt {shard=} {prompt=} {image=} {request_id=} result: {result}")
+    if DEBUG >= 2: print(f"SendPrompt {shard=} {prompt=} {image_str=} {request_id=} result: {result}")
     tensor_data = result.tobytes() if result is not None else None
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
 

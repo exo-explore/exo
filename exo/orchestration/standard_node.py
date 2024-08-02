@@ -52,8 +52,13 @@ class StandardNode(Node):
         elif status_data.get("status", "").startswith("end_"):
           if status_data.get("node_id") == self.current_topology.active_node_id:
             self.current_topology.active_node_id = None
+      download_progress = None
+      if status_data.get("type", "") == "download_progress":
+        if DEBUG >= 5: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('current')}/{status_data.get('total')} ({round(status_data.get('current') / status_data.get('total') * 100, 2)}%)")
+        if status_data.get("node_id") == self.id:
+          download_progress = (status_data.get('current'), status_data.get('total'))
       if self.topology_viz:
-        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
+        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), download_progress)
     except json.JSONDecodeError:
       pass
 
@@ -125,7 +130,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {image_str=}")
     if shard.start_layer != 0:
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=} {image_str=}")
-      await self.forward_to_next_shard(shard, prompt, request_id, image_str)
+      await self.forward_to_next_shard(shard, prompt, request_id, image_str=image_str, inference_state=inference_state)
       return
 
     result, inference_state, is_finished = await self.inference_engine.infer_prompt(request_id, shard, prompt, image_str, inference_state=inference_state)
@@ -141,7 +146,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
     if not is_finished:
-      asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state))
+      asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, image_str=image_str, inference_state=inference_state))
 
     return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
 
@@ -370,6 +375,7 @@ class StandardNode(Node):
     await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
+    if DEBUG >= 5: print(f"Broadcasting opaque status: {request_id=} {status=}")
     async def send_status_to_peer(peer):
       try:
         await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)

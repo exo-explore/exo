@@ -2,6 +2,7 @@ __pycache__/
 .venv
 test_weights.npz
 .exo_used_ports
+.exo_node_id
 .idea
 
 # Byte-compiled / optimized / DLL files

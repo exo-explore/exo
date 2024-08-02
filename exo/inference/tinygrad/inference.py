@@ -1,7 +1,7 @@
 import asyncio
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 import json
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
@@ -198,7 +198,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self):
     self.shard = None
 
-  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     # TODO: we need to refactor models/llamaa to handle per-request-kv-cache. right now it's shared between requests.
     await self.ensure_shard(shard)
     start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
@@ -294,3 +294,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard = shard
     self.model = model
     self.tokenizer = tokenizer
+
+  def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
+    pass
