@@ -174,7 +174,7 @@ jobs:
   chatgpt_api_integration_test_tinygrad:
     machine:
       image: linux-cuda-12:default
-    resource_class: gpu.nvidia.small.gen2
+    resource_class: gpu.nvidia.medium
     steps:
       - checkout
       - run: nvidia-smi
