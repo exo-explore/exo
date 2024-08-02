@@ -104,7 +104,90 @@ jobs:
           name: Run chatgpt api integration test
           command: |
             source env/bin/activate
-            exit 0 # TODO: Implement the actual test here
+            # Check if cached files are present
+            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3-8B-Instruct-4bit/**/* || true
+
+            # Start first instance
+            DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --inference-engine mlx --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900 > output1.log 2>&1 &
+            PID1=$!
+
+            # Start second instance
+            DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --inference-engine mlx --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout-secs 900 > output2.log 2>&1 &
+            PID2=$!
+
+            # Wait for discovery
+            sleep 10
+
+            # Function to check if processes are still running
+            check_processes() {
+              if ! kill -0 $PID1 2>/dev/null; then
+                echo "First instance (PID $PID1) died unexpectedly. Log output:"
+                cat output1.log
+                exit 1
+              fi
+              if ! kill -0 $PID2 2>/dev/null; then
+                echo "Second instance (PID $PID2) died unexpectedly. Log output:"
+                cat output2.log
+                exit 1
+              fi
+            }
+
+            # Check processes before proceeding
+            check_processes
+
+            # first one to load the model
+            curl -s http://localhost:8000/v1/chat/completions \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "model": "llama-3-8b",
+                  "messages": [{"role": "user", "content": "Keep responses concise. Placeholder to load model..."}],
+                  "temperature": 0.7
+                }'
+
+            # Check processes after model load
+            check_processes
+
+            response_1=$(curl -s http://localhost:8000/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -d '{
+                "model": "llama-3-8b",
+                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "temperature": 0.7
+              }')
+            echo "Response 1: $response_1"
+
+            # Check processes after first response
+            check_processes
+
+            response_2=$(curl -s http://localhost:8000/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -d '{
+                "model": "llama-3-8b",
+                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "temperature": 0.7
+              }')
+            echo "Response 2: $response_2"
+
+            # Check processes after second response
+            check_processes
+
+            # Stop both instances
+            kill $PID1 $PID2
+
+            echo ""
+            if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
+              echo "Test failed: Response does not contain 'Michael Jackson'"
+              echo "Response 1: $response_1"
+              echo ""
+              echo "Response 2: $response_2"
+              echo "Output of first instance:"
+              cat output1.log
+              echo "Output of second instance:"
+              cat output2.log
+              exit 1
+            else
+              echo "Test passed: Response from both nodes contains 'Michael Jackson'"
+            fi
       - save_cache:
           paths:
             - ~/.cache/huggingface/hub
