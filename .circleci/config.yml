@@ -172,12 +172,12 @@ jobs:
           model_id: llama-3.1-8b
 
   test_cuda:
-    docker:
-      - image: cimg/base:current
-    resource_class: xlarge
+    machine:
+      image: linux-cuda-12:default
+    resource_class: gpu.nvidia.medium
     steps:
       - checkout
-      - run: echo "hi"
+      - run: nvidia-smi
 
   chatgpt_api_integration_test_tinygrad:
     docker:
@@ -186,7 +186,7 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Set up Python
+          name: Set up
           command: |
             sudo add-apt-repository ppa:deadsnakes/ppa -y
             sudo apt update -y
