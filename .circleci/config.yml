@@ -190,7 +190,8 @@ jobs:
           command: |
             sudo add-apt-repository ppa:deadsnakes/ppa -y
             sudo apt update -y
-            sudo apt install -y python3.12 python3.12-venv
+            sudo apt install -y python3.12
+            pip install virtualenv
       - run:
           name: Create and activate virtual environment
           command: |
