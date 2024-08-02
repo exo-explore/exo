@@ -117,18 +117,6 @@ jobs:
             # Check processes before proceeding
             check_processes
 
-            # first one to load the model
-            curl -s http://localhost:8000/v1/chat/completions \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "model": "llama-3.1-8b",
-                  "messages": [{"role": "user", "content": "Keep responses concise. Placeholder to load model..."}],
-                  "temperature": 0.7
-                }'
-
-            # Check processes after model load
-            check_processes
-
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -141,7 +129,7 @@ jobs:
             # Check processes after first response
             check_processes
 
-            response_2=$(curl -s http://localhost:8000/v1/chat/completions \
+            response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
                 "model": "llama-3.1-8b",
