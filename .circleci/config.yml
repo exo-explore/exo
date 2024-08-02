@@ -16,9 +16,12 @@ jobs:
             brew install python@3.12
             python3.12 -m venv env
             source env/bin/activate
-      - restore_cache:
+      - restore_cache_hf:
           keys:
             - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
+      - restore_cache_tinygrad:
+          keys:
+            - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
       - run:
           name: Install dependencies
           command: |
@@ -31,10 +34,14 @@ jobs:
             source env/bin/activate
             ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3-8B-Instruct-4bit/**/* || true
             METAL_XCODE=1 python3 -m exo.inference.test_inference_engine
-      - save_cache:
+      - save_cache_hf:
           paths:
             - ~/.cache/huggingface/hub
           key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
+      - save_cache_tinygrad:
+          paths:
+            - ~/Library/Caches/tinygrad/downloads
+          key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
 
   discovery_integration_test:
     macos:
@@ -86,11 +93,11 @@ jobs:
             brew install python@3.12
             python3.12 -m venv env
             source env/bin/activate
-      - restore_cache:
+      - restore_cache_hf:
           keys:
             - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
             - huggingface-hub-
-      - restore_cache:
+      - restore_cache_tinygrad:
           keys:
             - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
             - tinygrad-downloads-
@@ -188,11 +195,11 @@ jobs:
             else
               echo "Test passed: Response from both nodes contains 'Michael Jackson'"
             fi
-      - save_cache:
+      - save_cache_hf:
           paths:
             - ~/.cache/huggingface/hub
           key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
-      - save_cache:
+      - save_cache_tinygrad:
           paths:
             - ~/Library/Caches/tinygrad/downloads
           key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
