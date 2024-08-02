@@ -8,9 +8,11 @@ commands:
     parameters:
       inference_engine:
         type: string
+      model_id:
+        type: string
     steps:
       - run:
-          name: Run chatgpt api integration test (<<parameters.inference_engine>>)
+          name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
           command: |
             source env/bin/activate
 
@@ -45,7 +47,7 @@ commands:
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
-                "model": "llama-3.1-8b",
+                "model": "<<parameters.model_id>>",
                 "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
                 "temperature": 0.7
               }')
@@ -57,7 +59,7 @@ commands:
             response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
-                "model": "llama-3.1-8b",
+                "model": "<<parameters.model_id>>",
                 "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
                 "temperature": 0.7
               }')
@@ -167,8 +169,10 @@ jobs:
             pip install .
       - run_chatgpt_api_test:
           inference_engine: mlx
+          model_id: llama-3.1-8b
       - run_chatgpt_api_test:
           inference_engine: tinygrad
+          model_id: llama-3-8b
 
 workflows:
   version: 2
