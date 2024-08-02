@@ -117,8 +117,10 @@ def load_model_shard(
     raise FileNotFoundError(f"No safetensors found in {model_path}")
 
   weights = {}
-  for wf in weight_files:
-    weights.update(mx.load(wf))
+  for wf in sorted(weight_files):
+    loaded_weights = mx.load(wf)
+    filtered_weights = {k: v for k, v in loaded_weights.items() if shard.start_layer <= int(k.split(".")[2]) <= shard.end_layer}
+    weights.update(filtered_weights)
 
   model_class, model_args_class = _get_classes(config=config)
 
@@ -235,26 +237,28 @@ async def load_shard(
     tokenizer = load_tokenizer(model_path, tokenizer_config)
     return model, tokenizer
 
+
 async def get_image_from_str(_image_str: str):
-    image_str = _image_str.strip()
+  image_str = _image_str.strip()
 
-    if image_str.startswith("http"):
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_str, timeout=10) as response:
-                content = await response.read()
-                return Image.open(BytesIO(content)).convert("RGB")
-    elif image_str.startswith("data:image/"):
-        # Extract the image format and base64 data
-        format_prefix, base64_data = image_str.split(";base64,")
-        image_format = format_prefix.split("/")[1].lower()
-        if DEBUG >= 2: print(f"{image_str=} {image_format=}")
-        imgdata = base64.b64decode(base64_data)
-        img = Image.open(BytesIO(imgdata))
+  if image_str.startswith("http"):
+    async with aiohttp.ClientSession() as session:
+      async with session.get(image_str, timeout=10) as response:
+        content = await response.read()
+        return Image.open(BytesIO(content)).convert("RGB")
+  elif image_str.startswith("data:image/"):
+    # Extract the image format and base64 data
+    format_prefix, base64_data = image_str.split(";base64,")
+    image_format = format_prefix.split("/")[1].lower()
+    if DEBUG >= 2:
+      print(f"{image_str=} {image_format=}")
+    imgdata = base64.b64decode(base64_data)
+    img = Image.open(BytesIO(imgdata))
 
-        # Convert to RGB if not already
-        if img.mode != "RGB":
-            img = img.convert("RGB")
+    # Convert to RGB if not already
+    if img.mode != "RGB":
+      img = img.convert("RGB")
 
-        return img
-    else:
-        raise ValueError("Invalid image_str format. Must be a URL or a base64 encoded image.")
+    return img
+  else:
+    raise ValueError("Invalid image_str format. Must be a URL or a base64 encoded image.")
