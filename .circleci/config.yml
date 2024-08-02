@@ -172,8 +172,8 @@ jobs:
           model_id: llama-3.1-8b
 
   test_cuda:
-    machine:
-      image: linux-cuda-12:default
+    docker:
+      - image: nvidia/cuda:11.4.3-base-ubuntu20.04
     resource_class: gpu.nvidia.medium
     steps:
       - checkout
