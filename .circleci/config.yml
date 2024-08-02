@@ -150,7 +150,7 @@ jobs:
               exit 1
             fi
 
-  chatgpt_api_integration_test:
+  chatgpt_api_integration_test_mlx:
     macos:
       xcode: "15.2.0"
     steps:
@@ -170,6 +170,28 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.1-8b
+
+  chatgpt_api_integration_test_tinygrad:
+    machine:
+      image: ubuntu-2204-cuda-11.8:current
+    resource_class: gpu.nvidia.small.gen2
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            pyenv install 3.12
+            pyenv global 3.12
+      - run:
+          name: Create and activate virtual environment
+          command: |
+            python -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            pip install --upgrade pip
+            pip install .
       - run_chatgpt_api_test:
           inference_engine: tinygrad
           model_id: llama-3-8b
@@ -180,4 +202,5 @@ workflows:
     jobs:
       - unit_test
       - discovery_integration_test
-      - chatgpt_api_integration_test
+      - chatgpt_api_integration_test_mlx
+      - chatgpt_api_integration_test_tinygrad
