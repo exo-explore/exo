@@ -14,6 +14,7 @@ from io import BytesIO
 import base64
 import os
 import concurrent.futures
+import gc
 
 from exo import DEBUG
 import mlx.core as mx
@@ -125,6 +126,8 @@ def load_model_shard(
     loaded_weights = mx.load(wf)
     filtered_weights = {k: v for k, v in loaded_weights.items() if shard.start_layer <= int(k.split(".")[2]) <= shard.end_layer}
     weights.update(filtered_weights)
+    del loaded_weights
+    gc.collect()
 
   model_class, model_args_class = _get_classes(config=config)
 
