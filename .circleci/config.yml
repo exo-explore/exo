@@ -32,7 +32,7 @@ jobs:
           name: Run tests
           command: |
             source env/bin/activate
-            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3-8B-Instruct-4bit/**/* || true
+            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3.1-8B-Instruct-4bit/**/* || true
             METAL_XCODE=1 python3 -m exo.inference.test_inference_engine
       - save_cache:
           paths:
@@ -112,7 +112,7 @@ jobs:
           command: |
             source env/bin/activate
             # Check if cached files are present
-            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3-8B-Instruct-4bit/**/* || true
+            ls ~/.cache/huggingface/hub/models--mlx-community--Meta-Llama-3.1-8B-Instruct-4bit/**/* || true
 
             # Start first instance
             DEBUG_DISCOVERY=9 DEBUG=9 python3 main.py --inference-engine mlx --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900 > output1.log 2>&1 &
@@ -146,7 +146,7 @@ jobs:
             curl -s http://localhost:8000/v1/chat/completions \
                 -H "Content-Type: application/json" \
                 -d '{
-                  "model": "llama-3-8b",
+                  "model": "llama-3.1-8b",
                   "messages": [{"role": "user", "content": "Keep responses concise. Placeholder to load model..."}],
                   "temperature": 0.7
                 }'
@@ -157,7 +157,7 @@ jobs:
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
-                "model": "llama-3-8b",
+                "model": "llama-3.1-8b",
                 "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
                 "temperature": 0.7
               }')
@@ -169,7 +169,7 @@ jobs:
             response_2=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
-                "model": "llama-3-8b",
+                "model": "llama-3.1-8b",
                 "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
                 "temperature": 0.7
               }')
