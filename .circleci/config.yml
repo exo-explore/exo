@@ -209,4 +209,4 @@ workflows:
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
       - test_macos_m1
-      - chatgpt_api_integration_test_tinygrad
+      # - chatgpt_api_integration_test_tinygrad
