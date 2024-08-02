@@ -309,11 +309,12 @@ class ChatGPTAPI:
     match = self.prompts.find_longest_prefix(prompt)
     if match:
         if DEBUG >= 2:
-            print(f"Prompt for request starts with previous prompt {len(match[1].prompt)} of {len(prompt)}: {match[1].prompt}")
+          print(f"Prompt for request starts with previous prompt {len(match[1].prompt)} of {len(prompt)}: {match[1].prompt}")
         request_id = match[1].request_id
         self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
-        # remove the matching prefix from the prompt
-        prompt = prompt[len(match[1].prompt):]
+        if len(match[1].prompt) < len(prompt):
+          # remove the matching prefix from the prompt
+          prompt = prompt[len(match[1].prompt):]
     else:
       request_id = str(uuid.uuid4())
       self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
