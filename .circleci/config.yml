@@ -188,8 +188,9 @@ jobs:
       - run:
           name: Set up Python
           command: |
-            sudo apt-get update -y
-            sudo apt-get install -y python3.12
+            sudo add-apt-repository ppa:deadsnakes/ppa -y
+            sudo apt update -y
+            sudo apt install -y python3.12
             pip3 install virtualenv
       - run:
           name: Create and activate virtual environment
