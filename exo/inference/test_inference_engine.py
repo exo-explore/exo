@@ -44,7 +44,7 @@ asyncio.run(
   test_inference_engine(
     MLXDynamicShardInferenceEngine(),
     MLXDynamicShardInferenceEngine(),
-    "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
+    "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
   )
 )
 

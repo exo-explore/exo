@@ -144,10 +144,15 @@ def load_model_shard(
     weights = model.sanitize(weights)
 
   if (quantization := config.get("quantization", None)) is not None:
+    # Handle legacy models which may not have everything quantized
+    def class_predicate(p, m):
+        if not hasattr(m, "to_quantized"):
+            return False
+        return f"{p}.scales" in weights
     nn.quantize(
       model,
       **quantization,
-      class_predicate=None,
+      class_predicate=class_predicate,
     )
 
   model.load_weights(list(weights.items()), strict=True)
