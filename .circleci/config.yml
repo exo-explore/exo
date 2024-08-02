@@ -188,8 +188,8 @@ jobs:
       - run:
           name: Set up Python
           command: |
-            pyenv install 3.12
-            pyenv global 3.12
+            sudo apt-get update
+            sudo apt-get install -y python3.12 python3.12-venv
       - run:
           name: Create and activate virtual environment
           command: |
