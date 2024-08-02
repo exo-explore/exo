@@ -307,14 +307,13 @@ class ChatGPTAPI:
     prompt, image_str = build_prompt(tokenizer, chat_request.messages)
     request_id = None
     match = self.prompts.find_longest_prefix(prompt)
-    if match:
+    if match and len(prompt) > len(match[1].prompt):
         if DEBUG >= 2:
           print(f"Prompt for request starts with previous prompt {len(match[1].prompt)} of {len(prompt)}: {match[1].prompt}")
         request_id = match[1].request_id
         self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
-        if len(match[1].prompt) < len(prompt):
-          # remove the matching prefix from the prompt
-          prompt = prompt[len(match[1].prompt):]
+        # remove the matching prefix from the prompt
+        prompt = prompt[len(match[1].prompt):]
     else:
       request_id = str(uuid.uuid4())
       self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
