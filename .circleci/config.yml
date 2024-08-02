@@ -18,7 +18,7 @@ jobs:
             source env/bin/activate
       - restore_cache:
           keys:
-            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
       - run:
           name: Install dependencies
           command: |
@@ -34,7 +34,7 @@ jobs:
       - save_cache:
           paths:
             - ~/.cache/huggingface/hub
-          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
 
   discovery_integration_test:
     macos:
@@ -88,11 +88,11 @@ jobs:
             source env/bin/activate
       - restore_cache:
           keys:
-            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+            - huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
             - huggingface-hub-
       - restore_cache:
           keys:
-            - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+            - tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
             - tinygrad-downloads-
       - run:
           name: Install dependencies
@@ -108,11 +108,11 @@ jobs:
       - save_cache:
           paths:
             - ~/.cache/huggingface/hub
-          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+          key: huggingface-hub-{{ checksum "~/.cache/huggingface/hub/**/*" }}-{{ .Environment.CIRCLE_JOB }}
       - save_cache:
           paths:
             - ~/Library/Caches/tinygrad/downloads
-          key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*") }}-{{ .Environment.CIRCLE_JOB }}
+          key: tinygrad-downloads-{{ checksum "~/Library/Caches/tinygrad/downloads/**/*" }}-{{ .Environment.CIRCLE_JOB }}
 
 workflows:
   version: 2
