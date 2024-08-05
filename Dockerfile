@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y python3.12
 
 ENV PATH /usr/local/python3.12/bin:$PATH
 
-RUN apt clean && \\
-    rm -rf /var/lib/apt/lists \\
-    && \\
+RUN apt clean &&  \
+    rm -rf /var/lib/apt/lists \
+    && \
     rm -rf /var/log/apt/*
 
 RUN pip cache purge
