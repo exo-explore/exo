@@ -6,6 +6,7 @@ ENV DEBUG=1
 WORKDIR /app
 
 ENV PATH /usr/local/python3.12/bin:$PATH
+ENV NODE_ID=bytebolt-exo
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
     apt-get install -y software-properties-common && \
@@ -31,5 +32,5 @@ RUN pip install --no-cache-dir .
 RUN pip cache purge
 
 ENTRYPOINT ["/usr/bin/python"]
-CMD ["main.py"]
+CMD ["main.py", "--disable-tui", "--node-id", "$NODE_ID"]
 EXPOSE $WORKING_PORT
