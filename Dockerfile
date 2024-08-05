@@ -7,16 +7,18 @@ WORKDIR /app
 
 ENV PATH /usr/local/python3.12/bin:$PATH
 
-RUN apt clean &&  \
-    rm -rf /var/lib/apt/lists \
-    && \
-    rm -rf /var/log/apt/*
-
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
     apt-get install -y software-properties-common && \
     DEBIAN_FRONTEND=noninteractive add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get install -y python3.10 curl && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+
+RUN apt-get install git
+
+RUN apt clean &&  \
+    rm -rf /var/lib/apt/lists \
+    && \
+    rm -rf /var/log/apt/*
 
 RUN curl -sSL https://install.python-poetry.org | python3.10 - --preview
 RUN pip3 install --upgrade requests
