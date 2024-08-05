@@ -32,8 +32,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     async def infer_prompt(
             self, 
+            request_id: str, 
+            shard: Shard, 
             prompt: str, 
+            image_str: Optional[str] = None, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        
+        await self.ensure_shard(shard)
+
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
@@ -70,7 +76,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             shard: Shard, 
             input_data: np.ndarray, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        
         await self.ensure_shard(shard)
+
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
