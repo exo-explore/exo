@@ -3,6 +3,7 @@ import asyncio
 import signal
 import json
 import uuid
+import os
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery

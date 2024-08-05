@@ -8,22 +8,32 @@ WORKDIR /app
 ENV PATH /usr/local/python3.12/bin:$PATH
 ENV NODE_ID=bytebolt-exo
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y software-properties-common && \
-    DEBIAN_FRONTEND=noninteractive add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get install -y python3.12 curl && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+RUN apt update
+RUN apt install -y wget libffi-dev gcc build-essential  \
+    curl tcl-dev tk-dev uuid-dev lzma-dev liblzma-dev libssl-dev libsqlite3-dev \
+    git
 
-RUN apt-get install git -y
+
+RUN wget https://www.python.org/ftp/python/3.10.0/Python-3.12.0.tgz
+RUN tar -zxvf Python-3.12.0.tgz
+RUN cd Python-3.12.0 && ./configure --prefix=/opt/python3.12 && make && make install
+
+# Delete the python source code and temp files
+RUN rm Python-3.12.0.tgz
+RUN rm -r Python-3.12.0/
+
+# Now link it so that $python works
+RUN ln -s /opt/python3.12/python3.12 /usr/bin/python
+
+
 
 RUN apt clean &&  \
     rm -rf /var/lib/apt/lists \
     && \
     rm -rf /var/log/apt/*
 
-RUN curl -sSL https://install.python-poetry.org | python3.10 - --preview
+RUN curl -sSL https://install.python-poetry.org | python3.12 - --preview
 RUN pip3 install --upgrade requests
-RUN ln -fs /usr/bin/python3.12 /usr/bin/python
 
 
 COPY . .
