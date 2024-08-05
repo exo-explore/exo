@@ -13,7 +13,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
     apt-get install -y python3.10 curl && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
 
-RUN apt-get install git
+RUN apt-get install git -y
 
 RUN apt clean &&  \
     rm -rf /var/lib/apt/lists \
