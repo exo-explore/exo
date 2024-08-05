@@ -30,18 +30,4 @@ def build_transformer(model_name: str, quantize=None, device=None):
     if quantize:
         model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear})
 
-    # Shard the model if using multiple devices
-    if isinstance(device, tuple):
-        for name, param in model.named_parameters():
-            if "scale" in name:
-                param.data = param.data.chunk(len(device), dim=0)
-            elif ".attention." in name:
-                param.data = param.data.chunk(len(device), dim=-1)
-            elif ".feed_forward.w1." in name or ".feed_forward.w3." in name:
-                param.data = param.data.chunk(len(device), dim=0)
-            elif ".feed_forward." in name:
-                param.data = param.data.chunk(len(device), dim=-1)
-            elif "tok_embeddings.weight" in name or "output.weight" in name:
-                param.data = param.data.chunk(len(device), dim=0)
-
     return model

@@ -1,17 +1,17 @@
 # experimental, based off of tinygrad/inference.py
 # utilizing pytorch FSDP for sharding
+# look into shard being optional for the inferece
 
 import numpy as np
 import json
 import torch
+import functools
+import os
 from typing import Optional, Callable, Tuple
 from transformers import AutoTokenizer
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import build_transformer
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp.wrap import auto_wrap_policy
-from torch.distributed import init_process_group, destroy_process_group
 
 # Default settings
 TEMPERATURE = 0.7
@@ -21,25 +21,20 @@ ALPHA_F = 0.1
 ALPHA_P = 0.0
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
-    def __init__(self):
-        self.shard = None
-        self.model = None
-        self.tokenizer = None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Initialize process group
-        init_process_group(backend='nccl' if torch.cuda.is_available() else 'gloo')
+    def __init__(self, model_name: str = "gpt2", device: str = "cuda", tokenizer: str="gpt2"):
+        self.device = device
+        self.model_name = model_name
+        self.shard = Shard(model_id=model_name, start_layer=0, end_layer=1, n_layers=2)
+        self.model = build_transformer(self.shard.model_id, self.shard, device=self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
 
     async def infer_prompt(
             self, 
             request_id: str, 
             shard: Shard, 
             prompt: str, 
-            image_str: Optional[str] = None, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         
-        await self.ensure_shard(shard)
-
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
@@ -54,8 +49,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 temperature=TEMPERATURE,
                 top_k=TOP_K,
                 top_p=TOP_P,
-                pad_token_id=self.tokenizer.eos_token_id,
-                start_pos=start_pos
+                pad_token_id=self.tokenizer.eos_token_id
             )
 
         output_token = outputs[0, -1].item()
@@ -77,8 +71,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             input_data: np.ndarray, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         
-        await self.ensure_shard(shard)
-
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
@@ -107,22 +99,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             is_eos
         )
 
-    async def ensure_shard(self, shard: Shard):
-        if self.shard == shard:
-            return
-
-        # Load model and tokenizer from Hugging Face hub
-        self.model = build_transformer(shard.model_id, shard, device=self.device)
-        
-        # Wrap the model with FSDP
-        self.model = FSDP(self.model, auto_wrap_policy=auto_wrap_policy)
-
-        self.tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
-        self.shard = shard
-
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
         # This method can be implemented if progress tracking is needed
         pass
-
-    def __del__(self):
-        destroy_process_group()
