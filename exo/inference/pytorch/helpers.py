@@ -170,7 +170,7 @@ def fix_bf16(weights: Dict[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
         return {k: v.to(torch.float16) if v.dtype == torch.bfloat16 else v for k, v in weights.items()}
 
 
-def build_transformer(model_name: str, shard: Shard, model_size="8B", quantize=None, device=None):
+def build_transformer(model_name: str, quantize=None, device=None):
     """
     Builds a transformer model by loading it from the Hugging Face model hub and applying 
     weight conversion, quantization, and sharding as specified.
@@ -211,4 +211,29 @@ def build_transformer(model_name: str, shard: Shard, model_size="8B", quantize=N
                 param.data = param.data.chunk(len(device), dim=0)
 
     return model
+
+def shard_model(model: Any, model_name: str, num_shards: int) -> List[Shard]:
+    # Get the total number of layers
+    if hasattr(model, 'config'):
+        n_layers = model.config.num_hidden_layers
+    else:
+        raise ValueError("Unable to determine the number of layers in the model")
+
+    # Calculate layers per shard
+    layers_per_shard = n_layers // num_shards
+    remainder = n_layers % num_shards
+
+    shards = []
+    start_layer = 0
+    for i in range(num_shards):
+        end_layer = start_layer + layers_per_shard - 1
+        if i < remainder:
+            end_layer += 1
+        
+        shard = Shard(model_name, start_layer, end_layer, n_layers)
+        shards.append(shard)
+        
+        start_layer = end_layer + 1
+
+    return shards
 
