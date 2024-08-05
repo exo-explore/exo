@@ -30,6 +30,7 @@ RUN ln -fs /usr/bin/python3.12 /usr/bin/python
 COPY . .
 
 RUN pip install --no-cache-dir .
+RUN pip install tensorflow
 RUN pip cache purge
 
 ENTRYPOINT ["/usr/bin/python"]
