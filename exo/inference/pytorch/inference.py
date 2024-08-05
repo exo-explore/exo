@@ -1,33 +1,24 @@
 # experimental, based off of tinygrad/inference.py
-import os
+# utilizing pytorch FSDP for sharding
+
 import numpy as np
-import asyncio
 import json
 import torch
-from functools import partial
-from pathlib import Path
-from typing import List, Optional, Union, Callable, Dict, Tuple
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from typing import Optional, Callable, Tuple
+from transformers import AutoTokenizer
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.pytorch.helpers import (
-    fix_bf16, 
-    build_transformer, 
-    load_weights, 
-    convert_from_huggingface, 
-    MODEL_PARAMS
-)
+from exo.inference.pytorch.helpers import build_transformer
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import auto_wrap_policy
+from torch.distributed import init_process_group, destroy_process_group
 
-# default settings
-TEMPERATURE = 0  # 0.85
-TOP_K = 25
-TOP_P = 0.9
+# Default settings
+TEMPERATURE = 0.7
+TOP_K = 50
+TOP_P = 0.95
 ALPHA_F = 0.1
 ALPHA_P = 0.0
-
-
-# don't think prefill is needed
-# think that is used for stats but will look into
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     def __init__(self):
@@ -35,15 +26,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.model = None
         self.tokenizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Initialize process group
+        init_process_group(backend='nccl' if torch.cuda.is_available() else 'gloo')
 
     async def infer_prompt(
             self, 
-            request_id: str, 
-            shard: Shard, 
             prompt: str, 
-            image_str: Optional[str] = None, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
-        await self.ensure_shard(shard)
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
@@ -55,9 +45,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 attention_mask=attention_mask,
                 max_new_tokens=1,
                 do_sample=True,
-                temperature=0.7,
-                top_k=50,
-                top_p=0.95,
+                temperature=TEMPERATURE,
+                top_k=TOP_K,
+                top_p=TOP_P,
                 pad_token_id=self.tokenizer.eos_token_id,
                 start_pos=start_pos
             )
@@ -90,9 +80,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 input_tensor,
                 max_new_tokens=1,
                 do_sample=True,
-                temperature=0.7,
-                top_k=50,
-                top_p=0.95,
+                temperature=TEMPERATURE,
+                top_k=TOP_K,
+                top_p=TOP_P,
                 pad_token_id=self.tokenizer.eos_token_id,
                 start_pos=start_pos
             )
@@ -113,29 +103,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
 
-        cache_dir = Path.home() / ".cache" / "huggingface"
-        model_path = cache_dir / "models--" / shard.model_id.replace('/', '--')
+        # Load model and tokenizer from Hugging Face hub
+        self.model = build_transformer(shard.model_id, shard, device=self.device)
+        
+        # Wrap the model with FSDP
+        self.model = FSDP(self.model, auto_wrap_policy=auto_wrap_policy)
 
-        if not model_path.exists():
-            print(f"Downloading PyTorch model {shard.model_id}...")
-            weights = load_weights(str(model_path / "pytorch_model.bin"))
-        else:
-            weights = load_weights(str(model_path / "pytorch_model.bin"))
-
-        model_size = "8B"  # Assume 8B model, adjust as needed
-        n_heads = MODEL_PARAMS[model_size]["args"]["n_heads"]
-        n_kv_heads = MODEL_PARAMS[model_size]["args"]["n_kv_heads"]
-
-        self.model = build_transformer(shard.model_id, device=self.device)
-        converted_weights = convert_from_huggingface(weights, self.model, n_heads, n_kv_heads, shard)
-        converted_weights = fix_bf16(converted_weights)
-
-        self.model.load_state_dict(converted_weights, strict=False)
-        self.model.to(self.device)
-
-        self.tokenizer = AutoTokenizer.from_pretrained(str(model_path))
+        self.tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
         self.shard = shard
 
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
         # This method can be implemented if progress tracking is needed
         pass
+
+    def __del__(self):
+        destroy_process_group()
