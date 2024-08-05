@@ -25,7 +25,7 @@ RUN ln -fs /usr/bin/python3.10 /usr/bin/python
 
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir .
 RUN pip cache purge
 
 CMD ["DEBUG=$DEBUG_LEVEL", "python3.12", "main.py"]
