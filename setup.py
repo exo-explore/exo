@@ -27,6 +27,7 @@ install_requires = [
     "transformers==4.43.3",
     "uuid==1.30",
     "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@639af3f823cf242a1945dc24183e52a9df0af2b7",
+    "torch==2.4.0"
 ]
 
 # Add macOS-specific packages if on Darwin (macOS)
