@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/cuda:12.2.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04
 
 ENV WORKING_PORT=8080
 ENV DEBUG_LEVEL=1
