@@ -171,40 +171,26 @@ def fix_bf16(weights: Dict[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
 
 
 def build_transformer(model_name: str, shard: Shard, model_size="8B", quantize=None, device=None):
+    """
+    Builds a transformer model by loading it from the Hugging Face model hub and applying 
+    weight conversion, quantization, and sharding as specified.
+
+    Args:
+        model_name (str): The name of the model to load from the Hugging Face model hub.
+        shard (Shard): A Shard object containing information about the model shard.
+        model_size (str, optional): The size of the model to load (default is "8B").
+        quantize (bool, optional): Whether to apply dynamic quantization to the model (default is None).
+        device (torch.device, optional): The device to load the model onto (default is None).
+
+    Returns:
+        nn.Module: The constructed and configured transformer model.
+    """
     # Load model from Hugging Face hub
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, 
-        torch_dtype=torch.float16 if "cuda" in str(device) else torch.float32, 
+        model_name,
+        torch_dtype=torch.float16 if "cuda" in str(device) else torch.float32,
         device_map="auto" if "cuda" in str(device) else None
     )
-
-    # Load weights
-    model_path = Path(model_name)
-    if model_path.is_dir():
-        if (model_path / "pytorch_model.bin.index.json").exists():
-            weights = load_weights(str(model_path / "pytorch_model.bin.index.json"))
-        else:
-            pth_weights = []
-            for i in range(MODEL_PARAMS[model_size]["files"]):
-                pth_path = str(model_path / f"consolidated.{i:02d}.pth")
-                pth_weights.append(load_weights(pth_path))
-            
-            weights = concat_weights(
-                pth_weights,
-                device[0] if isinstance(device, tuple) else device,
-            )
-    else:
-        weights = load_weights(str(model_path))
-    
-    if "model.embed_tokens.weight" in weights:
-        weights = convert_from_huggingface(
-            weights,
-            model,
-            MODEL_PARAMS[model_size]["args"]["n_heads"],
-            MODEL_PARAMS[model_size]["args"]["n_kv_heads"],
-            shard=shard,
-        )
-    weights = fix_bf16(weights)
 
     # Quantize the model if specified
     if quantize:
@@ -223,9 +209,6 @@ def build_transformer(model_name: str, shard: Shard, model_size="8B", quantize=N
                 param.data = param.data.chunk(len(device), dim=-1)
             elif "tok_embeddings.weight" in name or "output.weight" in name:
                 param.data = param.data.chunk(len(device), dim=0)
-
-    # Replace weights in model
-    model.load_state_dict(weights, strict=False)
 
     return model
 

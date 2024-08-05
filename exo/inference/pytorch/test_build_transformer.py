@@ -14,6 +14,7 @@ class TestBuildTransformer(unittest.TestCase):
     def test_build_transformer(self, mock_open, mock_from_pretrained, mock_torch_load):
         # Mocking model and weights
         mock_model = MagicMock(spec=AutoModelForCausalLM)
+        mock_model.layers = [MagicMock()] * 2  # Mocking layers attribute
         mock_from_pretrained.return_value = mock_model
 
         mock_weights = {
@@ -24,7 +25,7 @@ class TestBuildTransformer(unittest.TestCase):
         mock_torch_load.return_value = mock_weights
 
         # Define the shard
-        shard = Shard(model_id="mock_model", start_layer=0, end_layer=0, n_layers=1)
+        shard = Shard(model_id="mock_model", start_layer=0, end_layer=1, n_layers=2)
 
         # Call the build_transformer function
         model = build_transformer("mock_model", shard, model_size="8B", quantize=True, device="cpu")
