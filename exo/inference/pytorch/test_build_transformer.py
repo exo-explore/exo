@@ -7,7 +7,7 @@ from exo.inference.pytorch.helpers import build_transformer
 
 class TestBuildTransformer(unittest.TestCase):
 
-    def test_build_transformer(self, mock_open, mock_from_pretrained, mock_torch_load):
+    def test_build_transformer(self):
         # Call the build_transformer function
         model = build_transformer(
             "gpt2", 
