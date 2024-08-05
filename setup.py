@@ -6,6 +6,7 @@ from setuptools import find_packages, setup
 install_requires = [
     "aiohttp==3.9.5",
     "aiohttp_cors==0.7.0",
+    "aiofiles==24.1.0",
     "blobfile==2.1.1",
     "grpcio==1.64.1",
     "grpcio-tools==1.64.1",
@@ -21,6 +22,7 @@ install_requires = [
     "requests==2.32.3",
     "rich==13.7.1",
     "safetensors==0.4.3",
+    "tenacity==9.0.0",
     "tiktoken==0.7.0",
     "tokenizers==0.19.1",
     "tqdm==4.66.4",

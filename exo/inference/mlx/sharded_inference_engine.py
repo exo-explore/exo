@@ -5,12 +5,13 @@ from .sharded_model import StatefulShardedModel
 from .sharded_utils import load_shard, get_image_from_str
 from ..shard import Shard
 from typing import Optional, Callable
+from exo.inference.hf_helpers import HFRepoProgressCallback
 
 
 class MLXDynamicShardInferenceEngine(InferenceEngine):
-  def __init__(self, on_download_progress: Callable[[int, int], None] = None):
+  def __init__(self, progress_callback: Optional[HFRepoProgressCallback] = None):
     self.shard = None
-    self.on_download_progress = on_download_progress
+    self.progress_callback = progress_callback
 
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     await self.ensure_shard(shard)
@@ -33,9 +34,9 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    model_shard, self.tokenizer = await load_shard(shard.model_id, shard, on_download_progress=self.on_download_progress)
+    model_shard, self.tokenizer = await load_shard(shard.model_id, shard, progress_callback=self.progress_callback)
     self.stateful_sharded_model = StatefulShardedModel(shard, model_shard)
     self.shard = shard
 
-  def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
-    self.on_download_progress = on_download_progress
+  def set_progress_callback(self, progress_callback: HFRepoProgressCallback):
+    self.progress_callback = progress_callback

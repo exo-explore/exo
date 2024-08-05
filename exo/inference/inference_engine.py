@@ -1,9 +1,9 @@
 import numpy as np
 
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, Coroutine, Any
 from abc import ABC, abstractmethod
 from .shard import Shard
-
+from exo.inference.hf_helpers import HFRepoProgressEvent
 
 class InferenceEngine(ABC):
   @abstractmethod
@@ -15,5 +15,5 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
-  def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
+  def set_progress_callback(self, progress_callback: Callable[[HFRepoProgressEvent], Coroutine[Any, Any, None]]):
     pass

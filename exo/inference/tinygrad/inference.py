@@ -1,9 +1,7 @@
-import asyncio
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Union, Callable
+from typing import List, Optional, Union, Callable, Coroutine, Any
 import json
-import tiktoken
 from tiktoken.load import load_tiktoken_bpe
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from tinygrad.nn.state import safe_load, torch_load, load_state_dict
@@ -12,7 +10,7 @@ from tinygrad.helpers import DEBUG, tqdm, _cache_dir, fetch
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 import numpy as np
-import os
+from exo.inference.hf_helpers import HFRepoProgressCallback, HFRepoProgressEvent, download_all_files, get_repo_root
 
 MODEL_PARAMS = {
   "8B": {
@@ -46,15 +44,6 @@ MODEL_PARAMS = {
 
 
 # **** helper functions ****
-async def fetch_async(
-  url: str,
-  name: Optional[Union[Path, str]] = None,
-  subdir: Optional[str] = None,
-  allow_caching=not os.getenv("DISABLE_HTTP_CACHE"),
-) -> Path:
-  func = partial(fetch, url, name, subdir, allow_caching)
-  return await asyncio.get_event_loop().run_in_executor(None, func)
-
 
 def concat_weights(models, device=None):
   def convert(name) -> Tensor:
@@ -159,8 +148,9 @@ def prefill(model, toks, start_pos=0):
 
 
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
-  def __init__(self):
+  def __init__(self, progress_callback: Optional[HFRepoProgressCallback] = None):
     self.shard = None
+    self.progress_callback = progress_callback
 
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     # TODO: we need to refactor models/llamaa to handle per-request-kv-cache. right now it's shared between requests.
@@ -199,62 +189,9 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    model_path = Path(shard.model_id)
-    models_dir = Path(_cache_dir) / "tinygrad" / "downloads"
-    model_path = models_dir / shard.model_id
-    size = "8B"
-    if Path(model_path / "tokenizer_config.json").exists():
-      model = model_path
-    else:
-
-      if DEBUG >= 2: print(f"Downloading tinygrad model {shard.model_id}...")
-      if shard.model_id.lower().find("llama3-8b-sfr") != -1:
-        num_files = 4
-        for i in range(num_files):
-          await fetch_async(
-            f"https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/model-{(i+1):05d}-of-{num_files:05d}.safetensors",
-            f"model-{(i+1):05d}-of-{num_files:05d}.safetensors",
-            subdir=shard.model_id,
-          )
-        await fetch_async(
-          "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/config.json",
-          "config.json",
-          subdir=shard.model_id,
-        )
-        model = await fetch_async(
-          "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/raw/main/model.safetensors.index.json",
-          "model.safetensors.index.json",
-          subdir=shard.model_id,
-        )
-        await fetch_async(
-          "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/special_tokens_map.json",
-          "special_tokens_map.json",
-          subdir=shard.model_id,
-        )
-        await fetch_async(
-          "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/tokenizer.json",
-          "tokenizer.json",
-          subdir=shard.model_id,
-        )
-        await fetch_async(
-          "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/tokenizer_config.json",
-          "tokenizer_config.json",
-          subdir=shard.model_id,
-        )
-        size = "8B"
-      elif shard.model_id.lower().find("llama3-70b-sfr") != -1:
-        raise NotImplementedError("llama3-70b-sfr is not implemented for tinygrad")
-        # fetch("https://huggingface.co/bofenghuang/Meta-Llama-3-70B/resolve/main/original/tokenizer.model", "tokenizer.model", subdir=shard.model_id)
-        # fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/resolve/main/model-00001-of-00004.safetensors", "model-00001-of-00004.safetensors", subdir=shard.model_id)
-        # fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/resolve/main/model-00002-of-00004.safetensors", "model-00002-of-00004.safetensors", subdir=shard.model_id)
-        # fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/resolve/main/model-00003-of-00004.safetensors", "model-00003-of-00004.safetensors", subdir=shard.model_id)
-        # fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/resolve/main/model-00004-of-00004.safetensors", "model-00004-of-00004.safetensors", subdir=shard.model_id)
-        # model = fetch("https://huggingface.co/TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R/raw/main/model.safetensors.index.json", "model.safetensors.index.json", subdir=shard.model_id)
-        # size = "70B"
-      else:
-        raise ValueError(f"tinygrad doesnt currently support arbitrary model downloading. unsupported model: {shard.model_id}")
-
-    model = build_transformer(model_path, shard=shard, model_size=size)
+    model_path = await download_all_files(shard.model_id, progress_callback=self.progress_callback)
+    print(f"{model_path=}")
+    model = build_transformer(model_path, shard=shard, model_size="8B" if "8b" in shard.model_id else "70B" if "70b" in shard.model_id else "8B")
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(str((model_path if model_path.is_dir() else model_path.parent)))
 
@@ -262,5 +199,5 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.model = model
     self.tokenizer = tokenizer
 
-  def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
-    pass
+  def set_progress_callback(self, progress_callback: Callable[[HFRepoProgressEvent], Coroutine[Any, Any, None]]):
+    self.progress_callback = progress_callback

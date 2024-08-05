@@ -12,10 +12,7 @@ from typing import Optional, Tuple, Union, List, Callable
 from PIL import Image
 from io import BytesIO
 import base64
-import os
-import concurrent.futures
 
-from exo import DEBUG
 import mlx.core as mx
 import mlx.nn as nn
 from huggingface_hub import snapshot_download, list_repo_tree, get_paths_info
@@ -28,6 +25,8 @@ from transformers import AutoProcessor
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
 from mlx_lm.tuner.utils import apply_lora_layers
 
+from exo import DEBUG
+from exo.inference.hf_helpers import download_all_files, HFRepoProgressCallback
 from ..shard import Shard
 
 
@@ -164,52 +163,6 @@ def load_model_shard(
   return model
 
 
-async def get_repo_size(repo_id: str, revision: Optional[str] = None, allow_patterns: Optional[Union[List[str], str]] = None, repo_type: Optional[str] = None):
-  it = await asyncio.to_thread(list_repo_tree, repo_id, revision=revision, repo_type=repo_type)
-  files = list(filter_repo_objects(it, allow_patterns=allow_patterns, key=lambda f: f.path))
-  return sum(file.size for file in files if hasattr(file, "size") and file.size is not None)
-
-async def monitor_progress(dir, total_size, print_progress=False, on_progress: Callable[[int, int], None] = None):
-    while True:
-      try:
-        await asyncio.sleep(0.1)
-        current_size = sum(os.path.getsize(os.path.join(root, file))
-                            for root, _, files in os.walk(dir)
-                            for file in files)
-        progress = min(current_size / total_size * 100, 100)
-        if print_progress:
-          print(f"\rProgress: {progress:.2f}% ({current_size}/{total_size} bytes)", end="", flush=True)
-        if on_progress:
-          on_progress(current_size, total_size)
-        if progress >= 100:
-          if print_progress:
-            print("\nDownload complete!")
-          break
-      except Exception as e:
-        print(f"Error monitoring progress: {e}")
-
-async def download_repo(repo_id: str, revision: Optional[str] = None, allow_patterns: Optional[Union[List[str], str]] = None, repo_type: Optional[str] = None):
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return await asyncio.get_event_loop().run_in_executor(
-            pool,
-            partial(snapshot_download, repo_id=repo_id, revision=revision, allow_patterns=allow_patterns, repo_type=repo_type)
-        )
-
-async def download_async_with_progress(repo_id: str, revision: Optional[str] = None, allow_patterns: Optional[Union[List[str], str]] = None, repo_type: Optional[str] = None, on_progress: Callable[[int, int], None] = None):
-  storage_folder = os.path.join(HF_HUB_CACHE, repo_folder_name(repo_id=repo_id, repo_type="model"))
-  # os.environ['HF_HUB_ENABLE_HF_TRANSFER'] = '1'
-  # os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
-
-  total_size = await get_repo_size(repo_id)
-
-  # Create tasks for download and progress checking
-  download_task = asyncio.create_task(download_repo(repo_id, revision=revision, allow_patterns=allow_patterns, repo_type=repo_type))
-  progress_task = asyncio.create_task(monitor_progress(storage_folder, total_size, on_progress=on_progress))
-
-  # Wait for both tasks to complete
-  result = await asyncio.gather(download_task, progress_task, return_exceptions=True)
-  return result[0]  # Return the result from download_task
-
 repo_id_safetensors_layers = {
   "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit": {
     "model.safetensors": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
@@ -313,7 +266,7 @@ def get_safetensors_allow_patterns(repo_id: str, shard: Optional[Shard] = None):
 
     return allow_patterns if len(allow_patterns) > 0 else ["*.safetensors"]
 
-async def get_model_path(path_or_hf_repo: str, shard: Optional[Shard] = None, revision: Optional[str] = None, on_download_progress: Callable[[int, int], None] = None) -> Path:
+async def get_model_path(path_or_hf_repo: str, shard: Optional[Shard] = None, revision: str = "main", progress_callback: Optional[HFRepoProgressCallback] = None) -> Path:
   """
   Ensures the model is available locally. If the path does not exist locally,
   it is downloaded from the Hugging Face Hub.
@@ -329,7 +282,7 @@ async def get_model_path(path_or_hf_repo: str, shard: Optional[Shard] = None, re
   if not model_path.exists():
     try:
       model_path = Path(
-        await download_async_with_progress(
+        await download_all_files(
           repo_id=path_or_hf_repo,
           revision=revision,
           allow_patterns=[
@@ -339,7 +292,7 @@ async def get_model_path(path_or_hf_repo: str, shard: Optional[Shard] = None, re
             "*.tiktoken",
             "*.txt",
           ] + get_safetensors_allow_patterns(path_or_hf_repo, shard),
-          on_progress=on_download_progress,
+          progress_callback=progress_callback,
         )
       )
     except RepositoryNotFoundError:
@@ -360,7 +313,7 @@ async def load_shard(
   model_config={},
   adapter_path: Optional[str] = None,
   lazy: bool = False,
-  on_download_progress: Callable[[int, int], None] = None,
+  progress_callback: Optional[HFRepoProgressCallback] = None,
 ) -> Tuple[nn.Module, TokenizerWrapper]:
   """
   Load the model and tokenizer from a given path or a huggingface repository.
@@ -383,7 +336,7 @@ async def load_shard(
    FileNotFoundError: If config file or safetensors are not found.
    ValueError: If model class or args class are not found.
   """
-  model_path = await get_model_path(path_or_hf_repo, shard, on_download_progress=on_download_progress)
+  model_path = await get_model_path(path_or_hf_repo, shard, progress_callback=progress_callback)
 
   model = load_model_shard(model_path, shard, lazy, model_config)
   if adapter_path is not None:
