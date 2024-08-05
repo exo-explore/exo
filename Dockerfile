@@ -5,8 +5,6 @@ ENV DEBUG_LEVEL=1
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y python3.12
-
 ENV PATH /usr/local/python3.12/bin:$PATH
 
 RUN apt clean &&  \
@@ -14,11 +12,21 @@ RUN apt clean &&  \
     && \
     rm -rf /var/log/apt/*
 
-RUN pip cache purge
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y software-properties-common && \
+    DEBIAN_FRONTEND=noninteractive add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get install -y python3.10 curl && \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+
+RUN curl -sSL https://install.python-poetry.org | python3.10 - --preview
+RUN pip3 install --upgrade requests
+RUN ln -fs /usr/bin/python3.10 /usr/bin/python
+
 
 COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip cache purge
 
 CMD ["DEBUG=$DEBUG_LEVEL", "python3.12", "main.py"]
 EXPOSE $WORKING_PORT
