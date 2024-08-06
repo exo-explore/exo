@@ -8,8 +8,11 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Generator, Iterable, TypeVar, TypedDict
 from dataclasses import dataclass
+from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
+from exo.topology.topology import Topology
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from exo.helpers import DEBUG
+
 
 T = TypeVar("T")
 def filter_repo_objects(
@@ -199,6 +202,14 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
                     await progress_callback(HFRepoFileProgressEvent(file_path, downloaded_size, total_size, speed, eta, status))
         if DEBUG >= 2: print(f"Downloaded: {file_path}")
 
+async def download_file_from_peer(file_path: str, save_directory: str, progress_callback: Optional[HFRepoProgressCallback] = None):
+    topology = Topology()
+    node_id = await topology.broadcast_file_request(file_path)
+    if not node_id:
+        raise ValueError(f"No peer has the file {file_path}")
+    peer_handle = GRPCPeerHandle(node_id)
+    await peer_handle.download_file(file_path, save_directory, progress_callback)
+
 async def download_all_files(repo_id: str, revision: str = "main", progress_callback: Optional[HFRepoProgressCallback] = None, allow_patterns: Optional[Union[List[str], str]] = None, ignore_patterns: Optional[Union[List[str], str]] = None):
     repo_root = get_repo_root(repo_id)
     refs_dir = repo_root / "refs"
@@ -207,6 +218,14 @@ async def download_all_files(repo_id: str, revision: str = "main", progress_call
     # Ensure directories exist
     refs_dir.mkdir(parents=True, exist_ok=True)
     snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        await download_file_from_peer(repo_id, snapshots_dir, progress_callback)
+        return
+    except ValueError:
+        if DEBUG >= 2: print("File not found with peers, downloading from HUB")
+
+    # Else download the file from HUB
 
     async with aiohttp.ClientSession() as session:
         # Fetch the commit hash for the given revision

@@ -8,6 +8,7 @@ from ..peer_handle import PeerHandle
 from .grpc_peer_handle import GRPCPeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo import DEBUG_DISCOVERY
+from exo.topology.topology import Topology
 
 
 class ListenProtocol(asyncio.DatagramProtocol):
@@ -45,6 +46,7 @@ class GRPCDiscovery(Discovery):
     self.listen_task = None
     self.cleanup_task = None
     self.discovery_timeout = discovery_timeout
+    self.topology = Topology()
 
   async def start(self):
     self.device_capabilities = device_capabilities()
@@ -97,14 +99,12 @@ class GRPCDiscovery(Discovery):
     sock = transport.get_extra_info("socket")
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-    message = json.dumps(
-      {
-        "type": "discovery",
-        "node_id": self.node_id,
-        "grpc_port": self.node_port,
-        "device_capabilities": self.device_capabilities.to_dict(),
-      }
-    ).encode("utf-8")
+    message = json.dumps({
+      "type": "discovery",
+      "node_id": self.node_id,
+      "grpc_port": self.node_port,
+      "device_capabilities": self.device_capabilities.to_dict(),
+    }).encode("utf-8")
 
     while True:
       try:
@@ -160,6 +160,32 @@ class GRPCDiscovery(Discovery):
     await asyncio.get_event_loop().create_datagram_endpoint(lambda: ListenProtocol(self.on_listen_message), local_addr=("0.0.0.0", self.listen_port))
     if DEBUG_DISCOVERY >= 2:
       print("Started listen task")
+
+  async def broadcast_file_request(self, file_path: str) -> List[str]:
+    """
+    Sends a file request to all known peers and gathers their responses.
+    Returns a list of node IDs that have the file.
+    """
+    nodes_with_file = []
+    for peer_id, (peer_handle, _, _) in self.known_peers.items():
+      has_file = await peer_handle.check_file(file_path)
+      if has_file:
+        self.topology.update_file_ownership(peer_id, file_path)
+        nodes_with_file.append(peer_id)
+    return nodes_with_file
+
+  async def download_from_peer(self, file_path: str, save_directory: str):
+    """
+    Initiates a file download from a peer that has the file.
+    If no peer has the file, raises a ValueError.
+    """
+    nodes_with_file = await self.broadcast_file_request(file_path)
+    if not nodes_with_file:
+      raise ValueError(f"No peer has the file {file_path}")
+    # Choose the first node with the file to download from
+    node_id = nodes_with_file[0]
+    peer_handle = GRPCPeerHandle(node_id)
+    await peer_handle.download_file(file_path, save_directory)
 
   async def task_cleanup_peers(self):
     while True:
