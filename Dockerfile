@@ -2,7 +2,6 @@ FROM nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04
 
 ENV WORKING_PORT=8080
 ENV DEBUG=1
-ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
