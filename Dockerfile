@@ -5,7 +5,7 @@ ENV DEBUG=1
 
 WORKDIR /app
 
-ENV PATH /usr/local/python3.12/bin:$PATH
+ENV PATH=/usr/local/python3.12/bin:$PATH
 ENV NODE_ID=bytebolt-exo
 
 RUN apt-get update && \
