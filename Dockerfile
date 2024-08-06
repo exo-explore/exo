@@ -16,7 +16,6 @@ RUN apt-get update && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
     rm -rf /var/lib/apt/lists/*
 
-RUN curl -sSL https://install.python-poetry.org | python3.12 - --preview
 RUN pip3 install --no-cache-dir --upgrade requests
 RUN ln -fs /usr/bin/python3.12 /usr/bin/python
 
