@@ -20,11 +20,13 @@ RUN curl -sSL https://install.python-poetry.org | python3.12 - --preview
 RUN pip3 install --no-cache-dir --upgrade requests
 RUN ln -fs /usr/bin/python3.12 /usr/bin/python
 
-COPY . .
+COPY setup.py .
 
 RUN pip3 install --no-cache-dir .
 RUN pip3 install --no-cache-dir tensorflow
 RUN pip3 cache purge
+
+COPY . .
 
 ENTRYPOINT ["/usr/bin/python"]
 CMD ["main.py", "--disable-tui", "--node-id", "$NODE_ID"]
