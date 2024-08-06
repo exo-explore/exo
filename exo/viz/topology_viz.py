@@ -1,6 +1,6 @@
 import math
 from typing import List, Optional, Tuple
-from exo.helpers import exo_text
+from exo.helpers import exo_text, pretty_print_bytes, pretty_print_bytes_per_second
 from exo.topology.topology import Topology
 from exo.topology.partitioning_strategy import Partition
 from rich.console import Console
@@ -8,8 +8,10 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.live import Live
 from rich.style import Style
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
+from rich.table import Table
 from exo.topology.device_capabilities import UNKNOWN_DEVICE_CAPABILITIES
-
+from exo.inference.hf_helpers import HFRepoProgressEvent
 
 class TopologyViz:
   def __init__(self, chatgpt_api_endpoint: str = None, web_chat_url: str = None):
@@ -24,7 +26,7 @@ class TopologyViz:
     self.live_panel = Live(self.panel, auto_refresh=False, console=self.console)
     self.live_panel.start()
 
-  def update_visualization(self, topology: Topology, partitions: List[Partition], download_progress: Optional[Tuple[int, int]] = None):
+  def update_visualization(self, topology: Topology, partitions: List[Partition], download_progress: HFRepoProgressEvent = None):
     self.topology = topology
     self.partitions = partitions
     self.download_progress = download_progress
@@ -34,7 +36,7 @@ class TopologyViz:
     self.panel.renderable = self._generate_layout()
     # Update the panel title with the number of nodes and partitions
     node_count = len(self.topology.nodes)
-    self.panel.title = f"Exo Cluster ({node_count} node{'s' if node_count != 1 else ''}){f' {self.download_progress[0]/self.download_progress[1]:.2%} Downloaded' if self.download_progress else ''}"
+    self.panel.title = f"Exo Cluster ({node_count} node{'s' if node_count != 1 else ''})"
     self.live_panel.update(self.panel, refresh=True)
 
   def _generate_layout(self) -> str:
@@ -46,6 +48,31 @@ class TopologyViz:
 
     # Generate visualization
     visualization = [[" " for _ in range(100)] for _ in range(55)]  # Decreased height
+
+    # Draw download first so everything else is drawn on top
+    # If a download is in progress, show the download info summary
+    if self.download_progress and self.download_progress.status != "complete":
+        download_summary = _generate_download_summary(self.download_progress)
+        download_panel = Panel(
+            download_summary,
+            title="Download Progress",
+            border_style="cyan",
+            expand=False,
+            width=96,  # Further reduced to ensure it fits within the visualization
+            height=None  # Allow the panel to adjust its height based on content
+        )
+        console = Console(width=98, height=55)  # Reduced console width
+        with console.capture() as capture:
+            console.print(download_panel)
+        download_lines = capture.get().split('\n')
+        download_start_y = 15
+        panel_width = len(max(download_lines, key=len))
+        start_x = max(1, (100 - panel_width) // 2)  # Ensure start_x is at least 1 to avoid left border cut-off
+        for i, line in enumerate(download_lines):
+            for j, char in enumerate(line):
+                if 1 <= start_x + j < 99 and download_start_y + i < 55:  # Ensure we don't write to the rightmost column
+                    visualization[download_start_y + i][start_x + j] = char
+
 
     # Add exo_text at the top in bright yellow
     exo_lines = exo_text.split("\n")
@@ -168,3 +195,28 @@ class TopologyViz:
 
     # Convert to string
     return "\n".join("".join(str(char) for char in row) for row in visualization)
+
+def _generate_download_summary(download_progress) -> Table:
+    summary = Table(show_header=False, box=None, padding=(0, 1))
+    summary.add_column("Info", style="cyan", no_wrap=True)
+    summary.add_column("Progress", style="cyan", no_wrap=True)
+    summary.add_column("Percentage", style="cyan", no_wrap=True)
+
+    title = f"Downloading model ({download_progress.completed_files}/{download_progress.total_files}):"
+    summary.add_row(Text(title, style="bold"))
+    progress_info = f"{pretty_print_bytes(download_progress.downloaded_bytes)} / {pretty_print_bytes(download_progress.total_bytes)} ({pretty_print_bytes_per_second(download_progress.overall_speed)})"
+    summary.add_row(progress_info)
+
+    eta_info = f"ETA: {download_progress.overall_eta}"
+    summary.add_row(eta_info)
+
+    summary.add_row("")  # Empty row for spacing
+
+    for file_path, file_progress in download_progress.file_progress.items():
+      if file_progress.status != "complete":
+        progress = int(file_progress.downloaded / file_progress.total * 20)  # Increased bar width
+        bar = f"[{'=' * progress}{' ' * (20 - progress)}]"
+        percentage = f"{file_progress.downloaded / file_progress.total * 100:.0f}%"
+        summary.add_row(Text(file_path[:20], style="cyan"), bar, percentage)  # Increased file path length
+
+    return summary

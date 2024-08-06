@@ -3,6 +3,7 @@ import json
 import asyncio
 import uuid
 import time
+import traceback
 from typing import List, Dict, Optional, Tuple, Union
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
@@ -13,6 +14,7 @@ from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, 
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
+from exo.inference.hf_helpers import HFRepoProgressEvent
 
 
 class StandardNode(Node):
@@ -54,12 +56,14 @@ class StandardNode(Node):
             self.current_topology.active_node_id = None
       download_progress = None
       if status_data.get("type", "") == "download_progress":
-        if DEBUG >= 5: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('current')}/{status_data.get('total')} ({round(status_data.get('current') / status_data.get('total') * 100, 2)}%)")
+        if DEBUG >= 5: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
         if status_data.get("node_id") == self.id:
-          download_progress = (status_data.get('current'), status_data.get('total'))
+          download_progress = HFRepoProgressEvent.from_dict(status_data.get('progress'))
       if self.topology_viz:
         self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), download_progress)
-    except json.JSONDecodeError:
+    except Exception as e:
+      if DEBUG >= 1: print(f"Error updating visualization: {e}")
+      traceback.print_exc()
       pass
 
   async def start(self, wait_for_peers: int = 0) -> None:
@@ -231,8 +235,6 @@ class StandardNode(Node):
       return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
     except Exception as e:
       print(f"Error processing tensor for shard {shard}: {e}")
-      import traceback
-
       traceback.print_exc()
       return None
 
@@ -368,8 +370,6 @@ class StandardNode(Node):
         print(f"Timeout broadcasting result to {peer.id()}")
       except Exception as e:
         print(f"Error broadcasting result to {peer.id()}: {e}")
-        import traceback
-
         traceback.print_exc()
 
     await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
@@ -383,8 +383,6 @@ class StandardNode(Node):
         print(f"Timeout sending opaque status to {peer.id()}")
       except Exception as e:
         print(f"Error sending opaque status to {peer.id()}: {e}")
-        import traceback
-
         traceback.print_exc()
 
     await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)

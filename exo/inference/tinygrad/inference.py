@@ -1,16 +1,14 @@
-from functools import partial
 from pathlib import Path
 from typing import List, Optional, Union, Callable, Coroutine, Any
 import json
-from tiktoken.load import load_tiktoken_bpe
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from tinygrad.nn.state import safe_load, torch_load, load_state_dict
 from tinygrad import Tensor, nn, Context, GlobalCounters
-from tinygrad.helpers import DEBUG, tqdm, _cache_dir, fetch
+from tinygrad.helpers import tqdm
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 import numpy as np
-from exo.inference.hf_helpers import HFRepoProgressCallback, HFRepoProgressEvent, download_all_files, get_repo_root
+from exo.inference.hf_helpers import HFRepoProgressCallback, HFRepoProgressEvent, download_all_files
 
 MODEL_PARAMS = {
   "8B": {
@@ -88,6 +86,7 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", quantize=
       )
   else:
     weights = load(str(model_path))
+
   if "model.embed_tokens.weight" in weights:
     weights = convert_from_huggingface(
       weights,
