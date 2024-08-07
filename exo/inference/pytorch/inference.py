@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer, Cache
+from transformers import AutoTokenizer, DynamicCache
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
@@ -60,21 +60,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to("cpu")
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
         
         # Continue the sequence if inference state exists
         past_key_values = None
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model.forward_layers(
-            input_ids,
-            past_key_values=past_key_values
-        )
-
-        if self.debug:
-            self.log.info(
-                f"\nInfer Prompt Debug - Request ID: {request_id}\nOutput: {output}\nEOS: {self.shard.is_last_layer()}")
+        output, past_key_values = self.model.forward_layers(input_ids, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
@@ -85,9 +78,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             output_data = output.cpu().numpy()
             is_eos = False
 
-        new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
+        new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
 
-        
+        if self.debug:
+            self.log.info(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 
@@ -111,14 +105,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
+        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
         
         # Continue the sequence if inference state exists
         past_key_values = None
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model(input_tensor, past_key_values=past_key_values)
+        output, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
@@ -129,7 +123,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             output_data = output.cpu().numpy()
             is_eos = False
 
-        new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
+        new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
 
         if self.debug:
             self.log.info(f"Infer Tensor Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
@@ -162,13 +156,17 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             past_key_values_list (list): List of past key-value tensors.
 
         Returns:
-            Cache: Loaded past key-value cache.
+            DynamicCache: Loaded past key-value cache.
         """
         if past_key_values_list is None:
-            return Cache()
-        cache = Cache()
-        for kv in past_key_values_list:
-            cache.append(torch.tensor(kv, device=self.device))
+            return DynamicCache()
+
+        cache = DynamicCache()
+        for layer_idx, (key_states, value_states) in enumerate(past_key_values_list):
+            key_states_tensor = torch.tensor(key_states, device=self.device)
+            value_states_tensor = torch.tensor(value_states, device=self.device)
+            cache.update(key_states_tensor, value_states_tensor, layer_idx)
+
         return cache
 
     def _save_kv_cache(self, past_key_values):
@@ -176,12 +174,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Save key-value cache to the inference state.
 
         Args:
-            past_key_values (list): List of past key-value tensors.
+            past_key_values (DynamicCache): Cache object containing past key-value tensors.
 
         Returns:
             list: List of key-value tensors in a format suitable for saving.
         """
-        return [kv.cpu().tolist() for kv in past_key_values]
+        past_key_values_list = []
+        for layer_idx in range(len(past_key_values)):
+            key_states, value_states = past_key_values[layer_idx]
+            past_key_values_list.append((key_states.cpu().tolist(), value_states.cpu().tolist()))
+
+        return past_key_values_list
+
 
     async def ensure_shard(self, shard: Optional[Shard]):
         """

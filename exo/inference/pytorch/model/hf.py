@@ -1,18 +1,13 @@
-# Work in progress on a generic hugging face model sharder
-# right now doesn't work with all models
-
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM, Cache
+from transformers import AutoModelForCausalLM, DynamicCache
 from exo.inference.shard import Shard
-import logging
 
 class ShardedHuggingFaceModel(nn.Module):
     def __init__(self, model_name: str, shard: Shard):
         super(ShardedHuggingFaceModel, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
-        self.device_ids = list(range(torch.cuda.device_count()))
 
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
@@ -37,19 +32,19 @@ class ShardedHuggingFaceModel(nn.Module):
 
         Args:
             input_ids (torch.Tensor): Input token IDs.
-            past_key_values (list, optional): Past key values for caching.
+            past_key_values (DynamicCache, optional): Past key values for caching.
 
         Returns:
             tuple: Hidden states and new past key values.
         """
         if past_key_values is None:
-            past_key_values = Cache()
+            past_key_values = DynamicCache()
 
         # Token embeddings
         hidden_states = self.embed_tokens(input_ids)
 
         # Apply each layer in this shard
-        new_past_key_values = []
+        new_past_key_values = DynamicCache()
         for i, layer in enumerate(self.layers):
             layer_past = past_key_values[i]
             hidden_states, new_layer_past = layer(
@@ -57,8 +52,7 @@ class ShardedHuggingFaceModel(nn.Module):
                 past_key_values=layer_past, 
                 use_cache=True
             )
-            
-            new_past_key_values.append(new_layer_past)
+            new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
 
         if self.shard.is_last_layer():
             hidden_states = self.norm(hidden_states)
