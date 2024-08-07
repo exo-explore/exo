@@ -345,7 +345,11 @@ class ChatGPTAPI:
             "chat.completion",
           )
           if DEBUG >= 2: print(f"Streaming completion: {completion}")
-          await response.write(f"data: {json.dumps(completion)}\n\n".encode())
+          try:
+            await response.write(f"data: {json.dumps(completion)}\n\n".encode())
+          except Exception as e:
+            if DEBUG >= 2: print(f"Error streaming completion: {e}")
+            if DEBUG >= 2: traceback.print_exc()
 
         def on_result(_request_id: str, tokens: List[int], is_finished: bool):
           self.stream_tasks[request_id] = asyncio.create_task(stream_result(request_id, tokens, is_finished))
