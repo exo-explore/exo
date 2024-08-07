@@ -22,17 +22,14 @@ class ShardedHuggingFaceModel(nn.Module):
         )
         
         # Only keep layers corresponding to this shard
-        self.layers = nn.ModuleList([
-            self.model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
-        ])
-
+        self.layers = self.model.layers
         logging.info(f"layers: {self.layers}")
         
         # Embeddings and final layer norm
-        self.embed_tokens = self.model.model.embed_tokens
-        self.embed_positions = self.model.model.embed_positions
-        self.norm = self.model.model.norm
-        self.lm_head = self.model.lm_head
+        self.embed_tokens = self.model.embed_tokens
+        self.embed_positions = self.model.embed_positions
+        self.norm = self.model.norm
+        self.lm_head = self.lm_head
 
     def forward_layers(self, input_ids, past_key_values=None):
         """
