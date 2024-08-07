@@ -2,12 +2,14 @@ import unittest
 import asyncio
 from exo.inference.shard import Shard
 from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
+import logging
+logging.basicConfig()
+logging.getLogger("pytorch.inference.test_engine").setLevel(logging.DEBUG)
 
 class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-
         # Create a shard
         cls.shard = Shard(
             model_id="llama3-8b-sfr",
@@ -22,6 +24,8 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
     def test_infer_prompt(self):
         # Prepare the prompt
         prompt = "Why is the sky blue?"
+
+        logging.info(f"Testing infer_prompt with prompt {prompt}")
 
         # Run inference
         loop = asyncio.get_event_loop()
