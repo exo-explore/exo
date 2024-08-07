@@ -43,8 +43,9 @@ def get_inference_engine(inference_engine_name):
 
     return TinygradDynamicShardInferenceEngine()
   elif inference_engine_name == "pytorch":
+     # will change from debug being true after testing
      from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
-     return PyTorchDynamicShardInferenceEngine()
+     return PyTorchDynamicShardInferenceEngine(debug=os.getenv("PYTORCH_DEBUG", default=True))
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")
 

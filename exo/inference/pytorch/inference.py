@@ -10,10 +10,6 @@ from transformers import AutoTokenizer, DynamicCache
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
-import logging
-
-logging.basicConfig()
-logging.getLogger("pytorch.inference").setLevel(logging.DEBUG)
 
 # Default settings
 TEMPERATURE = 0.7
@@ -34,15 +30,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.shard = None
         self.model = None
         self.debug = debug
-        self.log = logging.getLogger("pytorch.inference")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     async def infer_prompt(
-        self, 
-        request_id: str, 
-        shard: Optional[Shard], 
-        prompt: str, 
-        inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+            self, 
+            request_id: str, 
+            shard: Optional[Shard] = None, 
+            prompt: str = "", 
+            image_str: Optional[str] = None, 
+            inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         """
         Perform inference based on a text prompt.
 
@@ -50,6 +46,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             request_id (str): Unique identifier for the request.
             shard (Optional[Shard]): Shard information for the model.
             prompt (str): The input text prompt for inference.
+            image_str (Optional[str]): Optional image string for multi-modal models.
             inference_state (Optional[str]): The previous inference state.
 
         Returns:
@@ -57,37 +54,27 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
-        
-        # Continue the sequence if inference state exists
-        past_key_values = None
-        if inference_state:
-            past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
+        toks = self.tokenizer.encode(prompt)
+        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        output, past_key_values = self.model.forward_layers(input_ids, past_key_values=past_key_values)
+        start_pos = self.model.prefill(self.model, toks[:-1], start_pos=start_pos)
+        last_tok = toks[-1]
 
-        if self.shard.is_last_layer():
-            logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
-            next_token = torch.argmax(logits[:, -1, :], dim=-1)
-            output_data = np.array([next_token.item()])
-            is_eos = next_token.item() == self.tokenizer.eos_token_id
-        else:
-            output_data = output.cpu().detach().numpy()
-            is_eos = False
+        output_data = np.array([self.model.forward_layers(torch.tensor([[last_tok]], device=self.model.device), start_pos=start_pos, temperature=TEMPERATURE, top_k=TOP_K).tolist()])
+        if output_data.size == 1:
+            start_pos += 1
 
-        new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
-
-        if self.debug:
-            self.log.info(
-                f"\nInfer Prompt Debug - Request ID: {request_id}\nOutput: {output_data}\nEOS: {is_eos}")
-
-        return output_data, new_inference_state, is_eos
+        return (
+            output_data,
+            json.dumps({"start_pos": start_pos}),
+            output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
+        )
 
     async def infer_tensor(
             self, 
             request_id: str, 
-            shard: Optional[Shard], 
-            input_data: np.ndarray, 
+            shard: Optional[Shard] = None, 
+            input_data: np.ndarray = None, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         """
         Perform inference based on an input tensor.
@@ -103,30 +90,17 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
-        
-        # Continue the sequence if inference state exists
-        past_key_values = None
-        if inference_state:
-            past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
+        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        output, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
+        output_data = np.array([self.model.forward_layers(torch.tensor([input_data], device=self.model.device), start_pos=start_pos, temperature=TEMPERATURE, top_k=TOP_K).tolist()])
+        if output_data.size == 1:
+            start_pos += 1
 
-        if self.shard.is_last_layer():
-            logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
-            next_token = torch.argmax(logits[:, -1, :], dim=-1)
-            output_data = np.array([next_token.item()])
-            is_eos = next_token.item() == self.tokenizer.eos_token_id
-        else:
-            output_data = output.cpu().detach().numpy()
-            is_eos = False
-
-        new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
-
-        if self.debug:
-            self.log.info(f"Infer Tensor Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
-
-        return output_data, new_inference_state, is_eos
+        return (
+            output_data,
+            json.dumps({"start_pos": start_pos}),
+            output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
+        )
 
     def _apply_generation_settings(self, logits, temperature, top_k):
         """
@@ -146,7 +120,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             logits = logits.scatter(1, top_k_indices, top_k_values)
         return logits
 
-    def _load_kv_cache(self, past_key_values_list) -> DynamicCache:
+    def _load_kv_cache(self, past_key_values_list):
         """
         Load key-value cache from the inference state.
 
@@ -158,10 +132,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         if past_key_values_list is None:
             return DynamicCache()
-        
-        cache = DynamicCache()
-        for layer_idx, (key, value) in enumerate(past_key_values_list):
-            cache.update(torch.tensor(key, device=self.device), torch.tensor(value, device=self.device), layer_idx)
+        cache = DynamicCache.from_legacy_cache(past_key_values_list)
         return cache
 
     def _save_kv_cache(self, past_key_values):
@@ -169,20 +140,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Save key-value cache to the inference state.
 
         Args:
-            past_key_values (DynamicCache): Cache object containing past key-value tensors.
+            past_key_values (DynamicCache): Past key-value cache.
 
         Returns:
             list: List of key-value tensors in a format suitable for saving.
         """
-        past_key_values_list = []
-        for layer_idx in range(len(past_key_values)):
-            key_states, value_states = past_key_values[layer_idx]
-            past_key_values_list.append((
-                key_states.cpu().tolist(),
-                value_states.cpu().tolist()
-            ))
-
-        return past_key_values_list
+        return past_key_values.to_legacy_cache()
 
     async def ensure_shard(self, shard: Optional[Shard]):
         """
