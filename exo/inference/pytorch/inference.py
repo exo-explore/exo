@@ -11,6 +11,9 @@ from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
 from exo.inference.pytorch.model.llama import ShardedLLAMAModel
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 import logging
 
 logging.basicConfig()
@@ -25,16 +28,34 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, debug: bool = True):
+    def __init__(self, debug: bool = True, rank: int = 0, world_size: int = 1):
         """
         Initialize the inference engine.
 
         Args:
             debug (bool): If True, enables debug logging. Defaults to False.
+            rank (int): Rank of the current process in distributed training.
+            world_size (int): Total number of processes in distributed training.
         """
         self.shard = None
         self.debug = debug
+        self.rank = rank
+        self.world_size = world_size
+        self.device = torch.device(f"cuda:{rank}")
         self.log = logging.getLogger("pytorch.inference")
+        self.setup_distributed()
+
+    def setup_distributed(self):
+        """
+        Initialize the process group for distributed training.
+        """
+        dist.init_process_group(backend='nccl', init_method='env://', world_size=self.world_size, rank=self.rank)
+
+    def cleanup_distributed(self):
+        """
+        Clean up the process group for distributed training.
+        """
+        dist.destroy_process_group()
 
     async def infer_prompt(
             self, 
@@ -56,14 +77,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
         
         # Continue the sequence if inference state exists
         past_key_values = None
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model.forward_layers(input_ids, past_key_values=past_key_values)
+        output, past_key_values = self.model(input_ids, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
@@ -102,14 +123,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
+        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
         
         # Continue the sequence if inference state exists
         past_key_values = None
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
+        output, past_key_values = self.model(input_tensor, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
@@ -159,7 +180,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             return Cache()
         cache = Cache()
         for kv in past_key_values_list:
-            cache.append(torch.tensor(kv, device=self.model.device))
+            cache.append(torch.tensor(kv, device=self.device))
         return cache
 
     def _save_kv_cache(self, past_key_values):
@@ -221,11 +242,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Load the sharded model
         sharded_model = ShardedLLAMAModel(model_path, shard)
 
-        # Use DataParallel for multi-GPU support
-        device_ids = [i for i in range(torch.cuda.device_count())]
-        self.model = torch.nn.DataParallel(sharded_model, device_ids=device_ids)
+        # Use DistributedDataParallel for multi-GPU support
+        self.model = DDP(sharded_model.to(self.device), device_ids=[self.rank], output_device=self.rank)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
         
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
