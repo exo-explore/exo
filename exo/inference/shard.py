@@ -25,6 +25,9 @@ class Shard:
       "n_layers": self.n_layers,
     }
 
+  def from_dict(data: dict) -> 'Shard':
+    return Shard(**data)
+
   def overlaps(self, other: 'Shard') -> bool:
     return shards_overlap(self, other)
 
