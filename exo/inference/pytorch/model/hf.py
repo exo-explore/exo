@@ -21,8 +21,10 @@ class ShardedHuggingFaceModel(nn.Module):
             device_map="auto"
         )
         
-        # Only keep layers corresponding to this shard
-        self.layers = self.model.layers
+        # Extract only the layers for this shard
+        self.layers = nn.ModuleList([
+            self.full_model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
+        ])
         logging.info(f"layers: {self.layers}")
         
         # Embeddings and final layer norm
