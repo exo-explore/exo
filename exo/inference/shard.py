@@ -1,12 +1,15 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(frozen=True)
 class Shard:
   model_id: str
   start_layer: int
   end_layer: int
   n_layers: int
+
+  def __hash__(self):
+    return hash((self.model_id, self.start_layer, self.end_layer, self.n_layers))
 
   def is_first_layer(self) -> bool:
     return self.start_layer == 0

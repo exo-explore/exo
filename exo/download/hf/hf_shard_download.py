@@ -10,18 +10,19 @@ from exo.helpers import AsyncCallbackSystem, DEBUG
 
 class HFShardDownloader(ShardDownloader):
     def __init__(self):
-        self.active_downloads: List[Tuple[Shard, asyncio.Task]] = []
+        self.active_downloads: Dict[Shard, asyncio.Task] = []
         self._on_progress = AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]()
 
     async def ensure_shard(self, shard: Shard) -> Path:
         # If a download on this shard is already in progress, keep that one
-        for active_shard, task in self.active_downloads:
+        for active_shard, task in self.active_downloads.values():
             if active_shard == shard:
+                if DEBUG >= 2: print(f"Download already in progress for {shard}. Keeping that one.")
                 return await task
 
         # Cancel any downloads for this model_id on a different shard
-        to_remove = [(active_shard, task) for active_shard, task in self.active_downloads if active_shard.model_id == shard.model_id]
-        for active_shard, task in to_remove:
+        existing_active_shards = [active_shard for active_shard in self.active_downloads.keys() if active_shard.model_id == shard.model_id]
+        for active_shard in existing_active_shards:
             if DEBUG >= 2: print(f"Cancelling download for {active_shard} (replacing with {shard})")
             task.cancel()
             try:
@@ -31,18 +32,18 @@ class HFShardDownloader(ShardDownloader):
             except Exception as e:
                 if DEBUG >= 2: print(f"Error in cancelling download {active_shard}: {e}")
                 traceback.print_exc()
-        if DEBUG >= 2: print(f"Removing cancelled downloads: {to_remove}")
-        self.active_downloads = [(active_shard, task) for active_shard, task in self.active_downloads if active_shard.model_id != shard.model_id]
+        self.active_downloads = {active_shard: task for active_shard, task in self.active_downloads.items() if active_shard.model_id != shard.model_id}
 
         # Start new download
         download_task = asyncio.create_task(self._download_shard(shard))
-        self.active_downloads.append((shard, download_task))
+        self.active_downloads[shard] = download_task
         try:
             return await download_task
         finally:
             # Ensure the task is removed even if an exception occurs
-            if (shard, download_task) in self.active_downloads:
-                self.active_downloads.remove((shard, download_task))
+            print(f"Removing download task for {shard}: {shard in self.active_downloads}")
+            if shard in self.active_downloads:
+                self.active_downloads.pop(shard)
 
     async def _download_shard(self, shard: Shard) -> Path:
         async def wrapped_progress_callback(event: RepoProgressEvent):

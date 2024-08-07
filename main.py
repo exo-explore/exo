@@ -9,7 +9,7 @@ from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
-from exo.download.shard_download import ShardDownloader
+from exo.download.shard_download import ShardDownloader, RepoProgressEvent
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_inference_engine, get_system_info, get_or_create_node_id
 from exo.inference.shard import Shard
@@ -79,10 +79,10 @@ if args.prometheus_client_port:
     start_metrics_server(node, args.prometheus_client_port)
 
 last_broadcast_time = 0
-def throttled_broadcast(shard, event):
+def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
     global last_broadcast_time
     current_time = time.time()
-    if current_time - last_broadcast_time >= 0.1:
+    if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
         last_broadcast_time = current_time
         asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
