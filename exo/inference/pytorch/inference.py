@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer, LlamaForCausalLM
+from transformers import AutoTokenizer, LlamaForCausalLM, Cache
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
@@ -71,7 +71,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
 
         if self.debug:
-            logging.info(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+            print(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 
@@ -146,11 +146,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             past_key_values_list (list): List of past key-value tensors.
 
         Returns:
-            list: List of loaded past key-value tensors.
+            Cache: Loaded past key-value cache.
         """
         if past_key_values_list is None:
-            return None
-        return [torch.tensor(kv, device=self.model.device) for kv in past_key_values_list]
+            return Cache()
+        cache = Cache()
+        for kv in past_key_values_list:
+            cache.append(torch.tensor(kv, device=self.model.device))
+        return cache
 
     def _save_kv_cache(self, past_key_values):
         """
