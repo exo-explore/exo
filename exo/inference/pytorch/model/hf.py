@@ -2,12 +2,14 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, DynamicCache
 from exo.inference.shard import Shard
+import logging
 
 class ShardedHuggingFaceModel(nn.Module):
     def __init__(self, model_name: str, shard: Shard):
         super(ShardedHuggingFaceModel, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
+        self.device_ids = list(range(torch.cuda.device_count()))
 
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
@@ -40,28 +42,26 @@ class ShardedHuggingFaceModel(nn.Module):
         if past_key_values is None:
             past_key_values = DynamicCache()
 
-        # Token and position embeddings
-        position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        # Token embeddings
         inputs_embeds = self.embed_tokens(input_ids)
+        
+        # Generate position ids if not given
+        position_ids = torch.arange(0, input_ids.shape[-1], dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+
+        # Apply positional embeddings
         hidden_states = inputs_embeds + self.full_model.model.embed_positions(position_ids)
 
         # Apply each layer in this shard
-        new_past_key_values = DynamicCache()
+        new_past_key_values = []
         for i, layer in enumerate(self.layers):
-            if i < len(past_key_values):
-                layer_past = past_key_values[i]
-            else:
-                layer_past = None
-
+            layer_past = past_key_values[i] if i < len(past_key_values) else None
             hidden_states, new_layer_past = layer(
-                hidden_states,
-                past_key_values=layer_past,
-                use_cache=True,
-                position_ids=position_ids
+                hidden_states, 
+                past_key_values=layer_past, 
+                use_cache=True
             )
-
-            new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
+            new_past_key_values.append(new_layer_past)
 
         if self.shard.is_last_layer():
             hidden_states = self.norm(hidden_states)
