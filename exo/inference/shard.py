@@ -24,3 +24,12 @@ class Shard:
       "end_layer": self.end_layer,
       "n_layers": self.n_layers,
     }
+
+  def overlaps(self, other: 'Shard') -> bool:
+    return shards_overlap(self, other)
+
+def shards_overlap(shard1: Shard, shard2: Shard) -> bool:
+  return (
+      shard1.model_id == shard2.model_id
+      and max(shard1.start_layer, shard2.start_layer) <= min(shard1.end_layer, shard2.end_layer)
+  )

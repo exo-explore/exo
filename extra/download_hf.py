@@ -1,6 +1,6 @@
 import argparse
 import asyncio
-from exo.inference.hf_helpers import download_all_files, HFRepoProgressEvent, HFRepoFileProgressEvent
+from exo.download.hf.hf_helpers import download_all_files, RepoProgressEvent
 
 DEFAULT_ALLOW_PATTERNS = [
     "*.json",
@@ -23,7 +23,7 @@ DEFAULT_IGNORE_PATTERNS = [
 ]
 
 async def main(repo_id, revision="main", allow_patterns=None, ignore_patterns=None):
-    async def progress_callback(event: HFRepoProgressEvent):
+    async def progress_callback(event: RepoProgressEvent):
         print(f"Overall Progress: {event.completed_files}/{event.total_files} files, {event.downloaded_bytes}/{event.total_bytes} bytes")
         print(f"Estimated time remaining: {event.overall_eta}")
         print("File Progress:")

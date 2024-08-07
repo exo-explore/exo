@@ -14,7 +14,7 @@ from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, 
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
-from exo.inference.hf_helpers import HFRepoProgressEvent
+from exo.download.hf.hf_helpers import RepoProgressEvent
 
 
 class StandardNode(Node):
@@ -25,7 +25,7 @@ class StandardNode(Node):
     inference_engine: InferenceEngine,
     discovery: Discovery,
     partitioning_strategy: PartitioningStrategy = None,
-    max_generate_tokens: int = 256,
+    max_generate_tokens: int = 1024,
     chatgpt_api_endpoint: Optional[str] = None,
     web_chat_url: Optional[str] = None,
     disable_tui: Optional[bool] = False,
@@ -44,6 +44,7 @@ class StandardNode(Node):
     self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
+    self.node_download_progress: Dict[str, RepoProgressEvent] = {}
 
   def on_node_status(self, request_id, opaque_status):
     try:
@@ -57,14 +58,13 @@ class StandardNode(Node):
       download_progress = None
       if status_data.get("type", "") == "download_progress":
         if DEBUG >= 5: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
-        if status_data.get("node_id") == self.id:
-          download_progress = HFRepoProgressEvent.from_dict(status_data.get('progress'))
+        download_progress = RepoProgressEvent.from_dict(status_data.get('progress'))
+        self.node_download_progress[status_data.get('node_id')] = download_progress
       if self.topology_viz:
-        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), download_progress)
+        self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), self.id, self.node_download_progress)
     except Exception as e:
       if DEBUG >= 1: print(f"Error updating visualization: {e}")
-      traceback.print_exc()
-      pass
+      if DEBUG >= 1: traceback.print_exc()
 
   async def start(self, wait_for_peers: int = 0) -> None:
     await self.server.start()
@@ -347,7 +347,7 @@ class StandardNode(Node):
     next_topology.active_node_id = self.topology.active_node_id  # this is not so clean.
     self.topology = next_topology
     if self.topology_viz:
-      self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology))
+      self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), self.id)
     return next_topology
 
   @property

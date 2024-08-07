@@ -2,12 +2,14 @@ import argparse
 import asyncio
 import signal
 import json
-import uuid
+import time
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
+from exo.download.shard_download import ShardDownloader
+from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_inference_engine, get_system_info, get_or_create_node_id
 
 # parse args
@@ -22,7 +24,7 @@ parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
 parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
 parser.add_argument("--chatgpt-api-response-timeout-secs", type=int, default=90, help="ChatGPT API response timeout in seconds")
-parser.add_argument("--max-generate-tokens", type=int, default=256, help="Max tokens to generate in each request")
+parser.add_argument("--max-generate-tokens", type=int, default=1024, help="Max tokens to generate in each request")
 parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 args = parser.parse_args()
@@ -32,9 +34,10 @@ print_yellow_exo()
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
+shard_downloader: ShardDownloader = HFShardDownloader()
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
-inference_engine = get_inference_engine(inference_engine_name)
-print(f"Using inference engine: {inference_engine.__class__.__name__}")
+inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
+print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
 if args.node_port is None:
     args.node_port = find_available_port(args.node_host)
@@ -60,7 +63,15 @@ node.on_token.register("main_log").on_next(lambda _, tokens, __: print(inference
 if args.prometheus_client_port:
     from exo.stats.metrics import start_metrics_server
     start_metrics_server(node, args.prometheus_client_port)
-inference_engine.set_progress_callback(lambda event: asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()}))))
+
+last_broadcast_time = 0
+def throttled_broadcast(shard, event):
+    global last_broadcast_time
+    current_time = time.time()
+    if current_time - last_broadcast_time >= 0.1:
+        last_broadcast_time = current_time
+        asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
+shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 async def shutdown(signal, loop):
     """Gracefully shutdown the server and close the asyncio loop."""

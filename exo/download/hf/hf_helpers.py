@@ -1,5 +1,6 @@
 import asyncio
 import aiohttp
+import json
 import os
 from urllib.parse import urljoin
 from typing import Callable, Optional, Coroutine, Any, Dict, List, Union, Literal
@@ -7,9 +8,9 @@ from datetime import datetime, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Generator, Iterable, TypeVar, TypedDict
-from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from exo.helpers import DEBUG
+from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEvent, RepoProgressCallback, RepoFileProgressCallback
 
 T = TypeVar("T")
 def filter_repo_objects(
@@ -21,10 +22,8 @@ def filter_repo_objects(
 ) -> Generator[T, None, None]:
     if isinstance(allow_patterns, str):
         allow_patterns = [allow_patterns]
-
     if isinstance(ignore_patterns, str):
         ignore_patterns = [ignore_patterns]
-
     if allow_patterns is not None:
         allow_patterns = [_add_wildcard_to_directories(p) for p in allow_patterns]
     if ignore_patterns is not None:
@@ -37,18 +36,14 @@ def filter_repo_objects(
             if isinstance(item, Path):
                 return str(item)
             raise ValueError(f"Please provide `key` argument in `filter_repo_objects`: `{item}` is not a string.")
-
         key = _identity
 
     for item in items:
         path = key(item)
-
         if allow_patterns is not None and not any(fnmatch(path, r) for r in allow_patterns):
             continue
-
         if ignore_patterns is not None and any(fnmatch(path, r) for r in ignore_patterns):
             continue
-
         yield item
 
 def _add_wildcard_to_directories(pattern: str) -> str:
@@ -99,84 +94,13 @@ async def fetch_file_list(session, repo_id, revision, path=""):
             raise Exception(f"Failed to fetch file list: {response.status}")
 
 
-@dataclass
-class HFRepoFileProgressEvent:
-    file_path: str
-    downloaded: int
-    downloaded_this_session: int
-    total: int
-    speed: int
-    eta: timedelta
-    status: Literal["not_started", "in_progress", "complete"]
-
-    def to_dict(self):
-        return {
-            "file_path": self.file_path,
-            "downloaded": self.downloaded,
-            "downloaded_this_session": self.downloaded_this_session,
-            "total": self.total,
-            "speed": self.speed,
-            "eta": self.eta.total_seconds(),
-            "status": self.status
-        }
-
-    @classmethod
-    def from_dict(cls, data):
-        # Convert eta from seconds back to timedelta
-        if 'eta' in data:
-            data['eta'] = timedelta(seconds=data['eta'])
-        return cls(**data)
-
-@dataclass
-class HFRepoProgressEvent:
-    completed_files: int
-    total_files: int
-    downloaded_bytes: int
-    downloaded_bytes_this_session: int
-    total_bytes: int
-    overall_speed: int
-    overall_eta: timedelta
-    file_progress: Dict[str, HFRepoFileProgressEvent]
-    status: Literal["not_started", "in_progress", "complete"]
-
-    def to_dict(self):
-        return {
-            "completed_files": self.completed_files,
-            "total_files": self.total_files,
-            "downloaded_bytes": self.downloaded_bytes,
-            "downloaded_bytes_this_session": self.downloaded_bytes_this_session,
-            "total_bytes": self.total_bytes,
-            "overall_speed": self.overall_speed,
-            "overall_eta": self.overall_eta.total_seconds(),
-            "file_progress": {k: v.to_dict() for k, v in self.file_progress.items()},
-            "status": self.status
-        }
-
-    @classmethod
-    def from_dict(cls, data):
-        # Convert overall_eta from seconds back to timedelta
-        if 'overall_eta' in data:
-            data['overall_eta'] = timedelta(seconds=data['overall_eta'])
-
-        # Parse file_progress
-        if 'file_progress' in data:
-            data['file_progress'] = {
-                k: HFRepoFileProgressEvent.from_dict(v)
-                for k, v in data['file_progress'].items()
-            }
-
-        return cls(**data)
-
-HFRepoFileProgressCallback = Callable[[HFRepoFileProgressEvent], Coroutine[Any, Any, None]]
-HFRepoProgressCallback = Callable[[HFRepoProgressEvent], Coroutine[Any, Any, None]]
-
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=4, max=60),
     retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, aiohttp.ClientResponseError)),
     reraise=True
 )
-async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: str, file_path: str, save_directory: str, progress_callback: Optional[HFRepoFileProgressCallback] = None, use_range_request: bool = True):
+async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: str, file_path: str, save_directory: str, progress_callback: Optional[RepoFileProgressCallback] = None, use_range_request: bool = True):
     base_url = f"https://huggingface.co/{repo_id}/resolve/{revision}/"
     url = urljoin(base_url, file_path)
     local_path = os.path.join(save_directory, file_path)
@@ -198,7 +122,7 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
         if downloaded_size == total_size:
             if DEBUG >= 2: print(f"File already downloaded: {file_path}")
             if progress_callback:
-                await progress_callback(HFRepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
+                await progress_callback(RepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
             return
 
         if response.status == 200:
@@ -221,7 +145,7 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
                 if downloaded_size == total_size:
                     if DEBUG >= 2: print(f"File fully downloaded on first pass: {file_path}")
                     if progress_callback:
-                        await progress_callback(HFRepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
+                        await progress_callback(RepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
                     return
             except ValueError:
                 if DEBUG >= 1: print(f"Failed to parse Content-Range header: {content_range}. Starting download from scratch...")
@@ -232,7 +156,7 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
         if downloaded_size == total_size:
             print(f"File already downloaded: {file_path}")
             if progress_callback:
-                await progress_callback(HFRepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
+                await progress_callback(RepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
             return
 
         DOWNLOAD_CHUNK_SIZE = 32768
@@ -249,10 +173,10 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
                     eta = timedelta(seconds=remaining_size / speed) if speed > 0 else timedelta(0)
                     status = "in_progress" if downloaded_size < total_size else "complete"
                     if DEBUG >= 8: print(f"HF repo file download progress: {file_path=} {elapsed_time=} {speed=} Downloaded={downloaded_size}/{total_size} {remaining_size=} {eta=} {status=}")
-                    await progress_callback(HFRepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, speed, eta, status))
+                    await progress_callback(RepoFileProgressEvent(file_path, downloaded_size, downloaded_this_session, total_size, speed, eta, status))
         if DEBUG >= 2: print(f"Downloaded: {file_path}")
 
-async def download_all_files(repo_id: str, revision: str = "main", progress_callback: Optional[HFRepoProgressCallback] = None, allow_patterns: Optional[Union[List[str], str]] = None, ignore_patterns: Optional[Union[List[str], str]] = None):
+async def download_repo_files(repo_id: str, revision: str = "main", progress_callback: Optional[RepoProgressCallback] = None, allow_patterns: Optional[Union[List[str], str]] = None, ignore_patterns: Optional[Union[List[str], str]] = None) -> Path:
     repo_root = get_repo_root(repo_id)
     refs_dir = repo_root / "refs"
     snapshots_dir = repo_root / "snapshots"
@@ -283,11 +207,11 @@ async def download_all_files(repo_id: str, revision: str = "main", progress_call
         filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns, key=lambda x: x["path"]))
         total_files = len(filtered_file_list)
         total_bytes = sum(file["size"] for file in filtered_file_list)
-        file_progress: Dict[str, HFRepoFileProgressEvent] = {file["path"]: HFRepoFileProgressEvent(file["path"], 0, 0, file["size"], 0, timedelta(0), "not_started") for file in filtered_file_list}
+        file_progress: Dict[str, RepoFileProgressEvent] = {file["path"]: RepoFileProgressEvent(file["path"], 0, 0, file["size"], 0, timedelta(0), "not_started") for file in filtered_file_list}
         start_time = datetime.now()
 
         async def download_with_progress(file_info, progress_state):
-            async def file_progress_callback(event: HFRepoFileProgressEvent):
+            async def file_progress_callback(event: RepoFileProgressEvent):
                 progress_state['downloaded_bytes'] += event.downloaded - file_progress[event.file_path].downloaded
                 progress_state['downloaded_bytes_this_session'] += event.downloaded_this_session - file_progress[event.file_path].downloaded_this_session
                 file_progress[event.file_path] = event
@@ -297,21 +221,60 @@ async def download_all_files(repo_id: str, revision: str = "main", progress_call
                     remaining_bytes = total_bytes - progress_state['downloaded_bytes']
                     overall_eta = timedelta(seconds=remaining_bytes / overall_speed) if overall_speed > 0 else timedelta(seconds=0)
                     status = "in_progress" if progress_state['downloaded_bytes'] < total_bytes else "complete"
-                    await progress_callback(HFRepoProgressEvent(progress_state['completed_files'], total_files, progress_state['downloaded_bytes'], progress_state['downloaded_bytes_this_session'], total_bytes, overall_speed, overall_eta, file_progress, status))
+                    await progress_callback(RepoProgressEvent(progress_state['completed_files'], total_files, progress_state['downloaded_bytes'], progress_state['downloaded_bytes_this_session'], total_bytes, overall_speed, overall_eta, file_progress, status))
 
             await download_file(session, repo_id, revision, file_info["path"], snapshot_dir, file_progress_callback)
             progress_state['completed_files'] += 1
-            file_progress[file_info["path"]] = HFRepoFileProgressEvent(file_info["path"], file_info["size"], file_progress[file_info["path"]].downloaded_this_session, file_info["size"], 0, timedelta(0), "complete")
+            file_progress[file_info["path"]] = RepoFileProgressEvent(file_info["path"], file_info["size"], file_progress[file_info["path"]].downloaded_this_session, file_info["size"], 0, timedelta(0), "complete")
             if progress_callback:
                 elapsed_time = (datetime.now() - start_time).total_seconds()
                 overall_speed = int(progress_state['downloaded_bytes_this_session'] / elapsed_time) if elapsed_time > 0 else 0
                 remaining_bytes = total_bytes - progress_state['downloaded_bytes']
                 overall_eta = timedelta(seconds=remaining_bytes / overall_speed) if overall_speed > 0 else timedelta(seconds=0)
                 status = "in_progress" if progress_state['completed_files'] < total_files else "complete"
-                await progress_callback(HFRepoProgressEvent(progress_state['completed_files'], total_files, progress_state['downloaded_bytes'], progress_state['downloaded_bytes_this_session'], total_bytes, overall_speed, overall_eta, file_progress, status))
+                await progress_callback(RepoProgressEvent(progress_state['completed_files'], total_files, progress_state['downloaded_bytes'], progress_state['downloaded_bytes_this_session'], total_bytes, overall_speed, overall_eta, file_progress, status))
 
         progress_state = {'completed_files': 0, 'downloaded_bytes': 0, 'downloaded_bytes_this_session': 0}
         tasks = [download_with_progress(file_info, progress_state) for file_info in filtered_file_list]
         await asyncio.gather(*tasks)
 
     return snapshot_dir
+
+async def get_weight_map(repo_id: str, revision: str = "main") -> Optional[Dict[str, str]]:
+    """
+    Retrieve the weight map from the model.safetensors.index.json file.
+
+    Args:
+        repo_id (str): The Hugging Face repository ID.
+        revision (str): The revision of the repository to use.
+
+    Returns:
+        Optional[Dict[str, str]]: The weight map if it exists, otherwise None.
+    """
+
+    # Download the index file
+    await download_repo_files(
+        repo_id=repo_id,
+        revision=revision,
+        allow_patterns="model.safetensors.index.json"
+    )
+
+    # Check if the file exists
+    repo_root = get_repo_root(repo_id)
+    snapshot_dir = repo_root / "snapshots"
+    index_file = next(snapshot_dir.glob("*/model.safetensors.index.json"), None)
+
+    if index_file and index_file.exists():
+        with open(index_file, 'r') as f:
+            index_data = json.load(f)
+        return index_data.get("weight_map")
+
+    return None
+
+def extract_layer_num(tensor_name: str) -> Optional[int]:
+    # This is a simple example and might need to be adjusted based on the actual naming convention
+    parts = tensor_name.split('.')
+    for part in parts:
+        if part.isdigit():
+            return int(part)
+    return None

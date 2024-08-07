@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional, Union, Callable, Coroutine, Any
+from typing import List, Optional
 import json
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from tinygrad.nn.state import safe_load, torch_load, load_state_dict
@@ -8,7 +8,7 @@ from tinygrad.helpers import tqdm
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 import numpy as np
-from exo.inference.hf_helpers import HFRepoProgressCallback, HFRepoProgressEvent, download_all_files
+from exo.download.shard_download import ShardDownloader
 
 MODEL_PARAMS = {
   "8B": {
@@ -147,9 +147,9 @@ def prefill(model, toks, start_pos=0):
 
 
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
-  def __init__(self, progress_callback: Optional[HFRepoProgressCallback] = None):
+  def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
-    self.progress_callback = progress_callback
+    self.shard_downloader = shard_downloader
 
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     # TODO: we need to refactor models/llamaa to handle per-request-kv-cache. right now it's shared between requests.
@@ -188,7 +188,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    model_path = await download_all_files(shard.model_id, progress_callback=self.progress_callback)
+    model_path = await self.shard_downloader.ensure_shard(shard)
     print(f"{model_path=}")
     model = build_transformer(model_path, shard=shard, model_size="8B" if "8b" in shard.model_id else "70B" if "70b" in shard.model_id else "8B")
     from transformers import AutoTokenizer
@@ -197,6 +197,3 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard = shard
     self.model = model
     self.tokenizer = tokenizer
-
-  def set_progress_callback(self, progress_callback: Callable[[HFRepoProgressEvent], Coroutine[Any, Any, None]]):
-    self.progress_callback = progress_callback
