@@ -1,12 +1,10 @@
 # experimental, based off of tinygrad/inference.py
 
 import os
-import shutil
 import json
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
 import torch.nn as nn
+import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Tuple
 from transformers import AutoTokenizer, LlamaForCausalLM, Cache
@@ -41,24 +39,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.rank = int(os.getenv("RANK", "0"))
         self.world_size = int(os.getenv("WORLD_SIZE", "1"))
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    def setup_distributed(self):
-        """
-        Set up the distributed environment.
-        """
-        if not dist.is_initialized():
-            dist.init_process_group(
-                backend="nccl" if torch.cuda.is_available() else "gloo",
-                rank=self.rank,
-                world_size=self.world_size
-            )
-
-    def cleanup_distributed(self):
-        """
-        Clean up the distributed environment.
-        """
-        if dist.is_initialized():
-            dist.destroy_process_group()
 
     async def infer_prompt(
             self, 
