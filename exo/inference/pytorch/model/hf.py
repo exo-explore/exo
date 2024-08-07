@@ -23,7 +23,7 @@ class ShardedHuggingFaceModel(nn.Module):
         
         # Only keep layers corresponding to this shard
         self.layers = nn.ModuleList([
-            self.model.transformer.h[i] for i in range(shard.start_layer, shard.end_layer + 1)
+            self.full_model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
         ])
 
         logging.info(f"layers: {self.layers}")
