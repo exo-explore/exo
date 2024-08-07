@@ -49,7 +49,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         Initialize the process group for distributed training.
         """
-        dist.init_process_group(backend='nccl', init_method='env://', world_size=self.world_size, rank=self.rank)
+        dist.init_process_group(
+            backend='nccl', 
+            init_method='env://', 
+            world_size=self.world_size, 
+            rank=self.rank
+        )
 
     def cleanup_distributed(self):
         """

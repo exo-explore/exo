@@ -1,15 +1,58 @@
 import unittest
 import torch
-import asyncio
 import torch.multiprocessing as mp
+import torch.distributed as dist
+import os
+import asyncio
 from exo.inference.shard import Shard
 from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
+
+def setup(rank, world_size):
+    """
+    Set up the distributed environment.
+    """
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+def cleanup():
+    """
+    Clean up the distributed environment.
+    """
+    dist.destroy_process_group()
+
+def run_engine(rank, world_size, shard, queue):
+    """
+    Run the inference engine in a distributed setting.
+    """
+    setup(rank, world_size)
+
+    # Initialize the engine
+    engine = PyTorchDynamicShardInferenceEngine(debug=True)
+    
+    # Run ensure_shard to set up the model
+    asyncio.run(engine.ensure_shard(shard))
+    
+    # Prepare the prompt
+    prompt = "Why is the sky blue?"
+    
+    # Run inference
+    output_data, new_inference_state, is_eos = asyncio.run(
+        engine.infer_prompt(
+            request_id="test_request", shard=shard, prompt=prompt
+        )
+    )
+
+    # Put results in the queue to be checked in the test
+    queue.put((output_data, new_inference_state, is_eos))
+
+    cleanup()
 
 class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.world_size = torch.cuda.device_count()
-
+        
         # Create a shard
         cls.shard = Shard(
             model_id="llama3-8b-sfr",
@@ -17,29 +60,6 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
             end_layer=0,
             n_layers=12
         )
-
-    def run_engine(rank, world_size, shard, queue):
-        """
-        Run the inference engine in a distributed setting.
-        """
-        # Initialize the engine
-        engine = PyTorchDynamicShardInferenceEngine(debug=True, rank=rank, world_size=world_size)
-
-        # Run ensure_shard to set up the model
-        asyncio.run(engine.ensure_shard(shard))
-
-        # Prepare the prompt
-        prompt = "Why is the sky blue?"
-
-        # Run inference
-        output_data, new_inference_state, is_eos = asyncio.run(
-            engine.infer_prompt(
-                request_id="test_request", shard=shard, prompt=prompt
-            )
-        )
-
-        # Put results in the queue to be checked in the test
-        queue.put((output_data, new_inference_state, is_eos))
 
     def test_infer_prompt(self):
         """
@@ -50,7 +70,7 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
 
         processes = []
         for rank in range(self.world_size):
-            p = mp.Process(target=self.run_engine, args=(rank, self.world_size, self.shard, queue))
+            p = mp.Process(target=run_engine, args=(rank, self.world_size, self.shard, queue))
             p.start()
             processes.append(p)
 
