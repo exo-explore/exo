@@ -1,13 +1,16 @@
+# experimental, based off of tinygrad/inference.py
+
 import os
 import json
 import torch
 import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer, LlamaForCausalLM, Cache
+from transformers import AutoTokenizer, Cache
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
+from exo.inference.pytorch.model.llama import ShardedLLAMAModel
 import logging
 
 logging.basicConfig()
@@ -60,7 +63,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model(input_ids, past_key_values=past_key_values)
+        output, past_key_values = self.model.forward_layers(input_ids, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
@@ -106,7 +109,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model(input_tensor, past_key_values=past_key_values)
+        output, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
@@ -215,12 +218,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             else:
                 raise ValueError(f"Unsupported model: {shard.model_id}")
 
-        # Load model and tokenizer from the downloaded files
-        # This is written for llama model but need to add in option for others
-        self.model = LlamaForCausalLM.from_pretrained(
-            model_path, 
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32)
+        # Load the sharded model
+        self.model = ShardedLLAMAModel(model_path, shard)
         
+        # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         self.shard = shard
