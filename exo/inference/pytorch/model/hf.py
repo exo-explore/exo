@@ -23,7 +23,7 @@ class ShardedHuggingFaceModel(nn.Module):
         
         # Extract only the layers for this shard
         self.layers = nn.ModuleList([
-            self.full_model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
+            self.model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
         ])
         logging.info(f"layers: {self.layers}")
         
