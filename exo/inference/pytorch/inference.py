@@ -10,6 +10,8 @@ from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
 import logging
+logging.basicConfig()
+logging.getLogger("pytorch.inference").setLevel( logging.INFO )
 
 # Default settings
 TEMPERATURE = 0.7
@@ -71,7 +73,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
 
         if self.debug:
-            print(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+            logging.info(
+                f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 
