@@ -208,7 +208,7 @@ class TopologyViz:
         progress_info = f"{pretty_print_bytes(download_progress.downloaded_bytes)} / {pretty_print_bytes(download_progress.total_bytes)} ({pretty_print_bytes_per_second(download_progress.overall_speed)})"
         summary.add_row(progress_info)
 
-        eta_info = f"ETA: {download_progress.overall_eta}"
+        eta_info = f"{download_progress.overall_eta}"
         summary.add_row(eta_info)
 
         summary.add_row("")  # Empty row for spacing
@@ -231,6 +231,12 @@ class TopologyViz:
             partition_info = f"[{partition.start:.2f}-{partition.end:.2f}]" if partition else ""
             percentage = progress.downloaded_bytes / progress.total_bytes * 100 if progress.total_bytes > 0 else 0
             speed = pretty_print_bytes_per_second(progress.overall_speed)
-            summary.add_row(f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}: {progress.repo_id}@{progress.repo_revision} {percentage:.1f}% ({speed} ETA: {progress.overall_eta})")
+            device_info = f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}"
+            progress_info = f"{progress.repo_id}@{progress.repo_revision} ({speed})"
+            progress_bar = f"[{'=' * int(percentage // 3.33)}{' ' * (30 - int(percentage // 3.33))}]"
+            percentage_str = f"{percentage:.1f}%"
+            eta_str = f"{progress.overall_eta}"
+            summary.add_row(device_info, progress_info, percentage_str)
+            summary.add_row("", progress_bar, eta_str)
 
     return summary
