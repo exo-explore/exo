@@ -1,7 +1,3 @@
-# experimental, based off of tinygrad/inference.py
-# utilizing pytorch FSDP for sharding
-# look into shard being optional for the inferece
-
 import os
 import shutil
 import json
@@ -9,18 +5,27 @@ import torch
 import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, LlamaForCausalLM
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
-from exo.inference.pytorch.model.llama import ShardedLLAMAModel
 
 # Default settings
 TEMPERATURE = 0.7
 TOP_K = 50
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
+    """
+    PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
+    """
+
     def __init__(self, debug: bool = False):
+        """
+        Initialize the inference engine.
+
+        Args:
+            debug (bool): If True, enables debug logging. Defaults to False.
+        """
         self.shard = None
         self.debug = debug
 
@@ -30,6 +35,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             shard: Optional[Shard], 
             prompt: str, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        """
+        Perform inference based on a text prompt.
+
+        Args:
+            request_id (str): Unique identifier for the request.
+            shard (Optional[Shard]): Shard information for the model.
+            prompt (str): The input text prompt for inference.
+            inference_state (Optional[str]): The previous inference state.
+
+        Returns:
+            Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
+        """
         await self.ensure_shard(shard)
 
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
@@ -63,6 +80,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             shard: Optional[Shard], 
             input_data: np.ndarray, 
             inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        """
+        Perform inference based on an input tensor.
+
+        Args:
+            request_id (str): Unique identifier for the request.
+            shard (Optional[Shard]): Shard information for the model.
+            input_data (np.ndarray): The input tensor for inference.
+            inference_state (Optional[str]): The previous inference state.
+
+        Returns:
+            Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
+        """
         await self.ensure_shard(shard)
 
         input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
@@ -91,6 +120,17 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         return output_data, new_inference_state, is_eos
 
     def _apply_generation_settings(self, logits, temperature, top_k):
+        """
+        Apply temperature and top_k settings to logits.
+
+        Args:
+            logits (torch.Tensor): The logits to be adjusted.
+            temperature (float): The temperature setting for generation.
+            top_k (int): The top_k setting for generation.
+
+        Returns:
+            torch.Tensor: The adjusted logits.
+        """
         logits = logits / temperature
         if top_k > 0:
             top_k_values, top_k_indices = torch.topk(logits, top_k, dim=-1)
@@ -98,23 +138,47 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         return logits
 
     def _load_kv_cache(self, past_key_values_list):
+        """
+        Load key-value cache from the inference state.
+
+        Args:
+            past_key_values_list (list): List of past key-value tensors.
+
+        Returns:
+            list: List of loaded past key-value tensors.
+        """
         if past_key_values_list is None:
             return None
         return [torch.tensor(kv, device=self.model.device) for kv in past_key_values_list]
 
     def _save_kv_cache(self, past_key_values):
+        """
+        Save key-value cache to the inference state.
+
+        Args:
+            past_key_values (list): List of past key-value tensors.
+
+        Returns:
+            list: List of key-value tensors in a format suitable for saving.
+        """
         return [kv.cpu().tolist() for kv in past_key_values]
 
     async def ensure_shard(self, shard: Optional[Shard]):
+        """
+        Ensure the model shard is loaded and ready for inference.
+
+        Args:
+            shard (Optional[Shard]): Shard information for the model.
+        """
         if self.shard == shard:
             return
 
-        model_path = Path(f".cache/{shard.model_id}")
+        model_path = Path(self.model_name)
+        models_dir = Path(__file__).parent / "temp_model_dir"
+        model_path = models_dir / shard.model_id
+
         if not model_path.exists():
             os.makedirs(model_path, exist_ok=True)
-        else:
-            shutil.rmtree(model_path)
-            os.makedirs(model_path)
 
             if shard.model_id.lower().find("llama3-8b-sfr") != -1:
                 num_files = 4
@@ -147,12 +211,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 raise ValueError(f"Unsupported model: {shard.model_id}")
 
         # Load model and tokenizer from the downloaded files
-        model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32)
-        self.model = ShardedLLAMAModel(model, shard)
+        # This is written for llama model but need to add in option for others
+        self.model = LlamaForCausalLM.from_pretrained(
+            model_path, 
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32)
+        
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         self.shard = shard
-
-    def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
-        # This method can be implemented if progress tracking is needed
-        pass
