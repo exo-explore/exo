@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, DynamicCache
 from exo.inference.shard import Shard
-import logging
 
 class ShardedHuggingFaceModel(nn.Module):
     def __init__(self, model_name: str, shard: Shard):
@@ -45,21 +44,20 @@ class ShardedHuggingFaceModel(nn.Module):
         # Token embeddings
         inputs_embeds = self.embed_tokens(input_ids)
         
-        # Generate position ids if not given
+        # Generate position ids
         position_ids = torch.arange(0, input_ids.shape[-1], dtype=torch.long, device=input_ids.device)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
 
-        # Apply positional embeddings
-        hidden_states = inputs_embeds + self.full_model.model.embed_positions(position_ids)
-
         # Apply each layer in this shard
+        hidden_states = inputs_embeds
         new_past_key_values = []
         for i, layer in enumerate(self.layers):
             layer_past = past_key_values[i] if i < len(past_key_values) else None
             hidden_states, new_layer_past = layer(
-                hidden_states, 
-                past_key_values=layer_past, 
-                use_cache=True
+                hidden_states,
+                past_key_values=layer_past,
+                use_cache=True,
+                position_ids=position_ids
             )
             new_past_key_values.append(new_layer_past)
 
