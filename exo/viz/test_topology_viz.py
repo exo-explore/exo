@@ -22,6 +22,8 @@ def create_hf_repo_progress_event(
     if file_progress is None:
         file_progress = {
             "file1.bin": RepoFileProgressEvent(
+                repo_id="repo_id",
+                repo_revision="repo_revision",
                 file_path="file1.bin",
                 downloaded=100000000,
                 downloaded_this_session=50000000,
@@ -31,6 +33,8 @@ def create_hf_repo_progress_event(
                 status="in_progress"
             ),
             "file2.bin": RepoFileProgressEvent(
+                repo_id="repo_id",
+                repo_revision="repo_revision",
                 file_path="file2.bin",
                 downloaded=200000000,
                 downloaded_this_session=100000000,
@@ -42,6 +46,8 @@ def create_hf_repo_progress_event(
         }
 
     return RepoProgressEvent(
+        repo_id="repo_id",
+        repo_revision="repo_revision",
         completed_files=completed_files,
         total_files=total_files,
         downloaded_bytes=downloaded_bytes,

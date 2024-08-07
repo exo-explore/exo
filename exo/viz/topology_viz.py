@@ -195,10 +195,10 @@ class TopologyViz:
     return "\n".join("".join(str(char) for char in row) for row in visualization)
 
   def _generate_download_layout(self) -> Table:
-    summary = Table(show_header=False, box=None, padding=(0, 1))
-    summary.add_column("Info", style="cyan", no_wrap=True)
-    summary.add_column("Progress", style="cyan", no_wrap=True)
-    summary.add_column("Percentage", style="cyan", no_wrap=True)
+    summary = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+    summary.add_column("Info", style="cyan", no_wrap=True, ratio=50)
+    summary.add_column("Progress", style="cyan", no_wrap=True, ratio=40)
+    summary.add_column("Percentage", style="cyan", no_wrap=True, ratio=10)
 
     # Current node download progress
     if self.node_id in self.node_download_progress:
