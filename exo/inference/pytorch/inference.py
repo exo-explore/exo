@@ -67,7 +67,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model.forward_layers(input_ids, past_key_values=past_key_values)
+        output, past_key_values = self.model.forward_layers(
+            input_ids,
+            past_key_values=past_key_values
+        )
 
         if self.debug:
             self.log.info(

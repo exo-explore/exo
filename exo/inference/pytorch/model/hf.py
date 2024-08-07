@@ -3,7 +3,7 @@
 
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, Cache
 from exo.inference.shard import Shard
 import logging
 
@@ -43,7 +43,7 @@ class ShardedHuggingFaceModel(nn.Module):
             tuple: Hidden states and new past key values.
         """
         if past_key_values is None:
-            past_key_values = [None] * len(self.layers)
+            past_key_values = Cache()
 
         # Token embeddings
         hidden_states = self.embed_tokens(input_ids)
@@ -52,7 +52,12 @@ class ShardedHuggingFaceModel(nn.Module):
         new_past_key_values = []
         for i, layer in enumerate(self.layers):
             layer_past = past_key_values[i]
-            hidden_states, new_layer_past = layer(hidden_states, past_key_values=layer_past, use_cache=True)
+            hidden_states, new_layer_past = layer(
+                hidden_states, 
+                past_key_values=layer_past, 
+                use_cache=True
+            )
+            
             new_past_key_values.append(new_layer_past)
 
         if self.shard.is_last_layer():
