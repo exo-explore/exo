@@ -10,7 +10,7 @@ from exo.helpers import AsyncCallbackSystem, DEBUG
 
 class HFShardDownloader(ShardDownloader):
     def __init__(self):
-        self.active_downloads: Dict[Shard, asyncio.Task] = []
+        self.active_downloads: Dict[Shard, asyncio.Task] = {}
         self._on_progress = AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]()
 
     async def ensure_shard(self, shard: Shard) -> Path:
