@@ -222,7 +222,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         sharded_model = ShardedLLAMAModel(model_path, shard)
 
         # Use DataParallel for multi-GPU support
-        self.model = torch.nn.DataParallel(sharded_model)
+        device_ids = [i for i in range(torch.cuda.device_count())]
+        self.model = torch.nn.DataParallel(sharded_model, device_ids=device_ids)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         
