@@ -28,7 +28,6 @@ class ShardedHuggingFaceModel(nn.Module):
 
         # Embeddings and final layer norm
         self.embed_tokens = self.full_model.model.embed_tokens
-        self.embed_positions = self.full_model.model.embed_positions
         self.norm = self.full_model.model.norm
         self.lm_head = self.full_model.lm_head
 
@@ -46,8 +45,8 @@ class ShardedHuggingFaceModel(nn.Module):
         if past_key_values is None:
             past_key_values = [None] * len(self.layers)
 
-        # Token and position embeddings
-        hidden_states = self.embed_tokens(input_ids) + self.embed_positions(input_ids)
+        # Token embeddings
+        hidden_states = self.embed_tokens(input_ids)
 
         # Apply each layer in this shard
         new_past_key_values = []
