@@ -59,7 +59,8 @@ class ShardedHuggingFaceModel(nn.Module):
                 use_cache=True,
                 position_ids=position_ids
             )
-            new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
+            if new_layer_past is not None:
+                new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
 
         if self.shard.is_last_layer():
             hidden_states = self.norm(hidden_states)
