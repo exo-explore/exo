@@ -7,10 +7,10 @@ import torch.nn as nn
 import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer, LlamaForCausalLM, Cache
+from transformers import AutoTokenizer, Cache
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.pytorch.helpers import download_files
+from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
 import logging
 
 logging.basicConfig()
@@ -25,7 +25,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, debug: bool = True):
+    def __init__(self, model_name: str, debug: bool = True):
         """
         Initialize the inference engine.
 
@@ -33,9 +33,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             debug (bool): If True, enables debug logging. Defaults to False.
         """
         self.shard = None
+        self.model = None
+        self.model_name = model_name if model_name else "meta-llama/Meta-Llama-3-8B"
         self.debug = debug
         self.log = logging.getLogger("pytorch.inference")
-        self.device_ids = list(range(torch.cuda.device_count()))
         self.rank = int(os.getenv("RANK", "0"))
         self.world_size = int(os.getenv("WORLD_SIZE", "1"))
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -188,56 +189,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
 
-        model_path = Path(f".cache/{shard.model_id}")
-        if not model_path.exists():
-            os.makedirs(model_path, exist_ok=True)
-
-            if shard.model_id.lower().find("llama3-8b-sfr") != -1:
-                num_files = 4
-                urls = [
-                    f"https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/model-{(i+1):05d}-of-{num_files:05d}.safetensors"
-                    for i in range(num_files)
-                ]
-                urls.extend([
-                    "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/config.json",
-                    "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/raw/main/model.safetensors.index.json",
-                    "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/special_tokens_map.json",
-                    "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/tokenizer.json",
-                    "https://huggingface.co/mlx-community/Meta-Llama-3-8B-Instruct/resolve/main/tokenizer_config.json"
-                ])
-                
-                output_paths = [
-                    model_path / f"model-{(i+1):05d}-of-{num_files:05d}.safetensors"
-                    for i in range(num_files)
-                ]
-                output_paths.extend([
-                    model_path / "config.json",
-                    model_path / "model.safetensors.index.json",
-                    model_path / "special_tokens_map.json",
-                    model_path / "tokenizer.json",
-                    model_path / "tokenizer_config.json"
-                ])
-
-                await download_files(urls, output_paths)
-            else:
-                raise ValueError(f"Unsupported model: {shard.model_id}")
-
         # Load model and tokenizer from the downloaded files
         # This is written for llama model but need to add in option for others
-        self.model = LlamaForCausalLM.from_pretrained(
-            model_path, 
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto"
-        )
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-        if torch.cuda.device_count() > 1:
-            self.model = nn.DataParallel(self.model, device_ids=self.device_ids)
-        
-        self.model.to(self.device)
+        if not self.model:
+            self.model = ShardedHuggingFaceModel(self.model_name, shard)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            
         self.shard = shard
-
 
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
         """
