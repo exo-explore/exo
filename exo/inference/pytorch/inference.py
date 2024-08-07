@@ -71,7 +71,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if self.debug:
             self.log.info(
-                f"\nInfer Prompt Debug - Request ID: {request_id}\nOutput: {output_data}\nEOS: {self.shard.is_last_layer()}")
+                f"\nInfer Prompt Debug - Request ID: {request_id}\nOutput: {output}\nEOS: {self.shard.is_last_layer()}")
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
