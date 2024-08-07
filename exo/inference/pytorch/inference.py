@@ -158,14 +158,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             DynamicCache: Loaded past key-value cache.
         """
-        if past_key_values_list is None:
-            return DynamicCache()
-
         cache = DynamicCache()
-        for layer_idx, (key_states, value_states) in enumerate(past_key_values_list):
-            key_states_tensor = torch.tensor(key_states, device=self.device)
-            value_states_tensor = torch.tensor(value_states, device=self.device)
-            cache.update(key_states_tensor, value_states_tensor, layer_idx)
+        if past_key_values_list is not None:
+            for layer_idx, (key_states, value_states) in enumerate(past_key_values_list):
+                key_states_tensor = torch.tensor(key_states, device=self.device)
+                value_states_tensor = torch.tensor(value_states, device=self.device)
+                cache.update(key_states_tensor, value_states_tensor, layer_idx)
 
         return cache
 
@@ -182,10 +180,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         past_key_values_list = []
         for layer_idx in range(len(past_key_values)):
             key_states, value_states = past_key_values[layer_idx]
-            past_key_values_list.append((key_states.cpu().tolist(), value_states.cpu().tolist()))
+            past_key_values_list.append((
+                key_states.cpu().tolist(),
+                value_states.cpu().tolist()
+            ))
 
         return past_key_values_list
-
 
     async def ensure_shard(self, shard: Optional[Shard]):
         """
