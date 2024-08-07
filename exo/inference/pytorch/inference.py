@@ -69,6 +69,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         output, past_key_values = self.model.full_model.model(input_ids, past_key_values=past_key_values)
 
+        if self.debug:
+            self.log.info(
+                f"\nInfer Prompt Debug - Request ID: {request_id}\nOutput: {output_data}\nEOS: {self.shard.is_last_layer()}")
+
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
             next_token = torch.argmax(logits[:, -1, :], dim=-1)
@@ -80,9 +84,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
 
-        if self.debug:
-            self.log.info(
-                f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+        
 
         return output_data, new_inference_state, is_eos
 
