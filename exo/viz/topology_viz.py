@@ -203,7 +203,7 @@ class TopologyViz:
     # Current node download progress
     if self.node_id in self.node_download_progress:
         download_progress = self.node_download_progress[self.node_id]
-        title = f"Downloading model ({download_progress.completed_files}/{download_progress.total_files}):"
+        title = f"Downloading model {download_progress.repo_id}@{download_progress.repo_revision} ({download_progress.completed_files}/{download_progress.total_files}):"
         summary.add_row(Text(title, style="bold"))
         progress_info = f"{pretty_print_bytes(download_progress.downloaded_bytes)} / {pretty_print_bytes(download_progress.total_bytes)} ({pretty_print_bytes_per_second(download_progress.overall_speed)})"
         summary.add_row(progress_info)
@@ -215,10 +215,10 @@ class TopologyViz:
 
         for file_path, file_progress in download_progress.file_progress.items():
             if file_progress.status != "complete":
-                progress = int(file_progress.downloaded / file_progress.total * 20)
-                bar = f"[{'=' * progress}{' ' * (20 - progress)}]"
+                progress = int(file_progress.downloaded / file_progress.total * 30)
+                bar = f"[{'=' * progress}{' ' * (30 - progress)}]"
                 percentage = f"{file_progress.downloaded / file_progress.total * 100:.0f}%"
-                summary.add_row(Text(file_path[:20], style="cyan"), bar, percentage)
+                summary.add_row(Text(file_path[:30], style="cyan"), bar, percentage)
 
     summary.add_row("")  # Empty row for spacing
 
@@ -231,6 +231,6 @@ class TopologyViz:
             partition_info = f"[{partition.start:.2f}-{partition.end:.2f}]" if partition else ""
             percentage = progress.downloaded_bytes / progress.total_bytes * 100 if progress.total_bytes > 0 else 0
             speed = pretty_print_bytes_per_second(progress.overall_speed)
-            summary.add_row(f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}: {percentage:.1f}% ({speed} ETA: {progress.overall_eta})")
+            summary.add_row(f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}: {progress.repo_id}@{progress.repo_revision} {percentage:.1f}% ({speed} ETA: {progress.overall_eta})")
 
     return summary
