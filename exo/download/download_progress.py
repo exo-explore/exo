@@ -4,6 +4,8 @@ from datetime import timedelta
 
 @dataclass
 class RepoFileProgressEvent:
+    repo_id: str
+    repo_revision: str
     file_path: str
     downloaded: int
     downloaded_this_session: int
@@ -14,6 +16,8 @@ class RepoFileProgressEvent:
 
     def to_dict(self):
         return {
+            "repo_id": self.repo_id,
+            "repo_revision": self.repo_revision,
             "file_path": self.file_path,
             "downloaded": self.downloaded,
             "downloaded_this_session": self.downloaded_this_session,
@@ -32,6 +36,8 @@ class RepoFileProgressEvent:
 
 @dataclass
 class RepoProgressEvent:
+    repo_id: str
+    repo_revision: str
     completed_files: int
     total_files: int
     downloaded_bytes: int
@@ -44,6 +50,8 @@ class RepoProgressEvent:
 
     def to_dict(self):
         return {
+            "repo_id": self.repo_id,
+            "repo_revision": self.repo_revision,
             "completed_files": self.completed_files,
             "total_files": self.total_files,
             "downloaded_bytes": self.downloaded_bytes,

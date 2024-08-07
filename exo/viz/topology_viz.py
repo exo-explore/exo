@@ -226,9 +226,11 @@ class TopologyViz:
     summary.add_row(Text("Other Nodes Download Progress:", style="bold"))
     for node_id, progress in self.node_download_progress.items():
         if node_id != self.node_id:
-            truncated_id = node_id[:8] + "..." if len(node_id) > 8 else node_id
+            device = self.topology.nodes.get(node_id)
+            partition = next((p for p in self.partitions if p.node_id == node_id), None)
+            partition_info = f"[{partition.start:.2f}-{partition.end:.2f}]" if partition else ""
             percentage = progress.downloaded_bytes / progress.total_bytes * 100 if progress.total_bytes > 0 else 0
             speed = pretty_print_bytes_per_second(progress.overall_speed)
-            summary.add_row(f"{truncated_id}: {percentage:.1f}% ({speed})")
+            summary.add_row(f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}: {percentage:.1f}% ({speed} ETA: {progress.overall_eta})")
 
     return summary
