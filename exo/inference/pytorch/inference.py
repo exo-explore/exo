@@ -75,7 +75,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             output_data = np.array([next_token.item()])
             is_eos = next_token.item() == self.tokenizer.eos_token_id
         else:
-            output_data = output.detach().numpy()
+            output_data = output.cpu().detach().numpy()
             is_eos = False
 
         new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
@@ -120,7 +120,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             output_data = np.array([next_token.item()])
             is_eos = next_token.item() == self.tokenizer.eos_token_id
         else:
-            output_data = output.detach().numpy()
+            output_data = output.cpu().detach().numpy()
             is_eos = False
 
         new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
