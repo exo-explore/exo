@@ -41,51 +41,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     async def infer_prompt(
-            self, 
-            request_id: str, 
-            shard: Optional[Shard], 
-            prompt: str, 
-            inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
-        """
-        Perform inference based on a text prompt.
-
-        Args:
-            request_id (str): Unique identifier for the request.
-            shard (Optional[Shard]): Shard information for the model.
-            prompt (str): The input text prompt for inference.
-            inference_state (Optional[str]): The previous inference state.
-
-        Returns:
-            Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
-        """
-        await self.ensure_shard(shard)
-
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
-        
-        # Continue the sequence if inference state exists
-        past_key_values = None
-        if inference_state:
-            past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
-
-        output, past_key_values = self.model.forward_layers(input_ids, past_key_values=past_key_values)
-
-        if self.shard.is_last_layer():
-            logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
-            next_token = torch.argmax(logits[:, -1, :], dim=-1)
-            output_data = np.array([next_token.item()])
-            is_eos = next_token.item() == self.tokenizer.eos_token_id
-        else:
-            output_data = output.cpu().detach().numpy()
-            is_eos = False
-
-        new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
-
-        if self.debug:
-            self.log.info(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
-
-        return output_data, new_inference_state, is_eos
-
-    async def infer_prompt(
         self, 
         request_id: str, 
         shard: Optional[Shard], 
@@ -128,6 +83,51 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.debug:
             self.log.info(
                 f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+
+        return output_data, new_inference_state, is_eos
+
+    async def infer_tensor(
+            self, 
+            request_id: str, 
+            shard: Optional[Shard], 
+            input_data: np.ndarray, 
+            inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        """
+        Perform inference based on an input tensor.
+
+        Args:
+            request_id (str): Unique identifier for the request.
+            shard (Optional[Shard]): Shard information for the model.
+            input_data (np.ndarray): The input tensor for inference.
+            inference_state (Optional[str]): The previous inference state.
+
+        Returns:
+            Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
+        """
+        await self.ensure_shard(shard)
+
+        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
+        
+        # Continue the sequence if inference state exists
+        past_key_values = None
+        if inference_state:
+            past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
+
+        output, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
+
+        if self.shard.is_last_layer():
+            logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
+            next_token = torch.argmax(logits[:, -1, :], dim=-1)
+            output_data = np.array([next_token.item()])
+            is_eos = next_token.item() == self.tokenizer.eos_token_id
+        else:
+            output_data = output.cpu().detach().numpy()
+            is_eos = False
+
+        new_inference_state = json.dumps({"past_key_values": past_key_values.to_legacy_cache()})
+
+        if self.debug:
+            self.log.info(f"Infer Tensor Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 
