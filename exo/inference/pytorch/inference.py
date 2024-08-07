@@ -47,20 +47,21 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     def setup_distributed(self):
         """
-        Initialize the process group for distributed training.
+        Set up the distributed environment.
         """
-        dist.init_process_group(
-            backend='nccl', 
-            init_method='env://', 
-            world_size=self.world_size, 
-            rank=self.rank
-        )
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend="nccl" if torch.cuda.is_available() else "gloo",
+                rank=self.rank,
+                world_size=self.world_size
+            )
 
     def cleanup_distributed(self):
         """
-        Clean up the process group for distributed training.
+        Clean up the distributed environment.
         """
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
     async def infer_prompt(
             self, 
