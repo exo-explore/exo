@@ -219,7 +219,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 raise ValueError(f"Unsupported model: {shard.model_id}")
 
         # Load the sharded model
-        self.model = ShardedLLAMAModel(model_path, shard)
+        sharded_model = ShardedLLAMAModel(model_path, shard)
+
+        # Use DataParallel for multi-GPU support
+        self.model = torch.nn.DataParallel(sharded_model)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
         
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
