@@ -50,7 +50,7 @@ class ShardedHuggingFaceModel(nn.Module):
 
         # Apply each layer in this shard
         hidden_states = inputs_embeds
-        new_past_key_values = []
+        new_past_key_values = DynamicCache()
         for i, layer in enumerate(self.layers):
             layer_past = past_key_values[i] if i < len(past_key_values) else None
             hidden_states, new_layer_past = layer(
@@ -59,7 +59,7 @@ class ShardedHuggingFaceModel(nn.Module):
                 use_cache=True,
                 position_ids=position_ids
             )
-            new_past_key_values.append(new_layer_past)
+            new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
 
         if self.shard.is_last_layer():
             hidden_states = self.norm(hidden_states)

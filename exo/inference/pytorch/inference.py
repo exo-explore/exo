@@ -148,7 +148,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             logits = logits.scatter(1, top_k_indices, top_k_values)
         return logits
 
-    def _load_kv_cache(self, past_key_values_list):
+    def _load_kv_cache(self, past_key_values_list) -> DynamicCache:
         """
         Load key-value cache from the inference state.
 
@@ -158,13 +158,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             DynamicCache: Loaded past key-value cache.
         """
+        if past_key_values_list is None:
+            return DynamicCache()
         cache = DynamicCache()
-        if past_key_values_list is not None:
-            for layer_idx, (key_states, value_states) in enumerate(past_key_values_list):
-                key_states_tensor = torch.tensor(key_states, device=self.device)
-                value_states_tensor = torch.tensor(value_states, device=self.device)
-                cache.update(key_states_tensor, value_states_tensor, layer_idx)
-
+        for layer_idx, (key, value) in enumerate(past_key_values_list):
+            cache.update(torch.tensor(key, device=self.device), torch.tensor(value, device=self.device), layer_idx)
         return cache
 
     def _save_kv_cache(self, past_key_values):
