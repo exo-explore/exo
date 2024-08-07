@@ -60,7 +60,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to("cpu")
         
         # Continue the sequence if inference state exists
         past_key_values = None
