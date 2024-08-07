@@ -71,7 +71,7 @@ class ShardedHuggingFaceModel(nn.Module):
         
         # Generate position ids
         position_ids = torch.arange(0, input_ids.shape[-1], dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        position_ids = position_ids.unsqueeze(0).expand(input_ids.shape[0], -1)
 
         # Apply each layer in this shard
         hidden_states = inputs_embeds

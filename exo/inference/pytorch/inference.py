@@ -94,7 +94,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        output_data, past_key_values = self.model.forward_layers(torch.tensor([input_data], device=self.model.device), start_pos=start_pos)
+        output_data, past_key_values = self.model.forward_layers(torch.tensor([input_data], device=self.model.device), past_key_values=past_key_values)
         output_data = output_data.detach().cpu().numpy()
 
         if output_data.size == 1:
