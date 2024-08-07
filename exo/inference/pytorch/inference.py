@@ -1,5 +1,4 @@
 import os
-import shutil
 import json
 import torch
 import numpy as np
@@ -10,6 +9,7 @@ from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
 import logging
+
 logging.basicConfig()
 logging.getLogger("pytorch.inference").setLevel(logging.DEBUG)
 
@@ -232,6 +232,5 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Args:
             on_download_progress (Callable[[int, int], None]): Callback function to track progress.
         """
-        # must have this function or inference engine breaks
         # This method can be implemented if progress tracking is needed
         pass

@@ -2,26 +2,14 @@ import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from exo.inference.shard import Shard
-from transformers import Cache
 
 class ShardedLLAMAModel(nn.Module):
-    """
-    Sharded LLAMA Model for performing inference with a subset of model layers.
-    """
-
     def __init__(self, model_path: str, shard: Shard):
-        """
-        Initialize the ShardedLLAMAModel.
-
-        Args:
-            model_path (str): Path to the pretrained model.
-            shard (Shard): Shard information indicating which layers to include.
-        """
         super(ShardedLLAMAModel, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
 
-        # Load the full model and move to device
+        # Load the full model
         self.full_model = LlamaForCausalLM.from_pretrained(model_path)
         self.full_model.to(self.device)
 
@@ -36,35 +24,31 @@ class ShardedLLAMAModel(nn.Module):
         self.norm = self.full_model.model.norm
         self.lm_head = self.full_model.lm_head
 
-    def forward(self, input_ids, past_key_values=None):
+    def forward_layers(self, input_ids, past_key_values=None):
         """
-        Perform a forward pass through the model.
+        Forward pass through the specified layers.
 
         Args:
             input_ids (torch.Tensor): Input token IDs.
-            past_key_values (Cache, optional): Cache object for past key-value states.
+            past_key_values (list, optional): Past key values for caching.
 
         Returns:
-            tuple: Output logits or hidden states and the new past key-values.
+            tuple: Hidden states and new past key values.
         """
         if past_key_values is None:
-            past_key_values = Cache()
+            past_key_values = [None] * len(self.layers)
 
         # Token and position embeddings
         hidden_states = self.embed_tokens(input_ids) + self.embed_positions(input_ids)
 
         # Apply each layer in this shard
-        new_past_key_values = Cache()
+        new_past_key_values = []
         for i, layer in enumerate(self.layers):
-            layer_past = past_key_values[i] if past_key_values else None
-            hidden_states, new_layer_past = layer(
-                hidden_states, 
-                past_key_values=layer_past
-            )
+            layer_past = past_key_values[i]
+            hidden_states, new_layer_past = layer(hidden_states, past_key_values=layer_past, use_cache=True)
             new_past_key_values.append(new_layer_past)
 
         if self.shard.is_last_layer():
-            # Apply final layer norm and compute logits
             hidden_states = self.norm(hidden_states)
             logits = self.lm_head(hidden_states)
             return logits, new_past_key_values
