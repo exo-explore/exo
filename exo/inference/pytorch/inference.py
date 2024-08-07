@@ -9,6 +9,7 @@ from transformers import AutoTokenizer, LlamaForCausalLM
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
+import logging
 
 # Default settings
 TEMPERATURE = 0.7
@@ -19,7 +20,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = True):
         """
         Initialize the inference engine.
 
@@ -70,7 +71,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
 
         if self.debug:
-            print(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+            logging.info(f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 

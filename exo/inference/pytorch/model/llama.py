@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from exo.inference.shard import Shard
+from transformers import Cache
 
 class ShardedLLAMAModel(nn.Module):
     """
@@ -41,22 +42,25 @@ class ShardedLLAMAModel(nn.Module):
 
         Args:
             input_ids (torch.Tensor): Input token IDs.
-            past_key_values (list, optional): List of past key-value states for attention layers.
+            past_key_values (Cache, optional): Cache object for past key-value states.
 
         Returns:
             tuple: Output logits or hidden states and the new past key-values.
         """
         if past_key_values is None:
-            past_key_values = [None] * len(self.layers)
+            past_key_values = Cache()
 
         # Token and position embeddings
         hidden_states = self.embed_tokens(input_ids) + self.embed_positions(input_ids)
 
         # Apply each layer in this shard
-        new_past_key_values = []
+        new_past_key_values = Cache()
         for i, layer in enumerate(self.layers):
-            layer_past = past_key_values[i]
-            hidden_states, new_layer_past = layer(hidden_states, past_key_values=layer_past)
+            layer_past = past_key_values[i] if past_key_values else None
+            hidden_states, new_layer_past = layer(
+                hidden_states, 
+                past_key_values=layer_past
+            )
             new_past_key_values.append(new_layer_past)
 
         if self.shard.is_last_layer():
