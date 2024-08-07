@@ -5,7 +5,6 @@ import json
 import torch
 import torch.nn as nn
 import numpy as np
-from pathlib import Path
 from typing import Optional, Callable, Tuple
 from transformers import AutoTokenizer, Cache
 from exo.inference.shard import Shard
@@ -194,7 +193,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if not self.model:
             self.model = ShardedHuggingFaceModel(self.model_name, shard)
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            
+
         self.shard = shard
 
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
