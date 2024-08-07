@@ -31,6 +31,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         self.shard = None
         self.debug = debug
+        self.log = logging.getLogger("pytorch.inference")
 
     async def infer_prompt(
             self, 
@@ -73,7 +74,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
 
         if self.debug:
-            logging.info(
+            self.log.info(
                 f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
@@ -119,7 +120,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         new_inference_state = json.dumps({"past_key_values": self._save_kv_cache(past_key_values)})
 
         if self.debug:
-            print(f"Infer Tensor Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+            self.log.info(f"Infer Tensor Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 
