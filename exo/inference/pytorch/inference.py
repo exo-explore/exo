@@ -173,10 +173,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
 
-        model_path = Path(self.model_name)
-        models_dir = Path(__file__).parent / "temp_model_dir"
-        model_path = models_dir / shard.model_id
-
+        model_path = Path(f".cache/{shard.model_id}")
         if not model_path.exists():
             os.makedirs(model_path, exist_ok=True)
 
