@@ -4,15 +4,14 @@ from transformers import AutoModelForCausalLM, DynamicCache
 from exo.inference.shard import Shard
 
 class ShardedHuggingFaceModel(nn.Module):
-    def __init__(self, shard: Shard):
+    def __init__(self, model_name: str, shard: Shard):
         super(ShardedHuggingFaceModel, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
-        self.device_ids = list(range(torch.cuda.device_count()))
 
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
-            shard.model_id,
+            model_name,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto"
         )
@@ -26,6 +25,32 @@ class ShardedHuggingFaceModel(nn.Module):
         self.embed_tokens = self.full_model.model.embed_tokens
         self.norm = self.full_model.model.norm
         self.lm_head = self.full_model.lm_head
+
+    def prefill(self, model, tokens, start_pos=0):
+        """
+        Process the initial input tokens and set up the initial hidden states and key-value caches.
+        """
+        # Token embeddings
+        inputs_embeds = self.embed_tokens(tokens)
+
+        # Generate position ids
+        position_ids = torch.arange(start_pos, start_pos + tokens.shape[-1], dtype=torch.long, device=tokens.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(tokens)
+
+        # Apply each layer in this shard
+        hidden_states = inputs_embeds
+        past_key_values = []
+        for i, layer in enumerate(self.layers):
+            layer_past = None
+            hidden_states, new_layer_past = layer(
+                hidden_states,
+                past_key_values=layer_past,
+                use_cache=True,
+                position_ids=position_ids
+            )
+            past_key_values.append(new_layer_past)
+
+        return hidden_states, past_key_values
 
     def forward_layers(self, input_ids, past_key_values=None):
         """
@@ -59,8 +84,7 @@ class ShardedHuggingFaceModel(nn.Module):
                 use_cache=True,
                 position_ids=position_ids
             )
-            if new_layer_past is not None:
-                new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
+            new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
 
         if self.shard.is_last_layer():
             hidden_states = self.norm(hidden_states)

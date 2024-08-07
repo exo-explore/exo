@@ -57,16 +57,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         toks = self.tokenizer.encode(prompt)
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        start_pos = self.model.prefill(self.model, toks[:-1], start_pos=start_pos)
-        last_tok = toks[-1]
+        hidden_states, past_key_values = self.model.prefill(self.model, torch.tensor(toks[:-1], device=self.model.device), start_pos=start_pos)
+        last_tok = torch.tensor([toks[-1]], device=self.model.device).unsqueeze(0)
 
-        output_data = np.array([self.model.forward_layers(torch.tensor([[last_tok]], device=self.model.device), start_pos=start_pos, temperature=TEMPERATURE, top_k=TOP_K).tolist()])
+        output_data, past_key_values = self.model.forward_layers(last_tok, past_key_values=past_key_values)
+        output_data = output_data.detach().cpu().numpy()
+
         if output_data.size == 1:
             start_pos += 1
 
         return (
             output_data,
-            json.dumps({"start_pos": start_pos}),
+            json.dumps({"start_pos": start_pos, "past_key_values": past_key_values.to_legacy_cache()}),
             output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
         )
 
@@ -92,13 +94,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
-        output_data = np.array([self.model.forward_layers(torch.tensor([input_data], device=self.model.device), start_pos=start_pos, temperature=TEMPERATURE, top_k=TOP_K).tolist()])
+        output_data, past_key_values = self.model.forward_layers(torch.tensor([input_data], device=self.model.device), start_pos=start_pos)
+        output_data = output_data.detach().cpu().numpy()
+
         if output_data.size == 1:
             start_pos += 1
 
         return (
             output_data,
-            json.dumps({"start_pos": start_pos}),
+            json.dumps({"start_pos": start_pos, "past_key_values": past_key_values.to_legacy_cache()}),
             output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
         )
 
