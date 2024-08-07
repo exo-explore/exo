@@ -219,3 +219,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         self.shard = shard
+
+    def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
+        """
+        Set a callback function to track download progress.
+
+        Args:
+            on_download_progress (Callable[[int, int], None]): Callback function to track progress.
+        """
+        # must have this function or inference engine breaks
+        # This method can be implemented if progress tracking is needed
+        pass
