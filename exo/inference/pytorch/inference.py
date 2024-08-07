@@ -24,7 +24,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, model_name: str, debug: bool = True):
+    def __init__(self, debug: bool = True):
         """
         Initialize the inference engine.
 
@@ -33,11 +33,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         self.shard = None
         self.model = None
-        self.model_name = model_name if model_name else "meta-llama/Meta-Llama-3-8B"
         self.debug = debug
         self.log = logging.getLogger("pytorch.inference")
-        self.rank = int(os.getenv("RANK", "0"))
-        self.world_size = int(os.getenv("WORLD_SIZE", "1"))
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     async def infer_prompt(
@@ -200,8 +197,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Load model and tokenizer from the downloaded files
         # This is written for llama model but need to add in option for others
         if not self.model:
-            self.model = ShardedHuggingFaceModel(self.model_name, shard)
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self.model = ShardedHuggingFaceModel(shard)
+            self.tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
 
         self.shard = shard
 
