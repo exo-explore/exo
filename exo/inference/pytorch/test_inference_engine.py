@@ -10,14 +10,17 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
 
         # Create a shard
         cls.shard = Shard(
-            model_id="llama3-8b-sfr",
+            model_id="meta-llama/Meta-Llama-3-8B",
             start_layer=0,
             end_layer=0,
             n_layers=12
         )
 
         # Initialize the inference engine
-        cls.engine = PyTorchDynamicShardInferenceEngine(debug=True)
+        cls.engine = PyTorchDynamicShardInferenceEngine(
+            cls.shard.model_id,
+            debug=True
+        )
 
     def test_infer_prompt(self):
         # Prepare the prompt
