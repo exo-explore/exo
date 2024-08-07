@@ -11,7 +11,7 @@ from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
 import logging
 logging.basicConfig()
-logging.getLogger("pytorch.inference").setLevel( logging.INFO )
+logging.getLogger("pytorch.inference").setLevel(logging.DEBUG)
 
 # Default settings
 TEMPERATURE = 0.7
