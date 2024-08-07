@@ -93,7 +93,6 @@ async def resolve_tokenizer(model_id: str):
     return processor
   except Exception as e:
     if DEBUG >= 4: print(f"Failed to load processor for {model_id}. Error: {e}")
-
     if DEBUG >= 4: print(traceback.format_exc())
 
   try:
