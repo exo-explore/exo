@@ -67,7 +67,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if inference_state:
             past_key_values = self._load_kv_cache(json.loads(inference_state).get("past_key_values"))
 
-        output, past_key_values = self.model.full_model(input_ids, past_key_values=past_key_values)
+        output, past_key_values = self.model.full_model.model(input_ids, past_key_values=past_key_values)
 
         if self.shard.is_last_layer():
             logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
