@@ -10,7 +10,7 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
 
         # Create a shard
         cls.shard = Shard(
-            model_id="LLMQ/LLaMA-3-8B-GPTQ-4bit-b128",
+            model_id="hoang1123/llama3.1-8b-sum-trans-gguf-q4_k_m",
             start_layer=0,
             end_layer=0,
             n_layers=12
