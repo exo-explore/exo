@@ -1,19 +1,18 @@
 # experimental, based off of tinygrad/inference.py
 
 import os
+import shutil
 import json
 import torch
-import numpy as np
+import torch.distributed as dist
+import torch.multiprocessing as mp
+import torch.nn as nn
 from pathlib import Path
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer, Cache
+from transformers import AutoTokenizer, LlamaForCausalLM, Cache
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.helpers import download_files
-from exo.inference.pytorch.model.llama import ShardedLLAMAModel
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
 import logging
 
 logging.basicConfig()
@@ -28,22 +27,20 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, debug: bool = True, rank: int = 0, world_size: int = 1):
+    def __init__(self, debug: bool = True):
         """
         Initialize the inference engine.
 
         Args:
             debug (bool): If True, enables debug logging. Defaults to False.
-            rank (int): Rank of the current process in distributed training.
-            world_size (int): Total number of processes in distributed training.
         """
         self.shard = None
         self.debug = debug
-        self.rank = rank
-        self.world_size = world_size
-        self.device = torch.device(f"cuda:{rank}")
         self.log = logging.getLogger("pytorch.inference")
-        self.setup_distributed()
+        self.device_ids = list(range(torch.cuda.device_count()))
+        self.rank = int(os.getenv("RANK", "0"))
+        self.world_size = int(os.getenv("WORLD_SIZE", "1"))
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def setup_distributed(self):
         """
@@ -245,17 +242,22 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             else:
                 raise ValueError(f"Unsupported model: {shard.model_id}")
 
-        # Load the sharded model
-        sharded_model = ShardedLLAMAModel(model_path, shard)
-
-        # Use DistributedDataParallel for multi-GPU support
-        self.model = DDP(sharded_model.to(self.device), device_ids=[self.rank], output_device=self.rank)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Load model and tokenizer from the downloaded files
+        # This is written for llama model but need to add in option for others
+        self.model = LlamaForCausalLM.from_pretrained(
+            model_path, 
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto"
+        )
         
-        # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
+        if torch.cuda.device_count() > 1:
+            self.model = nn.DataParallel(self.model, device_ids=self.device_ids)
+        
+        self.model.to(self.device)
         self.shard = shard
+
 
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
         """
@@ -264,5 +266,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Args:
             on_download_progress (Callable[[int, int], None]): Callback function to track progress.
         """
+        # must have this function or inference engine breaks
         # This method can be implemented if progress tracking is needed
         pass
