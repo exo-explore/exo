@@ -3,8 +3,7 @@ import asyncio
 from exo.inference.shard import Shard
 from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
 import logging
-logging.basicConfig()
-logging.getLogger("pytorch.inference.test_engine").setLevel(logging.DEBUG)
+
 
 class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
 
@@ -56,4 +55,6 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
     #     self.assertFalse(is_eos)
 
 if __name__ == '__main__':
+    logging.basicConfig()
+    logging.getLogger("pytorch.inference.test_engine").setLevel(logging.DEBUG)
     unittest.main()
