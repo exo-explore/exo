@@ -2,8 +2,9 @@ import unittest
 import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
-import os
 import asyncio
+import os
+from transformers import AutoTokenizer
 from exo.inference.shard import Shard
 from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
 
@@ -65,7 +66,7 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
         """
         Test the inference on a text prompt in a distributed setting.
         """
-        mp.set_start_method('spawn')
+        mp.set_start_method('spawn', force=True)
         queue = mp.Queue()
 
         processes = []
