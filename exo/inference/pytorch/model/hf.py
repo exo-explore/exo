@@ -15,7 +15,7 @@ class ShardedHuggingFaceModel(nn.Module):
         self.device_ids = list(range(torch.cuda.device_count()))
 
         # Load the model
-        self.model = AutoModelForCausalLM.from_pretrained(
+        self.full_model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto"
@@ -23,15 +23,14 @@ class ShardedHuggingFaceModel(nn.Module):
         
         # Extract only the layers for this shard
         self.layers = nn.ModuleList([
-            self.model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
+            self.full_model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
         ])
-        logging.info(f"layers: {self.layers}")
-        
+
         # Embeddings and final layer norm
-        self.embed_tokens = self.model.embed_tokens
-        self.embed_positions = self.model.embed_positions
-        self.norm = self.model.norm
-        self.lm_head = self.lm_head
+        self.embed_tokens = self.full_model.model.embed_tokens
+        self.embed_positions = self.full_model.model.embed_positions
+        self.norm = self.full_model.model.norm
+        self.lm_head = self.full_model.lm_head
 
     def forward_layers(self, input_ids, past_key_values=None):
         """
