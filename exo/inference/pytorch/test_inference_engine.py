@@ -21,10 +21,12 @@ class TestPyTorchDynamicShardInferenceEngine(unittest.TestCase):
         cls.engine = PyTorchDynamicShardInferenceEngine(debug=True)
 
     def test_infer_prompt(self):
+        log = logging.getLogger("pytorch.inference.test_engine")
+
         # Prepare the prompt
         prompt = "Why is the sky blue?"
 
-        logging.info(f"Testing infer_prompt with prompt {prompt}")
+        log.info(f"Testing infer_prompt with prompt {prompt}")
 
         # Run inference
         loop = asyncio.get_event_loop()
