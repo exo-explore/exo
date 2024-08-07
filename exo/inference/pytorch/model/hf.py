@@ -40,8 +40,11 @@ class ShardedHuggingFaceModel(nn.Module):
         if past_key_values is None:
             past_key_values = DynamicCache()
 
-        # Token embeddings
-        hidden_states = self.embed_tokens(input_ids)
+        # Token and position embeddings
+        position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        inputs_embeds = self.embed_tokens(input_ids)
+        hidden_states = inputs_embeds + self.full_model.model.embed_positions(position_ids)
 
         # Apply each layer in this shard
         new_past_key_values = DynamicCache()
@@ -50,13 +53,14 @@ class ShardedHuggingFaceModel(nn.Module):
                 layer_past = past_key_values[i]
             else:
                 layer_past = None
-            
+
             hidden_states, new_layer_past = layer(
-                hidden_states, 
-                past_key_values=layer_past, 
-                use_cache=True
+                hidden_states,
+                past_key_values=layer_past,
+                use_cache=True,
+                position_ids=position_ids
             )
-            
+
             new_past_key_values.update(new_layer_past[0], new_layer_past[1], i)
 
         if self.shard.is_last_layer():
