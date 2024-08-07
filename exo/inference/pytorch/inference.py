@@ -82,7 +82,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if self.debug:
             self.log.info(
-                f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+                f"\nInfer Prompt Debug - Request ID: {request_id}\nOutput: {output_data}\nEOS: {is_eos}")
 
         return output_data, new_inference_state, is_eos
 
