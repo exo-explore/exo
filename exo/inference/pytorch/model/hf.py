@@ -107,5 +107,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states = layer_outputs[0]
             new_past_key_values.append(layer_outputs[1])
 
-        return hidden_states, new_past_key_values
+        if self.shard.is_last_layer():
+            hidden_states = self.norm(hidden_states)
+            logits = self.lm_head(hidden_states).float()[:, -1, :]
+            return logits
+        else:
+            return hidden_states, new_past_key_values
 
