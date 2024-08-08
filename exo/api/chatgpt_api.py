@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoProcessor
 from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
+import traceback
 from exo import DEBUG, VERSION
 from exo.helpers import terminal_link, PrefixDict
 from exo.inference.shard import Shard
@@ -16,20 +17,22 @@ shard_mappings = {
   ### llama
   "llama-3.1-8b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
+    "TinygradDynamicShardInferenceEngine": Shard(model_id="mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated", start_layer=0, end_layer=0, n_layers=32),
   },
   "llama-3.1-70b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
+    "TinygradDynamicShardInferenceEngine": Shard(model_id="NousResearch/Meta-Llama-3.1-70B", start_layer=0, end_layer=0, n_layers=80),
   },
   "llama-3.1-405b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-405B-4bit", start_layer=0, end_layer=0, n_layers=126),
   },
   "llama-3-8b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="llama3-8b-sfr", start_layer=0, end_layer=0, n_layers=32),
+    "TinygradDynamicShardInferenceEngine": Shard(model_id="TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R", start_layer=0, end_layer=0, n_layers=32),
   },
   "llama-3-70b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="llama3-70b-sfr", start_layer=0, end_layer=0, n_layers=80),
+    "TinygradDynamicShardInferenceEngine": Shard(model_id="TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", start_layer=0, end_layer=0, n_layers=80),
   },
   ### mistral
   "mistral-nemo": {
@@ -76,18 +79,10 @@ class ChatCompletionRequest:
         }
 
 
-def resolve_tinygrad_tokenizer(model_id: str):
-  if model_id == "llama3-8b-sfr":
-    return AutoTokenizer.from_pretrained("TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R")
-  elif model_id == "llama3-70b-sfr":
-    return AutoTokenizer.from_pretrained("TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R")
-  else:
-    raise ValueError(f"tinygrad doesnt currently support arbitrary model downloading. unsupported model: {model_id}")
-
 
 async def resolve_tokenizer(model_id: str):
   try:
-    if DEBUG >= 2: print(f"Trying AutoProcessor for {model_id}")
+    if DEBUG >= 4: print(f"Trying AutoProcessor for {model_id}")
     processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
     if not hasattr(processor, 'eos_token_id'):
       processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
@@ -97,33 +92,17 @@ async def resolve_tokenizer(model_id: str):
       processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
     return processor
   except Exception as e:
-    if DEBUG >= 2: print(f"Failed to load processor for {model_id}. Error: {e}")
-    import traceback
-
-    if DEBUG >= 2: print(traceback.format_exc())
+    if DEBUG >= 4: print(f"Failed to load processor for {model_id}. Error: {e}")
+    if DEBUG >= 4: print(traceback.format_exc())
 
   try:
-    if DEBUG >= 2: print(f"Trying AutoTokenizer for {model_id}")
+    if DEBUG >= 4: print(f"Trying AutoTokenizer for {model_id}")
     return AutoTokenizer.from_pretrained(model_id)
   except Exception as e:
-    if DEBUG >= 2: print(f"Failed to load tokenizer for {model_id}. Falling back to tinygrad tokenizer. Error: {e}")
-    import traceback
+    if DEBUG >= 4: print(f"Failed to load tokenizer for {model_id}. Falling back to tinygrad tokenizer. Error: {e}")
+    if DEBUG >= 4: print(traceback.format_exc())
 
-    if DEBUG >= 2: print(traceback.format_exc())
-
-  try:
-    if DEBUG >= 2: print(f"Trying tinygrad tokenizer for {model_id}")
-    return resolve_tinygrad_tokenizer(model_id)
-  except Exception as e:
-    if DEBUG >= 2: print(f"Failed again to load tokenizer for {model_id}. Falling back to mlx tokenizer. Error: {e}")
-    import traceback
-
-    if DEBUG >= 2: print(traceback.format_exc())
-
-  if DEBUG >= 2: print(f"Trying mlx tokenizer for {model_id}")
-  from exo.inference.mlx.sharded_utils import get_model_path, load_tokenizer
-
-  return load_tokenizer(await get_model_path(model_id))
+  raise ValueError(f"[TODO] Unsupported model: {model_id}")
 
 
 def generate_completion(
@@ -326,10 +305,7 @@ class ChatGPTAPI:
     try:
       await self.node.process_prompt(shard, prompt, image_str, request_id=request_id)
     except Exception as e:
-      if DEBUG >= 2:
-        import traceback
-
-        traceback.print_exc()
+      if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
 
     try:
@@ -370,7 +346,11 @@ class ChatGPTAPI:
             "chat.completion",
           )
           if DEBUG >= 2: print(f"Streaming completion: {completion}")
-          await response.write(f"data: {json.dumps(completion)}\n\n".encode())
+          try:
+            await response.write(f"data: {json.dumps(completion)}\n\n".encode())
+          except Exception as e:
+            if DEBUG >= 2: print(f"Error streaming completion: {e}")
+            if DEBUG >= 2: traceback.print_exc()
 
         def on_result(_request_id: str, tokens: List[int], is_finished: bool):
           self.stream_tasks[request_id] = asyncio.create_task(stream_result(request_id, tokens, is_finished))

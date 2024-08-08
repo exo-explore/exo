@@ -48,7 +48,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     image_str = request.image_str
     request_id = request.request_id
     result = await self.node.process_prompt(shard, prompt, image_str, request_id)
-    if DEBUG >= 2: print(f"SendPrompt {shard=} {prompt=} {image_str=} {request_id=} result: {result}")
+    if DEBUG >= 5: print(f"SendPrompt {shard=} {prompt=} {image_str=} {request_id=} result: {result}")
     tensor_data = result.tobytes() if result is not None else None
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
 
@@ -64,14 +64,14 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     inference_state = request.inference_state
 
     result = await self.node.process_tensor(shard, tensor, request_id, inference_state)
-    if DEBUG >= 2: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
+    if DEBUG >= 5: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
     tensor_data = result.tobytes() if result is not None else None
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
 
   async def GetInferenceResult(self, request, context):
     request_id = request.request_id
     result = await self.node.get_inference_result(request_id)
-    if DEBUG >= 2: print(f"GetInferenceResult {request_id=}: {result}")
+    if DEBUG >= 5: print(f"GetInferenceResult {request_id=}: {result}")
     tensor_data = result[0].tobytes() if result[0] is not None else None
     return (
       node_service_pb2.InferenceResult(
@@ -96,20 +96,20 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       for node_id, cap in topology.nodes.items()
     }
     peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
-    if DEBUG >= 2: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
+    if DEBUG >= 5: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
     return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 
   async def SendResult(self, request, context):
     request_id = request.request_id
     result = request.result
     is_finished = request.is_finished
-    if DEBUG >= 2: print(f"Received SendResult request: {request_id=} {result=} {is_finished=}")
+    if DEBUG >= 5: print(f"Received SendResult request: {request_id=} {result=} {is_finished=}")
     self.node.on_token.trigger_all(request_id, result, is_finished)
     return node_service_pb2.Empty()
 
   async def SendOpaqueStatus(self, request, context):
     request_id = request.request_id
     status = request.status
-    if DEBUG >= 2: print(f"Received SendOpaqueStatus request: {request_id=} {status=}")
+    if DEBUG >= 5: print(f"Received SendOpaqueStatus request: {request_id=} {status=}")
     self.node.on_opaque_status.trigger_all(request_id, status)
     return node_service_pb2.Empty()

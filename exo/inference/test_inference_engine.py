@@ -1,4 +1,6 @@
+from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
 from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
 import asyncio
@@ -9,6 +11,7 @@ import numpy as np
 async def test_inference_engine(inference_engine_1: InferenceEngine, inference_engine_2: InferenceEngine, model_id: str):
   prompt = "In a single word only, what is the last name of the current president of the USA?"
   resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt("A", shard=Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32), prompt=prompt)
+
   next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
     "A",
     shard=Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32),
@@ -42,15 +45,15 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
 
 asyncio.run(
   test_inference_engine(
-    MLXDynamicShardInferenceEngine(),
-    MLXDynamicShardInferenceEngine(),
+    MLXDynamicShardInferenceEngine(HFShardDownloader()),
+    MLXDynamicShardInferenceEngine(HFShardDownloader()),
     "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
   )
 )
 
 # TODO: Need more memory or a smaller model
 # asyncio.run(test_inference_engine(
-#     TinygradDynamicShardInferenceEngine(),
-#     TinygradDynamicShardInferenceEngine(),
-#     "llama3-8b-sfr",
+#     TinygradDynamicShardInferenceEngine(HFShardDownloader()),
+#     TinygradDynamicShardInferenceEngine(HFShardDownloader()),
+#     "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R",
 # ))

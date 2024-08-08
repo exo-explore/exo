@@ -31,17 +31,17 @@ def get_system_info():
   return "Non-Mac, non-Linux system"
 
 
-def get_inference_engine(inference_engine_name):
+def get_inference_engine(inference_engine_name, shard_downloader: 'ShardDownloader'):
   if inference_engine_name == "mlx":
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 
-    return MLXDynamicShardInferenceEngine()
+    return MLXDynamicShardInferenceEngine(shard_downloader)
   elif inference_engine_name == "tinygrad":
     from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
     import tinygrad.helpers
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
-    return TinygradDynamicShardInferenceEngine()
+    return TinygradDynamicShardInferenceEngine(shard_downloader)
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")
 
@@ -201,3 +201,27 @@ def get_or_create_node_id():
     except Exception as e:
         if DEBUG >= 2: print(f"Unexpected error creating node_id: {e}")
         return str(uuid.uuid4())
+
+def pretty_print_bytes(size_in_bytes: int) -> str:
+    if size_in_bytes < 1024:
+        return f"{size_in_bytes} B"
+    elif size_in_bytes < 1024 ** 2:
+        return f"{size_in_bytes / 1024:.2f} KB"
+    elif size_in_bytes < 1024 ** 3:
+        return f"{size_in_bytes / (1024 ** 2):.2f} MB"
+    elif size_in_bytes < 1024 ** 4:
+        return f"{size_in_bytes / (1024 ** 3):.2f} GB"
+    else:
+        return f"{size_in_bytes / (1024 ** 4):.2f} TB"
+
+def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
+    if bytes_per_second < 1024:
+        return f"{bytes_per_second} B/s"
+    elif bytes_per_second < 1024 ** 2:
+        return f"{bytes_per_second / 1024:.2f} KB/s"
+    elif bytes_per_second < 1024 ** 3:
+        return f"{bytes_per_second / (1024 ** 2):.2f} MB/s"
+    elif bytes_per_second < 1024 ** 4:
+        return f"{bytes_per_second / (1024 ** 3):.2f} GB/s"
+    else:
+        return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
