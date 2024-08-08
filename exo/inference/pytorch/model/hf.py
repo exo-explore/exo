@@ -35,22 +35,30 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         """
         Process the initial input tokens and set up the initial hidden states.
         """
-         # Assuming tokens is a 1D tensor of token IDs
+        # Assuming tokens is a 1D tensor of token IDs
         for token in tokens:
             # Convert token to a tensor and get embeddings
             token_tensor = torch.tensor([[token]], device=self.device)
+            inputs_embeds = self.embed_tokens(token_tensor)
+
+            if DEBUG >= 2:
+                print(f"Initial input embeddings shape: {inputs_embeds.shape}")
 
             # Prefill with tokens
             for layer in self.layers:
-                _ = layer(
-                    token_tensor,
+                layer_outputs = layer(
+                    inputs_embeds,
                     use_cache=True,
                     output_attentions=False,
                 )
-                
+                inputs_embeds = layer_outputs[0]
+
+                if DEBUG >= 2:
+                    print(f"Layer output shape: {inputs_embeds.shape}")
+
             # Increment start position
             start_pos += 1
-        
+
         return start_pos
 
     def forward_layers(self, input_ids, past_key_values=None):
@@ -62,19 +70,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Token embeddings
         hidden_states = self.embed_tokens(input_ids)
-        
-        # Generate position ids
-        seq_length = input_ids.shape[1]
-        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand(input_ids.shape)
 
-        # Apply each layer in this shard
         new_past_key_values = []
         for i, layer in enumerate(self.layers):
             layer_outputs = layer(
                 hidden_states,
-                attention_mask=None,
-                position_ids=position_ids,
                 past_key_value=past_key_values[i],
                 use_cache=True,
                 output_attentions=False,
@@ -82,12 +82,4 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states = layer_outputs[0]
             new_past_key_values.append(layer_outputs[1])
 
-        if self.shard.is_last_layer():
-            hidden_states = self.norm(hidden_states)
-            logits = self.lm_head(hidden_states)
-            return logits, new_past_key_values
-        else:
-            return hidden_states, new_past_key_values
-
-    def is_last_layer(self):
-        return self.shard.is_last_layer()
+        return hidden_states, new_past_key_values
