@@ -93,6 +93,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 past_key_value = None
             
             # Forward pass through the layer
+            if DEBUG >= 2:
+                print(f"pass tensor to layer[{i}] {layer}")
+                
             layer_outputs = layer(
                 in_tensor if not out_tensor else out_tensor,
                 position_ids=position_ids,
@@ -105,16 +108,3 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             new_past_key_values.append(layer_outputs[1])
 
         return out_tensor, new_past_key_values
-
-
-    def forward(self, input_ids, past_key_values=None):
-        """
-        Forward pass through the model.
-        """
-        hidden_states, new_past_key_values = self.forward_layers(input_ids, past_key_values)
-        hidden_states = self.norm(hidden_states)
-        logits = self.lm_head(hidden_states)
-
-        if DEBUG >= 2:
-            print(f"\nLogits shape: {logits.shape}")  # Debugging
-        return logits, new_past_key_values
