@@ -72,7 +72,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         start_pos = self.model.prefill(
             torch.tensor(toks[:-1], device=self.device), start_pos=start_pos)
         
-        output_data, past_key_values = self.model.forward_layers(toks[:, -1:], past_key_values=past_key_values)
+        output_data, past_key_values = self.model(toks[:, -1:], past_key_values=past_key_values)
         output_data = output_data.detach().cpu().numpy()
 
         is_finished = output_data.shape[1] == 1 and output_data[0, 0, -1] == self.tokenizer.eos_token_id

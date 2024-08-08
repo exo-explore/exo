@@ -89,11 +89,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         """
         Forward pass through the model.
         """
-        hidden_states = self.prefill(input_ids)
+        hidden_states, new_past_key_values = self.forward_layers(input_ids, past_key_values)
         hidden_states = self.norm(hidden_states)
         logits = self.lm_head(hidden_states)
 
         if DEBUG >= 2:
             print(f"\nLogits shape: {logits.shape}")  # Debugging
-        return logits
-    
+        return logits, new_past_key_values
