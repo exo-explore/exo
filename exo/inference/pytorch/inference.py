@@ -120,7 +120,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         if past_key_values is None:
             return []
-        return [kv.cpu().tolist() for kv in past_key_values]
+        
+        new_cache = []
+        for kv in past_key_values:
+            if kv:
+                new_cache.append(kv.cpu().tolist())
+
+        return new_cache
 
     async def ensure_shard(self, shard: Optional[Shard]):
         """
