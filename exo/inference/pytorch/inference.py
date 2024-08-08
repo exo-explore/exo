@@ -32,12 +32,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     async def infer_prompt(
-            self, 
-            request_id: str, 
-            shard: Optional[Shard] = None, 
-            prompt: str = "", 
-            image_str: Optional[str] = None, 
-            inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        self, 
+        request_id: str, 
+        shard: Optional[Shard] = None, 
+        prompt: str = "", 
+        image_str: Optional[str] = None, 
+        inference_state: Optional[str] = None
+    ) -> Tuple[np.ndarray, str, bool]:
         """
         Perform inference based on a text prompt.
 
@@ -51,86 +52,60 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
         """
-    async def infer_prompt(
-        self, 
-        request_id: str, 
-        shard: Optional[Shard] = None, 
-        prompt: str = "", 
-        image_str: Optional[str] = None, 
-        inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
-        
-        if DEBUG >= 2:
-            print(f"[{request_id}] Processing prompt: {prompt[:50]}...")
 
+        # Ensure the shard is loaded
         await self.ensure_shard(shard)
 
-        toks = self.tokenizer.encode(prompt)
-        state = json.loads(inference_state) if inference_state else {}
-        start_pos = state.get("start_pos", 0)
-        past_key_values = self._load_kv_cache(state.get("past_key_values"))
+        # Tokenize the prompt
+        toks = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
 
-        start_pos = self.model.prefill(
-            torch.tensor(toks[:-1], device=self.device), start_pos=start_pos)
-        
-        output_data, past_key_values = self.model(toks[:, -1:], past_key_values=past_key_values)
-        output_data = output_data.detach().cpu().numpy()
+        # Load the past key values from the inference state if available
+        past_key_values = self._load_kv_cache(inference_state)
 
-        is_finished = output_data.shape[1] == 1 and output_data[0, 0, -1] == self.tokenizer.eos_token_id
-        new_state = {
-            "start_pos": start_pos,
-            "past_key_values": self._save_kv_cache(past_key_values)
-        }
-        new_inference_state = json.dumps(new_state)
+        # Prefill the model with tokens
+        start_pos = self.model.prefill(toks.squeeze())
+
+        # Run the forward pass through the model layers
+        output_data, past_key_values = self.model.forward_layers(toks[:, -1:], past_key_values=past_key_values)
+
+        # Save the past key values to the inference state
+        new_inference_state = self._save_kv_cache(past_key_values)
+
+        is_finished = False  # Assuming a mechanism to determine if the sequence is finished
 
         if DEBUG >= 2:
-            print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
+            print(f"Output data: {output_data}, new inference state: {new_inference_state}, finished: {is_finished}")
 
         return output_data, new_inference_state, is_finished
-
 
     async def infer_tensor(
-            self, 
-            request_id: str, 
-            shard: Optional[Shard] = None, 
-            input_data: np.ndarray = None, 
-            inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        self, 
+        input_tensor: torch.Tensor, 
+        shard: Optional[Shard] = None, 
+        past_key_values: Optional[list] = None
+    ) -> Tuple[torch.Tensor, list]:
         """
-        Perform inference based on an input tensor.
+        Perform inference based on a tensor input.
 
         Args:
-            request_id (str): Unique identifier for the request.
+            input_tensor (torch.Tensor): The input tensor for inference.
             shard (Optional[Shard]): Shard information for the model.
-            input_data (np.ndarray): The input tensor for inference.
-            inference_state (Optional[str]): The previous inference state.
+            past_key_values (Optional[list]): The previous inference state.
 
         Returns:
-            Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
+            Tuple[torch.Tensor, list]: The output tensor and new inference state.
         """
+
+        # Ensure the shard is loaded
         await self.ensure_shard(shard)
 
-        if DEBUG >= 2:
-            print(f"[{request_id}] Processing tensor input, shape: {input_data.shape}")
-
-        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
-
-        state = json.loads(inference_state) if inference_state else {}
-        start_pos = state.get("start_pos", 0)
-        past_key_values = self._load_kv_cache(state.get("past_key_values"))
-
+        # Run the forward pass through the model layers
         output_data, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
-        output_data = output_data.detach().cpu().numpy()
-
-        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
-        new_state = {
-            "start_pos": start_pos + 1,
-            "past_key_values": self._save_kv_cache(past_key_values)
-        }
-        new_inference_state = json.dumps(new_state)
 
         if DEBUG >= 2:
-            print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
+            print(f"Output data shape: {output_data.shape}")
 
-        return output_data, new_inference_state, is_finished
+        return output_data, past_key_values
 
     def _load_kv_cache(self, past_key_values_list):
         """
