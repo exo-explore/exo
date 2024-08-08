@@ -52,25 +52,48 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
         """
+        # await self.ensure_shard(shard)
+
+        # toks = self.tokenizer.encode(prompt)
+        # start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
+
+        # hidden_states, past_key_values = self.model.prefill(self.model, torch.tensor(toks[:-1], device=self.model.device), start_pos=start_pos)
+        # last_tok = torch.tensor([toks[-1]], device=self.model.device).unsqueeze(0)
+
+        # output_data, past_key_values = self.model.forward_layers(last_tok, past_key_values=past_key_values)
+        # output_data = output_data.detach().cpu().numpy()
+
+        # if output_data.size == 1:
+        #     start_pos += 1
+
+        # return (
+        #     output_data,
+        #     json.dumps({"start_pos": start_pos, "past_key_values": past_key_values.to_legacy_cache()}),
+        #     output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
+        # )
         await self.ensure_shard(shard)
 
-        toks = self.tokenizer.encode(prompt)
-        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
 
-        hidden_states, past_key_values = self.model.prefill(self.model, torch.tensor(toks[:-1], device=self.model.device), start_pos=start_pos)
-        last_tok = torch.tensor([toks[-1]], device=self.model.device).unsqueeze(0)
+        output = self.model.forward_layers(input_ids)
 
-        output_data, past_key_values = self.model.forward_layers(last_tok, past_key_values=past_key_values)
-        output_data = output_data.detach().cpu().numpy()
+        if self.shard.is_last_layer():
+            logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
+            next_token = torch.argmax(logits[:, -1, :], dim=-1)
+            output_data = np.array([next_token.item()])
+            is_eos = next_token.item() == self.tokenizer.eos_token_id
+        else:
+            output_data = output.detach().cpu().numpy()
+            is_eos = False
 
-        if output_data.size == 1:
-            start_pos += 1
+        new_inference_state = json.dumps({"past_key_values": []})
 
-        return (
-            output_data,
-            json.dumps({"start_pos": start_pos, "past_key_values": past_key_values.to_legacy_cache()}),
-            output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
-        )
+        if self.debug:
+            self.log.info(
+                f"Infer Prompt Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+
+        return output_data, new_inference_state, is_eos
+        
 
     async def infer_tensor(
             self, 
@@ -90,21 +113,43 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
         """
+        # await self.ensure_shard(shard)
+
+        # start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
+
+        # output_data, past_key_values = self.model.forward_layers(torch.tensor([input_data], device=self.model.device), past_key_values=past_key_values)
+        # output_data = output_data.detach().cpu().numpy()
+
+        # if output_data.size == 1:
+        #     start_pos += 1
+
+        # return (
+        #     output_data,
+        #     json.dumps({"start_pos": start_pos, "past_key_values": past_key_values.to_legacy_cache()}),
+        #     output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
+        # )
+
         await self.ensure_shard(shard)
 
-        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
+        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
 
-        output_data, past_key_values = self.model.forward_layers(torch.tensor([input_data], device=self.model.device), past_key_values=past_key_values)
-        output_data = output_data.detach().cpu().numpy()
+        output = self.model.forward_layers(input_tensor)
 
-        if output_data.size == 1:
-            start_pos += 1
+        if self.shard.is_last_layer():
+            logits = self._apply_generation_settings(output, TEMPERATURE, TOP_K)
+            next_token = torch.argmax(logits[:, -1, :], dim=-1)
+            output_data = np.array([next_token.item()])
+            is_eos = next_token.item() == self.tokenizer.eos_token_id
+        else:
+            output_data = output.detach().cpu().numpy()
+            is_eos = False
 
-        return (
-            output_data,
-            json.dumps({"start_pos": start_pos, "past_key_values": past_key_values.to_legacy_cache()}),
-            output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
-        )
+        new_inference_state = json.dumps({"past_key_values": []})
+
+        if self.debug:
+            self.log.info(f"Infer Tensor Debug - Request ID: {request_id}, Output: {output_data}, EOS: {is_eos}")
+
+        return output_data, new_inference_state, is_eos
 
     def _apply_generation_settings(self, logits, temperature, top_k):
         """
