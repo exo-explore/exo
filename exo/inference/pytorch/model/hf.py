@@ -22,6 +22,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         )
         
         # Extract only the layers for this shard
+        print(f"\nself.model: {self.model}\n")
         self.layers = torch.nn.ModuleList([
             self.full_model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
         ])

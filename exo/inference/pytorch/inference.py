@@ -51,15 +51,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         # Prefill the model with tokens
         start_pos = self.model.prefill(toks[:-1])
-        last_token = toks[-1]
+        last_token = torch.tensor(
+            toks[-1],
+            device=self.device
+        )
 
         # Run the forward pass through the model layers
         output_data, past_key_values = self.model.forward_layers(
             start_pos,
-            torch.tensor(
-                last_token,
-                device=self.device
-            ), 
+            last_token, 
             past_key_values=past_key_values
         )
 
