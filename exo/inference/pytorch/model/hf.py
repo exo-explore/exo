@@ -23,9 +23,14 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         
         # Extract only the layers for this shard
         print(f"\nself.model: {self.full_model.model}\n")
-        self.layers = torch.nn.ModuleList([
-            self.full_model.model.layers[i] for i in range(shard.start_layer, shard.end_layer + 1)
-        ])
+        self.layers = []
+        for i in range(shard.start_layer, shard.end_layer + 1):
+            if DEBUG >= 2:
+                print(f"layer[{i}]: {self.full_model.model.layers[i]}")
+            
+            self.layers.append(self.full_model.model.layers[i])
+
+        # self.layers = torch.nn.ModuleList(layer_list)
 
         # Embeddings and final layer norm
         self.embed_tokens = self.full_model.model.embed_tokens
@@ -95,7 +100,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             # Forward pass through the layer
             if DEBUG >= 2:
                 print(f"pass tensor to layer[{i}] {layer}")
-                
+
             layer_outputs = layer(
                 in_tensor if not out_tensor else out_tensor,
                 position_ids=position_ids,
