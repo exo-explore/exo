@@ -44,38 +44,26 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
 
         # Tokenize the prompt
-        toks = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
+        toks = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
         # Load the past key values from the inference state if available
         past_key_values = self._load_kv_cache(inference_state)
 
-        # Prefill the model with tokens
-        start_pos = self.model.prefill(toks[:-1])
-        last_token = torch.tensor(
-            toks[-1],
-            device=self.device
-        )
-
         # Run the forward pass through the model layers
         output_data, past_key_values = self.model.forward_layers(
-            start_pos,
-            last_token, 
+            input_ids=toks,
             past_key_values=past_key_values
         )
 
         # Save the past key values to the inference state
-        new_inference_state = self._save_kv_cache(past_key_values)
+        self._save_kv_cache(past_key_values)
 
-        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
+        is_finished = False  # Assuming a mechanism to determine if the sequence is finished
 
         if DEBUG >= 2:
-            print(f"Output data: {output_data}, new inference state: {new_inference_state}, finished: {is_finished}")
+            print(f"Output data: {output_data}, new inference state: {past_key_values}, finished: {is_finished}")
 
-        return (
-            output_data,
-            json.dumps({"start_pos": start_pos}),
-            is_finished
-        )
+        return output_data, "", is_finished
 
     async def infer_tensor(
         self, 

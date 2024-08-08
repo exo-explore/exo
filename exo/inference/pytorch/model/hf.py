@@ -38,79 +38,74 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.norm = self.full_model.model.norm
         self.lm_head = self.full_model.lm_head
 
-    def prefill(self, tokens: list[int], start_pos: int=0) -> int:
-        print(f"\nprefill called")
-        """
-        Process the initial input tokens and set up the initial hidden states.
-        """
-        # Assuming tokens is a 1D tensor of token IDs
-        for token in tokens:
-            # Convert token to a tensor and get embeddings
-            token_tensor = torch.tensor([[token]], device=self.device)
-            token_tensor = self.embed_tokens(token_tensor)
+    # def prefill(self, tokens: list[int], start_pos: int=0) -> int:
+    #     print(f"\nprefill called")
+    #     """
+    #     Process the initial input tokens and set up the initial hidden states.
+    #     """
+    #     # Assuming tokens is a 1D tensor of token IDs
+    #     for token in tokens:
+    #         # Convert token to a tensor and get embeddings
+    #         token_tensor = torch.tensor([[token]], device=self.device)
+    #         token_tensor = self.embed_tokens(token_tensor)
                 
-            if DEBUG >= 2:
-                print(f"\ntoken_tensor shape: {token_tensor.shape}")
+    #         if DEBUG >= 2:
+    #             print(f"\ntoken_tensor shape: {token_tensor.shape}")
 
-            # Prefill with tokens
-            self.forward_layers(start_pos, token_tensor, None)
+    #         # Prefill with tokens
+    #         self.forward_layers(start_pos, token_tensor, None)
 
-            # Increment start position
-            start_pos += 1
+    #         # Increment start position
+    #         start_pos += 1
 
-        return start_pos
+    #     return start_pos
 
     def forward_layers(
-            self,
-            start_pos: int,
-            in_tensor: torch.tensor,
-            past_key_values=None
-        ) -> Tuple[any, list]:
-
+        self,
+        input_ids: torch.tensor,
+        past_key_values=None
+    ) -> Tuple[any, list]:
         """
         Forward pass through the specified layers.
         """
-        # embed tensor if first layer
+        # Embed tensor if first layer
         if self.shard.is_first_layer():
             if DEBUG >= 2:
-                print(f"Embedding first layer in_tensor {in_tensor.shape}")
-            in_tensor = self.embed_tokens(in_tensor)
+                print(f"Embedding first layer input_ids {input_ids.shape}")
+            hidden_states = self.embed_tokens(input_ids)
+        else:
+            hidden_states = input_ids
 
-        # check past key values
+        # Check past key values
         if past_key_values is None:
             past_key_values = [None] * len(self.layers)
 
         # Initialize position_ids
         position_ids = torch.arange(
-            start_pos, 
-            start_pos + len(past_key_values), 
-            dtype=torch.long, 
+            hidden_states.size(1),
+            dtype=torch.long,
             device=self.device
-        )
-        position_ids = position_ids.unsqueeze(0)
+        ).unsqueeze(0)
 
         new_past_key_values = []
-        out_tensor = None
         for i, layer in enumerate(self.layers):
             # Get past key value if available
-            if past_key_values and len(past_key_values) > 0:
-                past_key_value = past_key_values[i] 
-            else:
-                past_key_value = None
+            past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
             
             # Forward pass through the layer
             if DEBUG >= 2:
-                print(f"pass tensor to layer[{i}] {layer}")
+                print(f"Pass tensor to layer[{i}] {layer}")
 
             layer_outputs = layer(
-                in_tensor if not out_tensor else out_tensor,
+                hidden_states,
                 position_ids=position_ids,
                 past_key_value=past_key_value,
                 use_cache=True,
                 output_attentions=False,
             )
             
-            out_tensor = layer_outputs[0]
+            hidden_states = layer_outputs[0]
             new_past_key_values.append(layer_outputs[1])
 
-        return out_tensor, new_past_key_values
+        return hidden_states, new_past_key_values
+
