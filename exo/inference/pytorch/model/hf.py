@@ -69,13 +69,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Initialize position_ids
         position_ids = torch.arange(
-            start_pos,
-            start_pos + in_tensor.size(1),
-            dtype=torch.long,
-            device=in_tensor.device
-        ).unsqueeze(0)
+            start_pos, 
+            start_pos + len(past_key_values), 
+            dtype=torch.long, 
+            device=in_tensor
+        )
+        position_ids = position_ids.unsqueeze(0)
 
         new_past_key_values = []
+        out_tensor = None
         for i, layer in enumerate(self.layers):
             # Get past key value if available
             if past_key_values and len(past_key_values) > 0:
@@ -85,17 +87,17 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             
             # Forward pass through the layer
             layer_outputs = layer(
-                layer_out,
+                in_tensor if not out_tensor else out_tensor,
                 position_ids=position_ids,
                 past_key_value=past_key_value,
                 use_cache=True,
                 output_attentions=False,
             )
             
-            layer_out = layer_outputs[0]
+            out_tensor = layer_outputs[0]
             new_past_key_values.append(layer_outputs[1])
 
-        return layer_out, new_past_key_values
+        return out_tensor, new_past_key_values
 
 
     def forward(self, input_ids, past_key_values=None):
