@@ -39,18 +39,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         for token in tokens:
             # Convert token to a tensor and get embeddings
             token_tensor = torch.tensor([[token]], device=self.device)
-            inputs_embeds = self.embed_tokens(token_tensor)
 
             # Prefill with tokens
             for layer in self.layers:
                 _ = layer(
-                    inputs_embeds,
+                    token_tensor,
                     use_cache=True,
                     output_attentions=False,
                 )
-                # Update embeddings with layer output
-                inputs_embeds = layer_outputs[0]
-
+                
             # Increment start position
             start_pos += 1
         
