@@ -87,21 +87,22 @@ def resolve_tinygrad_tokenizer(model_id: str):
 
 
 async def resolve_tokenizer(model_id: str):
-  try:
-    if DEBUG >= 2: print(f"Trying AutoProcessor for {model_id}")
-    processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
-    if not hasattr(processor, 'eos_token_id'):
-      processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
-    if not hasattr(processor, 'encode'):
-      processor.encode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).encode
-    if not hasattr(processor, 'decode'):
-      processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
-    return processor
-  except Exception as e:
-    if DEBUG >= 2: print(f"Failed to load processor for {model_id}. Error: {e}")
-    import traceback
+  if not model_id == "meta-llama/Meta-Llama-3.1-8B":
+    try:
+      if DEBUG >= 2: print(f"Trying AutoProcessor for {model_id}")
+      processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
+      if not hasattr(processor, 'eos_token_id'):
+        processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
+      if not hasattr(processor, 'encode'):
+        processor.encode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).encode
+      if not hasattr(processor, 'decode'):
+        processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
+      return processor
+    except Exception as e:
+      if DEBUG >= 2: print(f"Failed to load processor for {model_id}. Error: {e}")
+      import traceback
 
-    if DEBUG >= 2: print(traceback.format_exc())
+      if DEBUG >= 2: print(traceback.format_exc())
 
   try:
     if DEBUG >= 2: print(f"Trying AutoTokenizer for {model_id}")
