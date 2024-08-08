@@ -72,7 +72,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             start_pos, 
             start_pos + len(past_key_values), 
             dtype=torch.long, 
-            device=in_tensor
+            device=self.device
         )
         position_ids = position_ids.unsqueeze(0)
 
