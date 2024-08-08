@@ -51,25 +51,33 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
         """
-        await self.ensure_shard(shard)
-
+    async def infer_prompt(
+        self, 
+        request_id: str, 
+        shard: Optional[Shard] = None, 
+        prompt: str = "", 
+        image_str: Optional[str] = None, 
+        inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        
         if DEBUG >= 2:
             print(f"[{request_id}] Processing prompt: {prompt[:50]}...")
+
+        await self.ensure_shard(shard)
 
         toks = self.tokenizer.encode(prompt)
         state = json.loads(inference_state) if inference_state else {}
         start_pos = state.get("start_pos", 0)
         past_key_values = self._load_kv_cache(state.get("past_key_values"))
 
-        start_pos = self.model.prefill(torch.tensor(toks[:-1], device=self.device), start_pos=start_pos)
-        last_tok = torch.tensor([toks[-1]], device=self.device).unsqueeze(0)
-
-        output_data, past_key_values = self.model.forward_layers(last_tok, past_key_values=past_key_values)
+        start_pos = self.model.prefill(
+            torch.tensor(toks[:-1], device=self.device), start_pos=start_pos)
+        
+        output_data, past_key_values = self.model.forward_layers(toks[:, -1:], past_key_values=past_key_values)
         output_data = output_data.detach().cpu().numpy()
 
-        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
+        is_finished = output_data.shape[1] == 1 and output_data[0, 0, -1] == self.tokenizer.eos_token_id
         new_state = {
-            "start_pos": start_pos + 1,
+            "start_pos": start_pos,
             "past_key_values": self._save_kv_cache(past_key_values)
         }
         new_inference_state = json.dumps(new_state)
@@ -78,6 +86,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
 
         return output_data, new_inference_state, is_finished
+
 
     async def infer_tensor(
             self, 
