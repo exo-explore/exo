@@ -64,8 +64,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         """
         Forward pass through the specified layers.
         """
-        # embed in_tensor
-        # in_tensor = self.embed_tokens(in_tensor)
+        # embed tensor if first layer
+        if self.shard.is_first_layer():
+            if DEBUG >= 2:
+                print(f"Embedding first layer in_tensor {in_tensor.shape()}")
+            in_tensor = self.embed_tokens(in_tensor)
 
         # check past key values
         if past_key_values is None:
