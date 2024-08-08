@@ -33,6 +33,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.lm_head = self.full_model.lm_head
 
     def prefill(self, tokens: list[int], start_pos: int=0) -> int:
+        print(f"\nprefill called")
         """
         Process the initial input tokens and set up the initial hidden states.
         """
@@ -64,7 +65,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         Forward pass through the specified layers.
         """
         # embed in_tensor
-        in_tensor = self.embed_tokens(in_tensor)
+        # in_tensor = self.embed_tokens(in_tensor)
 
         # check past key values
         if past_key_values is None:
