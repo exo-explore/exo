@@ -71,19 +71,23 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Save the past key values to the inference state
         new_inference_state = self._save_kv_cache(past_key_values)
 
-        is_finished = False  # Assuming a mechanism to determine if the sequence is finished
+        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
         if DEBUG >= 2:
             print(f"Output data: {output_data}, new inference state: {new_inference_state}, finished: {is_finished}")
 
-        return output_data, new_inference_state, is_finished
+        return (
+            output_data,
+            json.dumps({"start_pos": start_pos}),
+            is_finished
+        )
 
     async def infer_tensor(
         self, 
-        input_tensor: torch.Tensor, 
-        shard: Optional[Shard] = None, 
-        past_key_values: Optional[list] = None
-    ) -> Tuple[torch.Tensor, list]:
+        request_id: str, 
+        shard: Shard, 
+        input_data: np.ndarray, 
+        inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         """
         Perform inference based on a tensor input.
 
@@ -98,14 +102,24 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         # Ensure the shard is loaded
         await self.ensure_shard(shard)
+        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         # Run the forward pass through the model layers
-        output_data, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
+        output_data, past_key_values = self.model.forward_layers(
+            input_data, 
+            past_key_values=past_key_values
+        )
+
+        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
         if DEBUG >= 2:
             print(f"Output data shape: {output_data.shape}")
 
-        return output_data, past_key_values
+        return (
+            output_data,
+            json.dumps({"start_pos": start_pos}),
+            is_finished
+        )
 
     def _load_kv_cache(self, past_key_values_list):
         """
