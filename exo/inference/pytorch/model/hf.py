@@ -9,7 +9,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         super(ShardedHuggingFaceModel, self).__init__()
 
         if DEBUG >= 2:
-            print(f"ShardedHuggingFaceModel init with shard {shard}")
+            print(f"\nShardedHuggingFaceModel init with shard {shard}")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
@@ -40,21 +40,22 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             # Convert token to a tensor and get embeddings
             token_tensor = torch.tensor([[token]], device=self.device)
             inputs_embeds = self.embed_tokens(token_tensor)
-
             if DEBUG >= 2:
-                print(f"Initial input embeddings shape: {inputs_embeds.shape}")
+                print(f"\nInitial input embeddings shape: {inputs_embeds.shape}")  # Debugging
 
             # Prefill with tokens
+            position_ids = torch.arange(start_pos, start_pos + 1, dtype=torch.long, device=self.device).unsqueeze(0)
             for layer in self.layers:
                 layer_outputs = layer(
                     inputs_embeds,
+                    position_ids=position_ids,
                     use_cache=True,
                     output_attentions=False,
                 )
                 inputs_embeds = layer_outputs[0]
 
                 if DEBUG >= 2:
-                    print(f"Layer output shape: {inputs_embeds.shape}")
+                    print(f"\nLayer output shape: {inputs_embeds.shape}")  # Debugging
 
             # Increment start position
             start_pos += 1
@@ -83,3 +84,16 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             new_past_key_values.append(layer_outputs[1])
 
         return hidden_states, new_past_key_values
+
+    def forward(self, input_ids, past_key_values=None):
+        """
+        Forward pass through the model.
+        """
+        hidden_states = self.prefill(input_ids)
+        hidden_states = self.norm(hidden_states)
+        logits = self.lm_head(hidden_states)
+
+        if DEBUG >= 2:
+            print(f"\nLogits shape: {logits.shape}")  # Debugging
+        return logits
+    
