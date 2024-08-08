@@ -97,6 +97,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM
 from exo.inference.shard import Shard
+from exo.helpers import DEBUG
 
 class ShardedHuggingFaceModel(nn.Module):
     def __init__(self, shard: Shard):
@@ -133,11 +134,17 @@ class ShardedHuggingFaceModel(nn.Module):
         Returns:
             int: The updated start position.
         """
+        if DEBUG >=2:
+            print("\nShardedHuggingFaceModel.prefill called")
+
         # Token embeddings
         inputs_embeds = self.embed_tokens(tokens)
 
         # Generate position ids
         position_ids = torch.arange(start_pos, start_pos + tokens.shape[-1], dtype=torch.long, device=tokens.device)
+
+        if DEBUG >= 2:
+            print(f"tokens: {tokens}")
         position_ids = position_ids.unsqueeze(0).expand_as(tokens)
 
         # Apply each layer in this shard
