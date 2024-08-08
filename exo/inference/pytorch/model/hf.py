@@ -76,7 +76,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         for i, layer in enumerate(self.layers):
             layer_outputs = layer(
                 hidden_states,
-                past_key_value=past_key_values[i],
+                past_key_value=past_key_values[i] if len(past_key_values) > 0 else None,
                 use_cache=True,
                 output_attentions=False,
             )
