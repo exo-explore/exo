@@ -44,21 +44,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 token_tensor = self.embed_tokens(token_tensor)
                 
             if DEBUG >= 2:
-                print(f"\nprefill shape: {inputs_embeds.shape}")  # Debugging
+                print(f"\ntoken_tensor shape: {token_tensor.shape}")
 
             # Prefill with tokens
-            position_ids = torch.arange(start_pos, start_pos + 1, dtype=torch.long, device=self.device).unsqueeze(0)
-            for layer in self.layers:
-                layer_outputs = layer(
-                    inputs_embeds,
-                    position_ids=position_ids,
-                    use_cache=True,
-                    output_attentions=False,
-                )
-                inputs_embeds = layer_outputs[0]
-
-                if DEBUG >= 2:
-                    print(f"\nLayer output shape: {inputs_embeds.shape}")  # Debugging
+            self.forward_layers(start_pos, token_tensor, None)
 
             # Increment start position
             start_pos += 1
