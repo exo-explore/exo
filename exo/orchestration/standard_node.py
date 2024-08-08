@@ -289,15 +289,14 @@ class StandardNode(Node):
 
   async def update_peers(self, wait_for_peers: int = 0) -> None:
     self.peers = await self.discovery.discover_peers(wait_for_peers)
-    if DEBUG >= 2: print(f"Starting with the following peers: {self.peers}")
-    if DEBUG >= 2: print("Connecting to new peers...")
     for peer in self.peers:
       is_connected = await peer.is_connected()
       if DEBUG >= 2 and is_connected:
         print(f"Already connected to {peer.id()}: {is_connected}")
       if not is_connected:
+        if DEBUG >= 2: print(f"Connecting to {peer.id()}...")
         await peer.connect()
-        if DEBUG >= 0: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")
+        if DEBUG >= 1: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")
 
   async def periodic_topology_collection(self, interval: int):
     while True:
@@ -307,9 +306,6 @@ class StandardNode(Node):
         await self.collect_topology()
       except Exception as e:
         print(f"Error collecting topology: {e}")
-
-      if DEBUG >= 2: print("Topology collection task executed.")
-      if DEBUG >= 2: print(f"Current topology: {self.topology}")
 
   async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
     if request_id not in self.buffered_token_output:
@@ -330,7 +326,6 @@ class StandardNode(Node):
       next_topology.add_edge(self.id, peer.id())
 
       if peer.id() in prev_visited:
-        if DEBUG >= 2: print(f"Already visited {peer.id()}. Skipping...")
         continue
 
       if max_depth <= 0:

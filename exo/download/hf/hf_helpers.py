@@ -11,6 +11,7 @@ from typing import Generator, Iterable, TypeVar, TypedDict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from exo.helpers import DEBUG
 from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEvent, RepoProgressCallback, RepoFileProgressCallback
+from exo.inference.shard import Shard
 
 T = TypeVar("T")
 def filter_repo_objects(
@@ -278,3 +279,27 @@ def extract_layer_num(tensor_name: str) -> Optional[int]:
         if part.isdigit():
             return int(part)
     return None
+
+
+def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
+    default_patterns = [
+        "*.json",
+        "*.py",
+        "tokenizer.model",
+        "*.tiktoken",
+        "*.txt",
+    ]
+    shard_specific_patterns = []
+    if weight_map:
+        for tensor_name, filename in weight_map.items():
+            layer_num = extract_layer_num(tensor_name)
+            if layer_num is not None and shard.start_layer <= layer_num <= shard.end_layer:
+                shard_specific_patterns.append(filename)
+        sorted_file_names = sorted(weight_map.values())
+        if shard.is_first_layer():
+            shard_specific_patterns.append(sorted_file_names[0])
+        elif shard.is_last_layer():
+            shard_specific_patterns.append(sorted_file_names[-1])
+    else:
+        shard_specific_patterns = ["*.safetensors"]
+    return list(set(default_patterns + shard_specific_patterns))  # Remove duplicates
