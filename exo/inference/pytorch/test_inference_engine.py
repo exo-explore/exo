@@ -12,8 +12,7 @@ def main():
     )
 
     engine = PyTorchDynamicShardInferenceEngine(
-        shard.model_id,
-        debug=True
+        shard
     )
 
    
