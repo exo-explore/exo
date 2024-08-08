@@ -18,7 +18,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, debug: bool = True):
+    def __init__(self, debug: bool = False):
         """
         Initialize the inference engine.
 
@@ -27,6 +27,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         self.shard = None
         self.model = None
+        self.tokenizer = None
         self.debug = debug
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -52,25 +53,31 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        toks = self.tokenizer.encode(prompt)
-        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
-        past_key_values_list = json.loads(inference_state).get("past_key_values", None) if inference_state else None
-        past_key_values = self._load_kv_cache(past_key_values_list)
+        if self.debug:
+            print(f"[{request_id}] Processing prompt: {prompt[:50]}...")
 
-        start_pos = self.model.prefill(torch.tensor(toks[:-1], device=self.model.device), start_pos=start_pos)
-        last_tok = torch.tensor([toks[-1]], device=self.model.device).unsqueeze(0)
+        toks = self.tokenizer.encode(prompt)
+        state = json.loads(inference_state) if inference_state else {}
+        start_pos = state.get("start_pos", 0)
+        past_key_values = self._load_kv_cache(state.get("past_key_values"))
+
+        start_pos = self.model.prefill(torch.tensor(toks[:-1], device=self.device), start_pos=start_pos)
+        last_tok = torch.tensor([toks[-1]], device=self.device).unsqueeze(0)
 
         output_data, past_key_values = self.model.forward_layers(last_tok, past_key_values=past_key_values)
         output_data = output_data.detach().cpu().numpy()
 
-        if output_data.size == 1:
-            start_pos += 1
+        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
+        new_state = {
+            "start_pos": start_pos + 1,
+            "past_key_values": self._save_kv_cache(past_key_values)
+        }
+        new_inference_state = json.dumps(new_state)
 
-        return (
-            output_data,
-            json.dumps({"start_pos": start_pos, "past_key_values": self._save_kv_cache(past_key_values)}),
-            output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
-        )
+        if self.debug:
+            print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
+
+        return output_data, new_inference_state, is_finished
 
     async def infer_tensor(
             self, 
@@ -92,23 +99,29 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.model.device)
+        if self.debug:
+            print(f"[{request_id}] Processing tensor input, shape: {input_data.shape}")
 
-        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
-        past_key_values_list = json.loads(inference_state).get("past_key_values", None) if inference_state else None
-        past_key_values = self._load_kv_cache(past_key_values_list)
+        input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
+
+        state = json.loads(inference_state) if inference_state else {}
+        start_pos = state.get("start_pos", 0)
+        past_key_values = self._load_kv_cache(state.get("past_key_values"))
 
         output_data, past_key_values = self.model.forward_layers(input_tensor, past_key_values=past_key_values)
         output_data = output_data.detach().cpu().numpy()
 
-        if output_data.size == 1:
-            start_pos += 1
+        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
+        new_state = {
+            "start_pos": start_pos + 1,
+            "past_key_values": self._save_kv_cache(past_key_values)
+        }
+        new_inference_state = json.dumps(new_state)
 
-        return (
-            output_data,
-            json.dumps({"start_pos": start_pos, "past_key_values": self._save_kv_cache(past_key_values)}),
-            output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id],
-        )
+        if self.debug:
+            print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
+
+        return output_data, new_inference_state, is_finished
 
     def _load_kv_cache(self, past_key_values_list):
         """
@@ -134,6 +147,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Returns:
             list: List of key-value tensors in a format suitable for saving.
         """
+        if past_key_values is None:
+            return []
         return [kv.cpu().tolist() for kv in past_key_values]
 
     async def ensure_shard(self, shard: Optional[Shard]):
@@ -146,9 +161,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
 
+        if self.debug:
+            print(f"Loading new shard: {shard}")
+
         self.model = ShardedHuggingFaceModel(shard)
         self.tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
         self.shard = shard
+
+        if self.debug:
+            print(f"Shard loaded successfully: {shard}")
 
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
         """
