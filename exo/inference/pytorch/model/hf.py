@@ -94,7 +94,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             
             # Forward pass through the layer
             if DEBUG >= 2:
-                print(f"Pass tensor to layer[{i}] {layer}")
+                print(f"\nPass tensor to layer[{i}] {layer}")
 
             layer_outputs = layer(
                 hidden_states,
@@ -103,6 +103,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 use_cache=True,
                 output_attentions=False,
             )
+
+            if DEBUG >= 2:
+                print(f"\nlayer_outputs: {layer_outputs}")
             
             hidden_states = layer_outputs[0]
             new_past_key_values.append(layer_outputs[1])
