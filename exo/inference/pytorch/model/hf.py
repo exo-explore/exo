@@ -99,9 +99,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             layer_outputs = layer(
                 hidden_states,
                 position_ids=position_ids,
-                past_key_value=past_key_value,
-                use_cache=True,
-                output_attentions=False,
+                # past_key_value=past_key_value,
+                use_cache=True
             )
 
             if DEBUG >= 2:
