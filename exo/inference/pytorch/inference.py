@@ -39,19 +39,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         image_str: Optional[str] = None, 
         inference_state: Optional[str] = None
     ) -> Tuple[np.ndarray, str, bool]:
-        """
-        Perform inference based on a text prompt.
-
-        Args:
-            request_id (str): Unique identifier for the request.
-            shard (Optional[Shard]): Shard information for the model.
-            prompt (str): The input text prompt for inference.
-            image_str (Optional[str]): Optional image string for multi-modal models.
-            inference_state (Optional[str]): The previous inference state.
-
-        Returns:
-            Tuple[np.ndarray, str, bool]: The output data, new inference state, and end-of-sequence flag.
-        """
 
         # Ensure the shard is loaded
         await self.ensure_shard(shard)
@@ -63,10 +50,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         past_key_values = self._load_kv_cache(inference_state)
 
         # Prefill the model with tokens
-        start_pos = self.model.prefill(toks.squeeze())
+        start_pos = self.model.prefill(toks[:-1])
+        last_token = toks[-1]
 
         # Run the forward pass through the model layers
-        output_data, past_key_values = self.model.forward_layers(toks[:, -1:], past_key_values=past_key_values)
+        output_data, past_key_values = self.model.forward_layers(
+            start_pos,
+            torch.tensor(
+                last_token,
+                device=self.device
+            ), 
+            past_key_values=past_key_values
+        )
 
         # Save the past key values to the inference state
         new_inference_state = self._save_kv_cache(past_key_values)
@@ -88,17 +83,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         shard: Shard, 
         input_data: np.ndarray, 
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
-        """
-        Perform inference based on a tensor input.
-
-        Args:
-            input_tensor (torch.Tensor): The input tensor for inference.
-            shard (Optional[Shard]): Shard information for the model.
-            past_key_values (Optional[list]): The previous inference state.
-
-        Returns:
-            Tuple[torch.Tensor, list]: The output tensor and new inference state.
-        """
 
         # Ensure the shard is loaded
         await self.ensure_shard(shard)
@@ -106,7 +90,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         # Run the forward pass through the model layers
         output_data, past_key_values = self.model.forward_layers(
-            input_data, 
+            start_pos,
+            torch.tensor(input_data), 
             past_key_values=past_key_values
         )
 
