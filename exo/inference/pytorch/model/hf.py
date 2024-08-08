@@ -40,9 +40,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         for token in tokens:
             # Convert token to a tensor and get embeddings
             token_tensor = torch.tensor([[token]], device=self.device)
-
-            if self.shard.is_first_layer():
-                token_tensor = self.embed_tokens(token_tensor)
+            token_tensor = self.embed_tokens(token_tensor)
                 
             if DEBUG >= 2:
                 print(f"\ntoken_tensor shape: {token_tensor.shape}")
@@ -65,6 +63,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         """
         Forward pass through the specified layers.
         """
+        # embed in_tensor
+        in_tensor = self.embed_tokens(in_tensor)
+
+        # check past key values
         if past_key_values is None:
             past_key_values = [None] * len(self.layers)
 
