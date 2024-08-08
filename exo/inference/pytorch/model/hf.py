@@ -2,10 +2,15 @@ import torch
 from transformers import AutoModelForCausalLM
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
+from typing import Tuple
 
 class ShardedHuggingFaceModel(torch.nn.Module):
     def __init__(self, shard: Shard):
         super(ShardedHuggingFaceModel, self).__init__()
+
+        if DEBUG >= 2:
+            print(f"ShardedHuggingFaceModel init with shard {shard}")
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
 
@@ -26,7 +31,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.norm = self.full_model.model.norm
         self.lm_head = self.full_model.lm_head
 
-    def prefill(self, tokens, start_pos=0):
+    def prefill(self, tokens, start_pos=0) -> int:
         # Token embeddings
         inputs_embeds = self.embed_tokens(tokens)
 
@@ -46,7 +51,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         return start_pos + tokens.shape[-1]
 
-    def forward_layers(self, input_ids, past_key_values=None):
+    def forward_layers(self, input_ids, past_key_values=None) -> Tuple[any, list]:
         if past_key_values is None:
             past_key_values = [None] * len(self.layers)
 

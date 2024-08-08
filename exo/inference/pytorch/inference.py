@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
+from exo.helpers import DEBUG
 
 # Default settings
 TEMPERATURE = 0.7
@@ -28,7 +29,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.shard = None
         self.model = None
         self.tokenizer = None
-        self.debug = debug
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     async def infer_prompt(
@@ -53,7 +53,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        if self.debug:
+        if DEBUG >= 2:
             print(f"[{request_id}] Processing prompt: {prompt[:50]}...")
 
         toks = self.tokenizer.encode(prompt)
@@ -74,7 +74,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         }
         new_inference_state = json.dumps(new_state)
 
-        if self.debug:
+        if DEBUG >= 2:
             print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
 
         return output_data, new_inference_state, is_finished
@@ -99,7 +99,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         """
         await self.ensure_shard(shard)
 
-        if self.debug:
+        if DEBUG >= 2:
             print(f"[{request_id}] Processing tensor input, shape: {input_data.shape}")
 
         input_tensor = torch.tensor(input_data).unsqueeze(0).to(self.device)
@@ -118,7 +118,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         }
         new_inference_state = json.dumps(new_state)
 
-        if self.debug:
+        if DEBUG >= 2:
             print(f"[{request_id}] Output size: {output_data.size}, Is finished: {is_finished}")
 
         return output_data, new_inference_state, is_finished
@@ -161,14 +161,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
 
-        if self.debug:
+        if DEBUG >= 2:
             print(f"Loading new shard: {shard}")
 
         self.model = ShardedHuggingFaceModel(shard)
         self.tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
         self.shard = shard
 
-        if self.debug:
+        if DEBUG >= 2:
             print(f"Shard loaded successfully: {shard}")
 
     def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
