@@ -54,15 +54,16 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
 
+        
+        
+        output_data = self.model.forward_layers(
+            tokens,
+            # past_key_values=past_key_values
+        )
+
         if shard.is_last_layer():
-            tokens_embed = self.model.embed_tokens(tokens)
-            output_data = self.model.norm(tokens_embed)
+            output_data = self.model.norm(output_data)
             output_data = output_data.flatten()
-        else:
-            output_data = self.model.forward_layers(
-                tokens,
-                # past_key_values=past_key_values
-            )
 
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
