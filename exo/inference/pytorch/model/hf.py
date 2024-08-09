@@ -73,10 +73,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         # Embed tensor if first layer
         # if self.shard.is_first_layer():
         #     if DEBUG >= 2:
-        #         print(f"Embedding first layer input_ids {input_ids.shape}")
-        #     hidden_states = self.embed_tokens(input_ids)
+        #         print(f"Embedding first layer input_ids {hidden_states.shape}")
+            
+        #     # flatten to 1d and turn to long
+        #     if hidden_states.dim() > 1: 
+        #         hidden_states = hidden_states.view(-1)  
+        #     hidden_states = hidden_states.long()
+        #     hidden_states = self.embed_tokens(hidden_states)
         # else:
-        #     hidden_states = input_ids
+        #     hidden_states = hidden_states
 
         # Check past key values
         # if past_key_values is None:
