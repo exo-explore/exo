@@ -62,7 +62,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
     def forward_layers(
         self,
-        hidden_states: torch.tensor,
+        input_data: torch.tensor,
         #past_key_values: list
     ) -> torch.tensor: #-> Tuple[torch.tensor, list]:
         """
@@ -71,17 +71,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         Note: past_key_values not working for model, might be a library bug
         """
         # Embed tensor if first layer
-        # if self.shard.is_first_layer():
-        #     if DEBUG >= 2:
-        #         print(f"Embedding first layer input_ids {hidden_states.shape}")
+        if self.shard.is_first_layer():
+            if DEBUG >= 2:
+                print(f"Embedding for first layer {input_data.shape}")
             
-        #     # flatten to 1d and turn to long
-        #     if hidden_states.dim() > 1: 
-        #         hidden_states = hidden_states.view(-1)  
-        #     hidden_states = hidden_states.long()
-        #     hidden_states = self.embed_tokens(hidden_states)
-        # else:
-        #     hidden_states = hidden_states
+            # flatten to 1d and turn to long
+            input_data = self.embed_tokens(input_data)
 
         # Check past key values
         # if past_key_values is None:
@@ -89,12 +84,13 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Initialize position_ids
         position_ids = torch.arange(
-            hidden_states.size(1),
+            input_data.size(1),
             dtype=torch.long,
             device=self.device
         ).unsqueeze(0)
 
         #new_past_key_values = []
+        hidden_states = input_data
         for i, layer in enumerate(self.layers):
             # Get past key value if available
             # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
