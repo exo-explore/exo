@@ -65,7 +65,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         input_data: torch.tensor,
         infer_from: str
         #past_key_values: list
-    ) -> torch.tensor: #-> Tuple[torch.tensor, list]:
+    ) -> any: #-> Tuple[torch.tensor, list]:
         """
         Forward pass through the specified layers.
 
@@ -125,7 +125,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             if i == self.shard.end_layer:
                 print(f"last layer, normalize hidden states")
                 hs_norm = self.norm(hidden_states)
-                return hs_norm
+                return hs_norm.flatten()
 
         return hidden_states
         # if self.shard.is_last_layer():
