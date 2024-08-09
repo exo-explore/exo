@@ -58,6 +58,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         
         output_data = self.model.forward_layers(
             tokens,
+            "prompt"
             # past_key_values=past_key_values
         )
 
@@ -101,6 +102,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         
         output_data = self.model.forward_layers(
             in_tensor,
+            "tensor"
             # past_key_values=past_key_values
         )
 

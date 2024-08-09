@@ -63,6 +63,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     def forward_layers(
         self,
         input_data: torch.tensor,
+        infer_from: str
         #past_key_values: list
     ) -> torch.tensor: #-> Tuple[torch.tensor, list]:
         """
@@ -97,10 +98,14 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             # Get past key value if available
             # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
 
-            # embed only at first layer
-            hidden_states = self.embed_tokens(hidden_states)
-            if DEBUG >= 2:
-                print(f"embedded hidden_states {hidden_states}")
+            # embed only at first layer and infer prompt
+            if i == 0 and infer_from == "prompt":
+                if DEBUG >= 2:
+                    print("first layer and infer_prompt")
+
+                hidden_states = self.embed_tokens(hidden_states)
+                if DEBUG >= 2:
+                    print(f"embedded hidden_states {hidden_states}")
             
             layer_outputs = layer(
                 hidden_states,
