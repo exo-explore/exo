@@ -69,7 +69,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if DEBUG >= 2:
             print("infer_prompt called")
-            print(f"Output data: {output_data} finished: {is_finished}")
+            print(f"Output data: {output_data} output_data.size: {output_data.size}")
+            print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
 
         with torch.no_grad():
