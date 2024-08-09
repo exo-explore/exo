@@ -72,8 +72,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         """ 
         if DEBUG >= 2:
             print(f"forward_layer call\ninput_data: {input_data}")
+            print(f"1 is last layer? {self.shard.is_last_layer}")
+            print(f"1 layer count {self.shard.get_layer_count()}")
 
-        # flatten to 1d and turn to long
+        # embed data
         input_data = self.embed_tokens(input_data)
         if DEBUG >= 2:
             print(f"embedded input_data {input_data}")
@@ -112,12 +114,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states = layer_outputs[0]
 
             if DEBUG >= 2:
-                print(f"is last layer? {self.shard.is_last_layer}")
-                print(f"layer count {self.shard.get_layer_count()}")
+                print(f"2 is last layer? {self.shard.is_last_layer}")
+                print(f"2 layer count {self.shard.get_layer_count()}")
 
             if self.shard.is_last_layer():
                 # output_data = output_data.view(1, -1, 4096)
-                output_data = self.model.norm(hidden_states)
+                return self.norm(hidden_states)
 
         return hidden_states
         # if self.shard.is_last_layer():
