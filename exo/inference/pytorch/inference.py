@@ -69,7 +69,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
 
-        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
+        is_finished = output_data.size == 1
 
         if DEBUG >= 2:
             print(f"Output data: {output_data} finished: {is_finished}")
@@ -111,7 +111,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 # past_key_values=past_key_values
             )
 
-        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
+        is_finished = output_data.size == 1
 
         if DEBUG >= 2:
             print(f"Output data: {output_data} finished: {is_finished}")
