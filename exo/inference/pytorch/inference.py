@@ -64,9 +64,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"Output data: {output_data} finished: {is_finished}")
 
+        with torch.no_grad():
+            output_npa = np.array(output_data.cpu())
+
         return (
-            np.array(output_data.cpu()), 
-            "", 
+            output_npa,
+            "",
             is_finished
         )
 
@@ -92,8 +95,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"Output data shape: {output_data.shape}")
 
+
+        with torch.no_grad():
+            output_npa = np.array(output_data.cpu())
+
         return (
-            np.array(output_data.cpu()),
+            output_npa,
             "",
             is_finished
         )
