@@ -65,7 +65,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Output data: {output_data} finished: {is_finished}")
 
         return (
-            output_data.detach().numpy(), 
+            np.array(output_data.cpu()), 
             "", 
             is_finished
         )
@@ -93,7 +93,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Output data shape: {output_data.shape}")
 
         return (
-            output_data.detach().numpy(),
+            np.array(output_data.cpu()),
             "",
             is_finished
         )
