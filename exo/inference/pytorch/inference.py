@@ -62,9 +62,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         )
 
         if shard.is_last_layer():
-            output_data = output_data.view(1, -1, 4096)
+            # output_data = output_data.view(1, -1, 4096)
             output_data = self.model.norm(output_data)
-            output_data = output_data.flatten()
+            # output_data = output_data.flatten()
 
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
@@ -98,7 +98,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         in_tensor = torch.tensor(input_data)
         if shard.is_last_layer():
             output_data = self.model.norm(in_tensor)
-            output_data = output_data.flatten()
+            # output_data = output_data.flatten()
         else:
             output_data = self.model.forward_layers(
                 in_tensor,
