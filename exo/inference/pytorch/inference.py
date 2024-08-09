@@ -67,6 +67,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         is_finished = output_data.size == 1
 
         if DEBUG >= 2:
+            print("infer_prompt called")
             print(f"Output data: {output_data} finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
 
@@ -88,6 +89,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         
         in_tensor = torch.tensor(input_data)
         if DEBUG >= 2:
+            print("infer_tensor called")
             print(f"input_data: {input_data}\n")
             print(f"in_tensor: {in_tensor}\n")
 
