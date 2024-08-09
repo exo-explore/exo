@@ -99,7 +99,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
 
             # embed only at first layer and infer prompt
-            if i == 0 and infer_from == "prompt":
+            if self.shard.start_layer == i and infer_from == "prompt":
                 if DEBUG >= 2:
                     print("first layer and infer_prompt")
 
@@ -120,11 +120,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states = layer_outputs[0]
 
             if DEBUG >= 2:
-                print(f"2 is last layer? {self.shard.is_last_layer()}")
                 print(f"2 shard {self.shard.to_dict()}")
 
-            if self.shard.is_last_layer():
-                # output_data = output_data.view(1, -1, 4096)
+            if i == self.shard.end_layer:
                 return self.norm(hidden_states)
 
         return hidden_states
