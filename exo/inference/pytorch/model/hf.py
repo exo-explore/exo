@@ -26,8 +26,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         print(f"\nlayer amount: {len(self.full_model.model.layers)}")
         self.layers = []
         for i in range(shard.start_layer, shard.end_layer + 1):
-            if DEBUG >= 2:
-                print(f"layer[{i}]: {self.full_model.model.layers[i]}")
+            # if DEBUG >= 2:
+            #     print(f"loading layer[{i}]: {self.full_model.model.layers[i]}")
             
             self.layers.append(self.full_model.model.layers[i])
 
