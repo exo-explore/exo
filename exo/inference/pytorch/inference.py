@@ -168,7 +168,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Loading new shard: {shard}")
 
         self.model = ShardedHuggingFaceModel(shard)
-        self.tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            shard.model_id,
+            add_eos_token=True,
+            use_fast=True
+        )
         self.shard = shard
 
         if DEBUG >= 2:
