@@ -75,13 +75,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"input_data: {input_data}")
             print(f"1 shard {self.shard.to_dict()}")
 
-        # embed data
-        if self.shard.is_first_layer():
-            input_data = self.embed_tokens(input_data)
-            
-            if DEBUG >= 2:
-                print(f"embedded input_data {input_data}")
-
         # Check past key values
         # if past_key_values is None:
         #     past_key_values = [None] * len(self.layers)
@@ -98,6 +91,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         for i, layer in enumerate(self.layers):
             # Get past key value if available
             # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
+
+            # embed only at first layer
+            if i == self.shard.start_layer:
+                input_data = self.embed_tokens(input_data)
+                if DEBUG >= 2:
+                    print(f"embedded input_data {input_data}")
             
             # Forward pass through the layer
             if DEBUG >= 2:
