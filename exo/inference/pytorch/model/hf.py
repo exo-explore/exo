@@ -34,9 +34,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         # self.layers = torch.nn.ModuleList(layer_list)
 
         # Embeddings and final layer norm
+        # used for doing what forward LlamaModel does in transformers
         self.embed_tokens = self.full_model.model.embed_tokens
         self.norm = self.full_model.model.norm
-        self.lm_head = self.full_model.lm_head
 
     # def prefill(self, tokens: list[int], start_pos: int=0) -> int:
     #     print(f"\nprefill called")
