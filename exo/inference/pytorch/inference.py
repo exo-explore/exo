@@ -65,11 +65,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
 
-        is_finished = output_data.size == 1
+        is_finished = output_data.size() == 1
 
         if DEBUG >= 2:
             print("infer_prompt called")
-            print(f"Output data: {output_data} output_data.size: {output_data.size}")
+            print(f"Output data: {output_data} output_data.size: {output_data.size()}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
 
