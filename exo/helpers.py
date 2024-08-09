@@ -6,6 +6,7 @@ import random
 import platform
 import psutil
 import uuid
+import netifaces
 from pathlib import Path
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
@@ -225,3 +226,17 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
         return f"{bytes_per_second / (1024 ** 3):.2f} GB/s"
     else:
         return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
+
+def get_all_ip_addresses():
+    try:
+      ip_addresses = []
+      for interface in netifaces.interfaces():
+        ifaddresses = netifaces.ifaddresses(interface)
+        if netifaces.AF_INET in ifaddresses:
+          for link in ifaddresses[netifaces.AF_INET]:
+            ip = link['addr']
+            ip_addresses.append(ip)
+      return list(set(ip_addresses))
+    except:
+      if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
+      return ["localhost"]

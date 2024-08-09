@@ -11,7 +11,7 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent
 from exo.download.hf.hf_shard_download import HFShardDownloader
-from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_inference_engine, get_system_info, get_or_create_node_id
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_inference_engine, get_system_info, get_or_create_node_id, get_all_ip_addresses, terminal_link
 from exo.inference.shard import Shard
 
 # parse args
@@ -47,14 +47,19 @@ if args.node_port is None:
 
 args.node_id = args.node_id or get_or_create_node_id()
 discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, discovery_timeout=args.discovery_timeout)
+chatgpt_api_endpoints=[f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip in get_all_ip_addresses()]
+web_chat_urls=[f"http://{ip}:{args.chatgpt_api_port}" for ip in get_all_ip_addresses()]
+if DEBUG >= 0:
+    print(f"Chat interface started:\n{'\n'.join([' - ' + terminal_link(web_chat_url) for web_chat_url in web_chat_urls])}")
+    print(f"ChatGPT API endpoint served at:\n{'\n'.join([' - ' + terminal_link(chatgpt_api_endpoint) for chatgpt_api_endpoint in chatgpt_api_endpoints])}")
 node = StandardNode(
     args.node_id,
     None,
     inference_engine,
     discovery,
+    chatgpt_api_endpoints=chatgpt_api_endpoints,
+    web_chat_urls=web_chat_urls,
     partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
-    chatgpt_api_endpoint=f"http://localhost:{args.chatgpt_api_port}/v1/chat/completions",
-    web_chat_url=f"http://localhost:{args.chatgpt_api_port}",
     disable_tui=args.disable_tui,
     max_generate_tokens=args.max_generate_tokens,
 )
