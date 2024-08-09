@@ -44,8 +44,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
 
         # Tokenize the prompt
-        toks = self.tokenizer.encode(prompt, return_tensors="pt")
-        #.input_ids.to(self.device)
+        toks = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
         # Load the past key values from the inference state if available
         # past_key_values = self._load_kv_cache(inference_state)
