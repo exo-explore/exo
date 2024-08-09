@@ -71,13 +71,16 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         Note: past_key_values not working for model, might be a library bug
         """ 
         if DEBUG >= 2:
-            print(f"forward_layer call\ninput_data: {input_data}")
+            print("forward_layer call")
+            print(f"input_data: {input_data}")
             print(f"1 shard {self.shard.to_dict()}")
 
         # embed data
-        input_data = self.embed_tokens(input_data)
-        if DEBUG >= 2:
-            print(f"embedded input_data {input_data}")
+        if self.shard.is_first_layer():
+            input_data = self.embed_tokens(input_data)
+            
+            if DEBUG >= 2:
+                print(f"embedded input_data {input_data}")
 
         # Check past key values
         # if past_key_values is None:
