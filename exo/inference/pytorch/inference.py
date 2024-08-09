@@ -65,7 +65,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
 
-        is_finished = output_data.size() == 1
+        is_finished = len(output_data.size()) == 1
 
         if DEBUG >= 2:
             print("infer_prompt called")
