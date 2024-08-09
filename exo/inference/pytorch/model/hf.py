@@ -62,7 +62,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
     def forward_layers(
         self,
-        input_ids: torch.tensor,
+        hidden_states: torch.tensor,
         #past_key_values: list
     ) -> torch.tensor: #-> Tuple[torch.tensor, list]:
         """
@@ -71,12 +71,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         Note: past_key_values not working for model, might be a library bug
         """
         # Embed tensor if first layer
-        if self.shard.is_first_layer():
-            if DEBUG >= 2:
-                print(f"Embedding first layer input_ids {input_ids.shape}")
-            hidden_states = self.embed_tokens(input_ids)
-        else:
-            hidden_states = input_ids
+        # if self.shard.is_first_layer():
+        #     if DEBUG >= 2:
+        #         print(f"Embedding first layer input_ids {input_ids.shape}")
+        #     hidden_states = self.embed_tokens(input_ids)
+        # else:
+        #     hidden_states = input_ids
 
         # Check past key values
         # if past_key_values is None:
