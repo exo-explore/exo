@@ -73,6 +73,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if DEBUG >= 2:
             print(f"Output data: {output_data} finished: {is_finished}")
+            print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
 
         with torch.no_grad():
             output_npa = np.array(output_data.cpu())
@@ -89,13 +90,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         shard: Shard, 
         input_data: np.ndarray, 
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        
+        in_tensor = torch.tensor(input_data)
+        if DEBUG >= 2:
+            print(f"input_data: {input_data}\n")
+            print(f"in_tensor: {in_tensor}\n")
 
         # Ensure the shard is loaded
         await self.ensure_shard(shard)
 
         # Run the forward pass through the model layers
         # output_data, past_key_values
-        in_tensor = torch.tensor(input_data)
+        
         if shard.is_last_layer():
             output_data = self.model.norm(in_tensor)
             # output_data = output_data.flatten()
@@ -108,7 +114,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
         if DEBUG >= 2:
-            print(f"Output data shape: {output_data.shape}")
+            print(f"Output data: {output_data} finished: {is_finished}")
+            print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
 
 
         with torch.no_grad():
