@@ -56,7 +56,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"tokens: {tokens}\ntokens_tensor: {tokens_tensor}")
 
         if shard.is_last_layer():
-            output_data = self.full_model.model.norm(tokens_tensor)
+            output_data = self.model.norm(tokens_tensor)
             output_data = output_data.flatten()
         else:
             output_data = self.model.forward_layers(
@@ -95,7 +95,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # output_data, past_key_values
         in_tensor = torch.tensor(input_data)
         if shard.is_last_layer():
-            output_data = self.full_model.model.norm(in_tensor)
+            output_data = self.model.norm(in_tensor)
             output_data = output_data.flatten()
         else:
             output_data = self.model.forward_layers(
