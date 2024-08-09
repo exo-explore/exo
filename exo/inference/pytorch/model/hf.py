@@ -69,14 +69,14 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         Forward pass through the specified layers.
 
         Note: past_key_values not working for model, might be a library bug
-        """
-        # Embed tensor if first layer
-        if self.shard.is_first_layer():
-            if DEBUG >= 2:
-                print(f"Embedding for first layer {input_data.shape}")
-            
-            # flatten to 1d and turn to long
-            input_data = self.embed_tokens(input_data)
+        """ 
+        if DEBUG >= 2:
+            print(f"forward_layer call\ninput_data: {input_data}")
+
+        # flatten to 1d and turn to long
+        input_data = self.embed_tokens(input_data)
+        if DEBUG >= 2:
+            print(f"embedded input_data {input_data}")
 
         # Check past key values
         # if past_key_values is None:
