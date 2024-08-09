@@ -89,19 +89,20 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         #new_past_key_values = []
         hidden_states = input_data
         for i, layer in enumerate(self.layers):
+            # Forward pass through the layer
+            if DEBUG >= 2:
+                print(f"\n[layer {i}] {layer}")
+                print(f"hidden_states {hidden_states}")
+
             # Get past key value if available
             # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
 
             # embed only at first layer
-            if i == self.shard.start_layer:
+            if i == 0:
                 hidden_states = self.embed_tokens(hidden_states)
                 if DEBUG >= 2:
                     print(f"embedded hidden_states {hidden_states}")
             
-            # Forward pass through the layer
-            if DEBUG >= 2:
-                print(f"\n[layer {i}] hidden_states {hidden_states}")
-
             layer_outputs = layer(
                 hidden_states,
                 position_ids=position_ids,
