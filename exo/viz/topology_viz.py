@@ -26,7 +26,7 @@ class TopologyViz:
     self.layout = Layout()
     self.layout.split(
       Layout(name="main"),
-      Layout(name="download", size=15)
+      Layout(name="download", size=25)
     )
     self.main_panel = Panel(self._generate_main_layout(), title="Exo Cluster (0 nodes)", border_style="bright_yellow")
     self.download_panel = Panel("", title="Download Progress", border_style="cyan")
