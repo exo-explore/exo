@@ -63,10 +63,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     def forward_layers(
         self,
         input_ids: torch.tensor,
-        past_key_values=None
-    ) -> Tuple[any, list]:
+        #past_key_values: list
+    ) -> torch.tensor: #-> Tuple[torch.tensor, list]:
         """
         Forward pass through the specified layers.
+
+        Note: past_key_values not working for model, might be a library bug
         """
         # Embed tensor if first layer
         if self.shard.is_first_layer():
@@ -77,8 +79,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states = input_ids
 
         # Check past key values
-        if past_key_values is None:
-            past_key_values = [None] * len(self.layers)
+        # if past_key_values is None:
+        #     past_key_values = [None] * len(self.layers)
 
         # Initialize position_ids
         position_ids = torch.arange(
@@ -87,10 +89,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             device=self.device
         ).unsqueeze(0)
 
-        new_past_key_values = []
+        #new_past_key_values = []
         for i, layer in enumerate(self.layers):
             # Get past key value if available
-            past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
+            # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
             
             # Forward pass through the layer
             if DEBUG >= 2:
@@ -100,18 +102,18 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 hidden_states,
                 position_ids=position_ids,
                 # past_key_value=past_key_value,
-                use_cache=True
+                # use_cache=True
             )
 
             if DEBUG >= 2:
                 print(f"\nlayer_outputs: {layer_outputs}")
             
             hidden_states = layer_outputs[0]
-            new_past_key_values.append(layer_outputs[1])
+            # new_past_key_values.append(layer_outputs[1])
 
         if self.shard.is_last_layer():
             _, logits, _, _, = self.full_model(hidden_states, position_ids=position_ids)
-            return logits, new_past_key_values
+            return logits #, new_past_key_values
         else:
-            return hidden_states, new_past_key_values
+            return hidden_states#, new_past_key_values
 

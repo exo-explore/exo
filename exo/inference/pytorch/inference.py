@@ -1,6 +1,6 @@
 # experimental, based off of tinygrad/inference.py
 
-import json
+import numpy as np
 import torch
 import numpy as np
 from typing import Optional, Callable, Tuple
@@ -50,20 +50,25 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         past_key_values = self._load_kv_cache(inference_state)
 
         # Run the forward pass through the model layers
-        output_data, past_key_values = self.model.forward_layers(
+        # output_data, past_key_values
+        output_data = self.model.forward_layers(
             input_ids=toks,
-            past_key_values=past_key_values
+            # past_key_values=past_key_values
         )
 
         # Save the past key values to the inference state
         self._save_kv_cache(past_key_values)
 
-        is_finished = False  # Assuming a mechanism to determine if the sequence is finished
+        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
         if DEBUG >= 2:
             print(f"Output data: {output_data}, new inference state: {past_key_values}, finished: {is_finished}")
 
-        return output_data, "", is_finished
+        return (
+            np.array(output_data), 
+            "", 
+            is_finished
+        )
 
     async def infer_tensor(
         self, 
@@ -74,13 +79,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         # Ensure the shard is loaded
         await self.ensure_shard(shard)
-        start_pos = json.loads(inference_state).get("start_pos", 0) if inference_state else 0
 
         # Run the forward pass through the model layers
-        output_data, past_key_values = self.model.forward_layers(
-            start_pos,
-            torch.tensor(input_data), 
-            past_key_values=past_key_values
+        # output_data, past_key_values
+        output_data = self.model.forward_layers(
+            input_ids=torch.tensor(input_data),
+            # past_key_values=past_key_values
         )
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
@@ -89,8 +93,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Output data shape: {output_data.shape}")
 
         return (
-            output_data,
-            json.dumps({"start_pos": start_pos}),
+            np.array(output_data),
+            "",
             is_finished
         )
 
