@@ -14,9 +14,9 @@ from rich.layout import Layout
 from exo.topology.device_capabilities import UNKNOWN_DEVICE_CAPABILITIES
 
 class TopologyViz:
-  def __init__(self, chatgpt_api_endpoint: str = None, web_chat_url: str = None):
-    self.chatgpt_api_endpoint = chatgpt_api_endpoint
-    self.web_chat_url = web_chat_url
+  def __init__(self, chatgpt_api_endpoints: List[str] = [], web_chat_urls: List[str] = []):
+    self.chatgpt_api_endpoints = chatgpt_api_endpoints
+    self.web_chat_urls = web_chat_urls
     self.topology = Topology()
     self.partitions: List[Partition] = []
     self.node_id = None
@@ -80,12 +80,12 @@ class TopologyViz:
         if 0 <= start_x + j < 100 and i < len(visualization):
           visualization[i][start_x + j] = char
 
-    # Display chatgpt_api_endpoint and web_chat_url if set
+    # Display chatgpt_api_endpoints and web_chat_urls
     info_lines = []
-    if self.web_chat_url:
-      info_lines.append(f"Web Chat URL (tinychat): {self.web_chat_url}")
-    if self.chatgpt_api_endpoint:
-      info_lines.append(f"ChatGPT API endpoint: {self.chatgpt_api_endpoint}")
+    if len(self.web_chat_urls) > 0:
+      info_lines.append(f"Web Chat URL (tinychat): {' '.join(self.web_chat_urls[:1])}")
+    if len(self.chatgpt_api_endpoints) > 0:
+      info_lines.append(f"ChatGPT API endpoint: {' '.join(self.chatgpt_api_endpoints[:1])}")
 
     info_start_y = len(exo_lines) + 1
     for i, line in enumerate(info_lines):

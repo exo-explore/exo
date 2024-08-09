@@ -13,6 +13,7 @@ install_requires = [
     "hf-transfer==0.1.8",
     "huggingface-hub==0.24.5",
     "Jinja2==3.1.4",
+    "netifaces==0.11.0",
     "numpy==2.0.0",
     "pillow==10.4.0",
     "prometheus-client==0.20.0",

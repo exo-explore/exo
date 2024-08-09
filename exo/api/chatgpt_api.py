@@ -391,6 +391,3 @@ class ChatGPTAPI:
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    if DEBUG >= 0:
-      print(f"Chat interface started. Open this link in your browser: {terminal_link(f'http://localhost:{port}')}")
-      print(f"ChatGPT API endpoint served at {terminal_link(f'http://localhost:{port}/v1/chat/completions')}")
