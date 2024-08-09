@@ -62,6 +62,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         )
 
         if shard.is_last_layer():
+            output_data = output_data.view(1, -1, 4096)
             output_data = self.model.norm(output_data)
             output_data = output_data.flatten()
 
