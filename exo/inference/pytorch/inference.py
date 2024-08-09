@@ -44,7 +44,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
 
         # Tokenize the prompt
-        toks = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+        toks = self.tokenizer.encode(prompt, return_tensors="pt").input_ids.to(self.device)
 
         # Load the past key values from the inference state if available
         # past_key_values = self._load_kv_cache(inference_state)
@@ -52,7 +52,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Run the forward pass through the model layers
         # output_data, past_key_values
         output_data = self.model.forward_layers(
-            input_ids=toks,
+            torch.tensor(toks),
             # past_key_values=past_key_values
         )
 
@@ -86,7 +86,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Run the forward pass through the model layers
         # output_data, past_key_values
         output_data = self.model.forward_layers(
-            input_ids=torch.tensor(input_data),
+            torch.tensor(input_data),
             # past_key_values=past_key_values
         )
 
