@@ -65,7 +65,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Output data: {output_data}, new inference state: {past_key_values}, finished: {is_finished}")
 
         return (
-            output_data.cpu().numpy(), 
+            output_data.detach().numpy(), 
             "", 
             is_finished
         )
@@ -93,44 +93,44 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Output data shape: {output_data.shape}")
 
         return (
-            output_data.cpu().numpy(),
+            output_data.detach().numpy(),
             "",
             is_finished
         )
 
-    def _load_kv_cache(self, past_key_values_list):
-        """
-        Load key-value cache from the inference state.
+    # def _load_kv_cache(self, past_key_values_list):
+    #     """
+    #     Load key-value cache from the inference state.
 
-        Args:
-            past_key_values_list (list): List of past key-value tensors.
+    #     Args:
+    #         past_key_values_list (list): List of past key-value tensors.
 
-        Returns:
-            list: List of loaded past key-value tensors.
-        """
-        if past_key_values_list is None:
-            return []
-        return [torch.tensor(kv, device=self.device) for kv in past_key_values_list]
+    #     Returns:
+    #         list: List of loaded past key-value tensors.
+    #     """
+    #     if past_key_values_list is None:
+    #         return []
+    #     return [torch.tensor(kv, device=self.device) for kv in past_key_values_list]
 
-    def _save_kv_cache(self, past_key_values):
-        """
-        Save key-value cache to the inference state.
+    # def _save_kv_cache(self, past_key_values):
+    #     """
+    #     Save key-value cache to the inference state.
 
-        Args:
-            past_key_values (list): List of past key-value tensors.
+    #     Args:
+    #         past_key_values (list): List of past key-value tensors.
 
-        Returns:
-            list: List of key-value tensors in a format suitable for saving.
-        """
-        if past_key_values is None:
-            return []
+    #     Returns:
+    #         list: List of key-value tensors in a format suitable for saving.
+    #     """
+    #     if past_key_values is None:
+    #         return []
         
-        new_cache = []
-        for kv in past_key_values:
-            if kv:
-                new_cache.append(kv.cpu().tolist())
+    #     new_cache = []
+    #     for kv in past_key_values:
+    #         if kv:
+    #             new_cache.append(kv.cpu().tolist())
 
-        return new_cache
+    #     return new_cache
 
     async def ensure_shard(self, shard: Optional[Shard]):
         """
