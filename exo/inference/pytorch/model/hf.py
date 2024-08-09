@@ -94,9 +94,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             # embed only at first layer
             if i == self.shard.start_layer:
-                input_data = self.embed_tokens(input_data)
+                hidden_states = self.embed_tokens(hidden_states)
                 if DEBUG >= 2:
-                    print(f"embedded input_data {input_data}")
+                    print(f"embedded hidden_states {hidden_states}")
             
             # Forward pass through the layer
             if DEBUG >= 2:
