@@ -55,7 +55,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"tokens: {tokens}\n")
 
         if shard.is_last_layer():
-            output_data = self.model.norm(tokens)
+            tokens_embed = self.model.embed_tokens(tokens)
+            output_data = self.model.norm(tokens_embed)
             output_data = output_data.flatten()
         else:
             output_data = self.model.forward_layers(
