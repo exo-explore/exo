@@ -24,7 +24,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Extract only the layers for this shard
         # get layers up to end layer
-        self.config.num_hidden_layers = shard.end_layer + 1 
+        self.config.num_hidden_layers = 2
 
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
@@ -35,18 +35,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 "use_cache"
             }
         )
-        
-        
-
-        # self.layered_model = self.full_model.model()
-        # self.layers = []
-        # for i in range(shard.start_layer, shard.end_layer + 1):
-        #     # if DEBUG >= 2:
-        #     #     print(f"loading layer[{i}]: {self.full_model.model.layers[i]}")
-            
-        #     self.layers.append(self.full_model.model.layers[i])
-
-        # self.layers = torch.nn.ModuleList(layer_list)
 
         # Embeddings and final layer norm
         # used for doing what forward LlamaModel does in transformers
@@ -66,37 +54,16 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         if DEBUG >= 2:
             print("forward_layer call")
             print(f"input_data: {input_data}")
-            print(f"1 shard {self.shard.to_dict()}")
+            print(f"shard {self.shard.to_dict()}")
 
         hidden_states = input_data
-        # position_ids = None
-        # position_embeddings = None
         present_kvs = DynamicCache()
-
-        # if self.shard.is_first_layer():
-        #     hidden_states = self.embed_tokens(hidden_states)
-
-        #     if DEBUG >= 2:
-        #         print(f"hidden_states: {hidden_states}")
-        #         print(f"hidden_states.size(): {hidden_states.size()}")
-
-        #     batch_size, seq_len = input_data.size()
-        #     position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0).expand(batch_size, -1)
-
-        #     position_embeddings = self.full_model.model.rotary_emb(
-        #         hidden_states,
-        #         position_ids
-        #     )
-
-        #     if DEBUG >= 2:
-        #         print(f"embedded hidden_states {hidden_states}")
-        #         print(f"position_ids: {position_embeddings}")
 
         # Forward pass through the layer
         if DEBUG >= 2:
             print(f"\n[layer model] {self.full_model.model}")
             print(f"hidden_states {hidden_states}")
-            print(f"past_kvs {past_kvs}")
+            # print(f"past_kvs {past_kvs}")
         
         layer_outputs = self.full_model.model(
             hidden_states,
@@ -111,9 +78,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         
         hidden_states = layer_outputs[0]
         present_kvs = layer_outputs[1]
-
-        if DEBUG >= 2:
-            print(f"present_kvs {present_kvs}")
 
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
