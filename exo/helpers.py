@@ -41,8 +41,11 @@ def get_inference_engine(inference_engine_name, shard_downloader: 'ShardDownload
     from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
     import tinygrad.helpers
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
-
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  elif inference_engine_name == "pytorch":
+     # will change from debug being true after testing
+     from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
+     return PyTorchDynamicShardInferenceEngine()
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")
 
