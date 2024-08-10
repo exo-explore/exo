@@ -41,7 +41,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         await self.ensure_shard(shard)
 
-        inference_state = json.loads(inference_state) if inference_state else ""
+        inference_state = json.loads(torch.tensor(inference_state)) if inference_state else ""
         tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if DEBUG >= 2:
@@ -62,7 +62,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             print(f"output_data.item() {output_data.item()}")
-            print(f"inference_state: {inference_state}")
+            print(f"inference_state: {inference_state.size()}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
             print(f"output_data[-1] {output_data[-1]}")
@@ -70,7 +70,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return (
             output_data,
-            json.dumps(inference_state),
+            json.dumps(inference_state.cpu().numpy()),
             is_finished
         )
 
@@ -82,7 +82,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
 
         in_tensor = torch.tensor(input_data)
-        inference_state = json.loads(inference_state) if inference_state else ""
+        inference_state = json.loads(torch.tensor(inference_state)) if inference_state else ""
 
         # Ensure input_data is 2D: [batch_size, seq_len]
         if in_tensor.dim() == 1:
