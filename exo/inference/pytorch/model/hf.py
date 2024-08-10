@@ -68,7 +68,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         present_kvs = DynamicCache()
 
         if self.shard.is_first_layer():
-            hidden_states = self.embed_tokens(hidden_states)
+            
 
             if DEBUG >= 2:
                 print(f"hidden_states: {hidden_states}")
