@@ -5,10 +5,10 @@ import torch
 import numpy as np
 import json
 from typing import Optional, Callable, Tuple
-from transformers import AutoTokenizer
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
+from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
@@ -124,11 +124,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Loading new shard: {shard}")
 
         self.model = ShardedHuggingFaceModel(shard)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            shard.model_id,
-            add_eos_token=True,
-            use_fast=True
-        )
+        self.tokenizer = resolve_tokenizer(shard.model_id)
         self.shard = shard
 
         if DEBUG >= 2:
