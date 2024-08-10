@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from torch.nn import functional as F
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, LlamaConfig
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
 from typing import Tuple
@@ -58,11 +58,16 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
 
+        # Load the model with the configuration for caching
+        self.config = LlamaConfig.from_pretrained(shard.model_id)
+        self.config.use_cache = True  # Enable caching
+
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
             shard.model_id,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto"
+            device_map="auto",
+            config=self.config
         )
         
         # Extract only the layers for this shard
