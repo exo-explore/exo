@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from torch.nn import functional as F
 from transformers import AutoModelForCausalLM
 from exo.inference.shard import Shard
@@ -84,7 +85,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     def forward_layers(
         self,
         input_data: torch.tensor
-    ) -> any:
+    ) -> np.ndarray:
         """
         Forward pass through the specified layers.
 

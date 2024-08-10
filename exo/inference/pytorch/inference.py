@@ -73,9 +73,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
 
         in_tensor = torch.tensor(input_data)
-        if in_tensor.dim() == 1:
-            in_tensor = in_tensor.unsqueeze(0)
-
+        
         if DEBUG >= 2:
             print("infer_tensor called")
             print(f"input_data: {input_data}\n")
@@ -97,12 +95,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"Output data: {output_data} finished: {is_finished}")
 
-
-        with torch.no_grad():
-            output_npa = np.array(output_data.cpu())
-
         return (
-            output_npa,
+            output_data,
             "",
             is_finished
         )
