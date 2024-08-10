@@ -10,16 +10,12 @@ from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
 from exo.helpers import DEBUG
 
-# Default settings
-TEMPERATURE = 0.7
-TOP_K = 50
-
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self, debug: bool = False):
+    def __init__(self):
         """
         Initialize the inference engine.
 
@@ -48,43 +44,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Tokenize the prompt
         tokens = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
-        # Load the past key values from the inference state if available
-        # past_key_values = self._load_kv_cache(inference_state)
-
         # Run the forward pass through the model layers
-        # output_data, past_key_values
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
 
         output_data = self.model.forward_layers(
             tokens
-            # past_key_values=past_key_values
         )
 
-        with torch.no_grad():
-            output_npa = np.array([output_data.tolist()])
-
-        if DEBUG >= 2:
-            print(f"output_data.size(): {output_data.size()}")
-
-            print(f"output_npa: {output_npa}")
-            print(f"output_npa.size: {output_npa.size}")
-
-        # Save the past key values to the inference state
-        # self._save_kv_cache(past_key_values)
-
-        is_finished = output_npa.size == 1
-
-        # if DEBUG >= 2:
-        #     print("infer_prompt called")
-        #     print(f"Output data: {output_data} output_data.size: {output_data.size()}")
-        #     print(f"output_data {output_data.squeeze().item()}")
-        #     print(f"output_npa {output_npa}")
-        #     print(f"finished: {is_finished}")
-        #     print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
+        is_finished = output_data.size == 1
 
         return (
-            output_npa,
+            output_data,
             "",
             is_finished
         )
