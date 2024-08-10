@@ -74,7 +74,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 print(f"hidden_states: {hidden_states}")
                 print(f"hidden_states.size(): {hidden_states.size()}")
 
-            if hidden_states.size() == 2:
+            if len(hidden_states.size()) == 2:
                 batch_size, seq_len = hidden_states.size()
             else:
                 batch_size, seq_len = input_data.size()
