@@ -42,18 +42,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
 
         inference_state = json.loads(inference_state) if inference_state else ""
-        tokens = self.tokenizer.apply_chat_template(
-            conversation=[{
-                "role": "user", 
-                "content": prompt
-            }],
-            tokenize=True,
-            padding=True,
-            add_generation_prompt=True,
-            return_tensors="pt"
-        )
-
-        # tokens = self.tokenizer.encode(prompt, return_tensors="pt")
+        tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
