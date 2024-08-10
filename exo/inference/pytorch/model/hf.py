@@ -56,7 +56,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         if self.shard.is_first_layer():
             hidden_states = self.embed_tokens(hidden_states)
-            position_embeddings = self.rotary_emb(hidden_states)
+            position_embeddings = self.full_model.model.rotary_emb(hidden_states)
 
             if DEBUG >= 2:
                 print(f"embedded hidden_states {hidden_states}")
