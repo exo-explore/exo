@@ -3,6 +3,7 @@
 import numpy as np
 import torch
 import numpy as np
+import json
 from typing import Optional, Callable, Tuple
 from transformers import AutoTokenizer
 from exo.inference.shard import Shard
@@ -48,7 +49,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
 
-        output_data = self.model.forward_layers(
+        output_data, inference_state = self.model.forward_layers(
             tokens
         )
 
@@ -65,7 +66,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return (
             output_data,
-            "",
+            json.loads(inference_state),
             is_finished
         )
 
@@ -89,7 +90,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # Run the forward pass through the model layers
         # output_data, past_key_values
         
-        output_data = self.model.forward_layers(
+        output_data, inference_state = self.model.forward_layers(
             in_tensor
             # past_key_values=past_key_values
         )
@@ -102,7 +103,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return (
             output_data,
-            "",
+            json.loads(inference_state),
             is_finished
         )
 
