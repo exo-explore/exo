@@ -14,7 +14,7 @@ def top_p_sampling(logits, top_p: float, temperature: float = 1.0):
         torch.Tensor: The selected token indices.
     """
     # Apply temperature scaling
-    logits = logits * (1/temperature)
+    logits = logits/temperature
     
     # Sort the logits in descending order
     sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
