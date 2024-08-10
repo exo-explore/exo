@@ -54,7 +54,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Initialize position_ids
         position_ids = torch.arange(
-            input_data.size(1),
+            input_data.size(1) if input_data.size > 1 else input_data,
             dtype=torch.long,
             device=self.device
         ).unsqueeze(0)
@@ -85,14 +85,14 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
             hs_norm = self.norm(hidden_states)
-            hs_lm_head = self.full_model.lm_head(hs_norm).float()
-            output_token = torch.argmax(hs_lm_head, dim=-1).cpu().numpy().flatten()
+            hs_lm_head = self.full_model.lm_head(hs_norm).float()[:, -1, :]
+            # output_token = .cpu().numpy().flatten()
             
             if DEBUG >= 2:
                 print(f"hs_norm: {hs_norm}")
                 print(f"hs_lm_head: {hs_lm_head}")
-                print(f"output_token: {output_token}")
+                # print(f"output_token: {output_token}")
 
-            return output_token
+            return hs_lm_head.cpu().numpy()
         
-        return hidden_states
+        return hidden_states.cpu().numpy()
