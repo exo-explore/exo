@@ -8,8 +8,8 @@ def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.
 
     # Top-k sampling
     if top_k > 0:
-        top_k_values, top_k_indices = torch.topk(logits, top_k, dim=-1)
-        logits = torch.full_like(logits, -float('inf'))
+        top_k_values, top_k_indices = torch.topk(logits, min(top_k, logits.size(-1)), dim=-1)
+        logits = torch.full_like(logits, float('-inf'))
         logits.scatter_(-1, top_k_indices, top_k_values)
 
     # Top-p (nucleus) sampling
@@ -22,13 +22,13 @@ def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.
         sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = 0
 
-        indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
-        logits = logits.masked_fill(indices_to_remove, -float('inf'))
+        indices_to_remove = sorted_indices[sorted_indices_to_remove]
+        logits[indices_to_remove] = float('-inf')
 
     # Alpha sampling (to discourage repetition)
     if alpha_f or alpha_p:
         if not hasattr(sample_logits, "alpha_counter"):
-            setattr(sample_logits, "alpha_counter", torch.zeros_like(logits, dtype=torch.int32).contiguous())
+            sample_logits.alpha_counter = torch.zeros_like(logits, dtype=torch.int32)
         logits = logits - (sample_logits.alpha_counter * alpha_f + (sample_logits.alpha_counter > 0) * alpha_p)
 
     # Sample from the logits
@@ -37,8 +37,6 @@ def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.
 
     # Update alpha counter
     if alpha_f or alpha_p:
-        condition = (torch.arange(probabilities.numel(), device=logits.device) == sampled_token)
-        condition = condition.bool()  # Convert condition to boolean tensor
-        sample_logits.alpha_counter = torch.where(condition, sample_logits.alpha_counter + 1, sample_logits.alpha_counter)
+        sample_logits.alpha_counter.scatter_(-1, sampled_token, sample_logits.alpha_counter.gather(-1, sampled_token) + 1)
 
     return sampled_token
