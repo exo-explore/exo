@@ -41,7 +41,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         await self.ensure_shard(shard)
 
-        inference_state = json.loads(inference_state)
+        inference_state = json.loads(inference_state) if inference_state else ""
         tokens = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
         if DEBUG >= 2:
@@ -78,7 +78,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
 
         in_tensor = torch.tensor(input_data)
-        inference_state = json.loads(inference_state)
+        inference_state = json.loads(inference_state) if inference_state else ""
 
         if DEBUG >= 2:
             print("infer_tensor called")
