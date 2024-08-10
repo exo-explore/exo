@@ -75,6 +75,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print("forward_layer call")
             print(f"input_data: {input_data}")
             print(f"1 shard {self.shard.to_dict()}")
+            print(f"1 is_last_layer {self.shard.is_first_layer()}")
 
         # Check past key values
         # if past_key_values is None:
