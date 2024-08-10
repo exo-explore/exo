@@ -124,7 +124,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"Loading new shard: {shard}")
 
         self.model = ShardedHuggingFaceModel(shard)
-        self.tokenizer = resolve_tokenizer(shard.model_id)
+        self.tokenizer = await resolve_tokenizer(shard.model_id)
         self.shard = shard
 
         if DEBUG >= 2:
