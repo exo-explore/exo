@@ -22,23 +22,29 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.config = LlamaConfig.from_pretrained(shard.model_id)
         self.config.use_cache = True  # Enable caching
 
+        # Extract only the layers for this shard
+        # get layers up to end layer
+        self.config.config.num_hidden_layers = shard.end_layer + 1 
+
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
             shard.model_id,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto",
-            config=self.config
+            config={
+                "use_cache"
+            }
         )
         
-        # Extract only the layers for this shard
-        print(f"\nself.model: {self.full_model.model}\n")
-        print(f"\nlayer amount: {len(self.full_model.model.layers)}")
-        self.layers = []
-        for i in range(shard.start_layer, shard.end_layer + 1):
-            # if DEBUG >= 2:
-            #     print(f"loading layer[{i}]: {self.full_model.model.layers[i]}")
+        
+
+        # self.layered_model = self.full_model.model()
+        # self.layers = []
+        # for i in range(shard.start_layer, shard.end_layer + 1):
+        #     # if DEBUG >= 2:
+        #     #     print(f"loading layer[{i}]: {self.full_model.model.layers[i]}")
             
-            self.layers.append(self.full_model.model.layers[i])
+        #     self.layers.append(self.full_model.model.layers[i])
 
         # self.layers = torch.nn.ModuleList(layer_list)
 
@@ -86,28 +92,27 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 print(f"embedded hidden_states {hidden_states}")
                 print(f"position_ids: {position_embeddings}")
 
-        for i, layer in enumerate(self.layers):
-            # Forward pass through the layer
-            if DEBUG >= 2:
-                print(f"\n[layer {i}] {layer}")
-                print(f"hidden_states {hidden_states}")
-                print(f"past_kvs {past_kvs}")
-            
-            layer_outputs = layer(
-                hidden_states,
-                position_embeddings=position_embeddings,
-                past_key_values=past_kvs,
-                use_cache=True
-            )
+        # Forward pass through the layer
+        if DEBUG >= 2:
+            print(f"\n[layer model] {self.full_model.model}")
+            print(f"hidden_states {hidden_states}")
+            print(f"past_kvs {past_kvs}")
+        
+        layer_outputs = self.full_model.model(
+            hidden_states,
+            position_embeddings=position_embeddings,
+            past_key_values=past_kvs,
+            use_cache=True
+        )
 
-            if DEBUG >= 2:
-                print(f"\n[layer {i}] layer_outputs: {layer_outputs}")
-            
-            hidden_states = layer_outputs[0]
-            present_kvs = layer_outputs[1]
+        if DEBUG >= 2:
+            print(f"\nlayer_outputs: {layer_outputs}")
+        
+        hidden_states = layer_outputs[0]
+        present_kvs = layer_outputs[1]
 
-            if DEBUG >= 2:
-                print(f"present_kvs {present_kvs}")
+        if DEBUG >= 2:
+            print(f"present_kvs {present_kvs}")
 
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
