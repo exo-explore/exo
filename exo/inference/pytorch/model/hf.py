@@ -76,8 +76,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         if DEBUG >= 2:
             print(f"\nlayer_outputs: {layer_outputs}")
         
-        hidden_states = layer_outputs[0]
-        present_kvs = layer_outputs[1]
+        hidden_states = layer_outputs.last_hidden_state
+        present_kvs = layer_outputs.past_key_values
 
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
