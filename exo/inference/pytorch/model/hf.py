@@ -54,7 +54,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Initialize position_ids
         position_ids = torch.arange(
-            input_data.size(1) if input_data.size > 1 else input_data,
+            input_data,
             dtype=torch.long,
             device=self.device
         ).unsqueeze(0)
@@ -63,8 +63,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         if self.shard.is_first_layer():
             hidden_states = self.embed_tokens(hidden_states)
+            position_embeddings = self.rotary_emb(hidden_states)
+
             if DEBUG >= 2:
                 print(f"embedded hidden_states {hidden_states}")
+                print(f"position_ids: {self.position_embeddings}")
 
         for i, layer in enumerate(self.layers):
             # Forward pass through the layer
@@ -74,7 +77,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             
             layer_outputs = layer(
                 hidden_states,
-                position_ids=position_ids
+                position_embeddings=position_embeddings
             )
 
             if DEBUG >= 2:
