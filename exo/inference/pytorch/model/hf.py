@@ -89,6 +89,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         #new_past_key_values = []
         hidden_states = input_data
+
+        if self.shard.is_first_layer():
+            hidden_states = self.embed_tokens(hidden_states)
+            if DEBUG >= 2:
+                print(f"embedded hidden_states {hidden_states}")
+
         for i, layer in enumerate(self.layers):
             # Forward pass through the layer
             if DEBUG >= 2:
@@ -99,13 +105,13 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
 
             # embed only at first layer and infer prompt
-            if self.shard.start_layer == i and infer_from == "prompt":
-                if DEBUG >= 2:
-                    print("first layer and infer_prompt")
+            # if self.shard.start_layer == i and infer_from == "prompt":
+            #     if DEBUG >= 2:
+            #         print("first layer and infer_prompt")
 
-                hidden_states = self.embed_tokens(hidden_states)
-                if DEBUG >= 2:
-                    print(f"embedded hidden_states {hidden_states}")
+            #     hidden_states = self.embed_tokens(hidden_states)
+            #     if DEBUG >= 2:
+            #         print(f"embedded hidden_states {hidden_states}")
             
             layer_outputs = layer(
                 hidden_states,
@@ -119,12 +125,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             
             hidden_states = layer_outputs[0]
 
-            # if i == self.shard.end_layer:
-            #     print(f"last layer, normalize hidden states")
-            #     hs_norm = self.norm(hidden_states)
-            #     return hs_norm.flatten()
-
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
+        if self.shard.is_last_layer():
+            hs_norm = self.norm(hidden_states)
+            return hs_norm.flatten()
+        
         return hidden_states
         # if self.shard.is_last_layer():
         #     logits = self.full_model.model.norm(hidden_states)
