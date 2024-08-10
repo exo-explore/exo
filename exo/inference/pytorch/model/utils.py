@@ -2,13 +2,18 @@ import torch
 from torch.nn import functional as F
 
 def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.0):
+    # Ensure logits is a 2D tensor
+    if logits.dim() == 1:
+        logits = logits.unsqueeze(0)
+
     # Apply temperature scaling
     if temp > 0:
         logits = logits / temp
 
     # Top-k sampling
     if top_k > 0:
-        top_k_values, top_k_indices = torch.topk(logits, min(top_k, logits.size(-1)), dim=-1)
+        top_k = min(top_k, logits.size(-1))
+        top_k_values, top_k_indices = torch.topk(logits, top_k, dim=-1)
         logits = torch.full_like(logits, float('-inf'))
         logits.scatter_(-1, top_k_indices, top_k_values)
 
@@ -23,7 +28,7 @@ def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.
         sorted_indices_to_remove[..., 0] = 0
 
         indices_to_remove = sorted_indices[sorted_indices_to_remove]
-        logits[indices_to_remove] = float('-inf')
+        logits[torch.arange(logits.size(0)).unsqueeze(1), indices_to_remove] = float('-inf')
 
     # Alpha sampling (to discourage repetition)
     if alpha_f or alpha_p:
@@ -39,4 +44,4 @@ def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.
     if alpha_f or alpha_p:
         sample_logits.alpha_counter.scatter_(-1, sampled_token, sample_logits.alpha_counter.gather(-1, sampled_token) + 1)
 
-    return sampled_token
+    return sampled_token.squeeze()
