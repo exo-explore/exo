@@ -62,7 +62,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         )
 
         with torch.no_grad():
-            output_npa = np.array(output_data.cpu())
+            output_npa = np.array([output_data.tolist()])
 
         if DEBUG >= 2:
             print(f"output_data.size(): {output_data.size()}")
