@@ -1,7 +1,7 @@
 import torch
 from torch.nn import functional as F
 
-def sample_logits(logits, temp=0.85, top_k=25, top_p=0.9, alpha_f=0.1, alpha_p=0.0):
+def sample_logits(logits, temp=0.0, top_k=15, top_p=0.9, alpha_f=0.1, alpha_p=0.0):
     # Apply temperature scaling
     if temp > 0:
         logits = logits / temp
