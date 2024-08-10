@@ -128,8 +128,13 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
             hs_norm = self.norm(hidden_states)
-            hs_lm_head = self.full_model.lm_head(hs_norm)
-            return hs_lm_head.float()
+            hs_lm_head = self.full_model.lm_head(hs_norm).float()
+            
+            if DEBUG >= 2:
+                print(f"hs_norm: {hs_norm}")
+                print(f"hs_lm_head: {hs_lm_head}")
+
+            return hs_lm_head
         
         return hidden_states
         # if self.shard.is_last_layer():
