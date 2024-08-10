@@ -41,7 +41,9 @@ def sample_logits(logits, temp=0.85, top_k=25, top_p=0.9, alpha_f=0.1, alpha_p=0
 
     # Update alpha counter
     if alpha_f or alpha_p:
-        sample_logits.alpha_counter = (torch.arange(probabilities.numel(), device=logits.device) == sampled_token).where(sample_logits.alpha_counter + 1, sample_logits.alpha_counter)
+        condition = (torch.arange(probabilities.numel(), device=logits.device) == sampled_token)
+        condition = condition.bool()  # Convert condition to boolean tensor
+        sample_logits.alpha_counter = torch.where(condition, sample_logits.alpha_counter + 1, sample_logits.alpha_counter)
 
     return sampled_token
 
