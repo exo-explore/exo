@@ -67,8 +67,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         with torch.no_grad():
             output_npa = np.array(output_data.cpu())
 
-            if DEBUG >= 2:
-                print(f"output_npa.size: {output_npa.size}")
+        if DEBUG >= 2:
+            print(f"output_data.size(): {output_data.size()}")
+            print(f"output_npa.size: {output_npa.size}")
 
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
