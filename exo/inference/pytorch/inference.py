@@ -39,18 +39,17 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print("infer_prompt called")
 
-        # Ensure the shard is loaded
         await self.ensure_shard(shard)
 
-        # Tokenize the prompt
+        inference_state = json.loads(inference_state)
         tokens = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
-        # Run the forward pass through the model layers
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
 
         output_data, inference_state = self.model.forward_layers(
-            tokens
+            tokens,
+            inference_state
         )
 
         is_finished = output_data[-1] == self.tokenizer.eos_token_id and output_data.size == 1
@@ -59,6 +58,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             print(f"output_data.item() {output_data.item()}")
+            print(f"inference_state: {inference_state}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
             print(f"output_data[-1] {output_data[-1]}")
@@ -66,7 +66,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return (
             output_data,
-            json.loads(inference_state),
+            json.dumps(inference_state),
             is_finished
         )
 
@@ -78,68 +78,37 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
 
         in_tensor = torch.tensor(input_data)
+        inference_state = json.loads(inference_state)
 
         if DEBUG >= 2:
             print("infer_tensor called")
             print(f"input_data: {input_data}\n")
             print(f"in_tensor: {in_tensor}\n")
 
-        # Ensure the shard is loaded
         await self.ensure_shard(shard)
 
-        # Run the forward pass through the model layers
-        # output_data, past_key_values
-        
         output_data, inference_state = self.model.forward_layers(
-            in_tensor
-            # past_key_values=past_key_values
+            in_tensor,
+            inference_state
         )
 
         is_finished = output_data[-1] == self.tokenizer.eos_token_id and output_data.size == 1
 
         if DEBUG >= 2:
+            print(f"output_data: {output_data}\n")
+            print(f"output_data.size {output_data.size}\n")
+            print(f"output_data.item() {output_data.item()}")
+            print(f"inference_state: {inference_state}")
             print(f"finished: {is_finished}")
+            print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
+            print(f"output_data[-1] {output_data[-1]}")
             print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
         return (
             output_data,
-            json.loads(inference_state),
+            json.dumps(inference_state),
             is_finished
         )
-
-    # def _load_kv_cache(self, past_key_values_list):
-    #     """
-    #     Load key-value cache from the inference state.
-
-    #     Args:
-    #         past_key_values_list (list): List of past key-value tensors.
-
-    #     Returns:
-    #         list: List of loaded past key-value tensors.
-    #     """
-    #     if past_key_values_list is None:
-    #         return []
-    #     return [torch.tensor(kv, device=self.device) for kv in past_key_values_list]
-
-    # def _save_kv_cache(self, past_key_values):
-    #     """
-    #     Save key-value cache to the inference state.
-
-    #     Args:
-    #         past_key_values (list): List of past key-value tensors.
-
-    #     Returns:
-    #         list: List of key-value tensors in a format suitable for saving.
-    #     """
-    #     if past_key_values is None:
-    #         return []
-        
-    #     new_cache = []
-    #     for kv in past_key_values:
-    #         if kv:
-    #             new_cache.append(kv.cpu().tolist())
-
-    #     return new_cache
 
     async def ensure_shard(self, shard: Optional[Shard]):
         """
