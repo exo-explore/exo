@@ -62,6 +62,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             # past_key_values=past_key_values
         )
 
+        with torch.no_grad():
+            output_npa = np.array(output_data.cpu())
+
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
 
@@ -70,12 +73,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print("infer_prompt called")
             print(f"Output data: {output_data} output_data.size: {output_data.size()}")
-            print(f"output_data {output_data.items()}")
+            print(f"output_data {output_npa.items()}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
-
-        with torch.no_grad():
-            output_npa = np.array(output_data.cpu())
 
         return (
             output_npa,
