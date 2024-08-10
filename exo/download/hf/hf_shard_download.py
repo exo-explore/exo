@@ -9,8 +9,9 @@ from exo.download.hf.hf_helpers import download_repo_files, RepoProgressEvent, g
 from exo.helpers import AsyncCallbackSystem, DEBUG
 
 class HFShardDownloader(ShardDownloader):
-    def __init__(self, quick_check: bool = False):
+    def __init__(self, quick_check: bool = False, max_parallel_downloads: int = 4):
         self.quick_check = quick_check
+        self.max_parallel_downloads = max_parallel_downloads
         self.active_downloads: Dict[Shard, asyncio.Task] = {}
         self.completed_downloads: Dict[Shard, Path] = {}
         self._on_progress = AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]()
@@ -69,7 +70,8 @@ class HFShardDownloader(ShardDownloader):
         return await download_repo_files(
             repo_id=shard.model_id,
             progress_callback=wrapped_progress_callback,
-            allow_patterns=allow_patterns
+            allow_patterns=allow_patterns,
+            max_parallel_downloads=self.max_parallel_downloads
         )
 
     @property
