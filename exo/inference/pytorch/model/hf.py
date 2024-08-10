@@ -73,8 +73,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             if DEBUG >= 2:
                 print(f"hidden_states: {hidden_states}")
 
-            batch_size, seq_len = input_data.size()
-            position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0).expand(batch_size, -1)
+            # batch_size, seq_len = input_data.size()
+            # position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0).expand(batch_size, -1)
 
             position_embeddings = self.full_model.model.rotary_emb(
                 hidden_states,
