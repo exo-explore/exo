@@ -69,7 +69,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             if DEBUG >= 2:
                 print(f"embedded hidden_states {hidden_states}")
-                print(f"position_ids: {self.position_embeddings}")
+                print(f"position_ids: {position_embeddings}")
 
         for i, layer in enumerate(self.layers):
             # Forward pass through the layer
