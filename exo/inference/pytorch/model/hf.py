@@ -24,7 +24,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # Extract only the layers for this shard
         # get layers up to end layer
-        self.config.config.num_hidden_layers = shard.end_layer + 1 
+        self.config.num_hidden_layers = shard.end_layer + 1 
 
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
