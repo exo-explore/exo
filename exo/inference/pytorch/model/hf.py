@@ -52,13 +52,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"input_data: {input_data}")
             print(f"1 shard {self.shard.to_dict()}")
 
-        # Initialize position_ids
-        position_ids = torch.arange(
-            input_data,
-            dtype=torch.long,
-            device=self.device
-        ).unsqueeze(0)
-
         hidden_states = input_data
 
         if self.shard.is_first_layer():
