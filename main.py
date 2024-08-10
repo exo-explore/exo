@@ -53,8 +53,8 @@ web_chat_urls=[f"http://{ip}:{args.chatgpt_api_port}" for ip in get_all_ip_addre
 if DEBUG >= 0:
     links = '\n'.join([' - ' + terminal_link(web_chat_url) for web_chat_url in web_chat_urls])
     print(f"Chat interface started:\n{links}")
-
-    print(f"ChatGPT API endpoint served at:\n{'\n'.join([' - ' + terminal_link(chatgpt_api_endpoint) for chatgpt_api_endpoint in chatgpt_api_endpoints])}")
+    api_links = '\n'.join([' - ' + terminal_link(chatgpt_api_endpoint) for chatgpt_api_endpoint in chatgpt_api_endpoints])
+    print(f"ChatGPT API endpoint served at:\n{api_links}")
 node = StandardNode(
     args.node_id,
     None,
