@@ -53,6 +53,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"1 shard {self.shard.to_dict()}")
 
         hidden_states = input_data
+        position_ids = None
+        position_embeddings = None
 
         if self.shard.is_first_layer():
             hidden_states = self.embed_tokens(hidden_states)
