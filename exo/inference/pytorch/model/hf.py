@@ -100,7 +100,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         
         layer_outputs = self.full_model.model(
             hidden_states,
-            position_embeddings=position_embeddings,
+            inputs_embeds=position_embeddings,
             past_key_values=past_kvs,
             use_cache=True
         )
