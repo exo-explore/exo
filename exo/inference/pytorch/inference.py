@@ -52,7 +52,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             inference_state
         )
 
-        is_finished = output_data.size == 1
+        is_finished = output_data.size == 1 #and output_data.item() in [self.tokenizer.eos_token_id]
+
+        if is_finished:
+            print(f"token from llm decode: {self.tokenizer.decode(output_data)}")
+
 
         if DEBUG >= 2:
             print(f"output_data: {output_data}\n")
@@ -92,7 +96,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             inference_state
         )
 
-        is_finished = output_data[-1] == self.tokenizer.eos_token_id and output_data.size == 1
+        is_finished = output_data.size == 1 #and output_data.item() in [self.tokenizer.eos_token_id]
 
         if DEBUG >= 2:
             print(f"output_data: {output_data}\n")
