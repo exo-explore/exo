@@ -51,7 +51,9 @@ discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.b
 chatgpt_api_endpoints=[f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip in get_all_ip_addresses()]
 web_chat_urls=[f"http://{ip}:{args.chatgpt_api_port}" for ip in get_all_ip_addresses()]
 if DEBUG >= 0:
-    print(f"Chat interface started:\n{'\n'.join([' - ' + terminal_link(web_chat_url) for web_chat_url in web_chat_urls])}")
+    links = '\n'.join([' - ' + terminal_link(web_chat_url) for web_chat_url in web_chat_urls])
+    print(f"Chat interface started:\n{links}")
+
     print(f"ChatGPT API endpoint served at:\n{'\n'.join([' - ' + terminal_link(chatgpt_api_endpoint) for chatgpt_api_endpoint in chatgpt_api_endpoints])}")
 node = StandardNode(
     args.node_id,
