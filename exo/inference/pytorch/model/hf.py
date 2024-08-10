@@ -69,7 +69,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"1 shard {self.shard.to_dict()}")
 
         hidden_states = input_data
-        position_ids = None
+        # position_ids = None
         # position_embeddings = None
         present_kvs = DynamicCache()
 
@@ -100,7 +100,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         
         layer_outputs = self.full_model.model(
             hidden_states,
-            position_ids=position_ids,
+            # position_ids=position_ids,
             # inputs_embeds=position_embeddings,
             past_key_values=past_kvs,
             use_cache=True
