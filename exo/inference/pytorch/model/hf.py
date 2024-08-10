@@ -73,7 +73,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             use_cache=True
         )
 
-        if DEBUG >= 2:
+        if DEBUG >= 4:
             print(f"\nlayer_outputs: {layer_outputs}")
         
         hidden_states = layer_outputs.last_hidden_state
