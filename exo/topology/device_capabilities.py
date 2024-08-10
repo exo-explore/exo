@@ -117,6 +117,8 @@ CHIP_FLOPS = {
   # ... add more devices if needed ...
   ### Qualcomm embedded chips: TODO
 }
+CHIP_FLOPS.update({f"LAPTOP GPU {key}": value for key, value in CHIP_FLOPS.items()})
+CHIP_FLOPS.update({f"Laptop GPU {key}": value for key, value in CHIP_FLOPS.items()})
 
 
 def device_capabilities() -> DeviceCapabilities:
