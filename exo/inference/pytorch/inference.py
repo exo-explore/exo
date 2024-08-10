@@ -56,11 +56,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
 
-        
-        
         output_data = self.model.forward_layers(
-            tokens,
-            "prompt"
+            tokens
             # past_key_values=past_key_values
         )
 
@@ -69,12 +66,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if DEBUG >= 2:
             print(f"output_data.size(): {output_data.size()}")
+
+            print(f"output_npa: {output_npa}")
             print(f"output_npa.size: {output_npa.size}")
 
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
 
-        is_finished = len(output_data.size()) == 1
+        is_finished = output_npa.size == 1
 
         # if DEBUG >= 2:
         #     print("infer_prompt called")
@@ -110,8 +109,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         # output_data, past_key_values
         
         output_data = self.model.forward_layers(
-            in_tensor,
-            "tensor"
+            in_tensor
             # past_key_values=past_key_values
         )
 

@@ -38,34 +38,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.embed_tokens = self.full_model.model.embed_tokens
         self.norm = self.full_model.model.norm
 
-    # def prefill(self, tokens: list[int], start_pos: int=0) -> int:
-    #     print(f"\nprefill called")
-    #     """
-    #     Process the initial input tokens and set up the initial hidden states.
-    #     """
-    #     # Assuming tokens is a 1D tensor of token IDs
-    #     for token in tokens:
-    #         # Convert token to a tensor and get embeddings
-    #         token_tensor = torch.tensor([[token]], device=self.device)
-    #         token_tensor = self.embed_tokens(token_tensor)
-                
-    #         if DEBUG >= 2:
-    #             print(f"\ntoken_tensor shape: {token_tensor.shape}")
-
-    #         # Prefill with tokens
-    #         self.forward_layers(start_pos, token_tensor, None)
-
-    #         # Increment start position
-    #         start_pos += 1
-
-    #     return start_pos
-
     def forward_layers(
         self,
-        input_data: torch.tensor,
-        infer_from: str
-        #past_key_values: list
-    ) -> any: #-> Tuple[torch.tensor, list]:
+        input_data: torch.tensor
+    ) -> any:
         """
         Forward pass through the specified layers.
 
@@ -76,10 +52,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"input_data: {input_data}")
             print(f"1 shard {self.shard.to_dict()}")
 
-        # Check past key values
-        # if past_key_values is None:
-        #     past_key_values = [None] * len(self.layers)
-
         # Initialize position_ids
         position_ids = torch.arange(
             input_data.size(1),
@@ -87,7 +59,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             device=self.device
         ).unsqueeze(0)
 
-        #new_past_key_values = []
         hidden_states = input_data
 
         if self.shard.is_first_layer():
@@ -100,24 +71,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             if DEBUG >= 2:
                 print(f"\n[layer {i}] {layer}")
                 print(f"hidden_states {hidden_states}")
-
-            # Get past key value if available
-            # past_key_value = past_key_values[i] if past_key_values and len(past_key_values) > 0 else None
-
-            # embed only at first layer and infer prompt
-            # if self.shard.start_layer == i and infer_from == "prompt":
-            #     if DEBUG >= 2:
-            #         print("first layer and infer_prompt")
-
-            #     hidden_states = self.embed_tokens(hidden_states)
-            #     if DEBUG >= 2:
-            #         print(f"embedded hidden_states {hidden_states}")
             
             layer_outputs = layer(
                 hidden_states,
-                position_ids=position_ids,
-                # past_key_value=past_key_value,
-                # use_cache=True
+                position_ids=position_ids
             )
 
             if DEBUG >= 2:
@@ -137,9 +94,3 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             return hs_lm_head
         
         return hidden_states
-        # if self.shard.is_last_layer():
-        #     logits = self.full_model.model.norm(hidden_states)
-        #     return logits.flatten() #, new_past_key_values
-        # else:
-        #     return hidden_states#, new_past_key_values
-
