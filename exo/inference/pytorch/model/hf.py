@@ -119,15 +119,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             
             hidden_states = layer_outputs[0]
 
-            if DEBUG >= 2:
-                print(f"2 shard {self.shard.to_dict()}")
+            # if i == self.shard.end_layer:
+            #     print(f"last layer, normalize hidden states")
+            #     hs_norm = self.norm(hidden_states)
+            #     return hs_norm.flatten()
 
-            if i == self.shard.end_layer:
-                print(f"last layer, normalize hidden states")
-                hs_norm = self.norm(hidden_states)
-                return hs_norm.flatten()
-
-        print(f"1 is_last_layer {self.shard.is_last_layer()}")
+        print(f"2 is_last_layer {self.shard.is_last_layer()}")
         return hidden_states
         # if self.shard.is_last_layer():
         #     logits = self.full_model.model.norm(hidden_states)
