@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from transformers import AutoModelForCausalLM, LlamaConfig
+from transformers import AutoModelForCausalLM, LlamaConfig, DynamicCache, Cache
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
 from typing import Tuple
@@ -50,7 +50,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     def forward_layers(
         self,
         input_data: torch.tensor,
-        past_kvs = []
+        past_kvs: Cache = DynamicCache()
     ) -> Tuple[np.ndarray, list]:
         """
         Forward pass through the specified layers.
@@ -65,7 +65,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         hidden_states = input_data
         position_ids = None
         position_embeddings = None
-        present_kvs = []
+        present_kvs = DynamicCache()
 
         if self.shard.is_first_layer():
             hidden_states = self.embed_tokens(hidden_states)
@@ -76,14 +76,14 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             # batch_size, seq_len = input_data.size()
             # position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0).expand(batch_size, -1)
 
-            position_embeddings = self.full_model.model.rotary_emb(
-                hidden_states,
-                position_ids
-            )
+            # position_embeddings = self.full_model.model.rotary_emb(
+            #     hidden_states,
+            #     position_ids
+            # )
 
-            if DEBUG >= 2:
-                print(f"embedded hidden_states {hidden_states}")
-                print(f"position_ids: {position_embeddings}")
+            # if DEBUG >= 2:
+            #     print(f"embedded hidden_states {hidden_states}")
+            #     print(f"position_ids: {position_embeddings}")
 
         for i, layer in enumerate(self.layers):
             # Forward pass through the layer
@@ -94,13 +94,13 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             
             layer_outputs = layer(
                 hidden_states,
-                position_embeddings=position_embeddings,
-                past_key_values=past_kvs[i] if past_kvs else None,
+                # position_embeddings=position_embeddings,
+                past_key_values=past_kvs,
                 use_cache=True
             )
 
             if DEBUG >= 2:
-                print(f"\n[layer {i}] layer_outputs: {layer_outputs[0]}")
+                print(f"\n[layer {i}] layer_outputs: {layer_outputs}")
             
             hidden_states = layer_outputs[0]
             present_kvs = layer_outputs[1]
