@@ -27,13 +27,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.config.num_hidden_layers = 2
 
         # Load the model
-        self.full_model = AutoModelForCausalLM.from_pretrained(
+        self.full_model = AutoModelForCausalLM(self.config).from_pretrained(
             shard.model_id,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto",
-            config={
-                "use_cache"
-            }
+            device_map="auto"
         )
 
         # Embeddings and final layer norm
