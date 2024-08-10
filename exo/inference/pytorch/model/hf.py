@@ -4,6 +4,46 @@ from exo.inference.shard import Shard
 from exo.helpers import DEBUG
 from typing import Tuple
 
+def sample_logits(logits, temp=0.85, top_k=25, top_p=0.9, alpha_f=0.1, alpha_p=0.0):
+    # Apply temperature scaling
+    if temp > 0:
+        logits = logits / temp
+
+    # Top-k sampling
+    if top_k > 0:
+        top_k_values, top_k_indices = torch.topk(logits, top_k, dim=-1)
+        logits = torch.full_like(logits, -float('inf'))
+        logits.scatter_(-1, top_k_indices, top_k_values)
+
+    # Top-p (nucleus) sampling
+    if 0 < top_p < 1.0:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+        # Remove tokens with cumulative probability above the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+
+        indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+        logits = logits.masked_fill(indices_to_remove, -float('inf'))
+
+    # Alpha sampling (to discourage repetition)
+    if alpha_f or alpha_p:
+        if not hasattr(sample_logits, "alpha_counter"):
+            setattr(sample_logits, "alpha_counter", torch.zeros_like(logits, dtype=torch.int32).contiguous())
+        logits = logits - (sample_logits.alpha_counter * alpha_f + (sample_logits.alpha_counter > 0) * alpha_p)
+
+    # Sample from the logits
+    probabilities = F.softmax(logits, dim=-1)
+    sampled_token = torch.multinomial(probabilities, 1)
+
+    # Update alpha counter
+    if alpha_f or alpha_p:
+        sample_logits.alpha_counter = (torch.arange(probabilities.numel(), device=logits.device) == sampled_token).where(sample_logits.alpha_counter + 1, sample_logits.alpha_counter)
+
+    return sampled_token
+
 class ShardedHuggingFaceModel(torch.nn.Module):
     def __init__(self, shard: Shard):
         super(ShardedHuggingFaceModel, self).__init__()
@@ -90,16 +130,16 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
             hs_norm = self.norm(hidden_states)
-            hs_lm_head = self.full_model.lm_head(hs_norm).float()[:, -1, :]
-            # output_token = .cpu().numpy().flatten()
-            
+            hs_lm_head = self.full_model.lm_head(hs_norm).float()
+
+            # Use the sampling function with default settings
+            output_token = sample_logits(hs_lm_head).cpu().numpy().flatten()
+
             if DEBUG >= 2:
                 print(f"hs_norm: {hs_norm}")
                 print(f"hs_lm_head: {hs_lm_head}")
-                # print(f"output_token: {output_token}")
-            with torch.no_grad():
-                last_state = hs_lm_head.cpu().numpy()
-                
-            return last_state
+                print(f"output_token: {output_token}")
+
+            return output_token
         
         return hidden_states.cpu().numpy()

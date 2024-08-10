@@ -52,6 +52,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             tokens
         )
 
+        if DEBUG >= 2:
+            print(f"output_data: {output_data}\n")
+            print(f"output_data.size {output_data.size}\n")
+
         is_finished = output_data.size == 1
 
         return (
