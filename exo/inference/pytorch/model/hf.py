@@ -97,7 +97,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 print(f"hs_norm: {hs_norm}")
                 print(f"hs_lm_head: {hs_lm_head}")
                 # print(f"output_token: {output_token}")
-
-            return hs_lm_head.cpu().numpy()
+            with torch.no_grad():
+                last_state = hs_lm_head.cpu().numpy()
+                
+            return last_state
         
         return hidden_states.cpu().numpy()
