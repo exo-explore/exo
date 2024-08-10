@@ -71,11 +71,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         shard: Shard, 
         input_data: np.ndarray, 
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
-        
-        if input_data.dim() == 1:
-            input_data = input_data.unsqueeze(0)
-            
+
         in_tensor = torch.tensor(input_data)
+        if in_tensor.dim() == 1:
+            in_tensor = in_tensor.unsqueeze(0)
+
         if DEBUG >= 2:
             print("infer_tensor called")
             print(f"input_data: {input_data}\n")
