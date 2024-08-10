@@ -117,7 +117,6 @@ CHIP_FLOPS.update({f"LAPTOP GPU {key}": value for key, value in CHIP_FLOPS.items
 CHIP_FLOPS.update({f"Laptop GPU {key}": value for key, value in CHIP_FLOPS.items()})
 
 
-
 def device_capabilities() -> DeviceCapabilities:
   if psutil.MACOS:
     return mac_device_capabilities()
