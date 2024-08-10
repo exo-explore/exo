@@ -48,9 +48,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 "content": prompt
             }],
             tokenize=True,
-            add_generation_prompt=False,
+            padding=True,
+            add_generation_prompt=True,
             return_tensors="pt"
         )
+
+        # tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
@@ -141,14 +144,3 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if DEBUG >= 2:
             print(f"Shard loaded successfully: {shard}")
-
-    def set_on_download_progress(self, on_download_progress: Callable[[int, int], None]):
-        """
-        Set a callback function to track download progress.
-
-        Args:
-            on_download_progress (Callable[[int, int], None]): Callback function to track progress.
-        """
-        # must have this function or inference engine breaks
-        # This method can be implemented if progress tracking is needed
-        pass
