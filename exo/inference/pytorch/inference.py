@@ -55,6 +55,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
+            print(f"output_data.item() {output_data.item()}")
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
