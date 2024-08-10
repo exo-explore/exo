@@ -73,6 +73,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print("infer_prompt called")
             print(f"Output data: {output_data} output_data.size: {output_data.size()}")
+            print(f"output_data {output_data.item()}")
             print(f"output_npa {output_npa}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
