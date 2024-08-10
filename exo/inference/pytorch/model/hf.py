@@ -134,7 +134,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hs_lm_head = self.full_model.lm_head(hs_norm).float()
 
             # Use the sampling function with default settings
-            output_token = sample_logits(hs_lm_head).cpu().numpy().flatten()
+            output_token = sample_logits(
+                hs_lm_head[:, -1, :]).cpu().numpy().flatten()
 
             if DEBUG >= 2:
                 print(f"hs_norm: {hs_norm}")
