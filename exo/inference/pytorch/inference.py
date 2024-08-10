@@ -39,6 +39,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         image_str: Optional[str] = None, 
         inference_state: Optional[str] = None
     ) -> Tuple[np.ndarray, str, bool]:
+        if DEBUG >= 2:
+            print("infer_prompt called")
 
         # Ensure the shard is loaded
         await self.ensure_shard(shard)
@@ -64,6 +66,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         with torch.no_grad():
             output_npa = np.array(output_data.cpu())
+
+            if DEBUG >= 2:
+                print(f"output_npa.size: {output_npa.size}")
 
         # Save the past key values to the inference state
         # self._save_kv_cache(past_key_values)
