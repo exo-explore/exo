@@ -1,4 +1,5 @@
 import torch
+from torch.nn import functional as F
 from transformers import AutoModelForCausalLM
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
