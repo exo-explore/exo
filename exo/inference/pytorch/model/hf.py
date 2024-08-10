@@ -70,27 +70,27 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         hidden_states = input_data
         position_ids = None
-        position_embeddings = None
+        # position_embeddings = None
         present_kvs = DynamicCache()
 
-        if self.shard.is_first_layer():
-            hidden_states = self.embed_tokens(hidden_states)
+        # if self.shard.is_first_layer():
+        #     hidden_states = self.embed_tokens(hidden_states)
 
-            if DEBUG >= 2:
-                print(f"hidden_states: {hidden_states}")
-                print(f"hidden_states.size(): {hidden_states.size()}")
+        #     if DEBUG >= 2:
+        #         print(f"hidden_states: {hidden_states}")
+        #         print(f"hidden_states.size(): {hidden_states.size()}")
 
-            batch_size, seq_len = input_data.size()
-            position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0).expand(batch_size, -1)
+        #     batch_size, seq_len = input_data.size()
+        #     position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0).expand(batch_size, -1)
 
-            position_embeddings = self.full_model.model.rotary_emb(
-                hidden_states,
-                position_ids
-            )
+        #     position_embeddings = self.full_model.model.rotary_emb(
+        #         hidden_states,
+        #         position_ids
+        #     )
 
-            if DEBUG >= 2:
-                print(f"embedded hidden_states {hidden_states}")
-                print(f"position_ids: {position_embeddings}")
+        #     if DEBUG >= 2:
+        #         print(f"embedded hidden_states {hidden_states}")
+        #         print(f"position_ids: {position_embeddings}")
 
         # Forward pass through the layer
         if DEBUG >= 2:
