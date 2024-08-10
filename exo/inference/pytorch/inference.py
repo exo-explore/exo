@@ -85,8 +85,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         inference_state = json.loads(inference_state) if inference_state else ""
 
         # Ensure input_data is 2D: [batch_size, seq_len]
-        if input_data.dim() == 1:
-            input_data = input_data.unsqueeze(0)  # Add a batch dimension: [1, seq_len]
+        if in_tensor.dim() == 1:
+            in_tensor = in_tensor.unsqueeze(0)  # Add a batch dimension: [1, seq_len]
 
         if DEBUG >= 2:
             print("infer_tensor called")
