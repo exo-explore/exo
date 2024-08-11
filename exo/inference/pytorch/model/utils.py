@@ -37,7 +37,7 @@ def top_p_sampling(logits, top_p: float, temperature: float = 1.0):
     # Convert to original index order
     return sorted_indices.gather(-1, sampled_token)
 
-def sample_logits(logits, temp=0.001, top_k=15, top_p=0.8, alpha_f=0.0, alpha_p=0.0):
+def sample_logits(logits, temp=0.001, top_k=15, top_p=0.8, alpha_f=0.1, alpha_p=0.0):
     """
     Sample tokens from logits using temperature, top-k, top-p, and alpha sampling.
 
@@ -68,7 +68,7 @@ def sample_logits(logits, temp=0.001, top_k=15, top_p=0.8, alpha_f=0.0, alpha_p=
         logits = top_p_sampling(logits, top_p, temp)
 
     # Apply alpha sampling to discourage repetition
-    if alpha_f or alpha_p:
+    if alpha_f > 0.0 or alpha_p > 0.0:
         if not hasattr(sample_logits, "alpha_counter"):
             sample_logits.alpha_counter = torch.zeros_like(logits, dtype=torch.int32)
         logits = logits - (sample_logits.alpha_counter * alpha_f + (sample_logits.alpha_counter > 0) * alpha_p)
@@ -78,7 +78,7 @@ def sample_logits(logits, temp=0.001, top_k=15, top_p=0.8, alpha_f=0.0, alpha_p=
     sampled_token = torch.multinomial(probabilities, 1)
 
     # Update alpha counter
-    if alpha_f or alpha_p:
+    if alpha_f > 0.0 or alpha_p > 0.0:
         sample_logits.alpha_counter.scatter_(-1, sampled_token, sample_logits.alpha_counter.gather(-1, sampled_token) + 1)
 
     return sampled_token.squeeze()
