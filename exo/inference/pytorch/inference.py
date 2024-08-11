@@ -10,6 +10,7 @@ from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
 from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
+from transformers import DynamicCache
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
@@ -41,7 +42,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         await self.ensure_shard(shard)
 
-        inference_state = json.loads(torch.tensor(inference_state)) if inference_state else ""
+        # need to make this so inference_state is not a string
+        if inference_state:
+            inference_state =  DynamicCache.from_legacy_cache(
+                json.loads(torch.tensor(inference_state))
+            )
+        else:
+            inference_state = DynamicCache()
+            
         tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if DEBUG >= 2:
