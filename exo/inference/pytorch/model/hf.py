@@ -72,9 +72,9 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"IN hidden_states {hidden_states}")
             # print(f"past_kvs {past_kvs}")
         
+        self.full_model.model.layer_idx = 5
         layer_outputs = self.full_model.model(
-            hidden_states,
-            layer_idx=5
+            hidden_states
             # position_ids=position_ids,
             # inputs_embeds=position_embeddings,
             # past_key_values=self.past_key_values,
