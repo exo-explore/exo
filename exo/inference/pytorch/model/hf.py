@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import numpy as np
 
 from transformers import AutoModelForCausalLM, LlamaConfig, DynamicCache, Cache
@@ -37,7 +38,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             layers.append(layer)
         
-        self.full_model.model.layers = layers
+        self.full_model.model.layers = nn.ModuleList(layers)
 
         if DEBUG >= 2:
             print(f"full_model.model layer: {len(self.full_model.model.layers)}")
