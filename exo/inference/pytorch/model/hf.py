@@ -40,10 +40,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.embed_tokens = self.full_model.model.embed_tokens
         self.norm = self.full_model.model.norm
 
+        self.past_key_values = DynamicCache()
+
     def forward_layers(
         self,
-        input_data: torch.tensor,
-        past_kvs: Cache = DynamicCache()
+        input_data: torch.tensor
     ) -> Tuple[np.ndarray, list]:
         """
         Forward pass through the specified layers.
@@ -56,7 +57,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"shard {self.shard.to_dict()}")
 
         hidden_states = input_data
-        present_kvs = DynamicCache()
 
         # Forward pass through the layer
         if DEBUG >= 2:
@@ -68,7 +68,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states,
             # position_ids=position_ids,
             # inputs_embeds=position_embeddings,
-            past_key_values=past_kvs,
+            past_key_values=self.past_key_values,
             use_cache=True
         )
 
@@ -76,7 +76,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"\nlayer_outputs: {layer_outputs}")
         
         hidden_states = layer_outputs.last_hidden_state
-        present_kvs = layer_outputs.past_key_values
+        self.past_key_values = layer_outputs.past_key_values
 
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
@@ -92,6 +92,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 print(f"hs_lm_head: {hs_lm_head}")
                 print(f"output_token: {output_token}")
 
-            return (output_token, present_kvs)
+            return output_token
         
-        return (hidden_states.cpu().numpy(), present_kvs)
+        return hidden_states.cpu().numpy()

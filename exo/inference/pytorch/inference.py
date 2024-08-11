@@ -43,21 +43,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
 
         # need to make this so inference_state is not a string
-        if inference_state:
-            inference_state =  DynamicCache.from_legacy_cache(
-                json.loads(torch.tensor(inference_state))
-            )
-        else:
-            inference_state = DynamicCache()
-            
+        # cant use it with dynamic cache
+           
         tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if DEBUG >= 2:
             print(f"tokens: {tokens}\n")
 
-        output_data, inference_state = self.model.forward_layers(
-            tokens,
-            inference_state
+        output_data = self.model.forward_layers(
+            tokens
         )
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
@@ -70,7 +64,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             print(f"output_data.item() {output_data.item()}")
-            print(f"inference_state.get_max_length(): {inference_state.get_max_length()}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
             print(f"output_data[-1] {output_data[-1]}")
@@ -78,7 +71,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return (
             output_data,
-            json.dumps(inference_state.cpu().numpy()),
+            "",
             is_finished
         )
 
@@ -90,14 +83,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
 
         in_tensor = torch.tensor(input_data)
-        
-        if inference_state:
-            inference_state =  DynamicCache.from_legacy_cache(
-                json.loads(torch.tensor(inference_state))
-            )
-        else:
-            inference_state = DynamicCache()
-
+    
         # Ensure input_data is 2D: [batch_size, seq_len]
         if in_tensor.dim() == 1:
             in_tensor = in_tensor.unsqueeze(0)  # Add a batch dimension: [1, seq_len]
@@ -109,9 +95,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         await self.ensure_shard(shard)
 
-        output_data, inference_state = self.model.forward_layers(
-            in_tensor,
-            inference_state
+        output_data = self.model.forward_layers(
+            in_tensor
         )
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
@@ -120,7 +105,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             print(f"output_data.item() {output_data.item()}")
-            print(f"inference_state.get_max_length(): {inference_state.get_max_length()}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
             print(f"output_data[-1] {output_data[-1]}")
@@ -128,7 +112,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return (
             output_data,
-            json.dumps(inference_state.cpu().numpy()),
+            "",
             is_finished
         )
 
