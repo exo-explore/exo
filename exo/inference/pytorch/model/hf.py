@@ -29,7 +29,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # using llamaconfig not working setting layers manually
         layers = []
-        for i in range(shard.start_layer, shard.end_layer + 1):
+        for i in range(shard.start_layer, 2):
             layer = self.full_model.model.layers[i]
 
             if DEBUG >= 2:
