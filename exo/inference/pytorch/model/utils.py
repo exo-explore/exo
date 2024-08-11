@@ -128,6 +128,6 @@ def sample_logits(logits, temperature=0.0, top_k=0, top_p=1.0):
 
     # Sample from the logits
     # probabilities = F.softmax(logits, dim=-1)
-    sampled_token = torch.multinomial(probabilities, 1)
+    sampled_token = torch.multinomial(logits, 1)
 
     return sampled_token.squeeze()
