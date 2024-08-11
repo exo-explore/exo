@@ -74,11 +74,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         
         self.full_model.model.layer_idx = 5
         layer_outputs = self.full_model.model(
-            hidden_states
+            hidden_states,
             # position_ids=position_ids,
             # inputs_embeds=position_embeddings,
             # past_key_values=self.past_key_values,
-            # use_cache=True # not enough vram for using cache ;_;
+            use_cache=False # not enough vram for using cache ;_;
         )
 
         if DEBUG >= 2:
