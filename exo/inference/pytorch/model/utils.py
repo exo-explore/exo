@@ -101,28 +101,30 @@ def sample_logits(logits, temperature=0.0, top_k=0, top_p=1.0):
     logits = logits.float()
 
     # Apply temperature scaling
-    if temperature != 1.0:
-        logits = logits * (1 / temperature)
+    if temperature == 0:
+        logits = logits.argmax(dim=-1)
+    else:
+        # Apply Top-k sampling if specified
+        if top_k > 0:
+            top_k = min(top_k, logits.size(-1))
+            top_k_values, top_k_indices = torch.topk(logits, top_k, dim=-1)
+            logits = torch.full_like(logits, float('-inf'))
+            logits.scatter_(-1, top_k_indices, top_k_values)
 
-    # Apply Top-k sampling if specified
-    if top_k > 0:
-        top_k = min(top_k, logits.size(-1))
-        top_k_values, top_k_indices = torch.topk(logits, top_k, dim=-1)
-        logits = torch.full_like(logits, float('-inf'))
-        logits.scatter_(-1, top_k_indices, top_k_values)
+        # Apply Top-p (nucleus) sampling if specified
+        if 0 < top_p < 1.0:
+            sorted_logits, _ = torch.sort(logits, descending=True, dim=-1)
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
 
-    # Apply Top-p (nucleus) sampling if specified
-    if 0 < top_p < 1.0:
-        sorted_logits, _ = torch.sort(logits, descending=True, dim=-1)
-        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            # Remove tokens with cumulative probability above the threshold
+            sorted_indices_to_remove = cumulative_probs > top_p
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = 0
 
-        # Remove tokens with cumulative probability above the threshold
-        sorted_indices_to_remove = cumulative_probs > top_p
-        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-        sorted_indices_to_remove[..., 0] = 0
-
-        sorted_logits[sorted_indices_to_remove] = -float('Inf')
-        logits = sorted_logits
+            sorted_logits[sorted_indices_to_remove] = -float('Inf')
+            logits = sorted_logits
+        else:
+            logits = logits * (1/temperature)
 
     # Sample from the logits
     probabilities = F.softmax(logits, dim=-1)
