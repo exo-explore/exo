@@ -101,8 +101,8 @@ def sample_logits(logits, temperature=0.0, top_k=0, top_p=1.0):
     logits = logits.float()
 
     # Apply temperature scaling
-    if temperature == 0:
-        logits = logits.argmax(dim=-1)
+    if temperature == 0.0:
+        logits = logits.argmax(dim=-1).float()
     else:
         # Apply Top-k sampling if specified
         if top_k > 0:
