@@ -36,7 +36,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.config.num_hidden_layers = 2
         self.full_model.model.config = self.config
         if DEBUG >= 2:
-            print(f"full_model.model layer: {len(self.full_model.layers)}")
+            print(f"full_model.model layer: {len(self.full_model.model.layers)}")
 
         # Embeddings and final layer norm
         # used for doing what forward LlamaModel does in transformers
