@@ -97,8 +97,8 @@ def sample_logits(logits, temperature=0.0, top_k=0, top_p=1.0):
         torch.Tensor: The selected token index.
     """
 
-    # Ensure logits are in a floating-point format
-    logits = logits.float()
+    # Ensure logits are long
+    logits = logits.long()
 
     # Apply temperature scaling
     if temperature == 0:
