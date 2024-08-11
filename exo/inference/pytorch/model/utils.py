@@ -83,7 +83,7 @@ from torch.nn import functional as F
 
 #     return sampled_token.squeeze()
 
-def sample_logits(logits, temperature=1.0, top_k=50, top_p=0.95):
+def sample_logits(logits, temperature=1.0, top_k=15, top_p=0.95):
     """
     Sample tokens from logits using temperature, top-k, and top-p (nucleus) sampling.
 
