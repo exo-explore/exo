@@ -30,7 +30,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         # using llamaconfig not working setting layers manually
         layers = []
-        for i in range(shard.start_layer, 2):
+        for i in range(5, 10):
             layer = self.full_model.model.layers[i]
 
             if DEBUG >= 2:
@@ -69,7 +69,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         # Forward pass through the layer
         if DEBUG >= 2:
             print(f"\n[layer model] {self.full_model.model}")
-            print(f"hidden_states {hidden_states}")
+            print(f"IN hidden_states {hidden_states}")
             # print(f"past_kvs {past_kvs}")
         
         layer_outputs = self.full_model.model(
@@ -81,7 +81,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         )
 
         if DEBUG >= 2:
-            print(f"\nlayer_outputs: {layer_outputs}")
+            print(f"OUT hidden_states {hidden_states}")
+            # print(f"\nlayer_outputs: {layer_outputs}")
         
         hidden_states = layer_outputs.last_hidden_state
         # self.past_key_values = layer_outputs.past_key_values
