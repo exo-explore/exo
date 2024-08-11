@@ -37,7 +37,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             layers.append(layer)
         
-        self.full_model.model.layer = layers
+        self.full_model.model.layers = layers
 
         if DEBUG >= 2:
             print(f"full_model.model layer: {len(self.full_model.model.layers)}")
