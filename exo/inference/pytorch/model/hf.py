@@ -18,13 +18,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
 
-        # Load the model with the configuration for caching
-        self.config = LlamaConfig.from_pretrained(shard.model_id)
-        self.config.use_cache = True  # Enable caching
-
-        # Extract only the layers for this shard
-        # get layers up to end layer
-        self.config.num_hidden_layers = 2
+        
 
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
@@ -33,7 +27,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             device_map="auto"
         )
 
-        self.full_model.config = self.config
+        # set model config to restrict layers and enable caching
+        self.config = LlamaConfig.from_pretrained(shard.model_id)
+        # self.config.use_cache = True  # Enable caching
+
+        # Extract only the layers for this shard
+        # get layers up to end layer
+        self.config.num_hidden_layers = 2
+
+        self.full_model.model.config = self.config
 
         # Embeddings and final layer norm
         # used for doing what forward LlamaModel does in transformers
