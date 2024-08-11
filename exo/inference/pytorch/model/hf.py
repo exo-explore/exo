@@ -27,14 +27,18 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             device_map="auto"
         )
 
-        # set model config to restrict layers and enable caching
-        self.config = LlamaConfig.from_pretrained(shard.model_id)
-        # self.config.use_cache = True  # Enable caching
+        # using llamaconfig not working setting layers manually
+        layers = []
+        for i in range(shard.start_layer, shard.end_layer + 1):
+            layer = self.full_model.model.layers[i]
 
-        # Extract only the layers for this shard
-        # get layers up to end layer
-        self.config.num_hidden_layers = 2
-        self.full_model.model.config = self.config
+            if DEBUG >= 2:
+                print(f"Loading layers[{i}]")
+
+            layers.append(layer)
+        
+        self.full_model.model.layer = layers
+
         if DEBUG >= 2:
             print(f"full_model.model layer: {len(self.full_model.model.layers)}")
 
