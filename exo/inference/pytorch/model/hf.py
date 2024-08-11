@@ -40,7 +40,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.embed_tokens = self.full_model.model.embed_tokens
         self.norm = self.full_model.model.norm
 
-        self.past_key_values = DynamicCache()
+        # self.past_key_values = DynamicCache()
 
     def forward_layers(
         self,
@@ -68,15 +68,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             hidden_states,
             # position_ids=position_ids,
             # inputs_embeds=position_embeddings,
-            past_key_values=self.past_key_values,
-            use_cache=True
+            # past_key_values=self.past_key_values,
+            # use_cache=True # not enough vram for using cache ;_;
         )
 
-        if DEBUG >= 4:
+        if DEBUG >= 2:
             print(f"\nlayer_outputs: {layer_outputs}")
         
         hidden_states = layer_outputs.last_hidden_state
-        self.past_key_values = layer_outputs.past_key_values
+        # self.past_key_values = layer_outputs.past_key_values
 
         print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
