@@ -37,7 +37,7 @@ def top_p_sampling(logits, top_p: float, temperature: float = 1.0):
     # Convert to original index order
     return sorted_indices.gather(-1, sampled_token)
 
-def sample_logits(logits, temp=1.0, top_k=20, top_p=0.95, alpha_f=0.1, alpha_p=0.0):
+def sample_logits(logits, temp=0.6, top_k=20, top_p=0.95, alpha_f=0.1, alpha_p=0.0):
     """
     Sample tokens from logits using temperature, top-k, top-p, and alpha sampling.
 
