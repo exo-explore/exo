@@ -107,7 +107,7 @@ def sample(logits: Tensor, temp: float, k: int, p: float, af: float, ap: float):
   assert 0 <= k <= logits.numel(), "k must be between 0 and numel"
 
   # if temperature is very low just use argmax
-  if temp < 1e-6: return logits.argmax()
+  if temp < 1e-6: return logits.argmax().reshape(1)
 
   # alpha sampling
   if af or ap:

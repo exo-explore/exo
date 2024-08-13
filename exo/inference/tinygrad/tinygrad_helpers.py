@@ -35,7 +35,7 @@ def load(fn:str, shard: Shard):
 
       parts[n] = load(str(Path(fn).parent / Path(n).name), shard)
       filtered_weight_map[k] = n
-    if DEBUG >= 2: print(f"Excluded model param keys for {shard=}: {set(weight_map.keys()) - set(filtered_weight_map.keys())}")
+    if DEBUG >= 2: print(f"Excluded model param keys for {shard=}: {sorted(set(weight_map.keys()) - set(filtered_weight_map.keys()))}")
     return {k: parts[n][k] for k, n in filtered_weight_map.items()}
   elif fn.endswith(".safetensors"):
     return safe_load(fn)

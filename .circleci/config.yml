@@ -109,7 +109,8 @@ jobs:
           name: Run tests
           command: |
             source env/bin/activate
-            METAL_XCODE=1 python3 -m exo.inference.test_inference_engine
+            # set TEMPERATURE to 0 for deterministic sampling
+            METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
 
   discovery_integration_test:
     macos:
