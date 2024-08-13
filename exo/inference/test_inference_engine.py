@@ -3,6 +3,7 @@ from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
+import os
 import asyncio
 import numpy as np
 
