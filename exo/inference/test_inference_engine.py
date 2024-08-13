@@ -5,10 +5,9 @@ from exo.inference.shard import Shard
 from exo.helpers import DEBUG
 import asyncio
 import numpy as np
-from transformers import AutoTokenizer
 
 # An inference engine should work the same for any number of Shards, as long as the Shards are continuous.
-async def test_inference_engine(inference_engine_1: InferenceEngine, inference_engine_2: InferenceEngine, model_id: str, tokenizer: AutoTokenizer):
+async def test_inference_engine(inference_engine_1: InferenceEngine, inference_engine_2: InferenceEngine, model_id: str):
   prompt = "In a single word only, what is the last name of the current president of the USA?"
   resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt("A", shard=Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32), prompt=prompt)
   next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
@@ -59,5 +58,4 @@ if os.getenv("RUN_TINYGRAD", default="0") == "1":
       TinygradDynamicShardInferenceEngine(HFShardDownloader()),
       TinygradDynamicShardInferenceEngine(HFShardDownloader()),
       "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R",
-      AutoTokenizer.from_pretrained("TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R")
   ))
