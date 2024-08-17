@@ -86,6 +86,7 @@ pip install .
 source install.sh
 ```
 
+
 ### Troubleshooting
 
 - If running on Mac, MLX has an [install guide](https://ml-explore.github.io/mlx/build/html/install.html) with troubleshooting steps.
