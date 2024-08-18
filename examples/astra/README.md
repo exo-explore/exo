@@ -1,0 +1,1 @@
+This is an example of an app similar to [Google's Project Astra](https://deepmind.google/technologies/gemini/project-astra/) that is fully open source and uses exo running on your own devices instead of Google's closed-source API.
