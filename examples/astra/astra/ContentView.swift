@@ -10,7 +10,7 @@ struct ContentView: View {
     @State private var bufferSeconds: Double = 0.5 // or whatever the actual buffer size is
     @State private var modelState: ModelState = .unloaded
 
-    @AppStorage("selectedModel") private var selectedModel: String = "large"
+    @AppStorage("selectedModel") private var selectedModel: String = "large-v3"
     @AppStorage("selectedLanguage") private var selectedLanguage: String = "english"
     @AppStorage("selectedTask") private var selectedTask: String = "transcribe"
 
@@ -18,10 +18,13 @@ struct ContentView: View {
     @State private var currentMemo = ""
     @State private var lastVoiceActivityTime = Date()
     @State private var silenceTimer: Timer?
-    @State private var voiceActivityThreshold: Float = 0.3 // Start with a lower value
+    @State private var voiceActivityThreshold: Float = 0.1 // Lower this value
     @State private var silenceTimeThreshold = 1.0
     @State private var debugText = ""
     @State private var apiEndpoint = "http://192.168.212.74:8000/v1/chat/completions"
+    @State private var audioBuffer: [Float] = []
+    @State private var bufferDuration: Double = 0.5 // 0.5 seconds buffer
+    @State private var isInitialTranscription = true
 
     var body: some View {
         VStack {
@@ -37,7 +40,7 @@ struct ContentView: View {
             }
 
             Picker("Model", selection: $selectedModel) {
-                Text("large").tag("large")
+                Text("large-v3").tag("large-v3")
                 Text("base").tag("base")
                 Text("small").tag("small")
             }
@@ -71,8 +74,22 @@ struct ContentView: View {
                 whisperKit = try await WhisperKit(verbose: true)
                 print("WhisperKit initialized successfully")
                 startListening()
+                startAudioBuffering() // Add this line
             } catch {
                 print("Error initializing WhisperKit: \(error)")
+            }
+        }
+    }
+
+    // Add this new function
+    private func startAudioBuffering() {
+        Task {
+            while true {
+                if let samples = whisperKit?.audioProcessor.audioSamples {
+                    let bufferSize = Int(Double(WhisperKit.sampleRate) * bufferDuration)
+                    audioBuffer = Array(samples.suffix(bufferSize))
+                }
+                try await Task.sleep(nanoseconds: 100_000_000) // Update every 0.1 seconds
             }
         }
     }
@@ -170,6 +187,7 @@ struct ContentView: View {
     private func startNewMemo() {
         isRecordingMemo = true
         currentMemo = ""
+        isInitialTranscription = true
         silenceTimer?.invalidate()
         silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             checkSilence()
@@ -183,15 +201,22 @@ struct ContentView: View {
             while isRecordingMemo {
                 if let samples = whisperKit?.audioProcessor.audioSamples, samples.count > WhisperKit.sampleRate {
                     do {
-                        let result = try await whisperKit?.transcribe(audioArray: Array(samples))
+                        let samplesToTranscribe: [Float]
+                        if isInitialTranscription {
+                            samplesToTranscribe = audioBuffer + samples
+                            isInitialTranscription = false
+                        } else {
+                            samplesToTranscribe = Array(samples)
+                        }
+                        
+                        let result = try await whisperKit?.transcribe(audioArray: samplesToTranscribe)
                         await MainActor.run {
                             let newText = result?.first?.text ?? ""
                             if !newText.isEmpty {
-                                currentMemo += newText
-                                currentText += newText
+                                currentMemo = newText
+                                currentText = newText
                             }
                         }
-                        whisperKit?.audioProcessor.purgeAudioSamples(keepingLast: 0)
                     } catch {
                         print("Transcription error: \(error)")
                     }
@@ -233,7 +258,8 @@ struct ContentView: View {
         let payload: [String: Any] = [
             "model": "llama-3.1-8b",
             "messages": [["role": "user", "content": memo]],
-            "temperature": 0.7
+            "temperature": 0.7,
+            "stream": true
         ]
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else {
