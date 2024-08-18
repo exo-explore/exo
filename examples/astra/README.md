@@ -1,1 +1,3 @@
-This is an example of an app similar to [Google's Project Astra](https://deepmind.google/technologies/gemini/project-astra/) that is fully open source and uses exo running on your own devices instead of Google's closed-source API.
+## Overview
+
+This app is an open-source alternative to [Google's Project Astra](https://deepmind.google/technologies/gemini/project-astra/). It leverages the exo library to run on your own devices, providing a fully transparent and customizable experience compared to Google's closed-source API.
