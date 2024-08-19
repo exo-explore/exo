@@ -16,5 +16,7 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>
