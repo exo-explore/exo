@@ -111,20 +111,21 @@ enum CameraError: Error {
     case imageProcessingFailed
 }
 
-struct CameraPreview: UIViewRepresentable {
+struct CameraPreview: UIViewControllerRepresentable {
     let cameraActor: CameraActor
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+    func makeUIViewController(context: Context) -> UIViewController {
+        let viewController = UIViewController()
         let previewLayer = AVCaptureVideoPreviewLayer(session: cameraActor.captureSession)
         previewLayer.videoGravity = .resizeAspectFill
-        view.layer.addSublayer(previewLayer)
-        return view
+        viewController.view.layer.addSublayer(previewLayer)
+        previewLayer.frame = viewController.view.bounds
+        return viewController
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        if let previewLayer = uiView.layer.sublayers?.first as? AVCaptureVideoPreviewLayer {
-            previewLayer.frame = uiView.bounds
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        if let previewLayer = uiViewController.view.layer.sublayers?.first as? AVCaptureVideoPreviewLayer {
+            previewLayer.frame = uiViewController.view.bounds
         }
     }
 }
@@ -173,106 +174,99 @@ struct ContentView: View {
     @State private var isFirst3WordsOfResponse = true
 
     var body: some View {
-        VStack {
-            Text(currentText)
-                .padding()
-
-            Text(isListening ? "Listening..." : "Not listening")
-                .foregroundColor(isListening ? .green : .red)
-
-            if isRecordingMemo {
-                Text("Recording memo...")
-                    .foregroundColor(.blue)
+        ZStack {
+            if showLiveCamera, isCameraReady, let actor = cameraActor {
+                CameraPreview(cameraActor: actor)
+                    .edgesIgnoringSafeArea(.all)
             }
-
-            Picker("Model", selection: $selectedModel) {
-                Text("large-v3").tag("large-v3")
-                Text("base").tag("base")
-                Text("small").tag("small")
-            }
-            .pickerStyle(SegmentedPickerStyle())
-            .padding()
-
-            Button("Load Model") {
-                loadModel(selectedModel)
-            }
-            .disabled(modelState == .loaded)
-            .padding()
-
-            Text("Model State: \(modelState.description)")
-
-            Text(debugText)
-                .font(.caption)
-                .foregroundColor(.gray)
-
-            Text("TTS Active: \(isTTSActive ? "Yes" : "No")")
-                .font(.caption)
-                .foregroundColor(isTTSActive ? .green : .red)
-
-            Text("Current Silence Threshold: \(voiceActivityThreshold, specifier: "%.2f")")
-                .font(.caption)
-                .foregroundColor(.blue)
-
-            Text("Original Silence Threshold: \(originalSilenceThreshold, specifier: "%.2f")")
-                .font(.caption)
-                .foregroundColor(.orange)
-
-            Slider(value: $voiceActivityThreshold, in: 0.01...1.0) {
-                Text("Voice Activity Threshold: \(voiceActivityThreshold, specifier: "%.2f")")
-            }
-
-            Text("API Response:")
-                .font(.headline)
-                .padding(.top)
 
             ScrollView {
-                Text(streamingResponse)
-                    .padding()
-            }
-            .frame(height: 200)
-            .border(Color.gray, width: 1)
-
-            Toggle("Show Live Camera", isOn: $showLiveCamera)
-                .padding()
-                .onChange(of: showLiveCamera) { newValue in
-                    if newValue {
-                        Task {
-                            await setupCamera()
-                        }
-                    } else {
-                        cameraActor = nil
-                        isCameraReady = false
-                        print("Camera disabled")
-                    }
-                }
-
-            if showLiveCamera {
-                if isCameraReady, let actor = cameraActor {
-                    CameraPreview(cameraActor: actor)
-                        .frame(height: 200)
-                        .cornerRadius(10)
+                VStack {
+                    Text(currentText)
                         .padding()
 
-                    Button("Capture Photo") {
-                        Task {
-                            await capturePhoto()
+                    Text(isListening ? "Listening..." : "Not listening")
+                        .foregroundColor(isListening ? .green : .red)
+
+                    if isRecordingMemo {
+                        Text("Recording...")
+                            .foregroundColor(.blue)
+                    }
+
+                    Picker("Model", selection: $selectedModel) {
+                        Text("large-v3").tag("large-v3")
+                        Text("base").tag("base")
+                        Text("small").tag("small")
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .padding()
+
+                    Button("Load Model") {
+                        loadModel(selectedModel)
+                    }
+                    .disabled(modelState == .loaded)
+                    .padding()
+
+                    Text("Model State: \(modelState.description)")
+
+                    Text(debugText)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+
+                    Text("TTS Active: \(isTTSActive ? "Yes" : "No")")
+                        .font(.caption)
+                        .foregroundColor(isTTSActive ? .green : .red)
+
+                    Text("Current Silence Threshold: \(voiceActivityThreshold, specifier: "%.2f")")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+
+                    Text("Original Silence Threshold: \(originalSilenceThreshold, specifier: "%.2f")")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+
+                    Slider(value: $voiceActivityThreshold, in: 0.01...1.0) {
+                        Text("Voice Activity Threshold: \(voiceActivityThreshold, specifier: "%.2f")")
+                    }
+
+                    Text("API Response:")
+                        .font(.headline)
+                        .padding(.top)
+
+                    ScrollView {
+                        Text(streamingResponse)
+                            .padding()
+                    }
+                    .frame(height: 200)
+                    .border(Color.gray, width: 1)
+
+                    Toggle("Show Live Camera", isOn: $showLiveCamera)
+                        .padding()
+                        .onChange(of: showLiveCamera) { newValue in
+                            if newValue {
+                                Task {
+                                    await setupCamera()
+                                }
+                            } else {
+                                cameraActor = nil
+                                isCameraReady = false
+                                print("Camera disabled")
+                            }
+                        }
+
+                    if !showLiveCamera {
+                        Text("Camera Ready: \(isCameraReady ? "Yes" : "No")")
+                            .padding()
+
+                        if let errorMessage = errorMessage {
+                            Text("Error: \(errorMessage)")
+                                .foregroundColor(.red)
+                                .padding()
                         }
                     }
-                    .padding()
-                } else {
-                    ProgressView("Initializing camera...")
-                        .padding()
                 }
             }
-
-            Text("Camera Ready: \(isCameraReady ? "Yes" : "No")")
-                .padding()
-
-            if let errorMessage = errorMessage {
-                Text("Error: \(errorMessage)")
-                    .foregroundColor(.red)
-                    .padding()
-            }
+            .opacity(showLiveCamera ? 0.7 : 1)
         }
         .onAppear {
             setupWhisperKit()
