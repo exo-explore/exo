@@ -4,6 +4,8 @@ import signal
 import json
 import time
 import traceback
+import uuid
+from asyncio import CancelledError
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
@@ -11,8 +13,13 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent
 from exo.download.hf.hf_shard_download import HFShardDownloader
-from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_inference_engine, get_system_info, get_or_create_node_id, get_all_ip_addresses, terminal_link
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses, terminal_link
 from exo.inference.shard import Shard
+from exo.inference.inference_engine import get_inference_engine, InferenceEngine
+from exo.inference.tokenizers import resolve_tokenizer
+from exo.orchestration.node import Node
+from exo.models import model_base_shards
+from exo.viz.topology_viz import TopologyViz
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -31,6 +38,8 @@ parser.add_argument("--chatgpt-api-response-timeout-secs", type=int, default=90,
 parser.add_argument("--max-generate-tokens", type=int, default=1024, help="Max tokens to generate in each request")
 parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
+parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
+parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 args = parser.parse_args()
 
 print_yellow_exo()
@@ -58,6 +67,7 @@ if DEBUG >= 0:
     print("ChatGPT API endpoint served at:")
     for chatgpt_api_endpoint in chatgpt_api_endpoints:
         print(f" - {terminal_link(chatgpt_api_endpoint)}")
+topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
 node = StandardNode(
     args.node_id,
     None,
@@ -68,11 +78,14 @@ node = StandardNode(
     partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
     disable_tui=args.disable_tui,
     max_generate_tokens=args.max_generate_tokens,
+    topology_viz=topology_viz
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
-api = ChatGPTAPI(node, inference_engine.__class__.__name__, response_timeout_secs=args.chatgpt_api_response_timeout_secs)
-node.on_token.register("main_log").on_next(lambda _, tokens, __: print(inference_engine.tokenizer.decode(tokens) if hasattr(inference_engine, "tokenizer") else tokens))
+api = ChatGPTAPI(node, inference_engine.__class__.__name__, response_timeout_secs=args.chatgpt_api_response_timeout_secs, on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None)
+node.on_token.register("update_topology_viz").on_next(
+    lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens) if hasattr(inference_engine, "tokenizer") else tokens) if topology_viz else None
+)
 def preemptively_start_download(request_id: str, opaque_status: str):
     try:
         status = json.loads(opaque_status)
@@ -110,6 +123,36 @@ async def shutdown(signal, loop):
     await server.stop()
     loop.stop()
 
+async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
+    shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
+    if not shard:
+        print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+        return
+    tokenizer = await resolve_tokenizer(shard.model_id)
+    request_id = str(uuid.uuid4())
+    callback_id = f"cli-wait-response-{request_id}"
+    callback = node.on_token.register(callback_id)
+    if topology_viz:
+        topology_viz.update_prompt(request_id, prompt)
+    prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+
+    try:
+        print(f"Processing prompt: {prompt}")
+        await node.process_prompt(shard, prompt, None, request_id=request_id)
+
+        _, tokens, _ = await callback.wait(
+            lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
+            timeout=90
+        )
+
+        print("\nGenerated response:")
+        print(tokenizer.decode(tokens))
+    except Exception as e:
+        print(f"Error processing prompt: {str(e)}")
+        traceback.print_exc()
+    finally:
+        node.on_token.deregister(callback_id)
+
 async def main():
     loop = asyncio.get_running_loop()
 
@@ -121,9 +164,12 @@ async def main():
         loop.add_signal_handler(s, handle_exit)
 
     await node.start(wait_for_peers=args.wait_for_peers)
-    asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
 
-    await asyncio.Event().wait()
+    if args.run_model:
+        await run_model_cli(node, inference_engine, args.run_model, args.prompt)
+    else:
+        asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
+        await asyncio.Event().wait()
 
 if __name__ == "__main__":
     loop = asyncio.new_event_loop()
