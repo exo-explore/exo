@@ -142,7 +142,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
         _, tokens, _ = await callback.wait(
             lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
-            timeout=90
+            timeout=300
         )
 
         print("\nGenerated response:")
