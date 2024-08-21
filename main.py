@@ -120,7 +120,10 @@ async def shutdown(signal, loop):
     [task.cancel() for task in server_tasks]
     print(f"Cancelling {len(server_tasks)} outstanding tasks")
     await asyncio.gather(*server_tasks, return_exceptions=True)
-    await server.stop()
+    try:
+        await server.stop()
+    except CancelledError:
+        pass
     loop.stop()
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
