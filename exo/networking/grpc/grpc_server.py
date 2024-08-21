@@ -1,6 +1,7 @@
 import grpc
 from concurrent import futures
 import numpy as np
+from asyncio import CancelledError
 
 from . import node_service_pb2
 from . import node_service_pb2_grpc
@@ -33,8 +34,11 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
 
   async def stop(self) -> None:
     if self.server:
-      await self.server.stop(grace=5)
-      await self.server.wait_for_termination()
+      try:
+        await self.server.stop(grace=5)
+        await self.server.wait_for_termination()
+      except CancelledError:
+        pass
       if DEBUG >= 1: print("Server stopped and all connections are closed")
 
   async def SendPrompt(self, request, context):
