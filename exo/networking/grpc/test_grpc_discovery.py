@@ -1,12 +1,12 @@
 import asyncio
 import unittest
-from .grpc_discovery import GRPCDiscovery
+from ..udp_discovery import UDPDiscovery
 
 
-class TestGRPCDiscovery(unittest.IsolatedAsyncioTestCase):
+class TestUDPDiscovery(unittest.IsolatedAsyncioTestCase):
   async def asyncSetUp(self):
-    self.node1 = GRPCDiscovery("node1", 50051, 5678, 5679)
-    self.node2 = GRPCDiscovery("node2", 50052, 5679, 5678)
+    self.node1 = UDPDiscovery("node1", 50051, 5678, 5679)
+    self.node2 = UDPDiscovery("node2", 50052, 5679, 5678)
     await self.node1.start()
     await self.node2.start()
 

@@ -235,6 +235,7 @@ async def download_repo_files(repo_id: str, revision: str = "main", progress_cal
             if DEBUG >= 2: print(f"Cached file list at {cached_file_list_path}")
 
         filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns, key=lambda x: x["path"]))
+        if DEBUG >= 2: print(f"Filtered file list {allow_patterns=} {ignore_patterns=}\noriginal: {file_list}\nfiltered: {filtered_file_list}")
         total_files = len(filtered_file_list)
         total_bytes = sum(file["size"] for file in filtered_file_list)
         file_progress: Dict[str, RepoFileProgressEvent] = {file["path"]: RepoFileProgressEvent(repo_id, revision, file["path"], 0, 0, file["size"], 0, timedelta(0), "not_started") for file in filtered_file_list}
@@ -353,4 +354,5 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
             shard_specific_patterns.append(sorted_file_names[-1])
     else:
         shard_specific_patterns = ["*.safetensors"]
+    if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
     return list(set(default_patterns + shard_specific_patterns))  # Remove duplicates

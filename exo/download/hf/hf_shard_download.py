@@ -41,7 +41,7 @@ class HFShardDownloader(ShardDownloader):
             try:
                 await task
             except asyncio.CancelledError:
-                pass  # This is expected when cancelling a task
+                pass
             except Exception as e:
                 if DEBUG >= 2: print(f"Error in cancelling download {active_shard}: {e}")
                 traceback.print_exc()

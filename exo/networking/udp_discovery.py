@@ -2,10 +2,11 @@ import asyncio
 import json
 import socket
 import time
+import traceback
 from typing import List, Dict, Callable, Tuple, Coroutine
-from ..discovery import Discovery
-from ..peer_handle import PeerHandle
-from .grpc_peer_handle import GRPCPeerHandle
+from .discovery import Discovery
+from .peer_handle import PeerHandle
+from .grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo import DEBUG_DISCOVERY
 
@@ -23,7 +24,7 @@ class ListenProtocol(asyncio.DatagramProtocol):
     asyncio.create_task(self.on_message(data, addr))
 
 
-class GRPCDiscovery(Discovery):
+class UDPDiscovery(Discovery):
   def __init__(
     self,
     node_id: str,
@@ -114,8 +115,6 @@ class GRPCDiscovery(Discovery):
         await asyncio.sleep(self.broadcast_interval)
       except Exception as e:
         print(f"Error in broadcast presence: {e}")
-        import traceback
-
         print(traceback.format_exc())
 
   async def on_listen_message(self, data, addr):
@@ -185,6 +184,4 @@ class GRPCDiscovery(Discovery):
         await asyncio.sleep(self.broadcast_interval)
       except Exception as e:
         print(f"Error in cleanup peers: {e}")
-        import traceback
-
         print(traceback.format_exc())
