@@ -74,8 +74,8 @@ class VisionAttention(nn.Module):
     keys = keys.reshape(B, S, num_heads, -1).transpose(0, 2, 3, 1)
     values = values.reshape(B, S, num_heads, -1).transpose(0, 2, 1, 3)
 
-    scale = math.sqrt(1 / queries.shape[-1])
-    scores = (queries * scale) @ keys
+    scale = math.sqrt(1/queries.shape[-1])
+    scores = (queries*scale) @ keys
     if mask is not None:
       scores = scores + mask.astype(scores.dtype)
     scores = mx.softmax(scores, axis=-1)
@@ -129,7 +129,7 @@ class VisionEmbeddings(nn.Module):
     self.image_size = config.image_size
     self.patch_size = config.patch_size
 
-    self.class_embedding = mx.zeros((config.hidden_size, ))
+    self.class_embedding = mx.zeros((config.hidden_size,))
 
     self.patch_embedding = nn.Conv2d(
       in_channels=config.num_channels,
@@ -170,12 +170,12 @@ class ClipVisionModel(nn.Module):
     x = self.embeddings(x)
     x = self.pre_layrnorm(x)
 
-    encoder_states = (x, ) if output_hidden_states else None
+    encoder_states = (x,) if output_hidden_states else None
 
     for l in self.encoder.layers:
       x = l(x, mask=None)
       if output_hidden_states:
-        encoder_states = encoder_states + (x, )
+        encoder_states = encoder_states + (x,)
 
     pooler_output = self.post_layernorm(x[:, 0, :])
     return pooler_output, x, encoder_states
@@ -263,12 +263,12 @@ class TextAttention(nn.Module):
     head_dim = config.hidden_size // n_heads
     self.scale = head_dim**-0.5
 
-    self.q_proj = nn.Linear(dim, n_heads * head_dim, bias=False)
-    self.k_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=False)
-    self.v_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=False)
-    self.o_proj = nn.Linear(n_heads * head_dim, dim, bias=False)
+    self.q_proj = nn.Linear(dim, n_heads*head_dim, bias=False)
+    self.k_proj = nn.Linear(dim, n_kv_heads*head_dim, bias=False)
+    self.v_proj = nn.Linear(dim, n_kv_heads*head_dim, bias=False)
+    self.o_proj = nn.Linear(n_heads*head_dim, dim, bias=False)
 
-    rope_scale = (1 / config.rope_scaling["factor"] if config.rope_scaling is not None and config.rope_scaling["type"] == "linear" else 1)
+    rope_scale = (1/config.rope_scaling["factor"] if config.rope_scaling is not None and config.rope_scaling["type"] == "linear" else 1)
     self.rope = nn.RoPE(
       head_dim,
       traditional=config.rope_traditional,
@@ -312,7 +312,7 @@ class TextMLP(nn.Module):
     self.up_proj = nn.Linear(dim, hidden_dim, bias=False)
 
   def __call__(self, x) -> mx.array:
-    return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
+    return self.down_proj(nn.silu(self.gate_proj(x))*self.up_proj(x))
 
 
 class TransformerBlock(nn.Module):
@@ -382,7 +382,7 @@ class Llama(nn.Module):
       mask = mask.astype(h.dtype)
 
     if cache is None:
-      cache = [None] * len(self.layers)
+      cache = [None]*len(self.layers)
 
     for layer, c in zip(self.layers, cache):
       h = layer(h, mask, c)

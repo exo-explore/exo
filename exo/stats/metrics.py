@@ -24,6 +24,6 @@ def start_metrics_server(node: Node, port: int):
     elif status == "end_process_tensor":
       elapsed_time_ns = status_data.get("elapsed_time_ns", 0)
       PROCESS_TENSOR_COUNTER.labels(node_id=node_id).inc()
-      PROCESS_TENSOR_TIME.labels(node_id=node_id).observe(elapsed_time_ns / 1e9)  # Convert ns to seconds
+      PROCESS_TENSOR_TIME.labels(node_id=node_id).observe(elapsed_time_ns/1e9)  # Convert ns to seconds
 
   node.on_opaque_status.register("stats").on_next(_on_opaque_status)

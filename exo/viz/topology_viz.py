@@ -99,7 +99,7 @@ class TopologyViz:
       # Process prompt
       prompt_lines = prompt.split('\n')
       if len(prompt_lines) > max_lines // 2:
-        prompt_lines = prompt_lines[:max_lines // 2 - 1] + ['...']
+        prompt_lines = prompt_lines[:max_lines//2 - 1] + ['...']
       prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
       prompt_text.append('\n'.join(line[:max_width] for line in prompt_lines), style="white")
 
@@ -139,7 +139,7 @@ class TopologyViz:
     max_line_length = max(len(line) for line in exo_lines)
     for i, line in enumerate(exo_lines):
       centered_line = line.center(max_line_length)
-      start_x = (100 - max_line_length) // 2 + 15
+      start_x = (100-max_line_length) // 2 + 15
       colored_line = Text(centered_line, style=yellow_style)
       for j, char in enumerate(str(colored_line)):
         if 0 <= start_x + j < 100 and i < len(visualization):
@@ -161,18 +161,18 @@ class TopologyViz:
 
     # Calculate total FLOPS and position on the bar
     total_flops = sum(self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16 for partition in self.partitions)
-    bar_pos = (math.tanh(total_flops / 20 - 2) + 1) / 2
+    bar_pos = (math.tanh(total_flops/20 - 2) + 1)/2
 
     # Add GPU poor/rich bar
     bar_width = 30
-    bar_start_x = (100 - bar_width) // 2
+    bar_start_x = (100-bar_width) // 2
     bar_y = info_start_y + len(info_lines) + 1
 
     # Create a gradient bar using emojis
     gradient_bar = Text()
     emojis = ["🟥", "🟧", "🟨", "🟩"]
     for i in range(bar_width):
-      emoji_index = min(int(i / (bar_width / len(emojis))), len(emojis) - 1)
+      emoji_index = min(int(i/(bar_width/len(emojis))), len(emojis) - 1)
       gradient_bar.append(emojis[emoji_index])
 
     # Add the gradient bar to the visualization
@@ -183,10 +183,10 @@ class TopologyViz:
 
     # Add labels
     visualization[bar_y - 1][bar_start_x - 10:bar_start_x - 3] = "GPU poor"
-    visualization[bar_y - 1][bar_start_x + bar_width * 2 + 2:bar_start_x + bar_width * 2 + 11] = "GPU rich"
+    visualization[bar_y - 1][bar_start_x + bar_width*2 + 2:bar_start_x + bar_width*2 + 11] = "GPU rich"
 
     # Add position indicator and FLOPS value
-    pos_x = bar_start_x + int(bar_pos * bar_width)
+    pos_x = bar_start_x + int(bar_pos*bar_width)
     flops_str = f"{total_flops:.2f} TFLOPS"
     visualization[bar_y - 1][pos_x] = "▼"
     visualization[bar_y + 1][pos_x - len(flops_str) // 2:pos_x + len(flops_str) // 2 + len(flops_str) % 2] = flops_str
@@ -198,9 +198,9 @@ class TopologyViz:
     for i, partition in enumerate(self.partitions):
       device_capabilities = self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES)
 
-      angle = 2 * math.pi * i / num_partitions
-      x = int(center_x + radius_x * math.cos(angle))
-      y = int(center_y + radius_y * math.sin(angle))
+      angle = 2*math.pi*i/num_partitions
+      x = int(center_x + radius_x*math.cos(angle))
+      y = int(center_y + radius_y*math.sin(angle))
 
       # Place node with different color for active node and this node
       if partition.node_id == self.topology.active_node_id:
@@ -220,8 +220,8 @@ class TopologyViz:
       # Calculate info position based on angle
       info_distance_x = radius_x + 6
       info_distance_y = radius_y + 3
-      info_x = int(center_x + info_distance_x * math.cos(angle))
-      info_y = int(center_y + info_distance_y * math.sin(angle))
+      info_x = int(center_x + info_distance_x*math.cos(angle))
+      info_y = int(center_y + info_distance_y*math.sin(angle))
 
       # Adjust text position to avoid overwriting the node icon and prevent cutoff
       if info_x < x:
@@ -230,9 +230,9 @@ class TopologyViz:
         info_x = min(99 - len(max(node_info, key=len)), info_x)
 
       # Adjust for top and bottom nodes
-      if 5 * math.pi / 4 < angle < 7 * math.pi / 4:
+      if 5*math.pi/4 < angle < 7*math.pi/4:
         info_x += 4
-      elif math.pi / 4 < angle < 3 * math.pi / 4:
+      elif math.pi/4 < angle < 3*math.pi/4:
         info_x += 3
         info_y -= 2
 
@@ -243,16 +243,16 @@ class TopologyViz:
               visualization[info_y + j][info_x + k] = char
 
       # Draw line to next node
-      next_i = (i + 1) % num_partitions
-      next_angle = 2 * math.pi * next_i / num_partitions
-      next_x = int(center_x + radius_x * math.cos(next_angle))
-      next_y = int(center_y + radius_y * math.sin(next_angle))
+      next_i = (i+1) % num_partitions
+      next_angle = 2*math.pi*next_i/num_partitions
+      next_x = int(center_x + radius_x*math.cos(next_angle))
+      next_y = int(center_y + radius_y*math.sin(next_angle))
 
       # Simple line drawing
       steps = max(abs(next_x - x), abs(next_y - y))
       for step in range(1, steps):
-        line_x = int(x + (next_x - x) * step / steps)
-        line_y = int(y + (next_y - y) * step / steps)
+        line_x = int(x + (next_x-x)*step/steps)
+        line_y = int(y + (next_y-y)*step/steps)
         if 0 <= line_y < 48 and 0 <= line_x < 100:
           visualization[line_y][line_x] = "-"
 
@@ -280,7 +280,7 @@ class TopologyViz:
 
       for file_path, file_progress in download_progress.file_progress.items():
         if file_progress.status != "complete":
-          progress = int(file_progress.downloaded / file_progress.total * 30)
+          progress = int(file_progress.downloaded/file_progress.total*30)
           bar = f"[{'=' * progress}{' ' * (30 - progress)}]"
           percentage = f"{file_progress.downloaded / file_progress.total * 100:.0f}%"
           summary.add_row(Text(file_path[:30], style="cyan"), bar, percentage)
@@ -294,7 +294,7 @@ class TopologyViz:
         device = self.topology.nodes.get(node_id)
         partition = next((p for p in self.partitions if p.node_id == node_id), None)
         partition_info = f"[{partition.start:.2f}-{partition.end:.2f}]" if partition else ""
-        percentage = progress.downloaded_bytes / progress.total_bytes * 100 if progress.total_bytes > 0 else 0
+        percentage = progress.downloaded_bytes/progress.total_bytes*100 if progress.total_bytes > 0 else 0
         speed = pretty_print_bytes_per_second(progress.overall_speed)
         device_info = f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}"
         progress_info = f"{progress.repo_id}@{progress.repo_revision} ({speed})"

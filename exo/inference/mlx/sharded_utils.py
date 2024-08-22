@@ -60,7 +60,7 @@ def _get_classes(config: dict):
 
 def load_config(model_path: Path) -> dict:
   try:
-    with open(model_path / "config.json", "r") as f:
+    with open(model_path/"config.json", "r") as f:
       config = json.load(f)
   except FileNotFoundError:
     logging.error(f"Config file not found in {model_path}")
@@ -103,11 +103,11 @@ def load_model_shard(
     "n_layers": shard.n_layers,
   }
 
-  weight_files = glob.glob(str(model_path / "model*.safetensors"))
+  weight_files = glob.glob(str(model_path/"model*.safetensors"))
 
   if not weight_files:
     # Try weight for back-compat
-    weight_files = glob.glob(str(model_path / "weight*.safetensors"))
+    weight_files = glob.glob(str(model_path/"weight*.safetensors"))
 
   if not weight_files:
     logging.error(f"No safetensors found in {model_path}")

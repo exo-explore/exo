@@ -22,7 +22,7 @@ class HFShardDownloader(ShardDownloader):
       return self.completed_downloads[shard]
     if self.quick_check:
       repo_root = get_repo_root(shard.model_id)
-      snapshots_dir = repo_root / "snapshots"
+      snapshots_dir = repo_root/"snapshots"
       if snapshots_dir.exists():
         most_recent_dir = max(snapshots_dir.iterdir(), key=lambda x: x.stat().st_mtime)
         return most_recent_dir

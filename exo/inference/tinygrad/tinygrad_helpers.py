@@ -37,7 +37,7 @@ def load(fn: str, shard: Shard):
         if layer_num < shard.start_layer or layer_num > shard.end_layer:
           continue
 
-      parts[n] = load(str(Path(fn).parent / Path(n).name), shard)
+      parts[n] = load(str(Path(fn).parent/Path(n).name), shard)
       filtered_weight_map[k] = n
     if DEBUG >= 2: print(f"Excluded model param keys for {shard=}: {sorted(set(weight_map.keys()) - set(filtered_weight_map.keys()))}")
     return {k: parts[n][k] for k, n in filtered_weight_map.items()}

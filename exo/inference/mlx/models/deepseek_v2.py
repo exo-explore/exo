@@ -59,7 +59,7 @@ class DeepseekV2Model(nn.Module):
       mask = mask.astype(h.dtype)
 
     if cache is None:
-      cache = [None] * len(self.layers)
+      cache = [None]*len(self.layers)
 
     for layer, c in zip(self.layers, cache):
       h = layer(h, mask, c)

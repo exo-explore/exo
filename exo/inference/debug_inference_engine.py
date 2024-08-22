@@ -10,7 +10,7 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
   from exo.inference.tinygrad.inference import Tokenizer
   from pathlib import Path
 
-  _tokenizer = Tokenizer(str(Path(model_id) / "tokenizer.model"))
+  _tokenizer = Tokenizer(str(Path(model_id)/"tokenizer.model"))
 
   prompt = "In a single word only, what is the last name of the president of the United States? "
   resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt("A", shard=Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32), prompt=prompt)

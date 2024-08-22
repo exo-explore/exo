@@ -38,7 +38,7 @@ model.save_weights("./test_weights.npz")
 n_layers = 5
 shard1 = Shard("test", 0, n_layers // 2, n_layers)
 sharded_model1 = DummyModel(shard1)
-shard2 = Shard("test", n_layers // 2 + 1, n_layers - 1, n_layers)
+shard2 = Shard("test", n_layers//2 + 1, n_layers - 1, n_layers)
 sharded_model2 = DummyModel(shard2)
 
 model.load_weights("./test_weights.npz")

@@ -62,12 +62,12 @@ def _add_wildcard_to_directories(pattern: str) -> str:
 
 def get_hf_home() -> Path:
   """Get the Hugging Face home directory."""
-  return Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+  return Path(os.environ.get("HF_HOME", Path.home()/".cache"/"huggingface"))
 
 
 async def get_hf_token():
   """Retrieve the Hugging Face token from the user's HF_HOME directory."""
-  token_path = get_hf_home() / "token"
+  token_path = get_hf_home()/"token"
   if await aios.path.exists(token_path):
     async with aiofiles.open(token_path, 'r') as f:
       return (await f.read()).strip()
@@ -85,7 +85,7 @@ async def get_auth_headers():
 def get_repo_root(repo_id: str) -> Path:
   """Get the root directory for a given repo ID in the Hugging Face cache."""
   sanitized_repo_id = repo_id.replace("/", "--")
-  return get_hf_home() / "hub" / f"models--{sanitized_repo_id}"
+  return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"
 
 
 async def fetch_file_list(session, repo_id, revision, path=""):
@@ -181,9 +181,9 @@ async def download_file(
         downloaded_this_session += len(chunk)
         if progress_callback and total_size:
           elapsed_time = (datetime.now() - start_time).total_seconds()
-          speed = int(downloaded_this_session / elapsed_time) if elapsed_time > 0 else 0
+          speed = int(downloaded_this_session/elapsed_time) if elapsed_time > 0 else 0
           remaining_size = total_size - downloaded_size
-          eta = timedelta(seconds=remaining_size / speed) if speed > 0 else timedelta(0)
+          eta = timedelta(seconds=remaining_size/speed) if speed > 0 else timedelta(0)
           status = "in_progress" if downloaded_size < total_size else "complete"
           if DEBUG >= 8: print(f"HF repo file download progress: {file_path=} {elapsed_time=} {speed=} Downloaded={downloaded_size}/{total_size} {remaining_size=} {eta=} {status=}")
           await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, downloaded_size, downloaded_this_session, total_size, speed, eta, status))
@@ -199,9 +199,9 @@ async def download_repo_files(
   max_parallel_downloads: int = 4
 ) -> Path:
   repo_root = get_repo_root(repo_id)
-  refs_dir = repo_root / "refs"
-  snapshots_dir = repo_root / "snapshots"
-  cachedreqs_dir = repo_root / "cachedreqs"
+  refs_dir = repo_root/"refs"
+  snapshots_dir = repo_root/"snapshots"
+  cachedreqs_dir = repo_root/"cachedreqs"
 
   # Ensure directories exist
   await aios.makedirs(refs_dir, exist_ok=True)
@@ -209,7 +209,7 @@ async def download_repo_files(
   await aios.makedirs(cachedreqs_dir, exist_ok=True)
 
   # Check if we have a cached commit hash
-  refs_file = refs_dir / revision
+  refs_file = refs_dir/revision
   if await aios.path.exists(refs_file):
     async with aiofiles.open(refs_file, 'r') as f:
       commit_hash = (await f.read()).strip()
@@ -230,13 +230,13 @@ async def download_repo_files(
         await f.write(commit_hash)
 
   # Set up the snapshot directory
-  snapshot_dir = snapshots_dir / commit_hash
+  snapshot_dir = snapshots_dir/commit_hash
   await aios.makedirs(snapshot_dir, exist_ok=True)
 
   # Set up the cached file list directory
-  cached_file_list_dir = cachedreqs_dir / commit_hash
+  cached_file_list_dir = cachedreqs_dir/commit_hash
   await aios.makedirs(cached_file_list_dir, exist_ok=True)
-  cached_file_list_path = cached_file_list_dir / "fetch_file_list.json"
+  cached_file_list_path = cached_file_list_dir/"fetch_file_list.json"
 
   async with aiohttp.ClientSession() as session:
     # Check if we have a cached file list
@@ -261,7 +261,7 @@ async def download_repo_files(
     start_time = datetime.now()
 
     async def download_with_progress(file_info, progress_state):
-      local_path = snapshot_dir / file_info["path"]
+      local_path = snapshot_dir/file_info["path"]
       if await aios.path.exists(local_path) and (await aios.stat(local_path)).st_size == file_info["size"]:
         if DEBUG >= 2: print(f"File already fully downloaded: {file_info['path']}")
         progress_state['completed_files'] += 1
@@ -269,9 +269,9 @@ async def download_repo_files(
         file_progress[file_info["path"]] = RepoFileProgressEvent(repo_id, revision, file_info["path"], file_info["size"], 0, file_info["size"], 0, timedelta(0), "complete")
         if progress_callback:
           elapsed_time = (datetime.now() - start_time).total_seconds()
-          overall_speed = int(progress_state['downloaded_bytes_this_session'] / elapsed_time) if elapsed_time > 0 else 0
+          overall_speed = int(progress_state['downloaded_bytes_this_session']/elapsed_time) if elapsed_time > 0 else 0
           remaining_bytes = total_bytes - progress_state['downloaded_bytes']
-          overall_eta = timedelta(seconds=remaining_bytes / overall_speed) if overall_speed > 0 else timedelta(seconds=0)
+          overall_eta = timedelta(seconds=remaining_bytes/overall_speed) if overall_speed > 0 else timedelta(seconds=0)
           status = "in_progress" if progress_state['completed_files'] < total_files else "complete"
           await progress_callback(
             RepoProgressEvent(
@@ -287,9 +287,9 @@ async def download_repo_files(
         file_progress[event.file_path] = event
         if progress_callback:
           elapsed_time = (datetime.now() - start_time).total_seconds()
-          overall_speed = int(progress_state['downloaded_bytes_this_session'] / elapsed_time) if elapsed_time > 0 else 0
+          overall_speed = int(progress_state['downloaded_bytes_this_session']/elapsed_time) if elapsed_time > 0 else 0
           remaining_bytes = total_bytes - progress_state['downloaded_bytes']
-          overall_eta = timedelta(seconds=remaining_bytes / overall_speed) if overall_speed > 0 else timedelta(seconds=0)
+          overall_eta = timedelta(seconds=remaining_bytes/overall_speed) if overall_speed > 0 else timedelta(seconds=0)
           status = "in_progress" if progress_state['downloaded_bytes'] < total_bytes else "complete"
           await progress_callback(
             RepoProgressEvent(
@@ -305,9 +305,9 @@ async def download_repo_files(
       ] = RepoFileProgressEvent(repo_id, revision, file_info["path"], file_info["size"], file_progress[file_info["path"]].downloaded_this_session, file_info["size"], 0, timedelta(0), "complete")
       if progress_callback:
         elapsed_time = (datetime.now() - start_time).total_seconds()
-        overall_speed = int(progress_state['downloaded_bytes_this_session'] / elapsed_time) if elapsed_time > 0 else 0
+        overall_speed = int(progress_state['downloaded_bytes_this_session']/elapsed_time) if elapsed_time > 0 else 0
         remaining_bytes = total_bytes - progress_state['downloaded_bytes']
-        overall_eta = timedelta(seconds=remaining_bytes / overall_speed) if overall_speed > 0 else timedelta(seconds=0)
+        overall_eta = timedelta(seconds=remaining_bytes/overall_speed) if overall_speed > 0 else timedelta(seconds=0)
         status = "in_progress" if progress_state['completed_files'] < total_files else "complete"
         await progress_callback(
           RepoProgressEvent(
@@ -347,11 +347,11 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Optional[Dict[
 
   # Check if the file exists
   repo_root = get_repo_root(repo_id)
-  snapshot_dir = repo_root / "snapshots"
+  snapshot_dir = repo_root/"snapshots"
   index_file = next((f for f in await aios.listdir(snapshot_dir) if f.endswith("model.safetensors.index.json")), None)
 
   if index_file:
-    index_file_path = snapshot_dir / index_file
+    index_file_path = snapshot_dir/index_file
     if await aios.path.exists(index_file_path):
       async with aiofiles.open(index_file_path, 'r') as f:
         index_data = json.loads(await f.read())

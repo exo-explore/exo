@@ -33,9 +33,9 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
 
   # load weights
   if model_path.is_dir():
-    if (model_path / "model.safetensors.index.json").exists(): weights = load(str(model_path / "model.safetensors.index.json"), shard)
-    elif (model_path / "model.safetensors").exists(): weights = load(str(model_path / "model.safetensors"), shard)
-    else: weights = concat_weights([load(str(model_path / f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
+    if (model_path/"model.safetensors.index.json").exists(): weights = load(str(model_path/"model.safetensors.index.json"), shard)
+    elif (model_path/"model.safetensors").exists(): weights = load(str(model_path/"model.safetensors"), shard)
+    else: weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
   else:
     weights = load(str(model_path), shard)
   weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
@@ -60,7 +60,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     toks = self.tokenizer.encode(prompt)
     h = self.model(Tensor([toks]), start_pos, TEMPERATURE).realize()
 
-    if h.shape == (1, ):
+    if h.shape == (1,):
       start_pos += len(toks)
       start_pos += 1
       n_captured_toks = 0
@@ -76,7 +76,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     h = self.model(Tensor(input_data), start_pos, TEMPERATURE).realize()
 
-    if h.shape == (1, ):
+    if h.shape == (1,):
       start_pos += n_captured_toks
       start_pos += 1
       n_captured_toks = 0

@@ -158,7 +158,7 @@ class ChatGPTAPI:
     self.inference_engine_classname = inference_engine_classname
     self.response_timeout_secs = response_timeout_secs
     self.on_chat_completion_request = on_chat_completion_request
-    self.app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB to support image upload
+    self.app = web.Application(client_max_size=100*1024*1024)  # 100MB to support image upload
     self.prompts: PrefixDict[str, PromptSession] = PrefixDict()
     self.prev_token_lens: Dict[str, int] = {}
     self.stream_tasks: Dict[str, asyncio.Task] = {}
@@ -171,7 +171,7 @@ class ChatGPTAPI:
     )
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
-    self.static_dir = Path(__file__).parent.parent.parent / "tinychat/examples/tinychat"
+    self.static_dir = Path(__file__).parent.parent.parent/"tinychat/examples/tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 
@@ -186,7 +186,7 @@ class ChatGPTAPI:
     return middleware
 
   async def handle_root(self, request):
-    return web.FileResponse(self.static_dir / "index.html")
+    return web.FileResponse(self.static_dir/"index.html")
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
