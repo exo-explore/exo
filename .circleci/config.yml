@@ -44,6 +44,7 @@ commands:
             # Check processes before proceeding
             check_processes
 
+            echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -56,6 +57,7 @@ commands:
             # Check processes after first response
             check_processes
 
+            echo "Sending request to second instance..."
             response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
