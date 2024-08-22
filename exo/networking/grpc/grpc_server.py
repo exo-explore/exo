@@ -11,6 +11,7 @@ from exo.orchestration import Node
 
 
 class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
+
   def __init__(self, node: Node, host: str, port: int):
     self.node = node
     self.host = host
@@ -81,9 +82,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       node_service_pb2.InferenceResult(
         tensor=node_service_pb2.Tensor(tensor_data=tensor_data, shape=result[0].shape, dtype=str(result[0].dtype)),
         is_finished=result[1],
-      )
-      if result[0] is not None
-      else node_service_pb2.InferenceResult(is_finished=result[1])
+      ) if result[0] is not None else node_service_pb2.InferenceResult(is_finished=result[1])
     )
 
   async def CollectTopology(self, request, context):
@@ -91,12 +90,13 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     visited = set(request.visited)
     topology = await self.node.collect_topology(visited, max_depth)
     nodes = {
-      node_id: node_service_pb2.DeviceCapabilities(
-        model=cap.model,
-        chip=cap.chip,
-        memory=cap.memory,
-        flops=node_service_pb2.DeviceFlops(fp32=cap.flops.fp32, fp16=cap.flops.fp16, int8=cap.flops.int8),
-      )
+      node_id:
+        node_service_pb2.DeviceCapabilities(
+          model=cap.model,
+          chip=cap.chip,
+          memory=cap.memory,
+          flops=node_service_pb2.DeviceFlops(fp32=cap.flops.fp32, fp16=cap.flops.fp16, int8=cap.flops.int8),
+        )
       for node_id, cap in topology.nodes.items()
     }
     peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}

@@ -20,15 +20,10 @@ TOP_P = 0.9
 ALPHA_F = 0.1
 ALPHA_P = 0.0
 MODEL_PARAMS = {
-  "8B": {
-    "args": {"dim": 4096, "n_heads": 32, "n_kv_heads": 8, "n_layers": 32, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 14336},
-    "files": 1
-  },
-  "70B": {
-    "args": {"dim": 8192, "n_heads": 64, "n_kv_heads": 8, "n_layers": 80, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256,  "hidden_dim": 28672},
-    "files": 8
-  }
+  "8B": {"args": {"dim": 4096, "n_heads": 32, "n_kv_heads": 8, "n_layers": 32, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 14336}, "files": 1},
+  "70B": {"args": {"dim": 8192, "n_heads": 64, "n_kv_heads": 8, "n_layers": 80, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 28672}, "files": 8}
 }
+
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
   # build model
@@ -48,10 +43,12 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
 
   with Context(BEAM=0):
     # replace weights in model
-    load_state_dict(model, weights, strict=False, consume=False) # consume=True
+    load_state_dict(model, weights, strict=False, consume=False)  # consume=True
   return model
 
+
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
+
   def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
@@ -64,7 +61,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     toks = self.tokenizer.encode(prompt)
     h = self.model(Tensor([toks]), start_pos, TEMPERATURE).realize()
 
-    if h.shape == (1,):
+    if h.shape == (1, ):
       start_pos += len(toks)
       start_pos += 1
       n_captured_toks = 0
@@ -80,7 +77,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     h = self.model(Tensor(input_data), start_pos, TEMPERATURE).realize()
 
-    if h.shape == (1,):
+    if h.shape == (1, ):
       start_pos += n_captured_toks
       start_pos += 1
       n_captured_toks = 0

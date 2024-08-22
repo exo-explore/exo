@@ -7,6 +7,7 @@ from exo.networking.peer_handle import PeerHandle
 
 
 class TestNode(unittest.IsolatedAsyncioTestCase):
+
   def setUp(self):
     self.mock_inference_engine = AsyncMock()
     self.mock_server = AsyncMock()

@@ -16,29 +16,27 @@ from exo.orchestration import Node
 from exo.models import model_base_shards
 from typing import Callable
 
-class Message:
-    def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
-        self.role = role
-        self.content = content
 
-    def to_dict(self):
-        return {
-            "role": self.role,
-            "content": self.content
-        }
+class Message:
+
+  def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
+    self.role = role
+    self.content = content
+
+  def to_dict(self):
+    return {"role": self.role, "content": self.content}
+
 
 class ChatCompletionRequest:
-    def __init__(self, model: str, messages: List[Message], temperature: float):
-        self.model = model
-        self.messages = messages
-        self.temperature = temperature
 
-    def to_dict(self):
-        return {
-            "model": self.model,
-            "messages": [message.to_dict() for message in self.messages],
-            "temperature": self.temperature
-        }
+  def __init__(self, model: str, messages: List[Message], temperature: float):
+    self.model = model
+    self.messages = messages
+    self.temperature = temperature
+
+  def to_dict(self):
+    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature}
+
 
 def generate_completion(
   chat_request: ChatCompletionRequest,
@@ -56,14 +54,12 @@ def generate_completion(
     "created": int(time.time()),
     "model": chat_request.model,
     "system_fingerprint": f"exo_{VERSION}",
-    "choices": [
-      {
-        "index": 0,
-        "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
-        "logprobs": None,
-        "finish_reason": finish_reason,
-      }
-    ],
+    "choices": [{
+      "index": 0,
+      "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
+      "logprobs": None,
+      "finish_reason": finish_reason,
+    }],
   }
 
   if not stream:
@@ -86,37 +82,38 @@ def generate_completion(
 
 
 def remap_messages(messages: List[Message]) -> List[Message]:
-    remapped_messages = []
-    last_image = None
-    for message in messages:
-        if not isinstance(message.content, list):
-           remapped_messages.append(message)
-           continue
+  remapped_messages = []
+  last_image = None
+  for message in messages:
+    if not isinstance(message.content, list):
+      remapped_messages.append(message)
+      continue
 
-        remapped_content = []
-        for content in message.content:
-            if isinstance(content, dict):
-                if content.get("type") in ["image_url", "image"]:
-                    image_url = content.get("image_url", {}).get("url") or content.get("image")
-                    if image_url:
-                        last_image = {"type": "image", "image": image_url}
-                        remapped_content.append({"type": "text", "text": "[An image was uploaded but is not displayed here]"})
-                else:
-                    remapped_content.append(content)
-            else:
-                remapped_content.append(content)
-        remapped_messages.append(Message(role=message.role, content=remapped_content))
+    remapped_content = []
+    for content in message.content:
+      if isinstance(content, dict):
+        if content.get("type") in ["image_url", "image"]:
+          image_url = content.get("image_url", {}).get("url") or content.get("image")
+          if image_url:
+            last_image = {"type": "image", "image": image_url}
+            remapped_content.append({"type": "text", "text": "[An image was uploaded but is not displayed here]"})
+        else:
+          remapped_content.append(content)
+      else:
+        remapped_content.append(content)
+    remapped_messages.append(Message(role=message.role, content=remapped_content))
 
-    if last_image:
-        # Replace the last image placeholder with the actual image content
-        for message in reversed(remapped_messages):
-            for i, content in enumerate(message.content):
-                if isinstance(content, dict):
-                  if content.get("type") == "text" and content.get("text") == "[An image was uploaded but is not displayed here]":
-                      message.content[i] = last_image
-                      return remapped_messages
+  if last_image:
+    # Replace the last image placeholder with the actual image content
+    for message in reversed(remapped_messages):
+      for i, content in enumerate(message.content):
+        if isinstance(content, dict):
+          if content.get("type") == "text" and content.get("text") == "[An image was uploaded but is not displayed here]":
+            message.content[i] = last_image
+            return remapped_messages
 
-    return remapped_messages
+  return remapped_messages
+
 
 def build_prompt(tokenizer, _messages: List[Message]):
   messages = remap_messages(_messages)
@@ -149,13 +146,17 @@ def parse_chat_request(data: dict):
     data.get("temperature", 0.0),
   )
 
+
 class PromptSession:
+
   def __init__(self, request_id: str, timestamp: int, prompt: str):
     self.request_id = request_id
     self.timestamp = timestamp
     self.prompt = prompt
 
+
 class ChatGPTAPI:
+
   def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
@@ -182,6 +183,7 @@ class ChatGPTAPI:
     self.app.middlewares.append(self.log_request)
 
   async def log_request(self, app, handler):
+
     async def middleware(request):
       if DEBUG >= 2: print(f"Received request: {request.method} {request.path}")
       return await handler(request)
@@ -268,7 +270,8 @@ class ChatGPTAPI:
           self.prev_token_lens[request_id] = max(prev_last_tokens_len, len(tokens))
           new_tokens = tokens[prev_last_tokens_len:]
           finish_reason = None
-          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer, AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
+          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer,
+                                                                                                                             AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
           if len(new_tokens) > 0 and new_tokens[-1] == eos_token_id:
             new_tokens = new_tokens[:-1]
             if is_finished:

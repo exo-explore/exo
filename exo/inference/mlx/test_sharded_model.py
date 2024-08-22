@@ -6,6 +6,7 @@ import numpy as np
 
 
 class DummyModel(nn.Module):
+
   def __init__(self, shard: Optional[Shard] = None):
     self.shard = shard
     self.layers = [
@@ -21,7 +22,7 @@ class DummyModel(nn.Module):
 
   def __call__(self, x, cache=None):
     if self.shard:
-      for layer in self.layers[self.shard.start_layer : self.shard.end_layer + 1]:
+      for layer in self.layers[self.shard.start_layer:self.shard.end_layer + 1]:
         x = layer(x)
       if self.shard.is_last_layer():
         x = x.reshape((1, 2, 4))

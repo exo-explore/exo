@@ -11,6 +11,7 @@ from exo import DEBUG_DISCOVERY
 
 
 class ListenProtocol(asyncio.DatagramProtocol):
+
   def __init__(self, on_message: Callable[[bytes, Tuple[str, int]], Coroutine]):
     super().__init__()
     self.on_message = on_message
@@ -24,6 +25,7 @@ class ListenProtocol(asyncio.DatagramProtocol):
 
 
 class GRPCDiscovery(Discovery):
+
   def __init__(
     self,
     node_id: str,
@@ -97,14 +99,12 @@ class GRPCDiscovery(Discovery):
     sock = transport.get_extra_info("socket")
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-    message = json.dumps(
-      {
-        "type": "discovery",
-        "node_id": self.node_id,
-        "grpc_port": self.node_port,
-        "device_capabilities": self.device_capabilities.to_dict(),
-      }
-    ).encode("utf-8")
+    message = json.dumps({
+      "type": "discovery",
+      "node_id": self.node_id,
+      "grpc_port": self.node_port,
+      "device_capabilities": self.device_capabilities.to_dict(),
+    }).encode("utf-8")
 
     while True:
       try:
@@ -166,14 +166,14 @@ class GRPCDiscovery(Discovery):
       try:
         current_time = time.time()
         peers_to_remove = [
-          peer_handle.id()
-          for peer_handle, connected_at, last_seen in self.known_peers.values()
+          peer_handle.id() for peer_handle, connected_at, last_seen in self.known_peers.values()
           if (not await peer_handle.is_connected() and current_time - connected_at > self.discovery_timeout) or current_time - last_seen > self.discovery_timeout
         ]
         if DEBUG_DISCOVERY >= 2:
           print(
             "Peer statuses:",
-            {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}" for peer_handle, connected_at, last_seen in self.known_peers.values()},
+            {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}"
+             for peer_handle, connected_at, last_seen in self.known_peers.values()},
           )
         if DEBUG_DISCOVERY >= 2 and len(peers_to_remove) > 0:
           print(f"Cleaning up peers: {peers_to_remove}")

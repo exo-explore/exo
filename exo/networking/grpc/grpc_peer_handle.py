@@ -13,6 +13,7 @@ from exo.topology.device_capabilities import DeviceCapabilities
 
 
 class GRPCPeerHandle(PeerHandle):
+
   def __init__(self, _id: str, address: str, device_capabilities: DeviceCapabilities):
     self._id = _id
     self.address = address

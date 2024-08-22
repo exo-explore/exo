@@ -16,7 +16,9 @@ from rich.syntax import Syntax
 from rich.panel import Panel
 from rich.markdown import Markdown
 
+
 class TopologyViz:
+
   def __init__(self, chatgpt_api_endpoints: List[str] = [], web_chat_urls: List[str] = []):
     self.chatgpt_api_endpoints = chatgpt_api_endpoints
     self.web_chat_urls = web_chat_urls
@@ -28,11 +30,7 @@ class TopologyViz:
 
     self.console = Console()
     self.layout = Layout()
-    self.layout.split(
-      Layout(name="main"),
-      Layout(name="prompt_output", size=15),
-      Layout(name="download", size=25)
-    )
+    self.layout.split(Layout(name="main"), Layout(name="prompt_output", size=15), Layout(name="download", size=25))
     self.main_panel = Panel(self._generate_main_layout(), title="Exo Cluster (0 nodes)", border_style="bright_yellow")
     self.prompt_output_panel = Panel("", title="Prompt and Output", border_style="green")
     self.download_panel = Panel("", title="Download Progress", border_style="cyan")
@@ -75,11 +73,11 @@ class TopologyViz:
 
     # Update and show/hide prompt and output panel
     if any(r[0] or r[1] for r in self.requests.values()):
-        self.prompt_output_panel = self._generate_prompt_output_layout()
-        self.layout["prompt_output"].update(self.prompt_output_panel)
-        self.layout["prompt_output"].visible = True
+      self.prompt_output_panel = self._generate_prompt_output_layout()
+      self.layout["prompt_output"].update(self.prompt_output_panel)
+      self.layout["prompt_output"].visible = True
     else:
-        self.layout["prompt_output"].visible = False
+      self.layout["prompt_output"].visible = False
 
     # Only show download_panel if there are in-progress downloads
     if any(progress.status == "in_progress" for progress in self.node_download_progress.values()):
@@ -97,33 +95,33 @@ class TopologyViz:
     max_lines = 13  # Maximum number of lines for the entire panel content
 
     for (prompt, output) in reversed(requests):
-        prompt_icon, output_icon = "💬️", "🤖"
+      prompt_icon, output_icon = "💬️", "🤖"
 
-        # Process prompt
-        prompt_lines = prompt.split('\n')
-        if len(prompt_lines) > max_lines // 2:
-            prompt_lines = prompt_lines[:max_lines // 2 - 1] + ['...']
-        prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
-        prompt_text.append('\n'.join(line[:max_width] for line in prompt_lines), style="white")
+      # Process prompt
+      prompt_lines = prompt.split('\n')
+      if len(prompt_lines) > max_lines // 2:
+        prompt_lines = prompt_lines[:max_lines // 2 - 1] + ['...']
+      prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
+      prompt_text.append('\n'.join(line[:max_width] for line in prompt_lines), style="white")
 
-        # Process output
-        output_lines = output.split('\n')
-        remaining_lines = max_lines - len(prompt_lines) - 2  # -2 for spacing
-        if len(output_lines) > remaining_lines:
-            output_lines = output_lines[:remaining_lines - 1] + ['...']
-        output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
-        output_text.append('\n'.join(line[:max_width] for line in output_lines), style="white")
+      # Process output
+      output_lines = output.split('\n')
+      remaining_lines = max_lines - len(prompt_lines) - 2  # -2 for spacing
+      if len(output_lines) > remaining_lines:
+        output_lines = output_lines[:remaining_lines - 1] + ['...']
+      output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
+      output_text.append('\n'.join(line[:max_width] for line in output_lines), style="white")
 
-        content.append(prompt_text)
-        content.append(output_text)
-        content.append(Text())  # Empty line between entries
+      content.append(prompt_text)
+      content.append(output_text)
+      content.append(Text())  # Empty line between entries
 
     return Panel(
-        Group(*content),
-        title="",
-        border_style="cyan",
-        height=15,  # Increased height to accommodate multiple lines
-        expand=True  # Allow the panel to expand to full width
+      Group(*content),
+      title="",
+      border_style="cyan",
+      height=15,  # Increased height to accommodate multiple lines
+      expand=True  # Allow the panel to expand to full width
     )
 
   def _generate_main_layout(self) -> str:
@@ -185,14 +183,14 @@ class TopologyViz:
       visualization[bar_y][bar_start_x + i] = segment
 
     # Add labels
-    visualization[bar_y - 1][bar_start_x - 10 : bar_start_x - 3] = "GPU poor"
-    visualization[bar_y - 1][bar_start_x + bar_width * 2 + 2 : bar_start_x + bar_width * 2 + 11] = "GPU rich"
+    visualization[bar_y - 1][bar_start_x - 10:bar_start_x - 3] = "GPU poor"
+    visualization[bar_y - 1][bar_start_x + bar_width * 2 + 2:bar_start_x + bar_width * 2 + 11] = "GPU rich"
 
     # Add position indicator and FLOPS value
     pos_x = bar_start_x + int(bar_pos * bar_width)
     flops_str = f"{total_flops:.2f} TFLOPS"
     visualization[bar_y - 1][pos_x] = "▼"
-    visualization[bar_y + 1][pos_x - len(flops_str) // 2 : pos_x + len(flops_str) // 2 + len(flops_str) % 2] = flops_str
+    visualization[bar_y + 1][pos_x - len(flops_str) // 2:pos_x + len(flops_str) // 2 + len(flops_str) % 2] = flops_str
     visualization[bar_y + 2][pos_x] = "▲"
 
     # Add an extra empty line for spacing
@@ -270,41 +268,41 @@ class TopologyViz:
 
     # Current node download progress
     if self.node_id in self.node_download_progress:
-        download_progress = self.node_download_progress[self.node_id]
-        title = f"Downloading model {download_progress.repo_id}@{download_progress.repo_revision} ({download_progress.completed_files}/{download_progress.total_files}):"
-        summary.add_row(Text(title, style="bold"))
-        progress_info = f"{pretty_print_bytes(download_progress.downloaded_bytes)} / {pretty_print_bytes(download_progress.total_bytes)} ({pretty_print_bytes_per_second(download_progress.overall_speed)})"
-        summary.add_row(progress_info)
+      download_progress = self.node_download_progress[self.node_id]
+      title = f"Downloading model {download_progress.repo_id}@{download_progress.repo_revision} ({download_progress.completed_files}/{download_progress.total_files}):"
+      summary.add_row(Text(title, style="bold"))
+      progress_info = f"{pretty_print_bytes(download_progress.downloaded_bytes)} / {pretty_print_bytes(download_progress.total_bytes)} ({pretty_print_bytes_per_second(download_progress.overall_speed)})"
+      summary.add_row(progress_info)
 
-        eta_info = f"{download_progress.overall_eta}"
-        summary.add_row(eta_info)
+      eta_info = f"{download_progress.overall_eta}"
+      summary.add_row(eta_info)
 
-        summary.add_row("")  # Empty row for spacing
+      summary.add_row("")  # Empty row for spacing
 
-        for file_path, file_progress in download_progress.file_progress.items():
-            if file_progress.status != "complete":
-                progress = int(file_progress.downloaded / file_progress.total * 30)
-                bar = f"[{'=' * progress}{' ' * (30 - progress)}]"
-                percentage = f"{file_progress.downloaded / file_progress.total * 100:.0f}%"
-                summary.add_row(Text(file_path[:30], style="cyan"), bar, percentage)
+      for file_path, file_progress in download_progress.file_progress.items():
+        if file_progress.status != "complete":
+          progress = int(file_progress.downloaded / file_progress.total * 30)
+          bar = f"[{'=' * progress}{' ' * (30 - progress)}]"
+          percentage = f"{file_progress.downloaded / file_progress.total * 100:.0f}%"
+          summary.add_row(Text(file_path[:30], style="cyan"), bar, percentage)
 
     summary.add_row("")  # Empty row for spacing
 
     # Other nodes download progress summary
     summary.add_row(Text("Other Nodes Download Progress:", style="bold"))
     for node_id, progress in self.node_download_progress.items():
-        if node_id != self.node_id:
-            device = self.topology.nodes.get(node_id)
-            partition = next((p for p in self.partitions if p.node_id == node_id), None)
-            partition_info = f"[{partition.start:.2f}-{partition.end:.2f}]" if partition else ""
-            percentage = progress.downloaded_bytes / progress.total_bytes * 100 if progress.total_bytes > 0 else 0
-            speed = pretty_print_bytes_per_second(progress.overall_speed)
-            device_info = f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}"
-            progress_info = f"{progress.repo_id}@{progress.repo_revision} ({speed})"
-            progress_bar = f"[{'=' * int(percentage // 3.33)}{' ' * (30 - int(percentage // 3.33))}]"
-            percentage_str = f"{percentage:.1f}%"
-            eta_str = f"{progress.overall_eta}"
-            summary.add_row(device_info, progress_info, percentage_str)
-            summary.add_row("", progress_bar, eta_str)
+      if node_id != self.node_id:
+        device = self.topology.nodes.get(node_id)
+        partition = next((p for p in self.partitions if p.node_id == node_id), None)
+        partition_info = f"[{partition.start:.2f}-{partition.end:.2f}]" if partition else ""
+        percentage = progress.downloaded_bytes / progress.total_bytes * 100 if progress.total_bytes > 0 else 0
+        speed = pretty_print_bytes_per_second(progress.overall_speed)
+        device_info = f"{device.model if device else 'Unknown Device'} {device.memory // 1024 if device else '?'}GB {partition_info}"
+        progress_info = f"{progress.repo_id}@{progress.repo_revision} ({speed})"
+        progress_bar = f"[{'=' * int(percentage // 3.33)}{' ' * (30 - int(percentage // 3.33))}]"
+        percentage_str = f"{percentage:.1f}%"
+        eta_str = f"{progress.overall_eta}"
+        summary.add_row(device_info, progress_info, percentage_str)
+        summary.add_row("", progress_bar, eta_str)
 
     return summary

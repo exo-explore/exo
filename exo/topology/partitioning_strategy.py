@@ -14,6 +14,7 @@ class Partition:
 
 
 class PartitioningStrategy(ABC):
+
   @abstractmethod
   def partition(self, topology: Topology) -> List[Partition]:
     pass

@@ -2,6 +2,7 @@ import traceback
 from transformers import AutoTokenizer, AutoProcessor
 from exo.helpers import DEBUG
 
+
 async def resolve_tokenizer(model_id: str):
   try:
     if DEBUG >= 4: print(f"Trying AutoProcessor for {model_id}")

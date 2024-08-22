@@ -7,6 +7,7 @@ from exo.topology.topology import Topology
 
 
 class PeerHandle(ABC):
+
   @abstractmethod
   def id(self) -> str:
     pass

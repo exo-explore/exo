@@ -4,6 +4,7 @@ from .peer_handle import PeerHandle
 
 
 class Discovery(ABC):
+
   @abstractmethod
   async def start(self) -> None:
     pass

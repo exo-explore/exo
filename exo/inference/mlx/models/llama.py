@@ -24,7 +24,9 @@ class ModelArgs(ModelArgs):
 
     self.shard = Shard(**self.shard)
 
+
 class LlamaModel(nn.Module):
+
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
@@ -66,7 +68,9 @@ class LlamaModel(nn.Module):
       h = self.norm(h)
     return h
 
+
 class Model(nn.Module):
+
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
@@ -116,9 +120,7 @@ class Model(nn.Module):
 
   @property
   def head_dim(self):
-    return (
-      self.args.head_dim or self.args.hidden_size // self.args.num_attention_heads
-    )
+    return (self.args.head_dim or self.args.hidden_size // self.args.num_attention_heads)
 
   @property
   def n_kv_heads(self):
