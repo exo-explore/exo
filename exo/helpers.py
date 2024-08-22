@@ -20,6 +20,7 @@ exo_text = r"""
  \___/_/\_\___/ 
     """
 
+
 def get_system_info():
   if psutil.MACOS:
     if platform.machine() == "arm64":
@@ -87,6 +88,8 @@ def terminal_link(uri, label=None):
 
 T = TypeVar("T")
 K = TypeVar("K")
+
+
 class AsyncCallback(Generic[T]):
   def __init__(self) -> None:
     self.condition: asyncio.Condition = asyncio.Condition()
@@ -95,9 +98,7 @@ class AsyncCallback(Generic[T]):
 
   async def wait(self, check_condition: Callable[..., bool], timeout: Optional[float] = None) -> Tuple[T, ...]:
     async with self.condition:
-      await asyncio.wait_for(
-        self.condition.wait_for(lambda: self.result is not None and check_condition(*self.result)), timeout
-      )
+      await asyncio.wait_for(self.condition.wait_for(lambda: self.result is not None and check_condition(*self.result)), timeout)
       assert self.result is not None  # for type checking
       return self.result
 
@@ -139,89 +140,96 @@ class AsyncCallbackSystem(Generic[K, T]):
 
 K = TypeVar('K', bound=str)
 V = TypeVar('V')
+
+
 class PrefixDict(Generic[K, V]):
-    def __init__(self):
-        self.items: Dict[K, V] = {}
+  def __init__(self):
+    self.items: Dict[K, V] = {}
 
-    def add(self, key: K, value: V) -> None:
-        self.items[key] = value
+  def add(self, key: K, value: V) -> None:
+    self.items[key] = value
 
-    def find_prefix(self, argument: str) -> List[Tuple[K, V]]:
-        return [(key, value) for key, value in self.items.items() if argument.startswith(key)]
+  def find_prefix(self, argument: str) -> List[Tuple[K, V]]:
+    return [(key, value) for key, value in self.items.items() if argument.startswith(key)]
 
-    def find_longest_prefix(self, argument: str) -> Optional[Tuple[K, V]]:
-        matches = self.find_prefix(argument)
-        if len(matches) == 0:
-            return None
+  def find_longest_prefix(self, argument: str) -> Optional[Tuple[K, V]]:
+    matches = self.find_prefix(argument)
+    if len(matches) == 0:
+      return None
 
-        return max(matches, key=lambda x: len(x[0]))
+    return max(matches, key=lambda x: len(x[0]))
+
 
 def is_valid_uuid(val):
-    try:
-        uuid.UUID(str(val))
-        return True
-    except ValueError:
-        return False
+  try:
+    uuid.UUID(str(val))
+    return True
+  except ValueError:
+    return False
+
 
 def get_or_create_node_id():
-    NODE_ID_FILE = Path(os.path.dirname(os.path.abspath(__file__))) / ".exo_node_id"
-    try:
-        if NODE_ID_FILE.is_file():
-            with open(NODE_ID_FILE, "r") as f:
-                stored_id = f.read().strip()
-            if is_valid_uuid(stored_id):
-                if DEBUG >= 2: print(f"Retrieved existing node ID: {stored_id}")
-                return stored_id
-            else:
-                if DEBUG >= 2: print("Stored ID is not a valid UUID. Generating a new one.")
+  NODE_ID_FILE = Path(os.path.dirname(os.path.abspath(__file__)))/".exo_node_id"
+  try:
+    if NODE_ID_FILE.is_file():
+      with open(NODE_ID_FILE, "r") as f:
+        stored_id = f.read().strip()
+      if is_valid_uuid(stored_id):
+        if DEBUG >= 2: print(f"Retrieved existing node ID: {stored_id}")
+        return stored_id
+      else:
+        if DEBUG >= 2: print("Stored ID is not a valid UUID. Generating a new one.")
 
-        new_id = str(uuid.uuid4())
-        with open(NODE_ID_FILE, "w") as f:
-            f.write(new_id)
+    new_id = str(uuid.uuid4())
+    with open(NODE_ID_FILE, "w") as f:
+      f.write(new_id)
 
-        if DEBUG >= 2: print(f"Generated and stored new node ID: {new_id}")
-        return new_id
-    except IOError as e:
-        if DEBUG >= 2: print(f"IO error creating node_id: {e}")
-        return str(uuid.uuid4())
-    except Exception as e:
-        if DEBUG >= 2: print(f"Unexpected error creating node_id: {e}")
-        return str(uuid.uuid4())
+    if DEBUG >= 2: print(f"Generated and stored new node ID: {new_id}")
+    return new_id
+  except IOError as e:
+    if DEBUG >= 2: print(f"IO error creating node_id: {e}")
+    return str(uuid.uuid4())
+  except Exception as e:
+    if DEBUG >= 2: print(f"Unexpected error creating node_id: {e}")
+    return str(uuid.uuid4())
+
 
 def pretty_print_bytes(size_in_bytes: int) -> str:
-    if size_in_bytes < 1024:
-        return f"{size_in_bytes} B"
-    elif size_in_bytes < 1024 ** 2:
-        return f"{size_in_bytes / 1024:.2f} KB"
-    elif size_in_bytes < 1024 ** 3:
-        return f"{size_in_bytes / (1024 ** 2):.2f} MB"
-    elif size_in_bytes < 1024 ** 4:
-        return f"{size_in_bytes / (1024 ** 3):.2f} GB"
-    else:
-        return f"{size_in_bytes / (1024 ** 4):.2f} TB"
+  if size_in_bytes < 1024:
+    return f"{size_in_bytes} B"
+  elif size_in_bytes < 1024**2:
+    return f"{size_in_bytes / 1024:.2f} KB"
+  elif size_in_bytes < 1024**3:
+    return f"{size_in_bytes / (1024 ** 2):.2f} MB"
+  elif size_in_bytes < 1024**4:
+    return f"{size_in_bytes / (1024 ** 3):.2f} GB"
+  else:
+    return f"{size_in_bytes / (1024 ** 4):.2f} TB"
+
 
 def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
-    if bytes_per_second < 1024:
-        return f"{bytes_per_second} B/s"
-    elif bytes_per_second < 1024 ** 2:
-        return f"{bytes_per_second / 1024:.2f} KB/s"
-    elif bytes_per_second < 1024 ** 3:
-        return f"{bytes_per_second / (1024 ** 2):.2f} MB/s"
-    elif bytes_per_second < 1024 ** 4:
-        return f"{bytes_per_second / (1024 ** 3):.2f} GB/s"
-    else:
-        return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
+  if bytes_per_second < 1024:
+    return f"{bytes_per_second} B/s"
+  elif bytes_per_second < 1024**2:
+    return f"{bytes_per_second / 1024:.2f} KB/s"
+  elif bytes_per_second < 1024**3:
+    return f"{bytes_per_second / (1024 ** 2):.2f} MB/s"
+  elif bytes_per_second < 1024**4:
+    return f"{bytes_per_second / (1024 ** 3):.2f} GB/s"
+  else:
+    return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
+
 
 def get_all_ip_addresses():
-    try:
-      ip_addresses = []
-      for interface in netifaces.interfaces():
-        ifaddresses = netifaces.ifaddresses(interface)
-        if netifaces.AF_INET in ifaddresses:
-          for link in ifaddresses[netifaces.AF_INET]:
-            ip = link['addr']
-            ip_addresses.append(ip)
-      return list(set(ip_addresses))
-    except:
-      if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
-      return ["localhost"]
+  try:
+    ip_addresses = []
+    for interface in netifaces.interfaces():
+      ifaddresses = netifaces.ifaddresses(interface)
+      if netifaces.AF_INET in ifaddresses:
+        for link in ifaddresses[netifaces.AF_INET]:
+          ip = link['addr']
+          ip_addresses.append(ip)
+    return list(set(ip_addresses))
+  except:
+    if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
+    return ["localhost"]

@@ -84,19 +84,17 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "start_process_prompt",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "prompt": prompt,
-            "image_str": image_str,
-            "inference_state": inference_state,
-            "request_id": request_id,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "start_process_prompt",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "prompt": prompt,
+          "image_str": image_str,
+          "inference_state": inference_state,
+          "request_id": request_id,
+        }),
       )
     )
     start_time = time.perf_counter_ns()
@@ -106,21 +104,19 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "end_process_prompt",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "prompt": prompt,
-            "image_str": image_str,
-            "inference_state": inference_state,
-            "request_id": request_id,
-            "elapsed_time_ns": elapsed_time_ns,
-            "result_size": resp.size if resp is not None else 0,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "end_process_prompt",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "prompt": prompt,
+          "image_str": image_str,
+          "inference_state": inference_state,
+          "request_id": request_id,
+          "elapsed_time_ns": elapsed_time_ns,
+          "result_size": resp.size if resp is not None else 0,
+        }),
       )
     )
     return resp
@@ -166,19 +162,17 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "start_process_tensor",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "tensor_size": tensor.size,
-            "tensor_shape": tensor.shape,
-            "request_id": request_id,
-            "inference_state": inference_state,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "start_process_tensor",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "tensor_size": tensor.size,
+          "tensor_shape": tensor.shape,
+          "request_id": request_id,
+          "inference_state": inference_state,
+        }),
       )
     )
     start_time = time.perf_counter_ns()
@@ -188,18 +182,16 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "end_process_tensor",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "request_id": request_id,
-            "elapsed_time_ns": elapsed_time_ns,
-            "result_size": resp.size if resp is not None else 0,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "end_process_tensor",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "request_id": request_id,
+          "elapsed_time_ns": elapsed_time_ns,
+          "result_size": resp.size if resp is not None else 0,
+        }),
       )
     )
     return resp
@@ -257,7 +249,7 @@ class StandardNode(Node):
     current_partition_index = next((i for i, p in enumerate(partitions) if p.node_id == self.id), None)
     if DEBUG >= 1: print(f"Current partition index: {current_partition_index}")
     if current_partition_index is not None:
-      next_partition_index = (current_partition_index + 1) % len(partitions)
+      next_partition_index = (current_partition_index+1) % len(partitions)
       next_partition: Partition = partitions[next_partition_index]
       next_shard = shards[next_partition_index]
       if DEBUG >= 2: print(f"Computed next from: {shard}, {self.topology}. Next partition: {next_partition}")
@@ -372,6 +364,7 @@ class StandardNode(Node):
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
     if DEBUG >= 5: print(f"Broadcasting opaque status: {request_id=} {status=}")
+
     async def send_status_to_peer(peer):
       try:
         await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)
