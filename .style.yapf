@@ -1,0 +1,13 @@
+[style]
+based_on_style = pep8
+indent_width = 2
+column_limit = 200
+allow_split_before_dict_value = False
+dedent_closing_brackets = True
+split_before_first_argument = False
+split_complex_comprehension = False
+continuation_indent_width = 2
+indent_dictionary_value = True
+allow_multiline_dictionary_keys = True
+each_dict_entry_on_separate_line = False
+allow_multiline_lambdas = True
