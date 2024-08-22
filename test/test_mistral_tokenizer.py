@@ -39,6 +39,7 @@ models = [
 import os
 verbose = os.environ.get("VERBOSE", "0").lower() == "1"
 for m in models:
+    # TODO: figure out why use_fast=False is giving inconsistent behaviour (no spaces decoding invididual tokens) for Mistral-Large-Instruct-2407-4bit
     # test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=False), verbose)
     test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=True), verbose)
     test_tokenizer(m, AutoTokenizer.from_pretrained(m), verbose)
