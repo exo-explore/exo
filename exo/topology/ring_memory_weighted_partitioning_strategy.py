@@ -12,7 +12,7 @@ class RingMemoryWeightedPartitioningStrategy(PartitioningStrategy):
     partitions = []
     start = 0
     for node in nodes:
-      end = round(start + (node[1].memory / total_memory), 5)
+      end = round(start + (node[1].memory/total_memory), 5)
       partitions.append(Partition(node[0], start, end))
       start = end
     return partitions

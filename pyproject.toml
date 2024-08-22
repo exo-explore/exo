@@ -1,13 +1,3 @@
-[tool.black]
-line-length = 200
-indent-size = 2
-skip-string-normalization = true
-
-[tool.isort]
-profile = "black"
-line_length = 200
-indent = "  "
-
 [tool.pylint.format]
 indent-string = '  '
 max-line-length = 200

@@ -1,6 +1,7 @@
 import grpc
 from concurrent import futures
 import numpy as np
+from asyncio import CancelledError
 
 from . import node_service_pb2
 from . import node_service_pb2_grpc
@@ -20,9 +21,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     self.server = grpc.aio.server(
       futures.ThreadPoolExecutor(max_workers=10),
       options=[
-        ("grpc.max_metadata_size", 32 * 1024 * 1024),
-        ("grpc.max_send_message_length", 128 * 1024 * 1024),
-        ("grpc.max_receive_message_length", 128 * 1024 * 1024),
+        ("grpc.max_metadata_size", 32*1024*1024),
+        ("grpc.max_send_message_length", 128*1024*1024),
+        ("grpc.max_receive_message_length", 128*1024*1024),
       ],
     )
     node_service_pb2_grpc.add_NodeServiceServicer_to_server(self, self.server)
@@ -33,8 +34,11 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
 
   async def stop(self) -> None:
     if self.server:
-      await self.server.stop(grace=5)
-      await self.server.wait_for_termination()
+      try:
+        await self.server.stop(grace=5)
+        await self.server.wait_for_termination()
+      except CancelledError:
+        pass
       if DEBUG >= 1: print("Server stopped and all connections are closed")
 
   async def SendPrompt(self, request, context):
@@ -77,9 +81,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       node_service_pb2.InferenceResult(
         tensor=node_service_pb2.Tensor(tensor_data=tensor_data, shape=result[0].shape, dtype=str(result[0].dtype)),
         is_finished=result[1],
-      )
-      if result[0] is not None
-      else node_service_pb2.InferenceResult(is_finished=result[1])
+      ) if result[0] is not None else node_service_pb2.InferenceResult(is_finished=result[1])
     )
 
   async def CollectTopology(self, request, context):
@@ -87,12 +89,13 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     visited = set(request.visited)
     topology = await self.node.collect_topology(visited, max_depth)
     nodes = {
-      node_id: node_service_pb2.DeviceCapabilities(
-        model=cap.model,
-        chip=cap.chip,
-        memory=cap.memory,
-        flops=node_service_pb2.DeviceFlops(fp32=cap.flops.fp32, fp16=cap.flops.fp16, int8=cap.flops.int8),
-      )
+      node_id:
+        node_service_pb2.DeviceCapabilities(
+          model=cap.model,
+          chip=cap.chip,
+          memory=cap.memory,
+          flops=node_service_pb2.DeviceFlops(fp32=cap.flops.fp32, fp16=cap.flops.fp16, int8=cap.flops.int8),
+        )
       for node_id, cap in topology.nodes.items()
     }
     peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}

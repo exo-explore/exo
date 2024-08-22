@@ -7,7 +7,7 @@ import mlx.nn as nn
 from mlx_lm.models.base import KVCache
 from mlx_lm.models.deepseek_v2 import ModelArgs, DeepseekV2DecoderLayer
 from .base import IdentityBlock
-from ...shard import Shard
+from exo.inference.shard import Shard
 
 
 @dataclass
@@ -59,7 +59,7 @@ class DeepseekV2Model(nn.Module):
       mask = mask.astype(h.dtype)
 
     if cache is None:
-      cache = [None] * len(self.layers)
+      cache = [None]*len(self.layers)
 
     for layer, c in zip(self.layers, cache):
       h = layer(h, mask, c)
@@ -107,10 +107,7 @@ class Model(nn.Module):
         for k in ["weight", "scales", "biases"]:
           if f"{prefix}.mlp.experts.0.{m}.{k}" in shard_state_dict:
             to_join = [shard_state_dict.pop(f"{prefix}.mlp.experts.{e}.{m}.{k}") for e in range(self.args.n_routed_experts)]
-            shard_state_dict[
-              f"{prefix}.mlp.switch_mlp.{
-       m}.{k}"
-            ] = mx.stack(to_join)
+            shard_state_dict[f"{prefix}.mlp.switch_mlp.{m}.{k}"] = mx.stack(to_join)
 
     return shard_state_dict
 

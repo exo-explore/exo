@@ -39,8 +39,8 @@ y = full.step("full", input_ids, pixel_values, temp=0)
 full_generated_tokens = [y.item()]
 
 for _ in range(13):
-    y = full.step("full", y, temp=0)
-    full_generated_tokens.append(y.item())
+  y = full.step("full", y, temp=0)
+  full_generated_tokens.append(y.item())
 
 full_response = full_processor.tokenizer.decode(full_generated_tokens)
 print("full response:", full_response)
@@ -54,9 +54,9 @@ y = m2.step("shard", y, temp=0)
 full_generated_tokens = [y.item()]
 
 for _ in range(13):
-    y = m1.step("shard", y, temp=0)
-    y = m2.step("shard", y, temp=0)
-    full_generated_tokens.append(y.item())
+  y = m1.step("shard", y, temp=0)
+  y = m2.step("shard", y, temp=0)
+  full_generated_tokens.append(y.item())
 
 sharded_response = processor2.tokenizer.decode(full_generated_tokens)
 print("sharded response:", sharded_response)

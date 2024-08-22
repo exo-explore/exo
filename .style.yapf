@@ -1,0 +1,19 @@
+[style]
+based_on_style = pep8
+indent_width = 2
+column_limit = 200
+allow_split_before_dict_value = False
+dedent_closing_brackets = True
+split_before_first_argument = False
+split_complex_comprehension = False
+continuation_indent_width = 2
+indent_dictionary_value = True
+allow_multiline_dictionary_keys = True
+each_dict_entry_on_separate_line = False
+allow_multiline_lambdas = True
+blank_line_before_nested_class_or_def = False
+arithmetic_precedence_indication = True
+no_spaces_around_selected_binary_operators = "*,/"
+coalesce_brackets = True
+space_between_ending_comma_and_closing_bracket = False
+split_before_expression_after_opening_paren = False
