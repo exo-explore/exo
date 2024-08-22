@@ -16,18 +16,12 @@ commands:
           command: |
             source env/bin/activate
 
-            # Create named pipes
-            mkfifo output1_pipe output2_pipe
-
-            # Start output streaming in the background
-            tee output1.log < output1_pipe &
-            tee output2.log < output2_pipe &
-
-            # Function to run a command and redirect output
+            # Function to run a command and stream output
             run_instance() {
               local instance=$1
               local port=$2
               local api_port=$3
+              local log_file="${instance}.log"
 
               HF_HOME="$(pwd)/.hf_cache_$instance" \
               DEBUG_DISCOVERY=7 \
@@ -39,7 +33,10 @@ commands:
                 --broadcast-port $((port + 1)) \
                 --chatgpt-api-port $api_port \
                 --chatgpt-api-response-timeout-secs 900 \
-                > ${instance}_pipe 2>&1 &
+                > "$log_file" 2>&1 &
+
+              # Start tailing the log file
+              tail -f "$log_file" &
 
               echo $!
             }
@@ -47,9 +44,11 @@ commands:
             # Start instances
             echo "Starting first instance..."
             PID1=$(run_instance "node1" 5678 8000)
+            TAIL_PID1=$!
 
             echo "Starting second instance..."
             PID2=$(run_instance "node2" 5679 8001)
+            TAIL_PID2=$!
 
             # Wait for discovery
             echo "Waiting for discovery..."
@@ -98,7 +97,7 @@ commands:
 
             # Stop both instances
             echo "Stopping instances..."
-            kill $PID1 $PID2
+            kill $PID1 $PID2 $TAIL_PID1 $TAIL_PID2
 
             echo ""
             if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
@@ -107,18 +106,17 @@ commands:
               echo ""
               echo "Response 2: $response_2"
               echo "Output of first instance:"
-              cat output1.log
+              cat node1.log
               echo "Output of second instance:"
-              cat output2.log
+              cat node2.log
               exit 1
             else
               echo "Test passed: Response from both nodes contains 'Michael Jackson'"
             fi
 
             # Clean up
-            kill $PID1 $PID2
+            kill $PID1 $PID2 $TAIL_PID1 $TAIL_PID2
             wait
-            rm output1_pipe output2_pipe
 
 jobs:
   unit_test:
