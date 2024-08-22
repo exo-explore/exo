@@ -16,52 +16,27 @@ commands:
           command: |
             source env/bin/activate
 
-            # Function to run a command and stream output
-            run_instance() {
-              local instance=$1
-              local port=$2
-              local api_port=$3
-              local log_file="${instance}.log"
+            # Start first instance
+            HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900 > output1.log 2>&1 &
+            PID1=$!
 
-              HF_HOME="$(pwd)/.hf_cache_$instance" \
-              DEBUG_DISCOVERY=7 \
-              DEBUG=7 \
-              python3 main.py \
-                --inference-engine <<parameters.inference_engine>> \
-                --node-id "$instance" \
-                --listen-port $port \
-                --broadcast-port $((port + 1)) \
-                --chatgpt-api-port $api_port \
-                --chatgpt-api-response-timeout-secs 900 \
-                > "$log_file" 2>&1 &
-
-              # Start tailing the log file
-              tail -f "$log_file" &
-
-              echo $!
-            }
-
-            # Start instances
-            echo "Starting first instance..."
-            PID1=$(run_instance "node1" 5678 8000)
-            TAIL_PID1=$!
-
-            echo "Starting second instance..."
-            PID2=$(run_instance "node2" 5679 8001)
-            TAIL_PID2=$!
+            # Start second instance
+            HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout-secs 900 > output2.log 2>&1 &
+            PID2=$!
 
             # Wait for discovery
-            echo "Waiting for discovery..."
             sleep 10
 
             # Function to check if processes are still running
             check_processes() {
               if ! kill -0 $PID1 2>/dev/null; then
-                echo "First instance (PID $PID1) died unexpectedly."
+                echo "First instance (PID $PID1) died unexpectedly. Log output:"
+                cat output1.log
                 exit 1
               fi
               if ! kill -0 $PID2 2>/dev/null; then
-                echo "Second instance (PID $PID2) died unexpectedly."
+                echo "Second instance (PID $PID2) died unexpectedly. Log output:"
+                cat output2.log
                 exit 1
               fi
             }
@@ -69,7 +44,6 @@ commands:
             # Check processes before proceeding
             check_processes
 
-            echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -82,7 +56,6 @@ commands:
             # Check processes after first response
             check_processes
 
-            echo "Sending request to second instance..."
             response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -96,8 +69,7 @@ commands:
             check_processes
 
             # Stop both instances
-            echo "Stopping instances..."
-            kill $PID1 $PID2 $TAIL_PID1 $TAIL_PID2
+            kill $PID1 $PID2
 
             echo ""
             if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
@@ -106,17 +78,13 @@ commands:
               echo ""
               echo "Response 2: $response_2"
               echo "Output of first instance:"
-              cat node1.log
+              cat output1.log
               echo "Output of second instance:"
-              cat node2.log
+              cat output2.log
               exit 1
             else
               echo "Test passed: Response from both nodes contains 'Michael Jackson'"
             fi
-
-            # Clean up
-            kill $PID1 $PID2 $TAIL_PID1 $TAIL_PID2
-            wait
 
 jobs:
   unit_test:
@@ -238,48 +206,8 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - hold_for_approval:
-          type: approval
-          filters:
-            branches:
-              ignore: main
-      - unit_test:
-          filters:
-            branches:
-              only: main
-      - discovery_integration_test:
-          filters:
-            branches:
-              only: main
-      - chatgpt_api_integration_test_mlx:
-          filters:
-            branches:
-              only: main
-      - test_macos_m1:
-          filters:
-            branches:
-              only: main
-      - unit_test:
-          requires:
-            - hold_for_approval
-          filters:
-            branches:
-              ignore: main
-      - discovery_integration_test:
-          requires:
-            - hold_for_approval
-          filters:
-            branches:
-              ignore: main
-      - chatgpt_api_integration_test_mlx:
-          requires:
-            - hold_for_approval
-          filters:
-            branches:
-              ignore: main
-      - test_macos_m1:
-          requires:
-            - hold_for_approval
-          filters:
-            branches:
-              ignore: main
+      - unit_test
+      - discovery_integration_test
+      - chatgpt_api_integration_test_mlx
+      - test_macos_m1
+      # - chatgpt_api_integration_test_tinygrad
