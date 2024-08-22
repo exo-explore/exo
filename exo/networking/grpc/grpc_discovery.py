@@ -11,7 +11,6 @@ from exo import DEBUG_DISCOVERY
 
 
 class ListenProtocol(asyncio.DatagramProtocol):
-
   def __init__(self, on_message: Callable[[bytes, Tuple[str, int]], Coroutine]):
     super().__init__()
     self.on_message = on_message
@@ -25,7 +24,6 @@ class ListenProtocol(asyncio.DatagramProtocol):
 
 
 class GRPCDiscovery(Discovery):
-
   def __init__(
     self,
     node_id: str,

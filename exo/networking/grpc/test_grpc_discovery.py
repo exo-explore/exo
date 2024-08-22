@@ -4,7 +4,6 @@ from .grpc_discovery import GRPCDiscovery
 
 
 class TestGRPCDiscovery(unittest.IsolatedAsyncioTestCase):
-
   async def asyncSetUp(self):
     self.node1 = GRPCDiscovery("node1", 50051, 5678, 5679)
     self.node2 = GRPCDiscovery("node2", 50052, 5679, 5678)

@@ -5,7 +5,6 @@ from exo.inference.shard import Shard
 
 
 class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
-
   def test_map_partitions_to_shards(self):
     partitions = [
       Partition("node1", 0.0, 0.42857),

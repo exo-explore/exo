@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 
 
 class Server(ABC):
-
   @abstractmethod
   async def start(self) -> None:
     pass

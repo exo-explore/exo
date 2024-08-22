@@ -26,7 +26,6 @@ class ModelArgs(ModelArgs):
 
 
 class LlamaModel(nn.Module):
-
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
@@ -70,7 +69,6 @@ class LlamaModel(nn.Module):
 
 
 class Model(nn.Module):
-
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args

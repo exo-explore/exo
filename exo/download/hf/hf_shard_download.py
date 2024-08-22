@@ -10,7 +10,6 @@ from exo.helpers import AsyncCallbackSystem, DEBUG
 
 
 class HFShardDownloader(ShardDownloader):
-
   def __init__(self, quick_check: bool = False, max_parallel_downloads: int = 4):
     self.quick_check = quick_check
     self.max_parallel_downloads = max_parallel_downloads
@@ -63,7 +62,6 @@ class HFShardDownloader(ShardDownloader):
         self.active_downloads.pop(shard)
 
   async def _download_shard(self, shard: Shard) -> Path:
-
     async def wrapped_progress_callback(event: RepoProgressEvent):
       self._on_progress.trigger_all(shard, event)
 

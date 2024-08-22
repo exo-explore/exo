@@ -18,7 +18,6 @@ from rich.markdown import Markdown
 
 
 class TopologyViz:
-
   def __init__(self, chatgpt_api_endpoints: List[str] = [], web_chat_urls: List[str] = []):
     self.chatgpt_api_endpoints = chatgpt_api_endpoints
     self.web_chat_urls = web_chat_urls

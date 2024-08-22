@@ -11,7 +11,6 @@ from fnmatch import fnmatch
 
 # **** helper functions ****
 def concat_weights(models, device=None):
-
   def convert(name) -> Tensor:
     disk_tensors: List[Tensor] = [model[name] for model in models]
     if len(disk_tensors) == 1 or len(disk_tensors[0].shape) == 1:

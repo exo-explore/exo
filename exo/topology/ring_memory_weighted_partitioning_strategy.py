@@ -5,7 +5,6 @@ from .partitioning_strategy import Partition
 
 
 class RingMemoryWeightedPartitioningStrategy(PartitioningStrategy):
-
   def partition(self, topology: Topology) -> List[Partition]:
     nodes = list(topology.all_nodes())
     nodes.sort(key=lambda x: (x[1].memory, x[0]), reverse=True)

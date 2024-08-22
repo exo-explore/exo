@@ -11,3 +11,4 @@ indent_dictionary_value = True
 allow_multiline_dictionary_keys = True
 each_dict_entry_on_separate_line = False
 allow_multiline_lambdas = True
+blank_line_before_nested_class_or_def = False

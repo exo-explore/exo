@@ -6,7 +6,6 @@ import numpy as np
 
 
 class DummyModel(nn.Module):
-
   def __init__(self, shard: Optional[Shard] = None):
     self.shard = shard
     self.layers = [

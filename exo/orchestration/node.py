@@ -7,7 +7,6 @@ from exo.topology.topology import Topology
 
 
 class Node(ABC):
-
   @abstractmethod
   async def start(self, wait_for_peers: int = 0) -> None:
     pass

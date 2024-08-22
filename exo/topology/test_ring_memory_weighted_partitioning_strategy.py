@@ -6,7 +6,6 @@ from exo.topology.partitioning_strategy import Partition
 
 
 class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
-
   def test_partition(self):
     # triangle
     # node1 -> node2 -> node3 -> node1

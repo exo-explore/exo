@@ -11,7 +11,6 @@ from exo.orchestration import Node
 
 
 class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
-
   def __init__(self, node: Node, host: str, port: int):
     self.node = node
     self.host = host

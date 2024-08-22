@@ -62,7 +62,6 @@ def create_hf_repo_progress_event(
 
 
 class TestNodeViz(unittest.IsolatedAsyncioTestCase):
-
   async def asyncSetUp(self):
     self.topology = Topology()
     self.topology.update_node(

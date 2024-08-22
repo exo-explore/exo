@@ -91,7 +91,6 @@ K = TypeVar("K")
 
 
 class AsyncCallback(Generic[T]):
-
   def __init__(self) -> None:
     self.condition: asyncio.Condition = asyncio.Condition()
     self.result: Optional[Tuple[T, ...]] = None
@@ -118,7 +117,6 @@ class AsyncCallback(Generic[T]):
 
 
 class AsyncCallbackSystem(Generic[K, T]):
-
   def __init__(self) -> None:
     self.callbacks: Dict[K, AsyncCallback[T]] = {}
 
@@ -145,7 +143,6 @@ V = TypeVar('V')
 
 
 class PrefixDict(Generic[K, V]):
-
   def __init__(self):
     self.items: Dict[K, V] = {}
 

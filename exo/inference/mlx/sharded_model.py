@@ -10,7 +10,6 @@ from ..shard import Shard
 
 
 class StatefulShardedModel:
-
   def __init__(self, shard: Shard, model: nn.Module, max_kv_size: int = 1024, max_caches: int = 2):
     self.shard = shard
     self.model = model
@@ -27,7 +26,6 @@ class StatefulShardedModel:
     top_p: float = 1.0,
     logit_bias: Optional[Dict[int, float]] = None,
   ) -> Generator[Tuple[mx.array, mx.array], None, None]:
-
     def sample(logits: mx.array) -> Tuple[mx.array, float]:
       if logit_bias:
         indices = mx.array(list(logit_bias.keys()))

@@ -4,7 +4,6 @@ from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapa
 
 
 class TestMacDeviceCapabilities(unittest.TestCase):
-
   @patch("subprocess.check_output")
   def test_mac_device_capabilities_pro(self, mock_check_output):
     # Mock the subprocess output

@@ -48,7 +48,6 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
 
 
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
-
   def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader

@@ -7,7 +7,6 @@ from exo.helpers import AsyncCallbackSystem
 
 
 class ShardDownloader(ABC):
-
   @abstractmethod
   async def ensure_shard(self, shard: Shard) -> Path:
     """

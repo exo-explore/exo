@@ -33,7 +33,6 @@ class VisionConfig:
 
 
 class VisionAttention(nn.Module):
-
   def __init__(
     self,
     dims: int,
@@ -86,7 +85,6 @@ class VisionAttention(nn.Module):
 
 
 class VisionMLP(nn.Module):
-
   def __init__(self, config: VisionConfig):
     super().__init__()
     self.activation_fn = nn.GELU(approx="fast")
@@ -100,7 +98,6 @@ class VisionMLP(nn.Module):
 
 
 class VisionEncoderLayer(nn.Module):
-
   def __init__(self, config: VisionConfig):
     super().__init__()
     self.embed_dim = config.hidden_size
@@ -119,14 +116,12 @@ class VisionEncoderLayer(nn.Module):
 
 
 class VisionEncoder(nn.Module):
-
   def __init__(self, config: VisionConfig):
     super().__init__()
     self.layers = [VisionEncoderLayer(config) for _ in range(config.num_hidden_layers)]
 
 
 class VisionEmbeddings(nn.Module):
-
   def __init__(self, config: VisionConfig):
     super().__init__()
     self.config = config
@@ -160,7 +155,6 @@ class VisionEmbeddings(nn.Module):
 
 
 class ClipVisionModel(nn.Module):
-
   def __init__(self, config: VisionConfig):
     super().__init__()
     self.embeddings = VisionEmbeddings(config)
@@ -188,7 +182,6 @@ class ClipVisionModel(nn.Module):
 
 
 class VisionModel(nn.Module):
-
   def __init__(self, config: VisionConfig):
     super().__init__()
 
@@ -258,7 +251,6 @@ class TextConfig:
 
 
 class TextAttention(nn.Module):
-
   def __init__(self, config: TextConfig):
     super().__init__()
 
@@ -313,7 +305,6 @@ class TextAttention(nn.Module):
 
 
 class TextMLP(nn.Module):
-
   def __init__(self, dim, hidden_dim):
     super().__init__()
     self.gate_proj = nn.Linear(dim, hidden_dim, bias=False)
@@ -325,7 +316,6 @@ class TextMLP(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-
   def __init__(self, config: TextConfig):
     super().__init__()
     self.num_attention_heads = config.num_attention_heads
@@ -350,7 +340,6 @@ class TransformerBlock(nn.Module):
 
 
 class Llama(nn.Module):
-
   def __init__(self, config: TextConfig, shard: Shard):
     super().__init__()
     self.config = config
@@ -404,7 +393,6 @@ class Llama(nn.Module):
 
 
 class LanguageModel(nn.Module):
-
   def __init__(self, config: TextConfig, shard: Shard):
     super().__init__()
     self.model_type = config.model_type
@@ -486,7 +474,6 @@ class ModelArgs(LlaVAConfig):
 
 
 class LlavaMultiModalProjector(nn.Module):
-
   def __init__(self, config: LlaVAConfig):
     super().__init__()
     self.linear_1 = nn.Linear(config.vision_config.hidden_size, config.text_config.hidden_size, bias=True)
@@ -501,7 +488,6 @@ class LlavaMultiModalProjector(nn.Module):
 
 
 class Model(nn.Module):
-
   def __init__(self, config: ModelArgs):
     super().__init__()
     self.config = config

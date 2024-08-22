@@ -38,7 +38,6 @@ def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
 
 
 class Attention:
-
   def __init__(self, dim, n_heads, n_kv_heads, max_context, linear=nn.Linear):
     self.n_heads = n_heads
     self.n_kv_heads = n_kv_heads if n_kv_heads is not None else n_heads  # n_kv_heads != n_heads implies MQA [arxiv/2307.09288, A.2.1]
@@ -88,7 +87,6 @@ class Attention:
 
 
 class FeedForward:
-
   def __init__(self, dim: int, hidden_dim: int, linear=nn.Linear):
     self.w1 = linear(dim, hidden_dim, bias=False)
     self.w2 = linear(hidden_dim, dim, bias=False)
@@ -99,7 +97,6 @@ class FeedForward:
 
 
 class TransformerBlock:
-
   def __init__(self, dim: int, hidden_dim: int, n_heads: int, n_kv_heads: int, norm_eps: float, max_context: int, linear=nn.Linear, feed_forward=FeedForward):
     self.attention = Attention(dim, n_heads, n_kv_heads, max_context, linear)
     self.feed_forward = feed_forward(dim, hidden_dim, linear)
@@ -165,7 +162,6 @@ from exo.inference.shard import Shard
 
 
 class Transformer:
-
   def __init__(
     self,
     dim: int,
@@ -222,7 +218,6 @@ class Transformer:
 
 
 def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_heads: int, n_kv_heads: int):
-
   def permute(v: Tensor, n_heads: int):
     return v.reshape(n_heads, 2, v.shape[0] // n_heads // 2, v.shape[1]).transpose(1, 2).reshape(*v.shape[:2])
 

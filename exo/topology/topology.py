@@ -3,7 +3,6 @@ from typing import Dict, Set, Optional
 
 
 class Topology:
-
   def __init__(self):
     self.nodes: Dict[str, DeviceCapabilities] = {}  # Maps node IDs to DeviceCapabilities
     self.peer_graph: Dict[str, Set[str]] = {}  # Adjacency list representing the graph

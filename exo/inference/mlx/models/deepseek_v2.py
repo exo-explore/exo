@@ -24,7 +24,6 @@ class ModelArgs(ModelArgs):
 
 
 class DeepseekV2Model(nn.Module):
-
   def __init__(self, config: ModelArgs):
     super().__init__()
     self.args = config
@@ -71,7 +70,6 @@ class DeepseekV2Model(nn.Module):
 
 
 class Model(nn.Module):
-
   def __init__(self, config: ModelArgs):
     super().__init__()
     self.args = config

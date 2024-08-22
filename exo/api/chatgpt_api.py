@@ -18,7 +18,6 @@ from typing import Callable
 
 
 class Message:
-
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
     self.role = role
     self.content = content
@@ -28,7 +27,6 @@ class Message:
 
 
 class ChatCompletionRequest:
-
   def __init__(self, model: str, messages: List[Message], temperature: float):
     self.model = model
     self.messages = messages
@@ -148,7 +146,6 @@ def parse_chat_request(data: dict):
 
 
 class PromptSession:
-
   def __init__(self, request_id: str, timestamp: int, prompt: str):
     self.request_id = request_id
     self.timestamp = timestamp
@@ -156,7 +153,6 @@ class PromptSession:
 
 
 class ChatGPTAPI:
-
   def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
@@ -183,7 +179,6 @@ class ChatGPTAPI:
     self.app.middlewares.append(self.log_request)
 
   async def log_request(self, app, handler):
-
     async def middleware(request):
       if DEBUG >= 2: print(f"Received request: {request.method} {request.path}")
       return await handler(request)

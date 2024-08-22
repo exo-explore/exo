@@ -27,7 +27,6 @@ if _version_not_supported:
 
 class NodeServiceStub(object):
   """Missing associated documentation comment in .proto file."""
-
   def __init__(self, channel):
     """Constructor.
 
@@ -74,7 +73,6 @@ class NodeServiceStub(object):
 
 class NodeServiceServicer(object):
   """Missing associated documentation comment in .proto file."""
-
   def SendPrompt(self, request, context):
     """Missing associated documentation comment in .proto file."""
     context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -159,7 +157,6 @@ def add_NodeServiceServicer_to_server(servicer, server):
 # This class is part of an EXPERIMENTAL API.
 class NodeService(object):
   """Missing associated documentation comment in .proto file."""
-
   @staticmethod
   def SendPrompt(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
     return grpc.experimental.unary_unary(

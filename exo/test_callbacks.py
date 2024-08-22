@@ -12,7 +12,6 @@ async def main() -> None:
   callback2 = callback_system.register("callback2")
 
   def on_next_callback(name: str) -> Callable[..., None]:
-
     def callback(*args: Any) -> None:
       print(f"{name} received values: {args}")
 
