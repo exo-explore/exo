@@ -216,8 +216,23 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - unit_test
-      - discovery_integration_test
-      - chatgpt_api_integration_test_mlx
-      - test_macos_m1
-      # - chatgpt_api_integration_test_tinygrad
+      - hold_for_approval:
+          type: approval
+          filters:
+            branches:
+              ignore: main
+      - unit_test:
+          requires:
+            - hold_for_approval
+      - discovery_integration_test:
+          requires:
+            - hold_for_approval
+      - chatgpt_api_integration_test_mlx:
+          requires:
+            - hold_for_approval
+      - test_macos_m1:
+          requires:
+            - hold_for_approval
+      # - chatgpt_api_integration_test_tinygrad:
+      #     requires:
+      #       - hold_for_approval
