@@ -222,17 +222,42 @@ workflows:
             branches:
               ignore: main
       - unit_test:
+          filters:
+            branches:
+              only: main
+      - discovery_integration_test:
+          filters:
+            branches:
+              only: main
+      - chatgpt_api_integration_test_mlx:
+          filters:
+            branches:
+              only: main
+      - test_macos_m1:
+          filters:
+            branches:
+              only: main
+      - unit_test:
           requires:
             - hold_for_approval
+          filters:
+            branches:
+              ignore: main
       - discovery_integration_test:
           requires:
             - hold_for_approval
+          filters:
+            branches:
+              ignore: main
       - chatgpt_api_integration_test_mlx:
           requires:
             - hold_for_approval
+          filters:
+            branches:
+              ignore: main
       - test_macos_m1:
           requires:
             - hold_for_approval
-      # - chatgpt_api_integration_test_tinygrad:
-      #     requires:
-      #       - hold_for_approval
+          filters:
+            branches:
+              ignore: main
