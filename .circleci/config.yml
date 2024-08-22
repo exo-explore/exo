@@ -16,27 +16,34 @@ commands:
           command: |
             source env/bin/activate
 
+            # Function to run a command with real-time output and capture
+            run_with_output() {
+              local log_file=$1
+              shift
+              "$@" > >(tee -a "$log_file") 2>&1 &
+              echo $!
+            }
+
             # Start first instance
-            HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900 > output1.log 2>&1 &
-            PID1=$!
+            echo "Starting first instance..."
+            PID1=$(run_with_output output1.log HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900)
 
             # Start second instance
-            HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout-secs 900 > output2.log 2>&1 &
-            PID2=$!
+            echo "Starting second instance..."
+            PID2=$(run_with_output output2.log HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout-secs 900)
 
             # Wait for discovery
+            echo "Waiting for discovery..."
             sleep 10
 
             # Function to check if processes are still running
             check_processes() {
               if ! kill -0 $PID1 2>/dev/null; then
-                echo "First instance (PID $PID1) died unexpectedly. Log output:"
-                cat output1.log
+                echo "First instance (PID $PID1) died unexpectedly."
                 exit 1
               fi
               if ! kill -0 $PID2 2>/dev/null; then
-                echo "Second instance (PID $PID2) died unexpectedly. Log output:"
-                cat output2.log
+                echo "Second instance (PID $PID2) died unexpectedly."
                 exit 1
               fi
             }
@@ -44,6 +51,7 @@ commands:
             # Check processes before proceeding
             check_processes
 
+            echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -56,6 +64,7 @@ commands:
             # Check processes after first response
             check_processes
 
+            echo "Sending request to second instance..."
             response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -69,6 +78,7 @@ commands:
             check_processes
 
             # Stop both instances
+            echo "Stopping instances..."
             kill $PID1 $PID2
 
             echo ""
