@@ -312,6 +312,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
+    # TODO: should we add our own peer id here?
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:

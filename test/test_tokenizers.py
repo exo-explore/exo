@@ -1,4 +1,5 @@
 from transformers import AutoTokenizer, AutoProcessor
+from exo.models import model_base_shards
 
 
 def test_tokenizer(name, tokenizer, verbose=False):
@@ -21,20 +22,8 @@ def test_tokenizer(name, tokenizer, verbose=False):
     strip_tokens = lambda s: s.lstrip(tokenizer.decode([tokenizer.bos_token_id])).rstrip(tokenizer.decode([tokenizer.eos_token_id]))
     assert text == strip_tokens(decoded) == strip_tokens(reconstructed)
 
-# test_tokenizer(AutoTokenizer.from_pretrained("mlx-community/Mistral-Nemo-Instruct-2407-4bit"))
-models = [
-    "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
-    "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated",
-    "mlx-community/Meta-Llama-3.1-70B-Instruct-4bit",
-    "NousResearch/Meta-Llama-3.1-70B",
-    "mlx-community/Meta-Llama-3.1-405B-4bit",
-    "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
-    "mlx-community/Meta-Llama-3-70B-Instruct-4bit",
-    # "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx",
-    # "llava-hf/llava-1.5-7b-hf",
-    "mlx-community/Mistral-Nemo-Instruct-2407-4bit",
-    "mlx-community/Mistral-Large-Instruct-2407-4bit",
-]
+ignore = ["TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", "llava-hf/llava-1.5-7b-hf"]
+models = [shard.model_id for shards in model_base_shards.values() for shard in shards.values() if shard.model_id not in ignore]
 
 import os
 verbose = os.environ.get("VERBOSE", "0").lower() == "1"
