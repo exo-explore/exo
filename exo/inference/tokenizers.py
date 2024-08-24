@@ -6,10 +6,14 @@ from exo.helpers import DEBUG
 
 async def resolve_tokenizer(model_id: str):
   local_path = await get_local_snapshot_dir(model_id)
-  if await aios.path.exists(local_path):
-    if DEBUG >= 2: print(f"Resolving tokenizer for {model_id=} from {local_path=}")
-    return await _resolve_tokenizer(local_path)
-  if DEBUG >= 2: print(f"Local check for {local_path=} failed. Resolving tokenizer for {model_id=} normally...")
+  if DEBUG >= 2: print(f"Checking if local path exists to load tokenizer from local {local_path=}")
+  try:
+    if await aios.path.exists(local_path):
+      if DEBUG >= 2: print(f"Resolving tokenizer for {model_id=} from {local_path=}")
+      return await _resolve_tokenizer(local_path)
+  except:
+    if DEBUG >= 5: print(f"Local check for {local_path=} failed. Resolving tokenizer for {model_id=} normally...")
+    if DEBUG >= 5: traceback.print_exc()
   return await _resolve_tokenizer(model_id)
 
 async def _resolve_tokenizer(model_id_or_local_path: str):
