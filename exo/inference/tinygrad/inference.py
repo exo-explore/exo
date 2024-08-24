@@ -3,6 +3,7 @@ import json
 import os
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from exo.inference.shard import Shard
+from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import safe_load, torch_load, load_state_dict
 from tinygrad import Tensor, dtypes, nn, Context
 from transformers import AutoTokenizer
@@ -90,5 +91,5 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     model_path = await self.shard_downloader.ensure_shard(shard)
     self.model = build_transformer(model_path, shard, model_size="8B" if "8b" in shard.model_id.lower() else "70B")
-    self.tokenizer = AutoTokenizer.from_pretrained(str((model_path if model_path.is_dir() else model_path.parent)))
+    self.tokenizer = await resolve_tokenizer(str((model_path if model_path.is_dir() else model_path.parent)))
     self.shard = shard
