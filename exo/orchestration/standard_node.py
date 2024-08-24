@@ -299,6 +299,7 @@ class StandardNode(Node):
         await self.collect_topology()
       except Exception as e:
         print(f"Error collecting topology: {e}")
+        traceback.print_exc()
 
   async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
     if request_id not in self.buffered_token_output:
@@ -312,6 +313,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
+    # TODO: should we add our own peer id here?
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:
