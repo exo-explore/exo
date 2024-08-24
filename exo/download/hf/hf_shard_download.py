@@ -24,8 +24,10 @@ class HFShardDownloader(ShardDownloader):
       repo_root = get_repo_root(shard.model_id)
       snapshots_dir = repo_root/"snapshots"
       if snapshots_dir.exists():
-        most_recent_dir = max(snapshots_dir.iterdir(), key=lambda x: x.stat().st_mtime)
-        return most_recent_dir
+        visible_dirs = [d for d in snapshots_dir.iterdir() if not d.name.startswith('.')]
+        if visible_dirs:
+          most_recent_dir = max(visible_dirs, key=lambda x: x.stat().st_mtime)
+          return most_recent_dir
 
     # If a download on this shard is already in progress, keep that one
     for active_shard in self.active_downloads:

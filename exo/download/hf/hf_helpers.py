@@ -17,6 +17,16 @@ from aiofiles import os as aios
 
 T = TypeVar("T")
 
+async def get_local_snapshot_dir(repo_id: str, revision: str = "main") -> Optional[Path]:
+  refs_dir = get_repo_root(repo_id)/"refs"
+  refs_file = refs_dir/revision
+  if await aios.path.exists(refs_file):
+    async with aiofiles.open(refs_file, 'r') as f:
+      commit_hash = (await f.read()).strip()
+      snapshot_dir = get_repo_root(repo_id)/"snapshots"/commit_hash
+      return snapshot_dir
+  return None
+
 
 def filter_repo_objects(
   items: Iterable[T],
