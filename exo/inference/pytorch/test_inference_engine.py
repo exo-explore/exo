@@ -19,7 +19,7 @@ def main():
 
     # Run inference
     loop = asyncio.get_event_loop()
-    output_data, new_inference_state, is_eos = loop.run_until_complete(
+    output_data, _, _ = loop.run_until_complete(
         engine.infer_prompt(
             request_id="test_request", shard=shard, prompt=prompt
         )
