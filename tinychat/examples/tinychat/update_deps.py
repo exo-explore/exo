@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import re
+from exo import models
 
 def download_file(url, local_path):
     response = requests.get(url)
@@ -43,6 +44,30 @@ def update_html(html_content, base_url):
             tag['href'] = "/" + relative_path
 
     return str(soup)
+
+def update_model_options(html_content: str):
+    """
+    update models.json to list models from exo/models.py
+    """
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    model_selector_div = soup.find('div', class_='model-selector')
+    if model_selector_div:
+        select_element = model_selector_div.find('select')
+        if select_element:
+            for option in select_element.find_all('option'):
+                option.decompose()
+            
+            for k,_ in models.model_base_shards.items():
+                option = soup.new_tag('option', value=k)
+                option.string = k
+                select_element.append(option)
+
+    with open('./index.html', 'w') as f:
+        f.write(str(soup))
+
+    print("updated model options")
+
 
 # Read the HTML file
 with open('./index.html', 'r') as f:
@@ -88,3 +113,5 @@ for font_url in font_urls:
     download_file(full_url, output_path)
 
 print("Download complete!")
+
+update_model_options(html_content)
