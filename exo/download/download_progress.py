@@ -23,9 +23,7 @@ class RepoFileProgressEvent:
 
   @classmethod
   def from_dict(cls, data):
-    # Convert eta from seconds back to timedelta
-    if 'eta' in data:
-      data['eta'] = timedelta(seconds=data['eta'])
+    if 'eta' in data: data['eta'] = timedelta(seconds=data['eta'])
     return cls(**data)
 
 
@@ -53,13 +51,8 @@ class RepoProgressEvent:
 
   @classmethod
   def from_dict(cls, data):
-    # Convert overall_eta from seconds back to timedelta
-    if 'overall_eta' in data:
-      data['overall_eta'] = timedelta(seconds=data['overall_eta'])
-
-    # Parse file_progress
-    if 'file_progress' in data:
-      data['file_progress'] = {k: RepoFileProgressEvent.from_dict(v) for k, v in data['file_progress'].items()}
+    if 'overall_eta' in data: data['overall_eta'] = timedelta(seconds=data['overall_eta'])
+    if 'file_progress' in data: data['file_progress'] = {k: RepoFileProgressEvent.from_dict(v) for k, v in data['file_progress'].items()}
 
     return cls(**data)
 
