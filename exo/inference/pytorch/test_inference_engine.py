@@ -8,12 +8,10 @@ def main():
         model_id="meta-llama/Meta-Llama-3.1-8B",
         start_layer=0,
         end_layer=0,
-        n_layers=12
+        n_layers=32
     )
 
-    engine = PyTorchDynamicShardInferenceEngine(
-        shard
-    )
+    engine = PyTorchDynamicShardInferenceEngine()
 
    
     # Prepare the prompt

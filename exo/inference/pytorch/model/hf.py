@@ -19,8 +19,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.shard = shard
 
-        
-
         # Load the model
         self.full_model = AutoModelForCausalLM.from_pretrained(
             shard.model_id,
@@ -53,9 +51,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     def forward_layers(
         self,
         input_data: torch.tensor
-    ) -> Tuple[np.ndarray, list]:
+    ) -> np.ndarray:
         """
         Forward pass through the specified layers.
+        This is without caching
 
         Note: past_key_values not working for model, might be a library bug
         """ 
@@ -104,4 +103,4 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             return output_token
         
-        return hidden_states.cpu().numpy()
+        return hidden_states.cpu().detach().numpy()

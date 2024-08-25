@@ -63,11 +63,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
-            print(f"output_data.item() {output_data.item()}")
+            
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
             print(f"output_data[-1] {output_data[-1]}")
-            print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
+
+            if output_data.size == 1:
+                print(f"size 1 output_data.item() {output_data.item()}")
+                print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
         return (
             output_data,
@@ -104,11 +107,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 2:
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
-            print(f"output_data.item() {output_data.item()}")
             print(f"finished: {is_finished}")
             print(f"self.tokenizer.eos_token_id {self.tokenizer.eos_token_id}")
             print(f"output_data[-1] {output_data[-1]}")
-            print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
+
+            if output_data.size == 1:
+                print(f"size 1 output_data.item() {output_data.item()}")
+                print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
         return (
             output_data,
