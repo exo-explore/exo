@@ -17,14 +17,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
     """
 
-    def __init__(self):
+    def __init__(self, shard):
         """
         Initialize the inference engine.
 
         Args:
             debug (bool): If True, enables debug logging. Defaults to False.
         """
-        self.shard = None
+        self.shard = shard
         self.model = None
         self.tokenizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
