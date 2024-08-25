@@ -21,8 +21,8 @@ model_base_shards = {
     "TinygradDynamicShardInferenceEngine": Shard(model_id="TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", start_layer=0, end_layer=0, n_layers=80),
   },
   "llama-3-2B-Base": {
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="andrijdavid/Llama3-2B-Base", start_layer=0, end_layer=0, n_layers=32),
-    "PyTorchDynamicShardInferenceEngine": Shard(model_id="andrijdavid/Llama3-2B-Base", start_layer=0, end_layer=0, n_layers=32),
+    "TinygradDynamicShardInferenceEngine": Shard(model_id="andrijdavid/Llama3-2B-Base", start_layer=0, end_layer=0, n_layers=5),
+    "PyTorchDynamicShardInferenceEngine": Shard(model_id="andrijdavid/Llama3-2B-Base", start_layer=0, end_layer=0, n_layers=5),
   },
   ### mistral
   "mistral-nemo": {"MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Nemo-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=40),},
