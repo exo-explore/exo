@@ -37,18 +37,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         image_str: Optional[str] = None, 
         inference_state: Optional[str] = None
     ) -> Tuple[np.ndarray, str, bool]:
-        if DEBUG >= 2:
-            print("infer_prompt called")
-
         await self.ensure_shard(shard)
 
         # need to make this so inference_state is not a string
         # cant use it with dynamic cache
            
         tokens = self.tokenizer.encode(prompt, return_tensors="pt")
-
-        if DEBUG >= 2:
-            print(f"tokens: {tokens}\n")
 
         output_data = self.model.forward_layers(
             tokens
@@ -60,7 +54,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"token from llm decode: {self.tokenizer.decode(output_data)}")
 
 
-        if DEBUG >= 2:
+        if DEBUG >= 4:
+            print("infer_prompt called")
+            print(f"tokens: {tokens}\n")
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             
@@ -91,7 +87,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if in_tensor.dim() == 1:
             in_tensor = in_tensor.unsqueeze(0)  # Add a batch dimension: [1, seq_len]
 
-        if DEBUG >= 2:
+        if DEBUG >= 4:
             print("infer_tensor called")
             print(f"input_data: {input_data}\n")
             print(f"in_tensor: {in_tensor}\n")
@@ -104,7 +100,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
-        if DEBUG >= 2:
+        if DEBUG >= 4:
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             print(f"finished: {is_finished}")
@@ -131,12 +127,21 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
 
-        if DEBUG >= 2:
+        if DEBUG >= 4:
             print(f"Loading new shard: {shard}")
+
+        # if self.model:
+        #     if DEBUG >= 2:
+        #         print(f"\nCLEARING MODEL {self.shard.model_id}\n")
+                
+        #     # delete model and free up memory to reload
+        #     self.model.cpu()
+        #     del self.model
+        #     torch.cuda.empty_cache()
 
         self.model = ShardedHuggingFaceModel(shard)
         self.tokenizer = await resolve_tokenizer(shard.model_id)
         self.shard = shard
 
-        if DEBUG >= 2:
+        if DEBUG >= 4:
             print(f"Shard loaded successfully: {shard}")
