@@ -79,17 +79,27 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     assert np.array_equal(next_resp_full, resp4)
 
 if __name__ == '__main__':
-    # asyncio.run(test_inference_engine(
-    #     PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-    #     PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-    #     "Qwen/Qwen2-0.5B-Instruct",
-    #     25
-    # ))
+    print(f"\n\n -------- TEST QWEN2 -------- \n\n")
+    asyncio.run(test_inference_engine(
+        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+        "Qwen/Qwen2-0.5B-Instruct",
+        25
+    ))
 
+    print(f"\n\n -------- TEST LLAMA3-1B-Base -------- \n\n")
     asyncio.run(test_inference_engine(
         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
         "andrijdavid/Llama3-1B-Base",
         3
+    ))
+
+    print(f"\n\n -------- TEST META LLAMA 3.1 8B -------- \n\n")
+    asyncio.run(test_inference_engine(
+        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+        "meta-llama/Meta-Llama-3.1-8B",
+        32
     ))
 
