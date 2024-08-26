@@ -1,5 +1,5 @@
 # experimental, based off of tinygrad/inference.py
-
+import os
 import numpy as np
 import torch
 import numpy as np
@@ -11,6 +11,8 @@ from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
 from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
 from transformers import DynamicCache
+
+from exo.inference.pytorch.model.utils import sample_logits
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
@@ -29,6 +31,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.tokenizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        if os.getenv("TORCH_CACHED") == "True":
+            self.use_cache = True
+        else:
+            self.use_cache = False
+
     async def infer_prompt(
         self, 
         request_id: str, 
@@ -37,6 +44,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         image_str: Optional[str] = None, 
         inference_state: Optional[str] = None
     ) -> Tuple[np.ndarray, str, bool]:
+        
         await self.ensure_shard(shard)
 
         # need to make this so inference_state is not a string
@@ -44,15 +52,26 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
            
         tokens = self.tokenizer.encode(prompt, return_tensors="pt")
 
-        output_data = self.model.forward_layers(
-            tokens
-        )
+        if self.use_cache:
+            # convert inference_state or cache from json to DynamicCache
+            past_kv = DynamicCache()
+            if inference_state != None:
+                cache_dict = json.loads(inference_state)
+                past_kv.key_cache = [torch.tensor(data) for data in cache_dict['key_cache']]
+                past_kv.value_cache = [torch.tensor(data) for data in cache_dict['value_cache']]
+                
+            output_data, current_kvs = self.model.forward(
+                tokens,
+                past_kv,
+                use_cache=True
+            )
+        else:
+            output_data = self.model.forward(
+                tokens,
+                use_cache=False
+            )
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
-
-        if is_finished:
-            print(f"token from llm decode: {self.tokenizer.decode(output_data)}")
-
 
         if DEBUG >= 4:
             print("infer_prompt called")
@@ -68,9 +87,17 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 print(f"size 1 output_data.item() {output_data.item()}")
                 print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
+        if self.use_cache:
+            # legacy_cache = current_kvs.to_legacy_cache()
+            print(current_kvs.key_cache)
+            cache_dict = {
+                'key_cache': [tensor.tolist() for tensor in current_kvs.key_cache],
+                'value_cache': [tensor.tolist() for tensor in current_kvs.value_cache]
+            }
+
         return (
             output_data,
-            "",
+            json.dumps(cache_dict) if self.use_cache else "",
             is_finished
         )
 
@@ -79,28 +106,38 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         request_id: str, 
         shard: Shard, 
         input_data: np.ndarray, 
-        inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        inference_state: Optional[str] = None
+    ) -> Tuple[np.ndarray, str, bool]:
+
+        await self.ensure_shard(shard)
 
         in_tensor = torch.tensor(input_data)
-    
-        # Ensure input_data is 2D: [batch_size, seq_len]
-        if in_tensor.dim() == 1:
-            in_tensor = in_tensor.unsqueeze(0)  # Add a batch dimension: [1, seq_len]
+
+        if self.use_cache:
+            # convert inference_state or cache from json to DynamicCache
+            past_kv = DynamicCache()
+            if inference_state != None:
+                cache_dict = json.loads(inference_state)
+                past_kv.key_cache = [torch.tensor(data) for data in cache_dict['key_cache']]
+                past_kv.value_cache = [torch.tensor(data) for data in cache_dict['value_cache']]
+
+            output_data, current_kvs = self.model.forward(
+                in_tensor,
+                past_kv,
+                use_cache=True
+            )
+        else:
+            output_data = self.model.forward(
+                in_tensor,
+                use_cache=False
+            )
+
+        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
         if DEBUG >= 4:
             print("infer_tensor called")
             print(f"input_data: {input_data}\n")
             print(f"in_tensor: {in_tensor}\n")
-
-        await self.ensure_shard(shard)
-
-        output_data = self.model.forward_layers(
-            in_tensor
-        )
-
-        is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
-
-        if DEBUG >= 4:
             print(f"output_data: {output_data}\n")
             print(f"output_data.size {output_data.size}\n")
             print(f"finished: {is_finished}")
@@ -111,9 +148,16 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 print(f"size 1 output_data.item() {output_data.item()}")
                 print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
+        if self.use_cache:
+            legacy_cache = current_kvs.to_legacy_cache()
+            cache_dict = {
+                'key_cache': [tensor.tolist() for tensor in legacy_cache.key_cache],
+                'value_cache': [tensor.tolist() for tensor in legacy_cache.value_cache]
+            }
+
         return (
             output_data,
-            "",
+            json.dumps(cache_dict) if self.use_cache else "",
             is_finished
         )
 
@@ -139,9 +183,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         #     del self.model
         #     torch.cuda.empty_cache()
 
-        self.model = ShardedHuggingFaceModel(shard)
-        self.tokenizer = await resolve_tokenizer(shard.model_id)
         self.shard = shard
+        self.tokenizer = await resolve_tokenizer(shard.model_id)
+        self.model = ShardedHuggingFaceModel(shard, self.tokenizer)
 
         if DEBUG >= 4:
             print(f"Shard loaded successfully: {shard}")
