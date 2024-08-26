@@ -6,7 +6,7 @@ Experimental, still under development
 Install needed py modules, make sure to be using CUDA 12.4 for the PyTorch install
 
 ```console
-$ pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+$ pip install torch --index-url https://download.pytorch.org/whl/cu124
 $ pip install transformers accelerate
 ```
 
