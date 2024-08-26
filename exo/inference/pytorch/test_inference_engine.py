@@ -1,7 +1,7 @@
 
 import asyncio
 from exo.inference.shard import Shard
-from .inference import PyTorchDynamicShardInferenceEngine
+from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
