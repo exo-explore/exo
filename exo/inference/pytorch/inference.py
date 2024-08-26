@@ -121,10 +121,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             device=self.device
         )
 
-        if in_tensor.dim() == 1:
-            in_tensor = in_tensor.unsqueeze(1) 
+        # if in_tensor.dim() == 1:
+        #     in_tensor = in_tensor.unsqueeze(1) 
 
-        in_tensor = self.model.embed_tokens(in_tensor)
+        # in_tensor = self.model.embed_tokens(in_tensor)
 
         if DEBUG >= 4:
             print("infer_tensor called")
