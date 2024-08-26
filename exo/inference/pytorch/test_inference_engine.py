@@ -26,12 +26,16 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
         prompt=prompt
     )
 
+    print(f"resp_full: {resp_full}")
+
     next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
         "A",
         shard=shard,
         input_data=resp_full,
         inference_state=inference_state_full,
     )
+
+    print(f"next_resp_full: {next_resp_full}")
 
     pp = int(n_layers/2)
     resp_shard = Shard(
@@ -79,8 +83,8 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     assert np.array_equal(next_resp_full, resp4)
 
 if __name__ == '__main__':
-    print(f"\n\n -------- TEST QWEN2 -------- \n\n")
     # try:
+    #     print(f"\n\n -------- TEST QWEN2 -------- \n\n")
     #     asyncio.run(test_inference_engine(
     #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
     #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),

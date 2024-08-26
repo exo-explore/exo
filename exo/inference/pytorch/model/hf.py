@@ -43,12 +43,12 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         if DEBUG >= 2:
             print(f"\nShardedHuggingFaceModel init with shard {shard}")
             print(f"self.llm_model: {self.llm_model}")
-            print(f"self.llm_model.model: {self.llm_model.model}")
+            print(f"self.base_model: {self.base_model}")
 
         # load layers from base model to use
         layers = []
         for i in range(shard.start_layer, shard.end_layer + 1):
-            layer = self.llm_model.model.layers[i]
+            layer = self.base_model.layers[i]
 
             if DEBUG >= 2:
                 print(f"Loading layers[{i}]")
@@ -58,11 +58,11 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self.layers = nn.ModuleList(layers)
 
         if DEBUG >= 2:
-            print(f"full_model.model layer: {len(self.llm_model.model.layers)}")
+            print(f"full_model.model layer: {len(self.base_model.layers)}")
 
         # Embeddings and final layer norm
         # used for doing what forward LlamaModel does in transformers
-        self.norm = self.llm_model.model.norm
+        self.norm = self.base_model.norm
         self.lm_head = self.llm_model.lm_head
         self.embed_tokens = self.base_model.embed_tokens
     
@@ -106,6 +106,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
         position_ids = cache_position.unsqueeze(0).to(self.device)
 
+        try:
+            position_embeddings = self.base_model.rotary_emb(
+                input_ids,
+                position_ids
+            )
+        except Exception as err:
+            print(f"rotary_emb not found in base_model")
+            position_embeddings = None
+
         # progress through layers
         for decoder_layer in self.layers:
             if DEBUG >= 4:
@@ -114,7 +123,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             layer_outputs = decoder_layer(
                 input_ids,
-                position_ids=position_ids,
+                position_ids=position_ids if not position_embeddings else None,
+                position_embeddings=position_embeddings,
                 past_key_value=past_kvs,
                 use_cache=True,
                 cache_position=cache_position,
@@ -124,8 +134,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         next_kvs = layer_outputs[1]
 
         if DEBUG >= 3:
-            print(f"hidden_state: {hidden_states}")
-            print(f"next_kvs: {next_kvs}")
+            print(f"layer_outputs {layer_outputs}")
         
         if self.shard.is_last_layer():
             hs_norm = self.norm(hidden_states)
@@ -138,7 +147,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                     TEMP,
                     TOP_P,
                     TOP_K
-                ).cpu().numpy().flatten()
+                ).numpy(force=True).flatten()
 
             if DEBUG >= 2:
                 print(f"hs_norm: {hs_norm}")
@@ -174,10 +183,10 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
     #     # Forward pass through the layer
     #     if DEBUG >= 2:
-    #         print(f"\n[layer model] {self.llm_model.model}")
+    #         print(f"\n[layer model] {self.base_model}")
     #         print(f"IN hidden_states {hidden_states}")
         
-    #     layer_outputs = self.llm_model.model(
+    #     layer_outputs = self.base_model(
     #         hidden_states.to(self.device),
     #         use_cache=False
     #     )
@@ -260,7 +269,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     #         #         position_ids=position_ids
     #         #     )
     #         # else:
-    #         #     position_embeddings = self.llm_model.model.rotary_emb(
+    #         #     position_embeddings = self.base_model.rotary_emb(
     #         #         hidden_states,
     #         #         position_ids
     #         #     )
@@ -275,7 +284,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
     #         print(f"IN hidden_states {hidden_states}")
     #         print(f"past_kvs {past_kvs}")
         
-    #     layer_outputs = self.llm_model.model(
+    #     layer_outputs = self.base_model(
     #         hidden_states,
     #         position_ids=position_ids,
     #         past_key_values=past_kvs,
