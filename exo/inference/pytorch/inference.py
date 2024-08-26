@@ -12,6 +12,8 @@ from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
 from transformers import DynamicCache
 
+
+
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
@@ -28,11 +30,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.model = None
         self.tokenizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        if os.getenv("TORCH_CACHED") == "True":
-            self.use_cache = True
-        else:
-            self.use_cache = False
 
     async def infer_prompt(
         self, 
@@ -59,24 +56,17 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"is_first_layer: {self.shard.is_first_layer()}")
             print(f"is_last_layer: {self.shard.is_last_layer()}")
         
-        if self.use_cache:
-            # convert inference_state or cache from json to DynamicCache
-            past_kv = DynamicCache()
-            if inference_state != None:
-                cache_dict = json.loads(inference_state)
-                past_kv.key_cache = [torch.tensor(data).to(self.device) for data in cache_dict['key_cache']]
-                past_kv.value_cache = [torch.tensor(data).to(self.device) for data in cache_dict['value_cache']]
-                
-            output_data, current_kvs = self.model.forward(
-                tokens,
-                past_kv,
-                use_cache=True
-            )
-        else:
-            output_data = self.model.forward(
-                tokens,
-                use_cache=False
-            )
+        # convert inference_state or cache from json to DynamicCache
+        past_kv = DynamicCache()
+        if inference_state != None:
+            cache_dict = json.loads(inference_state)
+            past_kv.key_cache = [torch.tensor(data).to(self.device) for data in cache_dict['key_cache']]
+            past_kv.value_cache = [torch.tensor(data).to(self.device) for data in cache_dict['value_cache']]
+            
+        output_data, current_kvs = self.model.forward(
+            tokens,
+            past_kv
+        )
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
@@ -92,15 +82,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 print(f"size 1 output_data.item() {output_data.item()}")
                 print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
-        if self.use_cache:
-            cache_dict = {
-                'key_cache': [tensor.tolist() for tensor in current_kvs.key_cache],
-                'value_cache': [tensor.tolist() for tensor in current_kvs.value_cache]
-            }
+        cache_dict = {
+            'key_cache': [tensor.tolist() for tensor in current_kvs.key_cache],
+            'value_cache': [tensor.tolist() for tensor in current_kvs.value_cache]
+        }
 
         return (
             output_data,
-            json.dumps(cache_dict) if self.use_cache else "",
+            json.dumps(cache_dict),
             is_finished
         )
 
@@ -116,15 +105,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         current_kvs = None
 
-        in_tensor = torch.tensor(
-            input_data,
-            device=self.device
-        )
+        if input_data.size == 1:
+            in_tensor = torch.tensor(
+                input_data,
+                device=self.device
+            ).unsqueeze(0).long()
 
-        # if in_tensor.dim() == 1:
-        #     in_tensor = in_tensor.unsqueeze(1) 
-
-        # in_tensor = self.model.embed_tokens(in_tensor)
+        in_tensor = self.model.embed_tokens(in_tensor)
 
         if DEBUG >= 4:
             print("infer_tensor called")
@@ -136,24 +123,26 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"is_first_layer: {self.shard.is_first_layer()}")
             print(f"is_last_layer: {self.shard.is_last_layer()}")
             
-        if self.use_cache:
-            # convert inference_state or cache from json to DynamicCache
-            past_kv = DynamicCache()
-            if inference_state != None:
+        # convert inference_state or cache from json to DynamicCache
+        past_kv = DynamicCache()
+        if inference_state != None:
+            try:
                 cache_dict = json.loads(inference_state)
                 past_kv.key_cache = [torch.tensor(data).to(self.device) for data in cache_dict['key_cache']]
                 past_kv.value_cache = [torch.tensor(data).to(self.device) for data in cache_dict['value_cache']]
 
-            output_data, current_kvs = self.model.forward(
-                in_tensor,
-                past_kv,
-                use_cache=True
-            )
-        else:
-            output_data = self.model.forward(
-                in_tensor,
-                use_cache=False
-            )
+                if DEBUG >= 4:
+                    print("Loaded past_kv from JSON")
+                    print(f"past_kv: {past_kv}")
+                    print(f"past_kv.key_cache len: {len(past_kv.key_cache)}")
+                    print(f"past_kv.value_cache len: {len(past_kv.value_cache)}")
+            except json.JSONDecodeError:
+                print(f"ERROR DECODING INFERENCE STATE")
+
+        output_data, current_kvs = self.model.forward(
+            in_tensor,
+            past_kv
+        )
 
         is_finished = output_data.size == 1 and output_data.item() in [self.tokenizer.eos_token_id]
 
@@ -169,15 +158,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 print(f"size 1 output_data.item() {output_data.item()}")
                 print(f"output_data.item() in [self.tokenizer.eos_token_id]: {output_data.item() in [self.tokenizer.eos_token_id]}")
 
-        if self.use_cache and current_kvs:
-            cache_dict = {
-                'key_cache': [tensor.tolist() for tensor in current_kvs.key_cache],
-                'value_cache': [tensor.tolist() for tensor in current_kvs.value_cache]
-            }
+        
+        cache_dict = {
+            'key_cache': [tensor.tolist() for tensor in current_kvs.key_cache],
+            'value_cache': [tensor.tolist() for tensor in current_kvs.value_cache]
+        }
 
         return (
             output_data,
-            json.dumps(cache_dict) if self.use_cache else "",
+            json.dumps(cache_dict),
             is_finished
         )
 

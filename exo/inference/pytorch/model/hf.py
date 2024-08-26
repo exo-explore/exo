@@ -55,7 +55,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             layers.append(layer)
         
-        self.layers = nn.ModuleList(layers).to(self.device)
+        self.layers = nn.ModuleList(layers)
 
         if DEBUG >= 2:
             print(f"full_model.model layer: {len(self.llm_model.model.layers)}")
@@ -70,7 +70,6 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         self,
         input_ids: torch.tensor,
         past_kvs: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
-        use_cache: bool = True
     ) -> Tuple[np.ndarray, any]:
         """
         Forward through layers using the base model
@@ -96,20 +95,16 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             print(f"is_first_layer: {self.shard.is_first_layer()}")
             print(f"is_last_layer: {self.shard.is_last_layer()}")
 
-        if use_cache:
-            past_kvs = DynamicCache.from_legacy_cache(past_kvs)
-            past_seen_tokens = past_kvs.get_seq_length() if past_kvs is not None else 0
-        
-        # if self.shard.is_first_layer():
-        #     inputs_embeds = self.embed_tokens(input_ids)
+        past_kvs = DynamicCache.from_legacy_cache(past_kvs)
+        past_seen_tokens = past_kvs.get_seq_length() if past_kvs is not None else 0
 
-        #     cache_position = torch.arange(
-        #         past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-        #     ).to(self.device)
+        cache_position = torch.arange(
+            past_seen_tokens, 
+            past_seen_tokens + input_ids.shape[1], 
+            device=input_ids.device
+        ).to(self.device)
 
-        #     position_ids = cache_position.unsqueeze(0).to(self.device)
-
-        # hidden_states = inputs_embeds
+        position_ids = cache_position.unsqueeze(0).to(self.device)
 
         # progress through layers
         for decoder_layer in self.layers:
@@ -119,15 +114,14 @@ class ShardedHuggingFaceModel(torch.nn.Module):
 
             layer_outputs = decoder_layer(
                 input_ids,
-                # position_ids=position_ids,
+                position_ids=position_ids,
                 past_key_value=past_kvs,
-                use_cache=use_cache,
-                # cache_position=cache_position,
+                use_cache=True,
+                cache_position=cache_position,
             )
 
         hidden_states = layer_outputs[0]
-        if use_cache:
-            next_kvs = layer_outputs[1]
+        next_kvs = layer_outputs[1]
 
         if DEBUG >= 3:
             print(f"hidden_state: {hidden_states}")
@@ -151,21 +145,15 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 print(f"hs_lm_head: {hs_lm_head}")
                 print(f"output_token: {output_token}")
 
-            if use_cache:
-                return (output_token, next_kvs)
-            
-            return output_token
+            return (output_token, next_kvs)
         
         with torch.no_grad():
             out_hidden_states = hidden_states.cpu().numpy()
 
-        if use_cache:
-            return (
-                out_hidden_states,
-                next_kvs
-            )
-        
-        return out_hidden_states
+        return (
+            out_hidden_states,
+            next_kvs
+        )
 
     # def forward_layers(
     #     self,
