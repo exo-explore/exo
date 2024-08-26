@@ -80,26 +80,26 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
 
 if __name__ == '__main__':
     print(f"\n\n -------- TEST QWEN2 -------- \n\n")
-    try:
-        asyncio.run(test_inference_engine(
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            "Qwen/Qwen2-0.5B-Instruct",
-            24
-        ))
-    except Exception as err:
-        print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
+    # try:
+    #     asyncio.run(test_inference_engine(
+    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #         "Qwen/Qwen2-0.5B-Instruct",
+    #         24
+    #     ))
+    # except Exception as err:
+    #     print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
 
-    try:
-        print(f"\n\n -------- TEST LLAMA3-1B-Base -------- \n\n")
-        asyncio.run(test_inference_engine(
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            "andrijdavid/Llama3-1B-Base",
-            3
-        ))
-    except Exception as err:
-        print(f"\n\n !!!!!!!!!!! LLAMA3-1B-Base TEST FAILED \n{err}\n")
+    # try:
+    #     print(f"\n\n -------- TEST LLAMA3-1B-Base -------- \n\n")
+    #     asyncio.run(test_inference_engine(
+    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #         "andrijdavid/Llama3-1B-Base",
+    #         3
+    #     ))
+    # except Exception as err:
+    #     print(f"\n\n !!!!!!!!!!! LLAMA3-1B-Base TEST FAILED \n{err}\n")
 
     try:
         print(f"\n\n -------- TEST META LLAMA 3.1 8B -------- \n\n")
