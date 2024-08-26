@@ -8,7 +8,7 @@ from exo.inference.shard import Shard
 from exo.helpers import DEBUG
 from typing import Tuple, Optional, Union, List
 
-from .utils import sample_logits
+from exo.inference.pytorch.model.utils import sample_logits
 
 TOP_P = 0.75 #0.95
 TOP_K = 20
@@ -30,7 +30,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         try:
             self.llm_model = AutoModelForCausalLM.from_pretrained(
                 shard.model_id,
-                torch_dtype="auto",
+                torch_dtype=torch.float32,
                 device_map="auto",
                 # offload_buffers=True
             )
@@ -64,6 +64,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
         # used for doing what forward LlamaModel does in transformers
         self.norm = self.llm_model.model.norm
         self.lm_head = self.llm_model.lm_head
+        self.embed_tokens = self.base_model.embed_tokens
     
     def forward(
         self,
@@ -88,65 +89,83 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             https://github.com/huggingface/transformers/blob/v4.44.2/src/transformers/models/qwen2/modeling_qwen2.py#L804
             https://github.com/huggingface/transformers/blob/v4.44.2/src/transformers/models/llama/modeling_llama.py#L887
         """
+        if DEBUG >= 4:
+            print("forward called")
+            print(f"input_ids: {input_ids}\n")
+            print(f"layer_count: {self.shard.get_layer_count()}")
+            print(f"is_first_layer: {self.shard.is_first_layer()}")
+            print(f"is_last_layer: {self.shard.is_last_layer()}")
 
-        if self.shard.is_first_layer():
-            inputs_embeds = self.base_model.embed_tokens(input_ids.to(self.device))
-
-            if use_cache:
-                past_kvs = DynamicCache.from_legacy_cache(past_kvs)
-
+        if use_cache:
+            past_kvs = DynamicCache.from_legacy_cache(past_kvs)
             past_seen_tokens = past_kvs.get_seq_length() if past_kvs is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+        
+        # if self.shard.is_first_layer():
+        #     inputs_embeds = self.embed_tokens(input_ids)
 
-            position_ids = cache_position.unsqueeze(0)
+        #     cache_position = torch.arange(
+        #         past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+        #     ).to(self.device)
 
-        hidden_states = inputs_embeds
+        #     position_ids = cache_position.unsqueeze(0).to(self.device)
+
+        # hidden_states = inputs_embeds
 
         # progress through layers
         for decoder_layer in self.layers:
+            if DEBUG >= 4:
+                print("Going through layer")
+                print(f"{decoder_layer}")
+
             layer_outputs = decoder_layer(
-                hidden_states,
-                position_ids=position_ids,
+                input_ids,
+                # position_ids=position_ids,
                 past_key_value=past_kvs,
                 use_cache=use_cache,
-                cache_position=cache_position,
+                # cache_position=cache_position,
             )
 
         hidden_states = layer_outputs[0]
-        next_kvs = layer_outputs[1]
+        if use_cache:
+            next_kvs = layer_outputs[1]
 
         if DEBUG >= 3:
             print(f"hidden_state: {hidden_states}")
             print(f"next_kvs: {next_kvs}")
-
+        
         if self.shard.is_last_layer():
-            norm = self.norm(hidden_states)
-            lm_head = self.lm_head(norm).float()
-    
+            hs_norm = self.norm(hidden_states)
+            hs_lm_head = self.llm_model.lm_head(hs_norm).float()
+
+            # Use the sampling function with default settings
             with torch.no_grad():
-                logits = sample_logits(
-                    lm_head[:, -1, :],
+                output_token = sample_logits(
+                    hs_lm_head[:, -1, :],
                     TEMP,
                     TOP_P,
                     TOP_K
                 ).cpu().numpy().flatten()
 
-                if DEBUG >= 3:
-                    print(
-                        self.tokenizer.batch_decode(
-                            logits,
-                            skip_special_tokens=True
-                        )[0]
-                    )
+            if DEBUG >= 2:
+                print(f"hs_norm: {hs_norm}")
+                print(f"hs_lm_head: {hs_lm_head}")
+                print(f"output_token: {output_token}")
 
-            return (logits, next_kvs)
+            if use_cache:
+                return (output_token, next_kvs)
+            
+            return output_token
+        
+        with torch.no_grad():
+            out_hidden_states = hidden_states.cpu().numpy()
 
-        return (
-            hidden_states.cpu().numpy(),
-            next_kvs
-        )
+        if use_cache:
+            return (
+                out_hidden_states,
+                next_kvs
+            )
+        
+        return out_hidden_states
 
     # def forward_layers(
     #     self,
