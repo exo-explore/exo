@@ -169,8 +169,11 @@ class ChatGPTAPI:
       allow_headers="*",
       allow_methods="*",
     )
+    cors.add(self.app.router.add_get("/models", self.handle_get_models), {"*": cors_options})
     cors.add(self.app.router.add_get("/v1/models", self.handle_get_models), {"*": cors_options})
+    cors.add(self.app.router.add_post("/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
+    cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
 
     self.static_dir = Path(__file__).parent.parent.parent/"tinychat/examples/tinychat"
