@@ -28,8 +28,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 shard.model_id,
                 torch_dtype=torch.float32,
                 device_map="auto",
-                offload_buffers=True
-            ).to(self.device)
+                # offload_buffers=True
+            )
 
             # disk_offload(model=self.llm_model, offload_dir="./.offload")
 
@@ -116,7 +116,7 @@ class ShardedHuggingFaceModel(torch.nn.Module):
                 past_key_value=past_kvs,
                 use_cache=True,
                 cache_position=cache_position,
-            ).to(self.device)
+            )
 
         hidden_states = layer_outputs[0]
         next_kvs = layer_outputs[1]

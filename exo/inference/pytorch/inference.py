@@ -108,6 +108,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
                 input_data,
                 device=self.device
             ).unsqueeze(0).long()
+        else:
+            in_tensor = torch.tensor(
+                input_data,
+                device=self.device
+            ).long()
 
         in_tensor = self.model.embed_tokens(in_tensor)
 
@@ -175,8 +180,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Args:
             shard (Optional[Shard]): Shard information for the model.
         """
-        if self.shard == shard:
-            return
+        # if self.shard == shard:
+        #     return
 
         if DEBUG >= 4:
             print(f"Loading new shard: {shard}")

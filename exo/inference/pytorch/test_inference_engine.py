@@ -13,31 +13,32 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     # prompt = "Why is the sky blue?"
     prompt = "In a single word only, what is the last name of the current president of the USA?"
 
-    shard = Shard(
-        model_id=model_id, 
-        start_layer=0, 
-        end_layer=n_layers-1, 
-        n_layers=n_layers
-    )
+    # shard = Shard(
+    #     model_id=model_id, 
+    #     start_layer=0, 
+    #     end_layer=n_layers-1, 
+    #     n_layers=n_layers
+    # )
 
-    resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt(
-        "A", 
-        shard=shard, 
-        prompt=prompt
-    )
+    # resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt(
+    #     "A", 
+    #     shard=shard, 
+    #     prompt=prompt
+    # )
 
-    print(f"resp_full: {resp_full}")
+    # print(f"resp_full: {resp_full}")
 
-    next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
-        "A",
-        shard=shard,
-        input_data=resp_full,
-        inference_state=inference_state_full,
-    )
+    # next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
+    #     "A",
+    #     shard=shard,
+    #     input_data=resp_full,
+    #     inference_state=inference_state_full,
+    # )
 
-    print(f"next_resp_full: {next_resp_full}")
+    # print(f"next_resp_full: {next_resp_full}")
 
     pp = int(n_layers/2)
+    
     resp_shard = Shard(
         model_id=model_id, 
         start_layer=0, 
@@ -65,19 +66,19 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
         inference_state=inference_state_1,
     )
 
-    resp3, inference_state_3, _ = await inference_engine_1.infer_tensor(
-        "B",
-        shard=resp_shard,
-        input_data=resp2,
-        inference_state=inference_state_2,
-    )
+    # resp3, inference_state_3, _ = await inference_engine_1.infer_tensor(
+    #     "B",
+    #     shard=resp_shard,
+    #     input_data=resp2,
+    #     inference_state=inference_state_2,
+    # )
 
-    resp4, _inference_state_4, _ = await inference_engine_2.infer_tensor(
-        "B",
-        shard=resp_shard2,
-        input_data=resp3,
-        inference_state=inference_state_3,
-    )
+    # resp4, _inference_state_4, _ = await inference_engine_2.infer_tensor(
+    #     "B",
+    #     shard=resp_shard2,
+    #     input_data=resp3,
+    #     inference_state=inference_state_3,
+    # )
 
     assert np.array_equal(resp_full, resp2)
     assert np.array_equal(next_resp_full, resp4)
@@ -116,14 +117,25 @@ if __name__ == '__main__':
     # except Exception as err:
     #     print(f"\n\n !!!!!!!!!!! META LLAMA 3.1 8B TEST FAILED \n{err}\n")
 
+    # try:
+    #     print(f"\n\n ------- TEST Chickaboo/ChickaQ-Large -----\n\n")
+    #     asyncio.run(test_inference_engine(
+    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #         "Chickaboo/ChickaQ-Large",
+    #         24
+    #     ))
+    # except Exception as err:
+    #     print(f"\n\n !!!!!!!!!!! Chickaboo/ChickaQ-Large TEST FAILED \n{err}\n")
+    
     try:
-        print(f"\n\n ------- TEST Chickaboo/ChickaQ-Large -----\n\n")
+        print(f"\n\n --------- TEST ambrosfitz/TinyLlama-1.1B-Chat-yawp -------\n\n")
         asyncio.run(test_inference_engine(
             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            "Chickaboo/ChickaQ-Large",
-            24
+            "ambrosfitz/TinyLlama-1.1B-Chat-yawp",
+            22
         ))
     except Exception as err:
-        print(f"\n\n !!!!!!!!!!! Chickaboo/ChickaQ-Large TEST FAILED \n{err}\n")
+        print(f"\n\n !!!!!!!!!!! ambrosfitz/TinyLlama-1.1B-Chat-yawp TEST FAILED \n{err}\n")
 
