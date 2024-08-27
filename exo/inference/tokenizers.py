@@ -19,7 +19,11 @@ async def resolve_tokenizer(model_id: str):
 async def _resolve_tokenizer(model_id_or_local_path: str):
   try:
     if DEBUG >= 4: print(f"Trying AutoProcessor for {model_id_or_local_path}")
-    processor = AutoProcessor.from_pretrained(model_id_or_local_path, use_fast=True if "Mistral-Large" in model_id_or_local_path else False)
+    if "Mistral-Large" in str(model_id_or_local_path):
+      use_fast = True
+    else:
+      use_fast = False
+    processor = AutoProcessor.from_pretrained(model_id_or_local_path, use_fast=use_fast)
     if not hasattr(processor, 'eos_token_id'):
       processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
     if not hasattr(processor, 'encode'):

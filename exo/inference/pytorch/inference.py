@@ -1,18 +1,16 @@
 # experimental, based off of tinygrad/inference.py
-import os
 import numpy as np
 import torch
 import numpy as np
 import json
-from typing import Optional, Callable, Tuple
+from typing import Optional, Tuple
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
 from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
 from transformers import DynamicCache
-
-
+from accelerate import disk_offload
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
@@ -183,14 +181,24 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 4:
             print(f"Loading new shard: {shard}")
 
-        # if self.model:
-        #     if DEBUG >= 2:
-        #         print(f"\nCLEARING MODEL {self.shard.model_id}\n")
+        if self.model:
+            if DEBUG >= 2:
+                print(f"\nCLEARING MODEL {shard.model_id}\n")
+                print(f"before allocated: {torch.cuda.memory_allocated()}")
+                print(f"before reserved: {torch.cuda.memory_reserved()}")
                 
-        #     # delete model and free up memory to reload
-        #     self.model.cpu()
-        #     del self.model
-        #     torch.cuda.empty_cache()
+            # delete model and free up memory to reload
+            # self.model.cuda()
+            # disk_offload(model=self.model, offload_dir="./.offload")
+            import gc
+
+            del self.model
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            if DEBUG >= 2:
+                print(f"after allocated: {torch.cuda.memory_allocated()}")
+                print(f"after reserved: {torch.cuda.memory_reserved()}")
 
         self.shard = shard
         self.tokenizer = await resolve_tokenizer(shard.model_id)
