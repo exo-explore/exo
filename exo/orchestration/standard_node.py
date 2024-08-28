@@ -26,9 +26,6 @@ class StandardNode(Node):
     discovery: Discovery,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
-    chatgpt_api_endpoints: List[str] = [],
-    web_chat_urls: List[str] = [],
-    disable_tui: Optional[bool] = False,
     topology_viz: Optional[TopologyViz] = None,
   ):
     self.id = _id

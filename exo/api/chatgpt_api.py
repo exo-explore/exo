@@ -168,8 +168,13 @@ class ChatGPTAPI:
       allow_headers="*",
       allow_methods="*",
     )
-    cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+    cors.add(self.app.router.add_get("/models", self.handle_get_models), {"*": cors_options})
+    cors.add(self.app.router.add_get("/v1/models", self.handle_get_models), {"*": cors_options})
+    cors.add(self.app.router.add_post("/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
+    cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+    cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+
     self.static_dir = Path(__file__).parent.parent.parent/"tinychat/examples/tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
@@ -186,6 +191,9 @@ class ChatGPTAPI:
 
   async def handle_root(self, request):
     return web.FileResponse(self.static_dir/"index.html")
+
+  async def handle_get_models(self, request):
+    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True } for model_name, _ in model_base_shards.items()])
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
@@ -253,7 +261,7 @@ class ChatGPTAPI:
           status=200,
           reason="OK",
           headers={
-            "Content-Type": "application/json",
+            "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
           },
         )
