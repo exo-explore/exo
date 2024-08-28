@@ -14,12 +14,13 @@ RUN apk add --no-cache \
     git \
     build-base \
     curl \
+    rust \
+    cargo \
     bash && \
     rm -rf /var/cache/apk/*
 
 # Install Python packages
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir requests
+RUN pip install --no-cache-dir requests
 
 # Copy installation files
 COPY setup.py .
