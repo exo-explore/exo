@@ -20,6 +20,7 @@ RUN apk add --no-cache \
     python3-dev \
     musl-dev \
     linux-headers \
+    pkgconfig \
     openssl-dev \
     bash && \
     rm -rf /var/cache/apk/*
