@@ -39,6 +39,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and Push Docker (alpine)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile-alpine
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/exo:latest-alpine
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Build and Push Docker (nvidia)
         uses: docker/build-push-action@v6
         with:
