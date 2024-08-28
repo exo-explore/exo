@@ -29,11 +29,12 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: Build and push Docker
+      - name: Build and Push Docker (nvidia)
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile-nvidia
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/exo:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/exo:latest-nvidia
           cache-from: type=gha
           cache-to: type=gha,mode=max
