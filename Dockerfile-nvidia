@@ -18,7 +18,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install dependencies and setup python3.12
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y git software-properties-common && \
+    apt-get install --no-install-recommends -y git gcc g++ software-properties-common && \
     add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get install --no-install-recommends -y python3.12 curl && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
