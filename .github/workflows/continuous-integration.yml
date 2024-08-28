@@ -1,0 +1,20 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  dockerfile:
+    name: Hadolint Dockerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+
+      - name: Lint Dockerfile-nvidia
+        uses: hadolint/hadolint-action@master
+        with:
+          dockerfile: "Dockerfile-nvidia"

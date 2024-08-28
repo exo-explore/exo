@@ -5,13 +5,14 @@ on:
     branches:
       - main
 
+# Keep builds in order so :latest is always the actual latest
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
   docker:
     name: Docker / Build and Push
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Project
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
