@@ -178,30 +178,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         Args:
             shard (Optional[Shard]): Shard information for the model.
         """
-        # if self.shard == shard:
-        #     return
+        if self.shard == shard:
+            return
 
         if DEBUG >= 4:
             print(f"Loading new shard: {shard}")
-
-        if self.model:
-            if DEBUG >= 2:
-                print(f"\nCLEARING MODEL {shard.model_id}\n")
-                print(f"before allocated: {torch.cuda.memory_allocated()}")
-                print(f"before reserved: {torch.cuda.memory_reserved()}")
-                
-            # delete model and free up memory to reload
-            # self.model.cuda()
-            # disk_offload(model=self.model, offload_dir="./.offload")
-            import gc
-
-            del self.model
-            gc.collect()
-            torch.cuda.empty_cache()
-
-            if DEBUG >= 2:
-                print(f"after allocated: {torch.cuda.memory_allocated()}")
-                print(f"after reserved: {torch.cuda.memory_reserved()}")
 
         self.shard = shard
         self.tokenizer = await resolve_tokenizer(shard.model_id)

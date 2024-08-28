@@ -7,8 +7,8 @@ from typing import Tuple, Optional, Union, List
 from exo.inference.pytorch.model.utils import sample_logits
 
 TOP_P = 0.9 #0.95
-TOP_K = 20
-TEMP = 0.8
+TOP_K = 25
+TEMP = 0.85
 
 class ShardedHuggingFaceModel(torch.nn.Module):
     def __init__(self, shard: Shard, tokenizer: any):
