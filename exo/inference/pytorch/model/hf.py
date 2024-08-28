@@ -1,107 +1,155 @@
 import torch
-import torch.nn as nn
 import numpy as np
-
-from transformers import AutoModelForCausalLM, LlamaConfig, DynamicCache, Cache
+from transformers import AutoModelForCausalLM, DynamicCache, Cache
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
-from typing import Tuple
+from typing import Tuple, Optional, Union, List
+from exo.inference.pytorch.model.utils import sample_logits
 
-from .utils import sample_logits
+TOP_P = 0.9 #0.95
+TOP_K = 25
+TEMP = 0.85
 
 class ShardedHuggingFaceModel(torch.nn.Module):
-    def __init__(self, shard: Shard):
+    def __init__(self, shard: Shard, tokenizer: any):
         super(ShardedHuggingFaceModel, self).__init__()
+
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else: 
+            self.device = torch.device("cpu")
+
+        self.shard = shard
+        self.tokenizer = tokenizer
+
+        # Load the model
+        try:
+            self.llm_model = AutoModelForCausalLM.from_pretrained(
+                shard.model_id,
+                torch_dtype=torch.float32,
+                device_map="auto",
+                # offload_buffers=True
+            )
+
+            # disk_offload(model=self.llm_model, offload_dir="./.offload")
+
+            self.base_model = self.llm_model.model
+        except Exception as err:
+            print(f"Error loading model: {err}")
+            raise
 
         if DEBUG >= 2:
             print(f"\nShardedHuggingFaceModel init with shard {shard}")
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.shard = shard
-
-        
-
-        # Load the model
-        self.full_model = AutoModelForCausalLM.from_pretrained(
-            shard.model_id,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto"
-        )
-
-        # using llamaconfig not working setting layers manually
-        layers = []
-        for i in range(shard.start_layer, shard.end_layer + 1):
-            layer = self.full_model.model.layers[i]
-
-            if DEBUG >= 2:
-                print(f"Loading layers[{i}]")
-
-            layers.append(layer)
-        
-        self.full_model.model.layers = nn.ModuleList(layers)
+            print(f"self.llm_model: {self.llm_model}")
+            print(f"self.base_model: {self.base_model}")
 
         if DEBUG >= 2:
-            print(f"full_model.model layer: {len(self.full_model.model.layers)}")
+            print(f"full_model.model layer: {len(self.base_model.layers)}")
 
         # Embeddings and final layer norm
         # used for doing what forward LlamaModel does in transformers
-        self.embed_tokens = self.full_model.model.embed_tokens
-        self.norm = self.full_model.model.norm
-
-        # self.past_key_values = DynamicCache()
-
-    def forward_layers(
+        self.norm = self.base_model.norm
+        self.lm_head = self.llm_model.lm_head
+        self.embed_tokens = self.base_model.embed_tokens
+    
+    def forward(
         self,
-        input_data: torch.tensor
-    ) -> Tuple[np.ndarray, list]:
+        input_ids: torch.tensor,
+        past_kvs: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+    ) -> Tuple[np.ndarray, any]:
         """
-        Forward pass through the specified layers.
+        Forward through layers using the base model
 
-        Note: past_key_values not working for model, might be a library bug
-        """ 
-        if DEBUG >= 2:
-            print("forward_layer call")
-            print(f"input_data: {input_data}")
-            print(f"shard {self.shard.to_dict()}")
-
-        hidden_states = input_data
-
-        # Forward pass through the layer
-        if DEBUG >= 2:
-            print(f"\n[layer model] {self.full_model.model}")
-            print(f"IN hidden_states {hidden_states}")
-            # print(f"past_kvs {past_kvs}")
+        Args:
+            input_ids: tensor input
+            past_kvs: past key value stores for cache
+            use_cache: use cache
         
-        self.full_model.model.layer_idx = 5
-        layer_outputs = self.full_model.model(
-            hidden_states,
-            # position_ids=position_ids,
-            # inputs_embeds=position_embeddings,
-            # past_key_values=self.past_key_values,
-            use_cache=False # not enough vram for using cache ;_;
-        )
+        Returns:
+            hidden_states: numpy of states between layers
+            or logits: numpy of normalization and linearization of last hidden state
+            past_kvs: DynamicCache of past key values if use_cache is true
 
-        if DEBUG >= 2:
-            print(f"OUT hidden_states {hidden_states}")
-            # print(f"\nlayer_outputs: {layer_outputs}")
+        Ref:
+            https://github.com/huggingface/transformers/blob/v4.44.2/src/transformers/models/qwen2/modeling_qwen2.py#L804
+            https://github.com/huggingface/transformers/blob/v4.44.2/src/transformers/models/llama/modeling_llama.py#L887
+        """
+        if DEBUG >= 4:
+            print("forward called")
+            print(f"input_ids: {input_ids}\n")
+            print(f"layer_count: {self.shard.get_layer_count()}")
+            print(f"is_first_layer: {self.shard.is_first_layer()}")
+            print(f"is_last_layer: {self.shard.is_last_layer()}")
+
+        past_kvs = DynamicCache.from_legacy_cache(past_kvs)
+        past_seen_tokens = past_kvs.get_seq_length() if past_kvs is not None else 0
+
+        cache_position = torch.arange(
+            past_seen_tokens, 
+            past_seen_tokens + input_ids.shape[1], 
+            device=input_ids.device
+        ).to(self.device)
+
+        position_ids = cache_position.unsqueeze(0).to(self.device)
+
+        try:
+            position_embeddings = self.base_model.rotary_emb(
+                input_ids,
+                position_ids
+            )
+        except Exception as err:
+            print(f"rotary_emb not found in base_model")
+            position_embeddings = None
+
+        # progress through layers
+        for i in range(self.shard.start_layer, self.shard.end_layer + 1):
+            decoder_layer = self.base_model.layers[i]
+
+            if DEBUG >= 4:
+                print("Going through layer")
+                print(f"{decoder_layer}")
+                print("input_ids")
+                print(f"{input_ids}")
+
+            layer_outputs = decoder_layer(
+                input_ids,
+                position_ids=position_ids if not position_embeddings else None,
+                position_embeddings=position_embeddings,
+                past_key_value=past_kvs,
+                use_cache=True,
+                cache_position=cache_position,
+            )
+
+        hidden_states = layer_outputs[0]
+        next_kvs = layer_outputs[1]
+
+        if DEBUG >= 3:
+            print(f"layer_outputs {layer_outputs}")
         
-        hidden_states = layer_outputs.last_hidden_state
-        # self.past_key_values = layer_outputs.past_key_values
-
-        print(f"2 is_last_layer {self.shard.is_last_layer()}")
         if self.shard.is_last_layer():
             hs_norm = self.norm(hidden_states)
-            hs_lm_head = self.full_model.lm_head(hs_norm).float()
+            hs_lm_head = self.llm_model.lm_head(hs_norm).float()
 
             # Use the sampling function with default settings
-            output_token = sample_logits(
-                hs_lm_head[:, -1, :]).cpu().numpy().flatten()
+            with torch.no_grad():
+                output_token = sample_logits(
+                    hs_lm_head[:, -1, :],
+                    TEMP,
+                    TOP_P,
+                    TOP_K
+                ).numpy(force=True).flatten()
 
             if DEBUG >= 2:
                 print(f"hs_norm: {hs_norm}")
                 print(f"hs_lm_head: {hs_lm_head}")
                 print(f"output_token: {output_token}")
 
-            return output_token
+            return (output_token, next_kvs)
         
-        return hidden_states.cpu().numpy()
+        with torch.no_grad():
+            out_hidden_states = hidden_states.numpy(force=True)
+
+        return (
+            out_hidden_states,
+            next_kvs
+        )

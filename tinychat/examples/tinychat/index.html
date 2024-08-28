@@ -18,25 +18,16 @@
 <link crossorigin="" href="/static/fonts.gstatic.com" rel="preconnect"/>
 <link href="/static/fonts.googleapis.com/css2" rel="stylesheet"/>
 <link href="/static/cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css" rel="stylesheet"/>
-<link crossorigin="anonymous" href="/static/cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" referrerpolicy="no-referrer" rel="stylesheet">
+<link crossorigin="anonymous" href="/static/cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" referrerpolicy="no-referrer" rel="stylesheet"/>
 <link href="/static/unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/vs2015.min.css" rel="stylesheet"/>
 <link href="/index.css" rel="stylesheet"/>
 <link href="/common.css" rel="stylesheet"/>
-</link></head>
+</head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
 <div class="model-selector">
 <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
-<option selected="" value="llama-3.1-8b">Llama 3.1 8B</option>
-<option value="llama-3.1-70b">Llama 3.1 70B</option>
-<option value="llama-3.1-405b">Llama 3.1 405B</option>
-<option value="llama-3-8b">Llama 3 8B</option>
-<option value="llama-3-70b">Llama 3 70B</option>
-<option value="mistral-nemo">Mistral Nemo</option>
-<option value="mistral-large">Mistral Large</option>
-<option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
-<option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
-</select>
+<option value="llama-3.1-8b">llama-3.1-8b</option><option value="llama-3.1-70b">llama-3.1-70b</option><option value="llama-3.1-405b">llama-3.1-405b</option><option value="llama-3-8b">llama-3-8b</option><option value="llama-3-70b">llama-3-70b</option><option value="llama-3-2B-Base">llama-3-2B-Base</option><option value="llama-3-1B-Base">llama-3-1B-Base</option><option value="TinyLlama-1.1B-Chat-yaw">TinyLlama-1.1B-Chat-yaw</option><option value="mistral-nemo">mistral-nemo</option><option value="mistral-large">mistral-large</option><option value="deepseek-coder-v2-lite">deepseek-coder-v2-lite</option><option value="llava-1.5-7b-hf">llava-1.5-7b-hf</option><option value="Qwen2-0.5B-Instruct">Qwen2-0.5B-Instruct</option></select>
 </div>
 <div @popstate.window="
       if (home === 2) {
