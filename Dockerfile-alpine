@@ -21,6 +21,7 @@ RUN apk add --no-cache \
     musl-dev \
     linux-headers \
     pkgconfig \
+    perl \
     openssl-dev \
     bash && \
     rm -rf /var/cache/apk/*
