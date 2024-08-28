@@ -18,3 +18,4 @@ jobs:
         uses: hadolint/hadolint-action@master
         with:
           dockerfile: "Dockerfile-nvidia"
+          failure-threshold: "error"
