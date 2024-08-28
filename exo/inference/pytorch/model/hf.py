@@ -6,7 +6,7 @@ from exo.helpers import DEBUG
 from typing import Tuple, Optional, Union, List
 from exo.inference.pytorch.model.utils import sample_logits
 
-TOP_P = 0.75 #0.95
+TOP_P = 0.9 #0.95
 TOP_K = 20
 TEMP = 0.8
 
