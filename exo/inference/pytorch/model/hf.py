@@ -108,6 +108,8 @@ class ShardedHuggingFaceModel(torch.nn.Module):
             if DEBUG >= 4:
                 print("Going through layer")
                 print(f"{decoder_layer}")
+                print("input_ids")
+                print(f"{input_ids}")
 
             layer_outputs = decoder_layer(
                 input_ids,

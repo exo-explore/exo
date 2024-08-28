@@ -103,16 +103,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         current_kvs = None
 
-        if input_data.size == 1:
-            in_tensor = torch.tensor(
-                input_data,
-                device=self.device
-            ).unsqueeze(0).long()
-        else:
-            in_tensor = torch.tensor(
-                input_data,
-                device=self.device
-            ).long()
+        # if input_data.size == 1:
+        #     in_tensor = torch.from_numpy(
+        #         input_data
+        #     ).unsqueeze(0).long()
+        # else:
+        in_tensor = torch.from_numpy(
+            input_data
+        ).long()
 
         in_tensor = self.model.embed_tokens(in_tensor)
 
