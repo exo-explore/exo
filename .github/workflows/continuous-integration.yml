@@ -17,5 +17,5 @@ jobs:
       - name: Lint Dockerfile-nvidia
         uses: hadolint/hadolint-action@master
         with:
-          dockerfile: "Dockerfile-nvidia"
+          dockerfile: "Dockerfile*"
           failure-threshold: "error"

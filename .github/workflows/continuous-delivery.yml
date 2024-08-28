@@ -29,6 +29,16 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
+      - name: Build and Push Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/exo:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Build and Push Docker (nvidia)
         uses: docker/build-push-action@v6
         with:
