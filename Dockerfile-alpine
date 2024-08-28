@@ -16,6 +16,10 @@ RUN apk add --no-cache \
     curl \
     rust \
     cargo \
+    gcc \
+    python3-dev \
+    musl-dev \
+    linux-headers \
     bash && \
     rm -rf /var/cache/apk/*
 
