@@ -27,7 +27,7 @@
 <main x-data="state" x-init="console.log(endpoint)">
 <div class="model-selector">
 <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
-<option value="llama-3.1-8b">llama-3.1-8b</option><option value="llama-3.1-70b">llama-3.1-70b</option><option value="llama-3.1-405b">llama-3.1-405b</option><option value="llama-3-8b">llama-3-8b</option><option value="llama-3-70b">llama-3-70b</option><option value="llama-3-2B-Base">llama-3-2B-Base</option><option value="llama-3-1B-Base">llama-3-1B-Base</option><option value="mistral-nemo">mistral-nemo</option><option value="mistral-large">mistral-large</option><option value="deepseek-coder-v2-lite">deepseek-coder-v2-lite</option><option value="llava-1.5-7b-hf">llava-1.5-7b-hf</option><option value="Qwen2-0.5B-Instruct">Qwen2-0.5B-Instruct</option></select>
+<option value="llama-3.1-8b">llama-3.1-8b</option><option value="llama-3.1-70b">llama-3.1-70b</option><option value="llama-3.1-405b">llama-3.1-405b</option><option value="llama-3-8b">llama-3-8b</option><option value="llama-3-70b">llama-3-70b</option><option value="llama-3-2B-Base">llama-3-2B-Base</option><option value="llama-3-1B-Base">llama-3-1B-Base</option><option value="TinyLlama-1.1B-Chat-yaw">TinyLlama-1.1B-Chat-yaw</option><option value="mistral-nemo">mistral-nemo</option><option value="mistral-large">mistral-large</option><option value="deepseek-coder-v2-lite">deepseek-coder-v2-lite</option><option value="llava-1.5-7b-hf">llava-1.5-7b-hf</option><option value="Qwen2-0.5B-Instruct">Qwen2-0.5B-Instruct</option></select>
 </div>
 <div @popstate.window="
       if (home === 2) {
