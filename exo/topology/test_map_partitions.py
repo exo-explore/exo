@@ -56,8 +56,8 @@ class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
     def _broken_map_partitions_to_shards(partitions: List[Partition], num_layers, model_id: str):
       shards = []
       for i, partition in enumerate(partitions):
-        start_layer = int(partition.start * num_layers)
-        end_layer = int(partition.end * num_layers) - 1
+        start_layer = int(partition.start*num_layers)
+        end_layer = int(partition.end*num_layers) - 1
         shards.append(Shard(model_id, start_layer, end_layer, num_layers))
       return shards
 

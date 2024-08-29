@@ -8,6 +8,7 @@ from exo.helpers import DEBUG
 from exo.download.hf.hf_helpers import get_allow_patterns
 from fnmatch import fnmatch
 
+
 # **** helper functions ****
 def concat_weights(models, device=None):
   def convert(name) -> Tensor:
@@ -17,11 +18,14 @@ def concat_weights(models, device=None):
     axis = 1 if name.endswith(".attention.wo.weight") or name.endswith(".feed_forward.w2.weight") else 0
     lazy_tensors = [data.to(device=device) for data in disk_tensors]
     return lazy_tensors[0].cat(*lazy_tensors[1:], dim=axis)
+
   return {name: convert(name) for name in {name: None for model in models for name in model}}
 
-def load(fn:str, shard: Shard):
+
+def load(fn: str, shard: Shard):
   if fn.endswith('.index.json'):
-    with open(fn) as fp: weight_map = json.load(fp)['weight_map']
+    with open(fn) as fp:
+      weight_map = json.load(fp)['weight_map']
     parts = {}
     filtered_weight_map = {}
     allow_patterns = get_allow_patterns(weight_map, shard)
@@ -33,7 +37,7 @@ def load(fn:str, shard: Shard):
         if layer_num < shard.start_layer or layer_num > shard.end_layer:
           continue
 
-      parts[n] = load(str(Path(fn).parent / Path(n).name), shard)
+      parts[n] = load(str(Path(fn).parent/Path(n).name), shard)
       filtered_weight_map[k] = n
     if DEBUG >= 2: print(f"Excluded model param keys for {shard=}: {sorted(set(weight_map.keys()) - set(filtered_weight_map.keys()))}")
     return {k: parts[n][k] for k, n in filtered_weight_map.items()}

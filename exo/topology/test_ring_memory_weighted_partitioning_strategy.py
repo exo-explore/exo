@@ -49,7 +49,7 @@ class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
       DeviceCapabilities(
         model="MacBook Pro",
         chip="test1",
-        memory=128 * 1024 * 1024 * 1024,
+        memory=128*1024*1024*1024,
         flops=DeviceFlops(fp32=0, fp16=0, int8=0),
       ),
     )
@@ -58,7 +58,7 @@ class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
       DeviceCapabilities(
         model="Mac Studio",
         chip="test2",
-        memory=192 * 1024 * 1024 * 1024,
+        memory=192*1024*1024*1024,
         flops=DeviceFlops(fp32=0, fp16=0, int8=0),
       ),
     )
@@ -67,7 +67,7 @@ class TestRingMemoryWeightedPartitioningStrategy(unittest.TestCase):
       DeviceCapabilities(
         model="MacBook Pro",
         chip="test3",
-        memory=128 * 1024 * 1024 * 1024,
+        memory=128*1024*1024*1024,
         flops=DeviceFlops(fp32=0, fp16=0, int8=0),
       ),
     )

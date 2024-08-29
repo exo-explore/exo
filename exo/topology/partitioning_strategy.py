@@ -22,8 +22,8 @@ class PartitioningStrategy(ABC):
 def map_partitions_to_shards(partitions: List[Partition], num_layers: int, model_id: str) -> List[Shard]:
   shards = []
   for i, partition in enumerate(partitions):
-    start_layer = int(partition.start * num_layers)
-    end_layer = int(partition.end * num_layers) - 1
+    start_layer = int(partition.start*num_layers)
+    end_layer = int(partition.end*num_layers) - 1
 
     # Ensure the last partition covers up to num_layers - 1
     if i == len(partitions) - 1:

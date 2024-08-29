@@ -26,9 +26,7 @@ class StandardNode(Node):
     discovery: Discovery,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
-    chatgpt_api_endpoints: List[str] = [],
-    web_chat_urls: List[str] = [],
-    disable_tui: Optional[bool] = False,
+    topology_viz: Optional[TopologyViz] = None,
   ):
     self.id = _id
     self.inference_engine = inference_engine
@@ -39,12 +37,24 @@ class StandardNode(Node):
     self.topology: Topology = Topology()
     self.device_capabilities = device_capabilities()
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
-    self.topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not disable_tui else None
     self.max_generate_tokens = max_generate_tokens
+    self.topology_viz = topology_viz
     self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
+
+  async def start(self, wait_for_peers: int = 0) -> None:
+    await self.server.start()
+    await self.discovery.start()
+    await self.update_peers(wait_for_peers)
+    await self.collect_topology()
+    if DEBUG >= 2: print(f"Collected topology: {self.topology}")
+    asyncio.create_task(self.periodic_topology_collection(5))
+
+  async def stop(self) -> None:
+    await self.discovery.stop()
+    await self.server.stop()
 
   def on_node_status(self, request_id, opaque_status):
     try:
@@ -66,36 +76,22 @@ class StandardNode(Node):
       if DEBUG >= 1: print(f"Error updating visualization: {e}")
       if DEBUG >= 1: traceback.print_exc()
 
-  async def start(self, wait_for_peers: int = 0) -> None:
-    await self.server.start()
-    await self.discovery.start()
-    await self.update_peers(wait_for_peers)
-    await self.collect_topology()
-    if DEBUG >= 2: print(f"Collected topology: {self.topology}")
-    asyncio.create_task(self.periodic_topology_collection(5))
-
-  async def stop(self) -> None:
-    await self.discovery.stop()
-    await self.server.stop()
-
   async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "start_process_prompt",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "prompt": prompt,
-            "image_str": image_str,
-            "inference_state": inference_state,
-            "request_id": request_id,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "start_process_prompt",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "prompt": prompt,
+          "image_str": image_str,
+          "inference_state": inference_state,
+          "request_id": request_id,
+        }),
       )
     )
     start_time = time.perf_counter_ns()
@@ -105,21 +101,19 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "end_process_prompt",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "prompt": prompt,
-            "image_str": image_str,
-            "inference_state": inference_state,
-            "request_id": request_id,
-            "elapsed_time_ns": elapsed_time_ns,
-            "result_size": resp.size if resp is not None else 0,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "end_process_prompt",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "prompt": prompt,
+          "image_str": image_str,
+          "inference_state": inference_state,
+          "request_id": request_id,
+          "elapsed_time_ns": elapsed_time_ns,
+          "result_size": resp.size if resp is not None else 0,
+        }),
       )
     )
     return resp
@@ -165,19 +159,17 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "start_process_tensor",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "tensor_size": tensor.size,
-            "tensor_shape": tensor.shape,
-            "request_id": request_id,
-            "inference_state": inference_state,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "start_process_tensor",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "tensor_size": tensor.size,
+          "tensor_shape": tensor.shape,
+          "request_id": request_id,
+          "inference_state": inference_state,
+        }),
       )
     )
     start_time = time.perf_counter_ns()
@@ -187,18 +179,16 @@ class StandardNode(Node):
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
-        json.dumps(
-          {
-            "type": "node_status",
-            "node_id": self.id,
-            "status": "end_process_tensor",
-            "base_shard": base_shard.to_dict(),
-            "shard": shard.to_dict(),
-            "request_id": request_id,
-            "elapsed_time_ns": elapsed_time_ns,
-            "result_size": resp.size if resp is not None else 0,
-          }
-        ),
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": "end_process_tensor",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "request_id": request_id,
+          "elapsed_time_ns": elapsed_time_ns,
+          "result_size": resp.size if resp is not None else 0,
+        }),
       )
     )
     return resp
@@ -256,7 +246,7 @@ class StandardNode(Node):
     current_partition_index = next((i for i, p in enumerate(partitions) if p.node_id == self.id), None)
     if DEBUG >= 1: print(f"Current partition index: {current_partition_index}")
     if current_partition_index is not None:
-      next_partition_index = (current_partition_index + 1) % len(partitions)
+      next_partition_index = (current_partition_index+1) % len(partitions)
       next_partition: Partition = partitions[next_partition_index]
       next_shard = shards[next_partition_index]
       if DEBUG >= 2: print(f"Computed next from: {shard}, {self.topology}. Next partition: {next_partition}")
@@ -306,6 +296,7 @@ class StandardNode(Node):
         await self.collect_topology()
       except Exception as e:
         print(f"Error collecting topology: {e}")
+        traceback.print_exc()
 
   async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
     if request_id not in self.buffered_token_output:
@@ -319,6 +310,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
+    # TODO: should we add our own peer id here?
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:
@@ -371,6 +363,7 @@ class StandardNode(Node):
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
     if DEBUG >= 5: print(f"Broadcasting opaque status: {request_id=} {status=}")
+
     async def send_status_to_peer(peer):
       try:
         await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)

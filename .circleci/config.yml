@@ -44,6 +44,7 @@ commands:
             # Check processes before proceeding
             check_processes
 
+            echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -56,6 +57,7 @@ commands:
             # Check processes after first response
             check_processes
 
+            echo "Sending request to second instance..."
             response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
@@ -110,7 +112,10 @@ jobs:
           command: |
             source env/bin/activate
             # set TEMPERATURE to 0 for deterministic sampling
+            echo "Running inference engine tests..."
             METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
+            echo "Running tokenizer tests..."
+            python3 ./test/test_tokenizers.py
 
   discovery_integration_test:
     macos:

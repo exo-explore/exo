@@ -3,106 +3,37 @@ import time
 import asyncio
 import json
 from pathlib import Path
-from transformers import AutoTokenizer, AutoProcessor
+from transformers import AutoTokenizer
 from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
 import traceback
 from exo import DEBUG, VERSION
-from exo.helpers import terminal_link, PrefixDict
+from exo.helpers import PrefixDict
 from exo.inference.shard import Shard
+from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-
-shard_mappings = {
-  ### llama
-  "llama-3.1-8b": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated", start_layer=0, end_layer=0, n_layers=32),
-  },
-  "llama-3.1-70b": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="NousResearch/Meta-Llama-3.1-70B", start_layer=0, end_layer=0, n_layers=80),
-  },
-  "llama-3.1-405b": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-405B-4bit", start_layer=0, end_layer=0, n_layers=126),
-  },
-  "llama-3-8b": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R", start_layer=0, end_layer=0, n_layers=32),
-  },
-  "llama-3-70b": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
-    "TinygradDynamicShardInferenceEngine": Shard(model_id="TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", start_layer=0, end_layer=0, n_layers=80),
-  },
-  ### mistral
-  "mistral-nemo": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Nemo-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=40),
-  },
-  "mistral-large": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Large-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=88),
-  },
-  ### deepseek v2
-  "deepseek-coder-v2-lite": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", start_layer=0, end_layer=0, n_layers=27),
-  },
-  ### llava
-  "llava-1.5-7b-hf": {
-    "MLXDynamicShardInferenceEngine": Shard(model_id="llava-hf/llava-1.5-7b-hf", start_layer=0, end_layer=0, n_layers=32),
-  },
-}
-
+from exo.models import model_base_shards
+from typing import Callable
 
 
 class Message:
-    def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
-        self.role = role
-        self.content = content
+  def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
+    self.role = role
+    self.content = content
 
-    def to_dict(self):
-        return {
-            "role": self.role,
-            "content": self.content
-        }
+  def to_dict(self):
+    return {"role": self.role, "content": self.content}
 
 
 class ChatCompletionRequest:
-    def __init__(self, model: str, messages: List[Message], temperature: float):
-        self.model = model
-        self.messages = messages
-        self.temperature = temperature
+  def __init__(self, model: str, messages: List[Message], temperature: float):
+    self.model = model
+    self.messages = messages
+    self.temperature = temperature
 
-    def to_dict(self):
-        return {
-            "model": self.model,
-            "messages": [message.to_dict() for message in self.messages],
-            "temperature": self.temperature
-        }
-
-
-
-async def resolve_tokenizer(model_id: str):
-  try:
-    if DEBUG >= 4: print(f"Trying AutoProcessor for {model_id}")
-    processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
-    if not hasattr(processor, 'eos_token_id'):
-      processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
-    if not hasattr(processor, 'encode'):
-      processor.encode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).encode
-    if not hasattr(processor, 'decode'):
-      processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
-    return processor
-  except Exception as e:
-    if DEBUG >= 4: print(f"Failed to load processor for {model_id}. Error: {e}")
-    if DEBUG >= 4: print(traceback.format_exc())
-
-  try:
-    if DEBUG >= 4: print(f"Trying AutoTokenizer for {model_id}")
-    return AutoTokenizer.from_pretrained(model_id)
-  except Exception as e:
-    if DEBUG >= 4: print(f"Failed to load tokenizer for {model_id}. Falling back to tinygrad tokenizer. Error: {e}")
-    if DEBUG >= 4: print(traceback.format_exc())
-
-  raise ValueError(f"[TODO] Unsupported model: {model_id}")
+  def to_dict(self):
+    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature}
 
 
 def generate_completion(
@@ -121,14 +52,12 @@ def generate_completion(
     "created": int(time.time()),
     "model": chat_request.model,
     "system_fingerprint": f"exo_{VERSION}",
-    "choices": [
-      {
-        "index": 0,
-        "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
-        "logprobs": None,
-        "finish_reason": finish_reason,
-      }
-    ],
+    "choices": [{
+      "index": 0,
+      "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
+      "logprobs": None,
+      "finish_reason": finish_reason,
+    }],
   }
 
   if not stream:
@@ -151,37 +80,38 @@ def generate_completion(
 
 
 def remap_messages(messages: List[Message]) -> List[Message]:
-    remapped_messages = []
-    last_image = None
-    for message in messages:
-        if not isinstance(message.content, list):
-           remapped_messages.append(message)
-           continue
+  remapped_messages = []
+  last_image = None
+  for message in messages:
+    if not isinstance(message.content, list):
+      remapped_messages.append(message)
+      continue
 
-        remapped_content = []
-        for content in message.content:
-            if isinstance(content, dict):
-                if content.get("type") in ["image_url", "image"]:
-                    image_url = content.get("image_url", {}).get("url") or content.get("image")
-                    if image_url:
-                        last_image = {"type": "image", "image": image_url}
-                        remapped_content.append({"type": "text", "text": "[An image was uploaded but is not displayed here]"})
-                else:
-                    remapped_content.append(content)
-            else:
-                remapped_content.append(content)
-        remapped_messages.append(Message(role=message.role, content=remapped_content))
+    remapped_content = []
+    for content in message.content:
+      if isinstance(content, dict):
+        if content.get("type") in ["image_url", "image"]:
+          image_url = content.get("image_url", {}).get("url") or content.get("image")
+          if image_url:
+            last_image = {"type": "image", "image": image_url}
+            remapped_content.append({"type": "text", "text": "[An image was uploaded but is not displayed here]"})
+        else:
+          remapped_content.append(content)
+      else:
+        remapped_content.append(content)
+    remapped_messages.append(Message(role=message.role, content=remapped_content))
 
-    if last_image:
-        # Replace the last image placeholder with the actual image content
-        for message in reversed(remapped_messages):
-            for i, content in enumerate(message.content):
-                if isinstance(content, dict):
-                  if content.get("type") == "text" and content.get("text") == "[An image was uploaded but is not displayed here]":
-                      message.content[i] = last_image
-                      return remapped_messages
+  if last_image:
+    # Replace the last image placeholder with the actual image content
+    for message in reversed(remapped_messages):
+      for i, content in enumerate(message.content):
+        if isinstance(content, dict):
+          if content.get("type") == "text" and content.get("text") == "[An image was uploaded but is not displayed here]":
+            message.content[i] = last_image
+            return remapped_messages
 
-    return remapped_messages
+  return remapped_messages
+
 
 def build_prompt(tokenizer, _messages: List[Message]):
   messages = remap_messages(_messages)
@@ -214,18 +144,21 @@ def parse_chat_request(data: dict):
     data.get("temperature", 0.0),
   )
 
+
 class PromptSession:
   def __init__(self, request_id: str, timestamp: int, prompt: str):
     self.request_id = request_id
     self.timestamp = timestamp
     self.prompt = prompt
 
+
 class ChatGPTAPI:
-  def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90):
+  def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
     self.response_timeout_secs = response_timeout_secs
-    self.app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB to support image upload
+    self.on_chat_completion_request = on_chat_completion_request
+    self.app = web.Application(client_max_size=100*1024*1024)  # 100MB to support image upload
     self.prompts: PrefixDict[str, PromptSession] = PrefixDict()
     self.prev_token_lens: Dict[str, int] = {}
     self.stream_tasks: Dict[str, asyncio.Task] = {}
@@ -236,9 +169,14 @@ class ChatGPTAPI:
       allow_headers="*",
       allow_methods="*",
     )
-    cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+    cors.add(self.app.router.add_get("/models", self.handle_get_models), {"*": cors_options})
+    cors.add(self.app.router.add_get("/v1/models", self.handle_get_models), {"*": cors_options})
+    cors.add(self.app.router.add_post("/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
-    self.static_dir = Path(__file__).parent.parent.parent / "tinychat/examples/tinychat"
+    cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+    cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+
+    self.static_dir = Path(__file__).parent.parent.parent/"tinychat/examples/tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 
@@ -253,11 +191,14 @@ class ChatGPTAPI:
     return middleware
 
   async def handle_root(self, request):
-    return web.FileResponse(self.static_dir / "index.html")
+    return web.FileResponse(self.static_dir/"index.html")
+
+  async def handle_get_models(self, request):
+    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True } for model_name, _ in model_base_shards.items()])
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
-    shard = shard_mappings.get(data.get("model", "llama-3.1-8b"), {}).get(self.inference_engine_classname)
+    shard = model_base_shards.get(data.get("model", "llama-3.1-8b"), {}).get(self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
     tokenizer = await resolve_tokenizer(shard.model_id)
     return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
@@ -269,12 +210,12 @@ class ChatGPTAPI:
     chat_request = parse_chat_request(data)
     if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to llama instead
       chat_request.model = "llama-3.1-8b"
-    if not chat_request.model or chat_request.model not in shard_mappings:
-      if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(shard_mappings.keys())}. Defaulting to llama-3.1-8b")
+    if not chat_request.model or chat_request.model not in model_base_shards:
+      if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_base_shards.keys())}. Defaulting to llama-3.1-8b")
       chat_request.model = "llama-3.1-8b"
-    shard = shard_mappings[chat_request.model].get(self.inference_engine_classname, None)
+    shard = model_base_shards[chat_request.model].get(self.inference_engine_classname, None)
     if not shard:
-      supported_models = [model for model, engines in shard_mappings.items() if self.inference_engine_classname in engines]
+      supported_models = [model for model, engines in model_base_shards.items() if self.inference_engine_classname in engines]
       return web.json_response(
         {"detail": f"Unsupported model: {chat_request.model} with inference engine {self.inference_engine_classname}. Supported models for this engine: {supported_models}"},
         status=400,
@@ -285,6 +226,11 @@ class ChatGPTAPI:
 
     prompt, image_str = build_prompt(tokenizer, chat_request.messages)
     request_id = str(uuid.uuid4())
+    if self.on_chat_completion_request:
+      try:
+        self.on_chat_completion_request(request_id, chat_request, prompt)
+      except Exception as e:
+        if DEBUG >= 2: traceback.print_exc()
     # request_id = None
     # match = self.prompts.find_longest_prefix(prompt)
     # if match and len(prompt) > len(match[1].prompt):
@@ -316,7 +262,7 @@ class ChatGPTAPI:
           status=200,
           reason="OK",
           headers={
-            "Content-Type": "application/json",
+            "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
           },
         )
@@ -327,7 +273,8 @@ class ChatGPTAPI:
           self.prev_token_lens[request_id] = max(prev_last_tokens_len, len(tokens))
           new_tokens = tokens[prev_last_tokens_len:]
           finish_reason = None
-          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer, AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
+          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer,
+                                                                                                                             AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
           if len(new_tokens) > 0 and new_tokens[-1] == eos_token_id:
             new_tokens = new_tokens[:-1]
             if is_finished:
