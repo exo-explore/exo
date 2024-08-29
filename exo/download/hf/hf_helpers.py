@@ -234,19 +234,9 @@ async def download_repo_files(
           raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
         revision_info = await response.json()
         commit_hash = revision_info['sha']
-
-<<<<<<< HEAD
-        filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns, key=lambda x: x["path"]))
-        if DEBUG >= 2: print(f"Filtered file list {allow_patterns=} {ignore_patterns=}\noriginal: {file_list}\nfiltered: {filtered_file_list}")
-        total_files = len(filtered_file_list)
-        total_bytes = sum(file["size"] for file in filtered_file_list)
-        file_progress: Dict[str, RepoFileProgressEvent] = {file["path"]: RepoFileProgressEvent(repo_id, revision, file["path"], 0, 0, file["size"], 0, timedelta(0), "not_started") for file in filtered_file_list}
-        start_time = datetime.now()
-=======
-      # Cache the commit hash
-      async with aiofiles.open(refs_file, 'w') as f:
-        await f.write(commit_hash)
->>>>>>> main
+        # Cache the commit hash
+        async with aiofiles.open(refs_file, 'w') as f:
+          await f.write(commit_hash)
 
   # Set up the snapshot directory
   snapshot_dir = snapshots_dir/commit_hash
