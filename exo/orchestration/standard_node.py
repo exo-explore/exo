@@ -281,9 +281,9 @@ class StandardNode(Node):
     self.peers = await self.discovery.discover_peers(wait_for_peers)
     for peer in self.peers:
       is_connected = await peer.is_connected()
-      if DEBUG >= 2 and is_connected:
-        print(f"Already connected to {peer.id()}: {is_connected}")
-      if not is_connected:
+      if is_connected:
+        if DEBUG >= 2: print(f"Already connected to {peer.id()}: {is_connected}")
+      else:
         if DEBUG >= 2: print(f"Connecting to {peer.id()}...")
         await peer.connect()
         if DEBUG >= 1: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")

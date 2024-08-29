@@ -3,7 +3,7 @@ import json
 import socket
 import time
 import traceback
-from typing import List, Dict, Callable, Tuple, Coroutine
+from typing import List, Dict, Callable, Tuple, Coroutine, Type
 from .discovery import Discovery
 from .peer_handle import PeerHandle
 from .grpc.grpc_peer_handle import GRPCPeerHandle
@@ -34,6 +34,7 @@ class UDPDiscovery(Discovery):
     broadcast_interval: int = 1,
     device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     discovery_timeout: int = 30,
+    create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle] = lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
   ):
     self.node_id = node_id
     self.node_port = node_port
@@ -41,11 +42,12 @@ class UDPDiscovery(Discovery):
     self.listen_port = listen_port
     self.broadcast_port = broadcast_port if broadcast_port is not None else listen_port
     self.broadcast_interval = broadcast_interval
-    self.known_peers: Dict[str, Tuple[GRPCPeerHandle, float, float]] = {}
+    self.known_peers: Dict[str, Tuple[PeerHandle, float, float]] = {}
     self.broadcast_task = None
     self.listen_task = None
     self.cleanup_task = None
     self.discovery_timeout = discovery_timeout
+    self.create_peer_handle = create_peer_handle
 
   async def start(self):
     self.device_capabilities = device_capabilities()
@@ -71,7 +73,7 @@ class UDPDiscovery(Discovery):
       while len(self.known_peers) == 0:
         if DEBUG_DISCOVERY >= 2:
           print("No peers discovered yet, retrying in 1 second...")
-        await asyncio.sleep(1)  # Keep trying to find peers
+        await asyncio.sleep(0.1)  # Keep trying to find peers
       if DEBUG_DISCOVERY >= 2:
         print(f"Discovered first peer: {next(iter(self.known_peers.values()))}")
 
@@ -145,7 +147,7 @@ class UDPDiscovery(Discovery):
       device_capabilities = DeviceCapabilities(**message["device_capabilities"])
       if peer_id not in self.known_peers:
         self.known_peers[peer_id] = (
-          GRPCPeerHandle(peer_id, f"{peer_host}:{peer_port}", device_capabilities),
+          self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities),
           time.time(),
           time.time(),
         )

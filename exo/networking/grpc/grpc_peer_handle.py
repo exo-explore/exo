@@ -1,5 +1,6 @@
 import grpc
 import numpy as np
+import asyncio
 from typing import Optional, Tuple, List
 
 # These would be generated from the .proto file
@@ -26,9 +27,15 @@ class GRPCPeerHandle(PeerHandle):
   def device_capabilities(self) -> DeviceCapabilities:
     return self._device_capabilities
 
-  async def connect(self):
+  async def connect(self, timeout: float = 5.0):
     self.channel = grpc.aio.insecure_channel(self.address, options=[("grpc.max_metadata_size", 32*1024*1024)])
     self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
+    try:
+      async with asyncio.timeout(timeout): await self.channel.channel_ready()
+    except asyncio.TimeoutError:
+      print("Connection attempt timed out")
+      await self.disconnect()
+      raise
 
   async def is_connected(self) -> bool:
     return self.channel is not None and self.channel.get_state() == grpc.ChannelConnectivity.READY
