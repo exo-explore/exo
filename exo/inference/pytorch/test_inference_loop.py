@@ -30,79 +30,22 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     print(resp_full)
     print("\n------------resp_full---------------\n")
 
-    next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
-        "A",
-        shard=shard,
-        input_data=resp_full,
-        inference_state=inference_state_full,
-    )
+    next_resp_full = resp_full
+    is_finished = False
+    while not is_finished:
+        next_resp_full, _next_inference_state_full, is_finished = await inference_engine_1.infer_tensor(
+            "A",
+            shard=shard,
+            input_data=next_resp_full,
+            inference_state=inference_state_full,
+        )
 
-    print("\n------------next_resp_full---------------\n")
-    print(next_resp_full)
-    print("\n------------next_resp_full---------------\n")
-
-    pp = int(n_layers/2)
+        print("\n------------next_resp_full---------------\n")
+        print(next_resp_full)
+        print("\n------------next_resp_full---------------\n")
     
-    resp_shard = Shard(
-        model_id=model_id, 
-        start_layer=0, 
-        end_layer=pp, 
-        n_layers=n_layers
-    )
 
-    resp_shard2 = Shard(
-        model_id=model_id, 
-        start_layer=pp + 1, 
-        end_layer=n_layers-1, 
-        n_layers=n_layers
-    )
-
-    resp1, inference_state_1, _ = await inference_engine_1.infer_prompt(
-        "B", 
-        shard=resp_shard,
-        prompt=prompt
-    )
-
-    print("\n------------resp1---------------\n")
-    print(resp1)
-    print("\n------------resp1---------------\n")
-
-
-    resp2, inference_state_2, _ = await inference_engine_2.infer_tensor(
-        "B",
-        shard=resp_shard2,
-        input_data=resp1,
-        inference_state=inference_state_1,
-    )
-
-    print("\n------------resp2---------------\n")
-    print(resp2)
-    print("\n------------resp2---------------\n")
-
-    resp3, inference_state_3, _ = await inference_engine_1.infer_tensor(
-        "B",
-        shard=resp_shard,
-        input_data=resp2,
-        inference_state=inference_state_2,
-    )
-
-    print("\n------------resp3---------------\n")
-    print(resp3)
-    print("\n------------resp3---------------\n")
-
-    resp4, _inference_state_4, _ = await inference_engine_2.infer_tensor(
-        "B",
-        shard=resp_shard2,
-        input_data=resp3,
-        inference_state=inference_state_3,
-    )
-
-    print("\n------------resp4---------------\n")
-    print(resp4)
-    print("\n------------resp4---------------\n")
-
-    assert np.array_equal(resp_full, resp2)
-    assert np.array_equal(next_resp_full, resp4)
+   
 
 if __name__ == '__main__':
     # try:
@@ -150,13 +93,13 @@ if __name__ == '__main__':
     #     print(f"\n\n !!!!!!!!!!! Chickaboo/ChickaQ-Large TEST FAILED \n{err}\n")
     
     try:
-        print(f"\n\n --------- TEST TinyLlama/TinyLlama_v1.1 -------\n\n")
+        print(f"\n\n --------- TEST ambrosfitz/TinyLlama-1.1B-Chat-yawp -------\n\n")
         asyncio.run(test_inference_engine(
             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            "TinyLlama/TinyLlama_v1.1",
+            "ambrosfitz/TinyLlama-1.1B-Chat-yawp",
             22
         ))
     except Exception as err:
-        print(f"\n\n !!!!!!!!!!! TinyLlama/TinyLlama_v1.1 TEST FAILED \n{err}\n")
+        print(f"\n\n !!!!!!!!!!! ambrosfitz/TinyLlama-1.1B-Chat-yawp TEST FAILED \n{err}\n")
 

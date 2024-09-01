@@ -58,6 +58,9 @@ def generate_completion(
       "finish_reason": finish_reason,
     }],
   }
+  
+  if DEBUG >= 3:
+    print(f"completion: {completion}")
 
   if not stream:
     completion["usage"] = {
@@ -113,16 +116,9 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 
 
 def build_prompt(tokenizer, _messages: List[Message]):
-  if len(_messages) == 1:
-    user_msg = _messages[0]
-
-    # get instruct sys message
-    sys_msg = Message(role="system", content="You are a helpful assistant.")
-
-    # restructure for sys_msg to go first
-    _messages = [sys_msg, user_msg]
-
   messages = remap_messages(_messages)
+  if DEBUG >= 3:
+    print(f"messages: {messages}")
   prompt = tokenizer.apply_chat_template(
     messages, 
     tokenize=False, 
@@ -140,7 +136,7 @@ def build_prompt(tokenizer, _messages: List[Message]):
       continue
 
     for content in message.content:
-      # note: we only support one image at a time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
+      # note: wae only support one image at  time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
       # follows the convention in https://platform.openai.com/docs/guides/vision
       if isinstance(content, dict) and content.get("type", None) == "image":
         image_str = content.get("image", None)
