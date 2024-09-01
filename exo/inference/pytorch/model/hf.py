@@ -9,7 +9,7 @@ from exo.download.shard_download import ShardDownloader
 from typing import Tuple, Optional, Union, List
 
 class ShardedHuggingFaceModel(InferenceEngine):
-    def __init__(self, shard: Shard):
+    def __init__(self, shard: Shard, ):
         self.shard = shard
 
         if torch.cuda.is_available():
@@ -25,11 +25,23 @@ class ShardedHuggingFaceModel(InferenceEngine):
         try:
             self.base_model = AutoModelForCausalLM.from_pretrained(
                 shard.model_id,
-                torch_dtype=torch.float32,
+                torch_dtype=self.torch_dtype,
                 device_map="auto"
             )
+
+            # build layers from shard
+            layers = self.base_model.model.layers
+            copy_layers = nn.ModuleList(
+                [layers[i] for i in range(self.shard.start_layer, self.shard.end_layer + 1)]
+            )
+
+            # apply layers back to model
+            self.base_model.model.layers.load_state_dict(
+                copy_layers.state_dict(),
+                strict=False
+            )
         except Exception as err:
-            print(f"error loading model: {err}")
+            print(f"error loading and splitting model: {err}")
             raise
 
     def forward(
@@ -46,11 +58,7 @@ class ShardedHuggingFaceModel(InferenceEngine):
             generator_ids: token ids from generation
         """
 
-        torch_dtype = 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.shard.model_id,
-            torch_dtype=torch.float32,
-            device_map="auto",
+        generate_ids = self.base_model.generate(
+            input_ids,
+
         )
-
-
