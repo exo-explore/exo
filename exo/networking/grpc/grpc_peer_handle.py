@@ -23,12 +23,16 @@ class GRPCPeerHandle(PeerHandle):
   def id(self) -> str:
     return self._id
 
+  def addr(self) -> str:
+    return self.address
+
   def device_capabilities(self) -> DeviceCapabilities:
     return self._device_capabilities
 
   async def connect(self):
     self.channel = grpc.aio.insecure_channel(self.address, options=[("grpc.max_metadata_size", 32*1024*1024)])
     self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
+    await self.channel.channel_ready()
 
   async def is_connected(self) -> bool:
     return self.channel is not None and self.channel.get_state() == grpc.ChannelConnectivity.READY

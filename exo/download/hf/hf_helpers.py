@@ -234,10 +234,9 @@ async def download_repo_files(
           raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
         revision_info = await response.json()
         commit_hash = revision_info['sha']
-
-      # Cache the commit hash
-      async with aiofiles.open(refs_file, 'w') as f:
-        await f.write(commit_hash)
+        # Cache the commit hash
+        async with aiofiles.open(refs_file, 'w') as f:
+          await f.write(commit_hash)
 
   # Set up the snapshot directory
   snapshot_dir = snapshots_dir/commit_hash
@@ -400,4 +399,5 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
       shard_specific_patterns.append(sorted_file_names[-1])
   else:
     shard_specific_patterns = ["*.safetensors"]
+  if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
   return list(set(default_patterns + shard_specific_patterns))  # Remove duplicates

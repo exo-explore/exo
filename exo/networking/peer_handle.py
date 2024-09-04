@@ -5,10 +5,13 @@ from exo.inference.shard import Shard
 from exo.topology.device_capabilities import DeviceCapabilities
 from exo.topology.topology import Topology
 
-
 class PeerHandle(ABC):
   @abstractmethod
   def id(self) -> str:
+    pass
+
+  @abstractmethod
+  def addr(self) -> str:
     pass
 
   @abstractmethod
@@ -36,13 +39,13 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
+  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+    pass
+
+  @abstractmethod
   async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
     pass
 
   @abstractmethod
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
-    pass
-
-  @abstractmethod
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     pass
