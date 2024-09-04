@@ -54,30 +54,42 @@ async def run_client(server_uuid):
     async with BleakClient(server_uuid) as client:
         logger.info("Connected")
 
-        # Try to set a shorter connection interval
-        try:
-            await client.write_gatt_char("0000180A-0000-1000-8000-00805f9b34fb", b"\x06\x00")
-        except Exception as e:
-            logger.warning(f"Failed to set connection interval: {e}")
+        # Explore services and characteristics
+        for service in client.services:
+            logger.info(f"Service: {service.uuid}")
+            for char in service.characteristics:
+                logger.info(f"  Characteristic: {char.uuid}")
+                logger.info(f"    Properties: {', '.join(char.properties)}")
+                try:
+                    value = await client.read_gatt_char(char.uuid)
+                    logger.info(f"    Value: {value}")
+                except Exception as e:
+                    logger.info(f"    Could not read value: {e}")
 
+        # Proceed with latency test
         num_tests = 50
         total_rtt = 0
         rtts = []
 
         for i in range(num_tests):
-            start_time = time.perf_counter()
+            start_write = time.perf_counter()
             await client.write_gatt_char(CHAR_UUID, b"ping")
-            response = await client.read_gatt_char(CHAR_UUID)
-            end_time = time.perf_counter()
+            end_write = time.perf_counter()
 
-            rtt = (end_time - start_time) * 1000  # Convert to milliseconds
-            total_rtt += rtt
-            rtts.append(rtt)
-            logger.info(f"Test {i+1}: RTT = {rtt:.2f} ms")
+            start_read = time.perf_counter()
+            response = await client.read_gatt_char(CHAR_UUID)
+            end_read = time.perf_counter()
+
+            write_time = (end_write - start_write) * 1000
+            read_time = (end_read - start_read) * 1000
+            total_time = (end_read - start_write) * 1000
+
+            rtts.append(total_time)
+            logger.info(f"Test {i+1}: Write: {write_time:.2f} ms, Read: {read_time:.2f} ms, Total: {total_time:.2f} ms")
 
             await asyncio.sleep(0.01)  # Small delay between tests
 
-        average_rtt = total_rtt / num_tests
+        average_rtt = sum(rtts) / num_tests
         median_rtt = sorted(rtts)[num_tests // 2]
         min_rtt = min(rtts)
         max_rtt = max(rtts)
