@@ -1,3 +1,7 @@
+# Note: this test is for MacOS
+# The results are not very good between 2 MacBook Pro's:
+# INFO:__main__:Test 1: Write: 60.72 ms, Read: 59.08 ms, Total RTT: 119.80 ms, Timestamp: 1713, Time diff: 0 ms
+
 import asyncio
 import time
 import struct
