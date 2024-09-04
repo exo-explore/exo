@@ -1,36 +1,29 @@
 import asyncio
 import time
+import struct
 import argparse
 import logging
 from typing import Any
-import struct
 
 # For the server
-from bless import (
-    BlessServer,
-    BlessGATTCharacteristic,
-    GATTCharacteristicProperties,
-    GATTAttributePermissions
-)
+from bless import BlessServer
+from bless.backends.characteristic import GATTCharacteristicProperties, GATTAttributePermissions
 
 # For the client
 from bleak import BleakClient, BleakScanner
-from bleak.backends.characteristic import BleakGATTCharacteristic
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SERVICE_UUID = "A07498CA-AD5B-474E-940D-16F1FBE7E8CD"
 CHAR_UUID = "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
-
-# New UUIDs for connection parameters
 CONN_PARAMS_SERVICE_UUID = "1234A00C-0000-1000-8000-00805F9B34FB"
 CONN_PARAMS_CHAR_UUID = "1234A00D-0000-1000-8000-00805F9B34FB"
 
-def read_request(characteristic: BlessGATTCharacteristic, **kwargs) -> bytearray:
+def read_request(characteristic):
     return characteristic.value
 
-def write_request(characteristic: BlessGATTCharacteristic, value: Any, **kwargs):
+def write_request(characteristic, value):
     characteristic.value = value
     if value == b"ping":
         characteristic.value = b"pong"
@@ -41,58 +34,45 @@ async def run_server(loop):
     server.write_request_func = write_request
 
     await server.add_new_service(SERVICE_UUID)
-    char_flags = (
-        GATTCharacteristicProperties.read
-        | GATTCharacteristicProperties.write
-        | GATTCharacteristicProperties.indicate
-    )
+
+    # Main characteristic for ping-pong (read and write)
+    char_flags = GATTCharacteristicProperties.read | GATTCharacteristicProperties.write
     permissions = GATTAttributePermissions.readable | GATTAttributePermissions.writeable
     await server.add_new_characteristic(
         SERVICE_UUID, CHAR_UUID, char_flags, None, permissions
     )
 
-    # Add new service and characteristic for connection parameters
+    # Add new service and characteristic for connection parameters (read-only)
     await server.add_new_service(CONN_PARAMS_SERVICE_UUID)
-    await server.add_new_characteristic(
-        CONN_PARAMS_SERVICE_UUID, CONN_PARAMS_CHAR_UUID, char_flags, None, permissions
-    )
-
-    # Set initial connection parameters (you may need to adjust these values)
     conn_params = struct.pack("<HHHH", 6, 6, 0, 100)  # Interval min, max, latency, timeout
-    server.update_value(CONN_PARAMS_SERVICE_UUID, CONN_PARAMS_CHAR_UUID, conn_params)
+    conn_params_flags = GATTCharacteristicProperties.read
+    conn_params_permissions = GATTAttributePermissions.readable
+    await server.add_new_characteristic(
+        CONN_PARAMS_SERVICE_UUID, CONN_PARAMS_CHAR_UUID, conn_params_flags, conn_params, conn_params_permissions
+    )
 
     await server.start()
     logger.info("Server started. Use the UUID of this device when running the client.")
+
     await asyncio.Event().wait()  # Run forever
 
 async def run_client(server_uuid):
     logger.info(f"Connecting to server with UUID: {server_uuid}")
-    async with BleakClient(server_uuid, use_cached=False) as client:
+    async with BleakClient(server_uuid) as client:
         logger.info("Connected")
 
-        # Request lower latency connection parameters
-        conn_params = struct.pack("<HHHH", 6, 6, 0, 100)  # Interval min, max, latency, timeout
+        # Read connection parameters
         try:
-            await client.write_gatt_char(CONN_PARAMS_CHAR_UUID, conn_params)
-            logger.info("Requested optimized connection parameters")
+            conn_params = await client.read_gatt_char(CONN_PARAMS_CHAR_UUID)
+            interval_min, interval_max, latency, timeout = struct.unpack("<HHHH", conn_params)
+            logger.info(f"Connection parameters: Interval min: {interval_min * 1.25}ms, "
+                        f"Interval max: {interval_max * 1.25}ms, Latency: {latency}, "
+                        f"Timeout: {timeout * 10}ms")
         except Exception as e:
-            logger.warning(f"Failed to request optimized connection parameters: {e}")
-
-        # Explore services and characteristics
-        for service in client.services:
-            logger.info(f"Service: {service.uuid}")
-            for char in service.characteristics:
-                logger.info(f"  Characteristic: {char.uuid}")
-                logger.info(f"    Properties: {', '.join(char.properties)}")
-                try:
-                    value = await client.read_gatt_char(char.uuid)
-                    logger.info(f"    Value: {value}")
-                except Exception as e:
-                    logger.info(f"    Could not read value: {e}")
+            logger.warning(f"Failed to read connection parameters: {e}")
 
         # Proceed with latency test
         num_tests = 50
-        total_rtt = 0
         rtts = []
 
         for i in range(num_tests):
