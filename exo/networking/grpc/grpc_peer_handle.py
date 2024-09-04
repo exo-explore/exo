@@ -23,6 +23,9 @@ class GRPCPeerHandle(PeerHandle):
   def id(self) -> str:
     return self._id
 
+  def addr(self) -> str:
+    return self.address
+
   def device_capabilities(self) -> DeviceCapabilities:
     return self._device_capabilities
 

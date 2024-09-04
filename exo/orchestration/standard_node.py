@@ -50,7 +50,7 @@ class StandardNode(Node):
     await self.update_peers(wait_for_peers)
     await self.collect_topology()
     if DEBUG >= 2: print(f"Collected topology: {self.topology}")
-    asyncio.create_task(self.periodic_topology_collection(5))
+    asyncio.create_task(self.periodic_topology_collection(1.0))
 
   async def stop(self) -> None:
     await self.discovery.stop()
@@ -277,23 +277,56 @@ class StandardNode(Node):
       raise ValueError(f"No current partition found for node: {self.id}")
     return shards[current_partition_index]
 
-  async def update_peers(self, wait_for_peers: int = 0) -> None:
-    self.peers = await self.discovery.discover_peers(wait_for_peers)
-    for peer in self.peers:
-      is_connected = await peer.is_connected()
-      if is_connected:
-        if DEBUG >= 2: print(f"Already connected to {peer.id()}: {is_connected}")
-      else:
-        if DEBUG >= 2: print(f"Connecting to {peer.id()}...")
-        await peer.connect()
-        if DEBUG >= 1: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")
+  async def update_peers(self, wait_for_peers: int = 0) -> bool:
+    next_peers = await self.discovery.discover_peers(wait_for_peers)
+    current_peer_ids = {peer.id() for peer in self.peers}
+    next_peer_ids = {peer.id() for peer in next_peers}
+    peers_added = [peer for peer in next_peers if peer.id() not in current_peer_ids]
+    peers_removed = [peer for peer in self.peers if peer.id() not in next_peer_ids]
+    peers_updated = [
+      peer for peer in next_peers
+      if peer.id() in current_peer_ids and any(p.addr() != peer.addr() for p in self.peers if p.id() == peer.id())
+    ]
+    peers_unchanged = [
+      peer for peer in next_peers
+      if peer.id() in current_peer_ids and all(p.addr() == peer.addr() for p in self.peers if p.id() == peer.id())
+    ]
+    peers_to_disconnect = [peer for peer in peers_removed if await peer.is_connected()]
+    peers_to_connect = [peer for peer in peers_added + peers_updated + peers_unchanged if not await peer.is_connected()]
+
+    print(f"{peers_added=} {peers_removed=} {peers_updated=} {peers_unchanged=} {peers_to_disconnect=} {peers_to_connect=}")
+
+    async def disconnect_with_timeout(peer, timeout=5):
+      try:
+        await asyncio.wait_for(peer.disconnect(), timeout)
+      except Exception as e:
+        print(f"Error disconnecting peer {peer.id()}@{peer.addr()}: {e}")
+        traceback.print_exc()
+
+    async def connect_with_timeout(peer, timeout=5):
+      try:
+        await asyncio.wait_for(peer.connect(), timeout)
+      except Exception as e:
+        print(f"Error connecting peer {peer.id()}@{peer.addr()}: {e}")
+        traceback.print_exc()
+
+    await asyncio.gather(
+      *(disconnect_with_timeout(peer) for peer in peers_to_disconnect),
+      *(connect_with_timeout(peer) for peer in peers_to_connect),
+      return_exceptions=True
+    )
+
+    self.peers = next_peers
+    return len(peers_to_connect) > 0 or len(peers_to_disconnect) > 0
 
   async def periodic_topology_collection(self, interval: int):
     while True:
       await asyncio.sleep(interval)
       try:
-        await self.update_peers()
-        await self.collect_topology()
+        did_peers_change = await self.update_peers()
+        if DEBUG >= 2: print(f"{did_peers_change=}")
+        if did_peers_change:
+          await self.collect_topology()
       except Exception as e:
         print(f"Error collecting topology: {e}")
         traceback.print_exc()
