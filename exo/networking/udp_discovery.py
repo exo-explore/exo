@@ -50,8 +50,8 @@ class UDPDiscovery(Discovery):
   async def start(self):
     self.device_capabilities = device_capabilities()
     self.broadcast_task = asyncio.create_task(self.task_broadcast_presence())
-    # self.listen_task = asyncio.create_task(self.task_listen_for_peers())
-    # self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
+    self.listen_task = asyncio.create_task(self.task_listen_for_peers())
+    self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
 
   async def stop(self):
     if self.broadcast_task: self.broadcast_task.cancel()
