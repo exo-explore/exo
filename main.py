@@ -83,7 +83,7 @@ node.server = server
 api = ChatGPTAPI(
   node,
   inference_engine.__class__.__name__,
-  response_timeout_secs=args.chatgpt_api_response_timeout_secs,
+  response_timeout=args.chatgpt_api_response_timeout,
   on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None
 )
 node.on_token.register("update_topology_viz").on_next(
