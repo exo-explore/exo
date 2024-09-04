@@ -3,6 +3,7 @@ import time
 import argparse
 import logging
 from typing import Any
+import struct
 
 # For the server
 from bless import (
@@ -14,12 +15,17 @@ from bless import (
 
 # For the client
 from bleak import BleakClient, BleakScanner
+from bleak.backends.characteristic import BleakGATTCharacteristic
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SERVICE_UUID = "A07498CA-AD5B-474E-940D-16F1FBE7E8CD"
 CHAR_UUID = "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
+
+# New UUIDs for connection parameters
+CONN_PARAMS_SERVICE_UUID = "1234A00C-0000-1000-8000-00805F9B34FB"
+CONN_PARAMS_CHAR_UUID = "1234A00D-0000-1000-8000-00805F9B34FB"
 
 def read_request(characteristic: BlessGATTCharacteristic, **kwargs) -> bytearray:
     return characteristic.value
@@ -45,14 +51,32 @@ async def run_server(loop):
         SERVICE_UUID, CHAR_UUID, char_flags, None, permissions
     )
 
+    # Add new service and characteristic for connection parameters
+    await server.add_new_service(CONN_PARAMS_SERVICE_UUID)
+    await server.add_new_characteristic(
+        CONN_PARAMS_SERVICE_UUID, CONN_PARAMS_CHAR_UUID, char_flags, None, permissions
+    )
+
+    # Set initial connection parameters (you may need to adjust these values)
+    conn_params = struct.pack("<HHHH", 6, 6, 0, 100)  # Interval min, max, latency, timeout
+    server.update_value(CONN_PARAMS_SERVICE_UUID, CONN_PARAMS_CHAR_UUID, conn_params)
+
     await server.start()
     logger.info("Server started. Use the UUID of this device when running the client.")
     await asyncio.Event().wait()  # Run forever
 
 async def run_client(server_uuid):
     logger.info(f"Connecting to server with UUID: {server_uuid}")
-    async with BleakClient(server_uuid) as client:
+    async with BleakClient(server_uuid, use_cached=False) as client:
         logger.info("Connected")
+
+        # Request lower latency connection parameters
+        conn_params = struct.pack("<HHHH", 6, 6, 0, 100)  # Interval min, max, latency, timeout
+        try:
+            await client.write_gatt_char(CONN_PARAMS_CHAR_UUID, conn_params)
+            logger.info("Requested optimized connection parameters")
+        except Exception as e:
+            logger.warning(f"Failed to request optimized connection parameters: {e}")
 
         # Explore services and characteristics
         for service in client.services:
