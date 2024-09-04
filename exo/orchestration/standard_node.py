@@ -343,7 +343,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
-    visited.update(self.id)
+    visited.add(self.id)
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:
