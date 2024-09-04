@@ -87,7 +87,11 @@ class UDPDiscovery(Discovery):
         print(traceback.format_exc())
       finally:
         if transport:
-          transport.close()
+          try:
+            transport.close()
+          except:
+            if DEBUG_DISCOVERY >= 2: print(f"Error closing transport: {e}")
+            if DEBUG_DISCOVERY >= 2: traceback.print_exc()
         await asyncio.sleep(self.broadcast_interval)
 
   async def on_listen_message(self, data, addr):

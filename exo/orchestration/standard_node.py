@@ -294,27 +294,46 @@ class StandardNode(Node):
     peers_to_disconnect = [peer for peer in peers_removed if await peer.is_connected()]
     peers_to_connect = [peer for peer in peers_added + peers_updated + peers_unchanged if not await peer.is_connected()]
 
-    print(f"{peers_added=} {peers_removed=} {peers_updated=} {peers_unchanged=} {peers_to_disconnect=} {peers_to_connect=}")
+    def _pretty(peers: List[PeerHandle]) -> List[str]:
+      return [f"{peer.id()}@{peer.addr()}" for peer in peers]
+    if DEBUG >= 2: print(f"update_peers: added={peers_added} removed={peers_removed} updated={peers_updated} unchanged={peers_unchanged} to_disconnect={peers_to_disconnect} to_connect={peers_to_connect}")
 
     async def disconnect_with_timeout(peer, timeout=5):
       try:
         await asyncio.wait_for(peer.disconnect(), timeout)
+        return True
       except Exception as e:
         print(f"Error disconnecting peer {peer.id()}@{peer.addr()}: {e}")
         traceback.print_exc()
+        return False
 
     async def connect_with_timeout(peer, timeout=5):
       try:
         await asyncio.wait_for(peer.connect(), timeout)
+        return True
       except Exception as e:
         print(f"Error connecting peer {peer.id()}@{peer.addr()}: {e}")
         traceback.print_exc()
+        return False
 
-    await asyncio.gather(
+    disconnect_results = await asyncio.gather(
       *(disconnect_with_timeout(peer) for peer in peers_to_disconnect),
+      return_exceptions=True
+    )
+    connect_results = await asyncio.gather(
       *(connect_with_timeout(peer) for peer in peers_to_connect),
       return_exceptions=True
     )
+
+    successful_disconnects = [peer for peer, result in zip(peers_to_disconnect, disconnect_results) if result is True]
+    failed_disconnects = [peer for peer, result in zip(peers_to_disconnect, disconnect_results) if result is False]
+    successful_connects = [peer for peer, result in zip(peers_to_connect, connect_results) if result is True]
+    failed_connects = [peer for peer, result in zip(peers_to_connect, connect_results) if result is False]
+    if DEBUG >= 1:
+      if successful_disconnects: print(f"Successfully disconnected peers: {_pretty(successful_disconnects)}")
+      if failed_disconnects: print(f"Failed to disconnect peers: {_pretty(failed_disconnects)}")
+      if successful_connects: print(f"Successfully connected peers: {_pretty(successful_connects)}")
+      if failed_connects: print(f"Failed to connect peers: {_pretty(failed_connects)}")
 
     self.peers = next_peers
     return len(peers_to_connect) > 0 or len(peers_to_disconnect) > 0
