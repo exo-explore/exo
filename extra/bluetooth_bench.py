@@ -54,21 +54,37 @@ async def run_client(server_uuid):
     async with BleakClient(server_uuid) as client:
         logger.info("Connected")
 
-        num_tests = 10
+        # Try to set a shorter connection interval
+        try:
+            await client.write_gatt_char("0000180A-0000-1000-8000-00805f9b34fb", b"\x06\x00")
+        except Exception as e:
+            logger.warning(f"Failed to set connection interval: {e}")
+
+        num_tests = 50
         total_rtt = 0
+        rtts = []
 
         for i in range(num_tests):
-            start_time = time.time()
+            start_time = time.perf_counter()
             await client.write_gatt_char(CHAR_UUID, b"ping")
             response = await client.read_gatt_char(CHAR_UUID)
-            end_time = time.time()
+            end_time = time.perf_counter()
 
             rtt = (end_time - start_time) * 1000  # Convert to milliseconds
             total_rtt += rtt
+            rtts.append(rtt)
             logger.info(f"Test {i+1}: RTT = {rtt:.2f} ms")
 
+            await asyncio.sleep(0.01)  # Small delay between tests
+
         average_rtt = total_rtt / num_tests
+        median_rtt = sorted(rtts)[num_tests // 2]
+        min_rtt = min(rtts)
+        max_rtt = max(rtts)
         logger.info(f"\nAverage RTT: {average_rtt:.2f} ms")
+        logger.info(f"Median RTT: {median_rtt:.2f} ms")
+        logger.info(f"Min RTT: {min_rtt:.2f} ms")
+        logger.info(f"Max RTT: {max_rtt:.2f} ms")
 
 async def discover_devices():
     logger.info("Scanning for BLE devices...")
@@ -83,14 +99,13 @@ if __name__ == "__main__":
     parser.add_argument("--uuid", help="Server's UUID (required for client mode)")
     args = parser.parse_args()
 
-    loop = asyncio.get_event_loop()
-
     if args.mode == "server":
+        loop = asyncio.get_event_loop()
         loop.run_until_complete(run_server(loop))
     elif args.mode == "client":
         if not args.uuid:
             logger.error("Error: Server UUID is required for client mode.")
             exit(1)
-        loop.run_until_complete(run_client(args.uuid))
+        asyncio.run(run_client(args.uuid))
     elif args.mode == "scan":
-        loop.run_until_complete(discover_devices())
+        asyncio.run(discover_devices())
