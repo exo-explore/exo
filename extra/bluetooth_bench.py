@@ -46,12 +46,12 @@ async def run_server(loop):
     )
 
     await server.start()
-    logger.info("Server started. Use the Bluetooth address of this machine when running the client.")
+    logger.info("Server started. Use the UUID of this device when running the client.")
     await asyncio.Event().wait()  # Run forever
 
-async def run_client(server_address):
-    logger.info(f"Connecting to server: {server_address}")
-    async with BleakClient(server_address) as client:
+async def run_client(server_uuid):
+    logger.info(f"Connecting to server with UUID: {server_uuid}")
+    async with BleakClient(server_uuid) as client:
         logger.info("Connected")
 
         num_tests = 10
@@ -74,13 +74,13 @@ async def discover_devices():
     logger.info("Scanning for BLE devices...")
     devices = await BleakScanner.discover()
     for d in devices:
-        logger.info(f"Found device: {d.name} ({d.address})")
+        logger.info(f"Found device: {d.name} (UUID: {d.address})")
     return devices
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BLE Latency Test")
     parser.add_argument("mode", choices=["server", "client", "scan"], help="Run as server, client, or scan for devices")
-    parser.add_argument("--addr", help="Server's Bluetooth address (required for client mode)")
+    parser.add_argument("--uuid", help="Server's UUID (required for client mode)")
     args = parser.parse_args()
 
     loop = asyncio.get_event_loop()
@@ -88,9 +88,9 @@ if __name__ == "__main__":
     if args.mode == "server":
         loop.run_until_complete(run_server(loop))
     elif args.mode == "client":
-        if not args.addr:
-            logger.error("Error: Server address is required for client mode.")
+        if not args.uuid:
+            logger.error("Error: Server UUID is required for client mode.")
             exit(1)
-        loop.run_until_complete(run_client(args.addr))
+        loop.run_until_complete(run_client(args.uuid))
     elif args.mode == "scan":
         loop.run_until_complete(discover_devices())
