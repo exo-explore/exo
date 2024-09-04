@@ -20,6 +20,12 @@ CHAR_UUID = "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
 CONN_PARAMS_SERVICE_UUID = "1234A00C-0000-1000-8000-00805F9B34FB"
 CONN_PARAMS_CHAR_UUID = "1234A00D-0000-1000-8000-00805F9B34FB"
 
+# Define the desired connection interval (7.5ms)
+CONN_INTERVAL_MIN = 6  # 7.5ms in 1.25ms units
+CONN_INTERVAL_MAX = 6
+CONN_LATENCY = 0
+SUPERVISION_TIMEOUT = 100  # 1 second
+
 def read_request(characteristic):
     return characteristic.value
 
@@ -44,7 +50,7 @@ async def run_server(loop):
 
     # Add new service and characteristic for connection parameters (read-only)
     await server.add_new_service(CONN_PARAMS_SERVICE_UUID)
-    conn_params = struct.pack("<HHHH", 6, 6, 0, 100)  # Interval min, max, latency, timeout
+    conn_params = struct.pack("<HHHH", CONN_INTERVAL_MIN, CONN_INTERVAL_MAX, CONN_LATENCY, SUPERVISION_TIMEOUT)
     conn_params_flags = GATTCharacteristicProperties.read
     conn_params_permissions = GATTAttributePermissions.readable
     await server.add_new_characteristic(
@@ -74,22 +80,37 @@ async def run_client(server_uuid):
         # Proceed with latency test
         num_tests = 50
         rtts = []
+        last_timestamp = 0
 
         for i in range(num_tests):
-            start_write = time.perf_counter()
+            start_time = time.perf_counter()
+
+            # Write operation
             await client.write_gatt_char(CHAR_UUID, b"ping")
-            end_write = time.perf_counter()
+            write_time = time.perf_counter()
 
-            start_read = time.perf_counter()
+            # Read operation
             response = await client.read_gatt_char(CHAR_UUID)
-            end_read = time.perf_counter()
+            end_time = time.perf_counter()
 
-            write_time = (end_write - start_write) * 1000
-            read_time = (end_read - start_read) * 1000
-            total_time = (end_read - start_write) * 1000
+            write_latency = (write_time - start_time) * 1000
+            read_latency = (end_time - write_time) * 1000
+            total_rtt = (end_time - start_time) * 1000
 
-            rtts.append(total_time)
-            logger.info(f"Test {i+1}: Write: {write_time:.2f} ms, Read: {read_time:.2f} ms, Total: {total_time:.2f} ms")
+            # Calculate timestamp (13-bit millisecond resolution as per BLE-MIDI spec)
+            timestamp = int((start_time * 1000) % 8192)
+
+            # Calculate time difference from last timestamp
+            if last_timestamp:
+                time_diff = (timestamp - last_timestamp) % 8192
+            else:
+                time_diff = 0
+
+            last_timestamp = timestamp
+
+            rtts.append(total_rtt)
+            logger.info(f"Test {i+1}: Write: {write_latency:.2f} ms, Read: {read_latency:.2f} ms, "
+                        f"Total RTT: {total_rtt:.2f} ms, Timestamp: {timestamp}, Time diff: {time_diff} ms")
 
             await asyncio.sleep(0.01)  # Small delay between tests
 
