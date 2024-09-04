@@ -343,7 +343,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
-    # TODO: should we add our own peer id here?
+    visited.update(self.id)
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:
@@ -358,7 +358,7 @@ class StandardNode(Node):
         continue
 
       try:
-        other_topology = await peer.collect_topology(visited, max_depth=max_depth - 1)
+        other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0)
         if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
         self.topology.merge(other_topology)
       except Exception as e:
