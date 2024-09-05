@@ -43,8 +43,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-nvidia
+          file: Dockerfile
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/exo:latest-nvidia
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BASE_IMAGE=nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04

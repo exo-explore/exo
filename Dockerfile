@@ -1,5 +1,8 @@
-# Nvidia image for GPU support
-FROM ubuntu:22.04
+# --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04
+ARG BASE_IMAGE=ubuntu:22.04
+
+# Base image
+FROM $BASE_IMAGE
 
 # Set environment variables
 ENV WORKING_PORT=8080
@@ -17,22 +20,29 @@ ENV NODE_ID=exo-node-1
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install dependencies and setup python3.12
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y git gnupg build-essential software-properties-common && \
+RUN apt-get update -y && \
+    apt-get install --no-install-recommends -y git gnupg build-essential software-properties-common curl && \
     add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get install --no-install-recommends -y python3.12 python3.12-dev curl && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
+    apt-get remove -y python3 python3-dev && \
+    apt-get autoremove -y && \
+    apt-get install --no-install-recommends -y python3.12 python3.12-dev python3.12-distutils && \
     rm -rf /var/lib/apt/lists/*
 
-# Configure python3.12
-RUN pip3 install --no-cache-dir --upgrade requests && ln -fs /usr/bin/python3.12 /usr/bin/python
+# Install pip
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+RUN ln -s /usr/bin/python3.12 /usr/bin/python3 && \
+    ln -s /usr/bin/pip3.12 /usr/bin/pip3
+
+# Upgrade request package
+# TODO: Is this even necessary?
+RUN pip3 install --no-cache-dir --upgrade requests
 
 # Copy installation files
 COPY setup.py .
 
 # Install exo
 RUN pip3 install --no-cache-dir . && \
-    pip3 install --no-cache-dir tensorflow && \
     pip3 cache purge
 
 # Copy source code
@@ -40,8 +50,7 @@ RUN pip3 install --no-cache-dir . && \
 COPY . .
 
 # Run command
-ENTRYPOINT ["/usr/bin/python"]
-CMD ["main.py", "--disable-tui", "--node-id", "$NODE_ID"]
+CMD ["python3", "main.py", "--disable-tui", "--node-id", "$NODE_ID"]
 
 # Expose port
 EXPOSE $WORKING_PORT
