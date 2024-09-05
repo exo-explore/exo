@@ -94,13 +94,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
   async def _run_inference(self, input_tensor, start_pos):
     with self.model_lock:
-      return await asyncio.get_event_loop().run_in_executor(
-        self.executor,
-        self.model,
-        input_tensor,
-        start_pos,
-        TEMPERATURE
-      )
+      return await asyncio.get_event_loop().run_in_executor(self.executor, self.model, input_tensor, start_pos, TEMPERATURE)
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
@@ -110,13 +104,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     with self.model_lock:
       if self.shard != shard:
-        self.model = await asyncio.get_event_loop().run_in_executor(
-          self.executor,
-          build_transformer,
-          model_path,
-          shard,
-          "8B" if "8b" in shard.model_id.lower() else "70B"
-        )
+        self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B")
         tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
         self.tokenizer = await resolve_tokenizer(tokenizer_path)
         self.shard = shard
