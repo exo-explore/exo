@@ -406,4 +406,4 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
   else:
     shard_specific_patterns = ["*.safetensors"]
   if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
-  return list(default_patterns | shard_specific_patterns)  # Remove duplicates
+  return list(default_patterns | shard_specific_patterns)
