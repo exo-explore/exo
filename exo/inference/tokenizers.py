@@ -11,7 +11,7 @@ async def resolve_tokenizer(model_id: str):
   local_path = await get_local_snapshot_dir(model_id)
   if DEBUG >= 2: print(f"Checking if local path exists to load tokenizer from local {local_path=}")
   try:
-    if await aios.path.exists(local_path):
+    if local_path and await aios.path.exists(local_path):
       if DEBUG >= 2: print(f"Resolving tokenizer for {model_id=} from {local_path=}")
       return await _resolve_tokenizer(local_path)
   except:
