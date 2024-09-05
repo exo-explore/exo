@@ -43,6 +43,7 @@ COPY setup.py .
 
 # Install exo
 RUN pip3 install --no-cache-dir . && \
+    pip3 install --no-cache-dir --upgrade tensorflow && \
     pip3 cache purge
 
 # Copy source code
