@@ -52,7 +52,7 @@ exo will [automatically discover](https://github.com/exo-explore/exo/blob/945f90
 
 ### ChatGPT-compatible API
 
-exo provides a [ChatGPT-compatible API](exo/api/chatgpt_api.py) for running models. It's a [one-line change](examples/chatgpt_api.py) in your application to run models on your own hardware using exo.
+exo provides a [ChatGPT-compatible API](exo/api/chatgpt_api.py) for running models. It's a [one-line change](examples/chatgpt_api.sh) in your application to run models on your own hardware using exo.
 
 ### Device Equality
 
@@ -107,8 +107,6 @@ python3 main.py
 ```
 
 That's it! No configuration required - exo will automatically discover the other device(s).
-
-The native way to access models running on exo is using the exo library with peer handles. See how in [this example for Llama 3](examples/llama3_distributed.py).
 
 exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:8000
 
