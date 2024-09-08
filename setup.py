@@ -55,4 +55,5 @@ setup(
   packages=find_packages(),
   install_requires=install_requires,
   extras_require=extras_require,
+  entry_points={"console_scripts": ["exo = exo.main:run"]},
 )

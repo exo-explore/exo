@@ -108,12 +108,12 @@ source install.sh
 #### Device 1:
 
 ```sh
-python3 main.py
+exo
 ```
 
 #### Device 2:
 ```sh
-python3 main.py
+exo
 ```
 
 That's it! No configuration required - exo will automatically discover the other device(s).
@@ -179,14 +179,14 @@ curl http://localhost:8000/v1/chat/completions \
 #### Device 1 (MacOS):
 
 ```sh
-python3 main.py --inference-engine tinygrad
+exo --inference-engine tinygrad
 ```
 
 Here we explicitly tell exo to use the **tinygrad** inference engine.
 
 #### Device 2 (Linux):
 ```sh
-python3 main.py
+exo
 ```
 
 Linux devices will automatically default to using the **tinygrad** inference engine.
@@ -199,18 +199,18 @@ You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/e
 Enable debug logs with the DEBUG environment variable (0-9).
 
 ```sh
-DEBUG=9 python3 main.py
+DEBUG=9 exo
 ```
 
 For the **tinygrad** inference engine specifically, there is a separate DEBUG flag `TINYGRAD_DEBUG` that can be used to enable debug logs (1-6).
 
 ```sh
-TINYGRAD_DEBUG=2 python3 main.py
+TINYGRAD_DEBUG=2 exo
 ```
 
 ## Known Issues
 
-- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually: 
+- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually:
 
 ```sh
 /Applications/Python 3.x/Install Certificates.command
