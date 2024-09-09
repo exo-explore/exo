@@ -432,3 +432,8 @@ class StandardNode(Node):
   @property
   def current_topology(self) -> Topology:
     return self.topology
+
+  def get_assigned_shards(self):
+    # For a standard node, all shards are assigned to it
+    # Assuming self.shards exists, otherwise adjust accordingly
+    return self.shards if hasattr(self, 'shards') else []

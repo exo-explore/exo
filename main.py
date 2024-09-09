@@ -172,6 +172,14 @@ async def main():
 
   await node.start(wait_for_peers=args.wait_for_peers)
 
+  # Parallelize model preloading
+  shards_to_load = node.get_assigned_shards()
+  await asyncio.gather(*(inference_engine.preload_model(shard) for shard in shards_to_load))
+
+  # Finish initialization sequentially if needed
+  for shard in shards_to_load:
+    await inference_engine.ensure_shard(shard)
+
   if args.run_model:
     await run_model_cli(node, inference_engine, args.run_model, args.prompt)
   else:

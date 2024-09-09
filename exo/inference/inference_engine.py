@@ -7,6 +7,7 @@ from .shard import Shard
 
 
 class InferenceEngine(ABC):
+
   @abstractmethod
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     pass
@@ -14,6 +15,11 @@ class InferenceEngine(ABC):
   @abstractmethod
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
     pass
+
+  @abstractmethod
+  async def preload_model(self, shard: Shard) -> None:
+        """Preload the model into memory without full initialization."""
+        pass
 
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
