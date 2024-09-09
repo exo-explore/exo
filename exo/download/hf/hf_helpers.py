@@ -399,5 +399,5 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
     elif shard.is_last_layer():
       shard_specific_patterns.append(sorted_file_names[-1])
   else:
-    shard_specific_patterns = ["*.safetensors"]
+    shard_specific_patterns = ["*.safetensors", "*Q4_K_M*.gguf"]
   return list(set(default_patterns + shard_specific_patterns))  # Remove duplicates
