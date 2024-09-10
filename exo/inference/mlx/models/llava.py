@@ -488,98 +488,119 @@ class LlavaMultiModalProjector(nn.Module):
 
 
 class Model(nn.Module):
-  def __init__(self, config: ModelArgs):
-    super().__init__()
-    self.config = config
-    self.model_type = config.model_type
-    if config.vision_config:
-      self.vision_tower = VisionModel(config.vision_config)
-      self.multi_modal_projector = LlavaMultiModalProjector(config)
-      self.vision_feature_layer = config.vision_feature_layer
-      self.vision_feature_select_strategy = config.vision_feature_select_strategy
-    self.language_model = LanguageModel(config.text_config, config.shard)
+    def __init__(self, config: ModelArgs):
+        super().__init__()
+        self.config = config
+        self.model_type = config.model_type
+        if config.vision_config:
+            self.vision_tower = VisionModel(config.vision_config)
+            self.multi_modal_projector = LlavaMultiModalProjector(config)
+            self.vision_feature_layer = config.vision_feature_layer
+            self.vision_feature_select_strategy = config.vision_feature_select_strategy
+        self.language_model = LanguageModel(config.text_config, config.shard)
 
-  def get_input_embeddings(
-    self,
-    input_ids: Optional[mx.array] = None,
-    pixel_values: Optional[mx.array] = None,
-  ):
-    if pixel_values is None:
-      return self.language_model(input_ids)
+    def get_input_embeddings(
+            self,
+            input_ids: Optional[mx.array] = None,
+            pixel_values: Optional[mx.array] = None,
+    ):
+        if pixel_values is None:
+            return self.language_model(input_ids)
 
-    # Get the input embeddings from the language model
-    inputs_embeds = self.language_model.model.embed_tokens(input_ids)
+        # Get the input embeddings from the language model
+        inputs_embeds = self.language_model.model.embed_tokens(input_ids)
 
-    # Get the ouptut hidden states from the vision model
-    *_, hidden_states = self.vision_tower(pixel_values.transpose(0, 2, 3, 1), output_hidden_states=True)
+        # Get the ouptut hidden states from the vision model
+        *_, hidden_states = self.vision_tower(
+            pixel_values.transpose(0, 2, 3, 1), output_hidden_states=True
+        )
 
-    # Select the hidden states from the desired layer
-    selected_image_feature = hidden_states[self.vision_feature_layer]
+        # Select the hidden states from the desired layer
+        selected_image_feature = hidden_states[self.vision_feature_layer]
 
-    if self.vision_feature_select_strategy == "default":
-      selected_image_feature = selected_image_feature[:, 1:]
-    elif self.vision_feature_select_strategy == "full":
-      selected_image_feature = selected_image_feature
-    else:
-      raise ValueError("Unexpected feature selection strategy: "
-                       f"{self.vision_feature_select_strategy}")
+        if self.vision_feature_select_strategy == "default":
+            selected_image_feature = selected_image_feature[:, 1:]
+        elif self.vision_feature_select_strategy == "full":
+            selected_image_feature = selected_image_feature
+        else:
+            raise ValueError(
+                "Unexpected feature selection strategy: "
+                f"{self.vision_feature_select_strategy}"
+            )
 
-    # Pass image features through the multi-modal projector
-    image_features = self.multi_modal_projector(selected_image_feature)
+        # Pass image features through the multi-modal projector
+        image_features = self.multi_modal_projector(selected_image_feature)
 
-    # Insert special image tokens in the input_ids
-    final_inputs_embeds = self._merge_input_ids_with_image_features(image_features, inputs_embeds, input_ids)
-    return final_inputs_embeds
+        # Insert special image tokens in the input_ids
+        final_inputs_embeds = self._merge_input_ids_with_image_features(
+            image_features, inputs_embeds, input_ids
+        )
+        return final_inputs_embeds
 
-  def _merge_input_ids_with_image_features(self, image_features, inputs_embeds, input_ids):
-    image_token_index = self.config.image_token_index
-    num_images, num_image_patches, embed_dim = image_features.shape
+    def _merge_input_ids_with_image_features(
+            self, image_features, inputs_embeds, input_ids
+    ):
+        image_features_list = mx.split(image_features, image_features.shape[0])
+        inputs_embeds_list = mx.split(inputs_embeds, inputs_embeds.shape[0])
+        input_ids_list = mx.split(input_ids, input_ids.shape[0])
 
-    # Positions of <image> tokens in input_ids, assuming batch size is 1
-    image_positions = np.where(input_ids[0] == image_token_index)[0].tolist()
+        stack = []
+        for input_ids, inputs_embeds, image_features in zip(input_ids_list, inputs_embeds_list, image_features_list):
+            image_token_index = self.config.image_token_index
+            num_images, num_image_patches, embed_dim = image_features.shape
 
-    if len(image_positions) != num_images:
-      raise ValueError(f"The number of image tokens ({len(image_positions)}) does not "
-                       f" match the number of image inputs ({num_images}).")
+            # Positions of <image> tokens in input_ids, assuming batch size is 1
+            image_positions = np.where(input_ids[0] == image_token_index)[0].tolist()
 
-    text_segments = []
-    start_idx = 0
+            if len(image_positions) != num_images:
+                raise ValueError(
+                    f"The number of image tokens ({len(image_positions)}) does not "
+                    f" match the number of image inputs ({num_images})."
+                )
 
-    for position in image_positions:
-      text_segments.append(inputs_embeds[:, start_idx:position])
-      start_idx = position + 1
+            text_segments = []
+            start_idx = 0
 
-    image_embeddings = mx.split(image_features, image_features.shape[0])
-    final_embeddings = [v for p in zip(text_segments, image_embeddings) for v in p]
-    final_embeddings += [inputs_embeds[:, start_idx:]]
+            for position in image_positions:
+                text_segments.append(inputs_embeds[:, start_idx:position])
+                start_idx = position + 1
 
-    # Create a final embedding of shape
-    # (1, num_image_patches*num_images + sequence_len, embed_dim)
-    return mx.concatenate(final_embeddings, axis=1)
+            image_embeddings = mx.split(image_features, image_features.shape[0])
+            final_embeddings = [v for p in zip(text_segments, image_embeddings) for v in p]
+            final_embeddings += [inputs_embeds[:, start_idx:]]
 
-  def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None):
-    input_embddings = None
-    if pixel_values is not None:
-      input_embddings = self.get_input_embeddings(input_ids, pixel_values)
-    logits = self.language_model(input_ids, cache=cache, inputs_embeds=input_embddings)
-    return logits
+            # Create a final embedding of shape
+            # (1, num_image_patches*num_images + sequence_len, embed_dim)
+            stack.append(mx.concatenate(final_embeddings, axis=1))
+        return mx.concatenate(stack, axis=0)
 
-  def sanitize(self, weights):
-    if self.config.vision_config:
-      weights = self.vision_tower.sanitize(weights)
-    else:
-      weights = {k: v for k, v in weights.items() if not k.startswith(('vision_tower', 'multi_modal_projector', 'vision_feature_layer', 'vision_feature_select_strategy'))}
-    weights = self.language_model.sanitize(weights)
-    return weights
+    def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None):
+        input_embddings = None
+        if pixel_values is not None:
+            input_embddings = self.get_input_embeddings(input_ids, pixel_values)
+        logits = self.language_model(
+            input_ids, cache=cache, inputs_embeds=input_embddings
+        )
+        return logits
 
-  @property
-  def layers(self):
-    return self.language_model.model.layers
+    def sanitize(self, weights):
+        if self.config.vision_config:
+          weights = self.vision_tower.sanitize(weights)
+        else:
+          weights = {k: v for k, v in weights.items() if not k.startswith(('vision_tower', 'multi_modal_projector', 'vision_feature_layer', 'vision_feature_select_strategy'))}
+        weights = self.language_model.sanitize(weights)
+        return weights
 
-  @property
-  def head_dim(self):
-    return (self.language_model.model.head_dim or self.language_model.model.hidden_size // self.language_model.model.num_attention_heads)
+    @property
+    def layers(self):
+        return self.language_model.model.layers
 
-  @property
-  def n_kv_heads(self):
-    return self.language_model.model.num_key_value_heads
+    @property
+    def head_dim(self):
+        return (
+                self.language_model.model.head_dim or self.language_model.model.hidden_size // self.language_model.model.num_attention_heads
+        )
+
+    @property
+    def n_kv_heads(self):
+        return self.language_model.model.num_key_value_heads

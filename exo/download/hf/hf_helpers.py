@@ -200,36 +200,6 @@ async def download_file(
     if DEBUG >= 2: print(f"Downloaded: {file_path}")
 
 
-async def resolve_revision_to_commit_hash(repo_id: str, revision: str) -> str:
-  repo_root = get_repo_root(repo_id)
-  refs_dir = repo_root/"refs"
-  refs_file = refs_dir/revision
-
-  # Check if we have a cached commit hash
-  if await aios.path.exists(refs_file):
-    async with aiofiles.open(refs_file, 'r') as f:
-      commit_hash = (await f.read()).strip()
-      if DEBUG >= 2: print(f"Commit hash is already cached at {refs_file}: {commit_hash}")
-      return commit_hash
-
-  # Fetch the commit hash for the given revision
-  async with aiohttp.ClientSession() as session:
-    api_url = f"https://huggingface.co/api/models/{repo_id}/revision/{revision}"
-    headers = await get_auth_headers()
-    async with session.get(api_url, headers=headers) as response:
-      if response.status != 200:
-        raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
-      revision_info = await response.json()
-      commit_hash = revision_info['sha']
-
-  # Cache the commit hash
-  await aios.makedirs(refs_dir, exist_ok=True)
-  async with aiofiles.open(refs_file, 'w') as f:
-    await f.write(commit_hash)
-
-  return commit_hash
-
-
 async def download_repo_files(
   repo_id: str,
   revision: str = "main",
@@ -239,15 +209,35 @@ async def download_repo_files(
   max_parallel_downloads: int = 4
 ) -> Path:
   repo_root = get_repo_root(repo_id)
+  refs_dir = repo_root/"refs"
   snapshots_dir = repo_root/"snapshots"
   cachedreqs_dir = repo_root/"cachedreqs"
 
   # Ensure directories exist
+  await aios.makedirs(refs_dir, exist_ok=True)
   await aios.makedirs(snapshots_dir, exist_ok=True)
   await aios.makedirs(cachedreqs_dir, exist_ok=True)
 
-  # Resolve revision to commit hash
-  commit_hash = await resolve_revision_to_commit_hash(repo_id, revision)
+  # Check if we have a cached commit hash
+  refs_file = refs_dir/revision
+  if await aios.path.exists(refs_file):
+    async with aiofiles.open(refs_file, 'r') as f:
+      commit_hash = (await f.read()).strip()
+      if DEBUG >= 2: print(f"Commit hash is already hashed at {refs_file}: {commit_hash}")
+  else:
+    async with aiohttp.ClientSession() as session:
+      # Fetch the commit hash for the given revision
+      api_url = f"https://huggingface.co/api/models/{repo_id}/revision/{revision}"
+      headers = await get_auth_headers()
+      async with session.get(api_url, headers=headers) as response:
+        if response.status != 200:
+          raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
+        revision_info = await response.json()
+        commit_hash = revision_info['sha']
+
+      # Cache the commit hash
+      async with aiofiles.open(refs_file, 'w') as f:
+        await f.write(commit_hash)
 
   # Set up the snapshot directory
   snapshot_dir = snapshots_dir/commit_hash
@@ -367,8 +357,7 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Optional[Dict[
 
   # Check if the file exists
   repo_root = get_repo_root(repo_id)
-  commit_hash = await resolve_revision_to_commit_hash(repo_id, revision)
-  snapshot_dir = repo_root/"snapshots"/commit_hash
+  snapshot_dir = repo_root/"snapshots"
   index_file = next((f for f in await aios.listdir(snapshot_dir) if f.endswith("model.safetensors.index.json")), None)
 
   if index_file:
@@ -391,19 +380,24 @@ def extract_layer_num(tensor_name: str) -> Optional[int]:
 
 
 def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
-  default_patterns = set(["*.json","*.py","tokenizer.model","*.tiktoken","*.txt"])
-  shard_specific_patterns = set()
+  default_patterns = [
+    "*.json",
+    "*.py",
+    "tokenizer.model",
+    "*.tiktoken",
+    "*.txt",
+  ]
+  shard_specific_patterns = []
   if weight_map:
     for tensor_name, filename in weight_map.items():
       layer_num = extract_layer_num(tensor_name)
       if layer_num is not None and shard.start_layer <= layer_num <= shard.end_layer:
-        shard_specific_patterns.add(filename)
+        shard_specific_patterns.append(filename)
     sorted_file_names = sorted(weight_map.values())
     if shard.is_first_layer():
-      shard_specific_patterns.add(sorted_file_names[0])
+      shard_specific_patterns.append(sorted_file_names[0])
     elif shard.is_last_layer():
-      shard_specific_patterns.add(sorted_file_names[-1])
+      shard_specific_patterns.append(sorted_file_names[-1])
   else:
     shard_specific_patterns = ["*.safetensors"]
-  if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
-  return list(default_patterns | shard_specific_patterns)
+  return list(set(default_patterns + shard_specific_patterns))  # Remove duplicates

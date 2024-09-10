@@ -5,13 +5,10 @@ from exo.inference.shard import Shard
 from exo.topology.device_capabilities import DeviceCapabilities
 from exo.topology.topology import Topology
 
+
 class PeerHandle(ABC):
   @abstractmethod
   def id(self) -> str:
-    pass
-
-  @abstractmethod
-  def addr(self) -> str:
     pass
 
   @abstractmethod
@@ -31,15 +28,11 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
-  async def send_prompt(self, shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def send_prompt(self, shard: Shard, prompts: List[str], image_strs: Optional[List[str]] = None, request_ids: Optional[List[str]] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
     pass
 
   @abstractmethod
-  async def send_tensor(self, shard: Shard, tensor: np.array, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
-    pass
-
-  @abstractmethod
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+  async def send_tensor(self, shard: Shard, tensor: np.array, request_ids: Optional[List[str]] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
     pass
 
   @abstractmethod
@@ -48,4 +41,8 @@ class PeerHandle(ABC):
 
   @abstractmethod
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
+    pass
+
+  @abstractmethod
+  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     pass

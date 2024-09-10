@@ -23,16 +23,12 @@ class GRPCPeerHandle(PeerHandle):
   def id(self) -> str:
     return self._id
 
-  def addr(self) -> str:
-    return self.address
-
   def device_capabilities(self) -> DeviceCapabilities:
     return self._device_capabilities
 
   async def connect(self):
     self.channel = grpc.aio.insecure_channel(self.address, options=[("grpc.max_metadata_size", 32*1024*1024)])
     self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
-    await self.channel.channel_ready()
 
   async def is_connected(self) -> bool:
     return self.channel is not None and self.channel.get_state() == grpc.ChannelConnectivity.READY
@@ -43,17 +39,17 @@ class GRPCPeerHandle(PeerHandle):
     self.channel = None
     self.stub = None
 
-  async def send_prompt(self, shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def send_prompt(self, shard: Shard, prompts: List[str], image_strs: Optional[List[str]] = None, request_ids: Optional[List[str]] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.PromptRequest(
-      prompt=prompt,
-      image_str=image_str,
+      prompts=prompts,
+      image_strs=image_strs,
       shard=node_service_pb2.Shard(
         model_id=shard.model_id,
         start_layer=shard.start_layer,
         end_layer=shard.end_layer,
         n_layers=shard.n_layers,
       ),
-      request_id=request_id,
+      request_ids=request_ids,
       inference_state=inference_state,
     )
     response = await self.stub.SendPrompt(request)
@@ -63,7 +59,7 @@ class GRPCPeerHandle(PeerHandle):
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
-  async def send_tensor(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def send_tensor(self, shard: Shard, tensor: np.ndarray, request_ids: Optional[List[str]] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.TensorRequest(
       shard=node_service_pb2.Shard(
         model_id=shard.model_id,
@@ -72,7 +68,7 @@ class GRPCPeerHandle(PeerHandle):
         n_layers=shard.n_layers,
       ),
       tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
-      request_id=request_id,
+      request_ids=request_ids,
       inference_state=inference_state,
     )
     response = await self.stub.SendTensor(request)

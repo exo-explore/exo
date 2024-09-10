@@ -159,9 +159,9 @@ def load_model_shard(
 
 
 async def load_shard(
-  model_path: str,
+  model_path: Path,
   shard: Shard,
-  tokenizer_config={},
+  tokenizer_config={"pad_token": "[PAD]"}, # TODO: move to appropriate place
   model_config={},
   adapter_path: Optional[str] = None,
   lazy: bool = False,
@@ -181,27 +181,36 @@ async def load_shard(
     tokenizer = load_tokenizer(model_path, tokenizer_config)
     return model, tokenizer
 
+async def get_image_from_str(image_strs: Union[str, List[str]]):
+    async def get_img_url(image_str: str):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_str, timeout=10) as response:
+                content = await response.read()
+                return Image.open(BytesIO(content)).convert("RGB")
 
-async def get_image_from_str(_image_str: str):
-  image_str = _image_str.strip()
+    async def get_img_data(img_path: str):
+        format_prefix, base64_data = image_str.split(";base64,")
+        image_format = format_prefix.split("/")[1].lower()
+        if DEBUG >= 2: print(f"{image_str=} {image_format=}")
+        imgdata = base64.b64decode(base64_data)
+        img = Image.open(BytesIO(imgdata))
 
-  if image_str.startswith("http"):
-    async with aiohttp.ClientSession() as session:
-      async with session.get(image_str, timeout=10) as response:
-        content = await response.read()
-        return Image.open(BytesIO(content)).convert("RGB")
-  elif image_str.startswith("data:image/"):
-    # Extract the image format and base64 data
-    format_prefix, base64_data = image_str.split(";base64,")
-    image_format = format_prefix.split("/")[1].lower()
-    if DEBUG >= 2: print(f"{image_str=} {image_format=}")
-    imgdata = base64.b64decode(base64_data)
-    img = Image.open(BytesIO(imgdata))
+        # Convert to RGB if not already
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        else:
+            raise ValueError("Invalid image_str format. Must be a URL or a base64 encoded image.")
+        return img
 
-    # Convert to RGB if not already
-    if img.mode != "RGB":
-      img = img.convert("RGB")
+    if isinstance(image_strs, str):
+        image_strs = [image_strs]
 
-    return img
-  else:
-    raise ValueError("Invalid image_str format. Must be a URL or a base64 encoded image.")
+    tasks = []
+    for image_str in image_strs:
+        image_str = image_str.strip()
+        if image_str.startswith("http"):
+            tasks.append(get_img_url(image_str))
+        elif image_str.startswith("data:image/"):
+            tasks.append(get_img_data(image_str))
+
+    return await asyncio.gather(*tasks)
