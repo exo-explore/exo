@@ -148,12 +148,38 @@ curl http://localhost:8000/v1/chat/completions \
    }'
 ```
 
+### Example Usage on Multiple Heterogenous Devices (MacOS + Linux)
+
+#### Device 1 (MacOS):
+
+```sh
+python3 main.py --inference-engine tinygrad
+```
+
+Here we explicitly tell exo to use the **tinygrad** inference engine.
+
+#### Device 2 (Linux):
+```sh
+python3 main.py
+```
+
+Linux devices will automatically default to using the **tinygrad** inference engine.
+
+You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/env_vars/). For example, you can configure tinygrad to use the cpu by specifying `CLANG=1`.
+
+
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).
 
 ```sh
 DEBUG=9 python3 main.py
+```
+
+For the **tinygrad** inference engine specifically, there is a separate DEBUG flag `TINYGRAD_DEBUG` that can be used to enable debug logs (1-6).
+
+```sh
+TINYGRAD_DEBUG=2 python3 main.py
 ```
 
 ## Known Issues
