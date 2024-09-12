@@ -2,6 +2,8 @@ from typing import Tuple, Union, Optional, Dict, Any
 from tinygrad import Tensor, Variable, TinyJit, dtypes, nn, Device
 from tinygrad.helpers import getenv
 
+from .base import IdentityBlock
+
 
 # https://github.com/facebookresearch/llama/blob/1076b9c51c77ad06e9d7ba8a4c6df775741732bd/llama/model.py#L47
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, dtype=dtypes.half) -> Tensor:
@@ -178,10 +180,17 @@ class Transformer:
     jit=True,
     feed_forward=FeedForward
   ):
-    self.layers = [TransformerBlock(dim, hidden_dim, n_heads, n_kv_heads, norm_eps, max_context, linear, feed_forward=feed_forward) for _ in range(n_layers)]
-    self.norm = nn.RMSNorm(dim, norm_eps)
-    self.tok_embeddings = nn.Embedding(vocab_size, dim)
-    self.output = nn.Linear(dim, vocab_size, bias=False)
+    self.layers = []
+    for i in range(n_layers):
+      if shard.start_layer <= i <= shard.end_layer:
+        self.layers.append(TransformerBlock(dim, hidden_dim, n_heads, n_kv_heads, norm_eps, max_context, linear, feed_forward=feed_forward))
+      else:
+        self.layers.append(IdentityBlock())
+    if shard.is_first_layer():
+      self.tok_embeddings = nn.Embedding(vocab_size, dim)
+    if shard.is_last_layer():
+      self.norm = nn.RMSNorm(dim, norm_eps)
+      self.output = nn.Linear(dim, vocab_size, bias=False)
     self.max_context = max_context
     self.freqs_cis = precompute_freqs_cis(dim // n_heads, self.max_context*2, rope_theta).contiguous()
     self.forward_jit = TinyJit(self.forward) if jit else None
@@ -197,8 +206,7 @@ class Transformer:
     else:
       h = x
 
-    for i in range(self.shard.start_layer, self.shard.end_layer + 1):
-      layer = self.layers[i]
+    for layer in self.layers:
       h = layer(h, start_pos, freqs_cis, mask)
 
     if self.shard.is_last_layer():
