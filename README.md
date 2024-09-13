@@ -25,7 +25,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 <div align="center">
-  <h2>Update: exo is hiring. See [here](https://github.com/exo-explore/exo) for more details.</h2>
+  <h2>Update: exo is hiring. See <a href="https://github.com/exo-explore/exo">here</a> for more details.</h2>
 </div>
 
 ## Get Involved
