@@ -21,12 +21,16 @@ text = tokenizer.apply_chat_template(
 )
 model_inputs = tokenizer([text], return_tensors="pt").to(device)
 
+print(f"model_inputs:\n{model_inputs}")
+
+print(f"generation_config:\n{model.generation_config}")
+
 generated_ids = model.generate(
     model_inputs.input_ids,
     attention_mask=model_inputs.attention_mask,
     max_new_tokens=512,
     do_sample=True,
-    top_k=20
+    #top_k=20,
     #num_beams=5,
     #early_stopping=True
 )

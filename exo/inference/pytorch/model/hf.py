@@ -44,21 +44,18 @@ class ShardedHuggingFaceModel(InferenceEngine):
             print(f"error loading and splitting model: {err}")
             raise
 
-    def forward(
+    def run(
         self,
         input_ids: torch.tensor
     ) -> Tuple[np.ndarray, any]:
         """
-        Forward through layers using the base model
+        Run through a set of model layers
 
         Args:
             input_ids: tensor input
+                this could be tokens or hidden states from other layers
 
         Returns:
-            generator_ids: token ids from generation
+            layer_outputs: dict
+                layer output including hidden states, key values or logits
         """
-
-        generate_ids = self.base_model.generate(
-            input_ids,
-
-        )

@@ -2,7 +2,28 @@ import torch
 import torch.nn as nn
 import asyncio
 import gc
-from transformers import AutoModelForCausalLM, AutoConfig, Qwen2ForCausalLM
+from transformers import (
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DynamicCache,
+    Cache,
+    LogitsProcessorList,
+    #MinLengthLogitsProcessor,
+    LogitsWarper,
+    TopKLogitsWarper,
+    TopPLogitsWarper,
+    TemperatureLogitsWarper,
+    StoppingCriteriaList,
+    MaxLengthCriteria,
+    MaxTimeCriteria
+)
+
+from transformers.generation.configuration_utils import (
+    GenerationConfig,
+    GenerationMode
+)
+
 from exo.api.chatgpt_api import resolve_tokenizer
 from typing import Tuple, Optional
 import re
@@ -19,50 +40,94 @@ class OnionHuggingFaceLM():
     def forward(
             self,
             model,
-            input_ids: torch.tensor=None,
-            hidden_states: torch.tensor=None,
+            llm_model,
+            input_ids: Optional[torch.tensor],
+            hidden_states: Optional[torch.tensor],
             attention_mask: torch.tensor=None,
+            past_key_values: Cache=DynamicCache(),
             **kwargs
-        ) -> Tuple[Optional[torch.tensor], Optional[torch.tensor]]:
+        ) -> Tuple[Optional[torch.tensor], Optional[torch.tensor], Optional[Cache]]:
 
-        # set base model
-        base_model = model.model
+        """
+        Generate hidden states or logits via passing through set amount of layers of a model
+        To be passed only input_ids OR hidden_state and not both. This is for connecting the model
+        layer to generate a complete output
+
+        Args:
+            input_ids: tensor Optional
+            hidden_states: tensor Optional
+
+        Returns:
+            Tuple of 
+                - hidden_states: tensor Optional
+                - logits: tensor Optional
+
+        """
+        is_first = False
 
         if input_ids is not None and hidden_states is not None:
-            print("You must either pass a hidden_state or input_ids but not both")
-            assert ValueError
+            raise ValueError
 
         if input_ids is not None:
-            # embed
-            hidden_states = base_model.embed_tokens(input_ids)
-            position_ids = torch.arange(
-                0,
-                input_ids.size(1),
-                device=input_ids.device
-            ).unsqueeze(0)
+            # embed input_ids
+            input_ids = model.embed_tokens(input_ids)
+            # calculate position_ids
+            batch_size, seq_length = input_ids.shape[:2]
+
+            is_first = True
 
         if hidden_states is not None:
-            hidden_states = hidden_states
-            position_ids = torch.arange(
-                0,
-                hidden_states.size(1),
-                device=hidden_states.device
-            ).unsqueeze(0)
+            batch_size, seq_length = hidden_states.shape[:2] 
+        
+        # cache
+        past_key_values_length = len(past_key_values)
+        cache_position = torch.arange(
+            past_key_values_length, 
+            seq_length + past_key_values_length, 
+            dtype=torch.long,
+            device=input_ids.device if input_ids is not None else hidden_states.device
+        )
+
+        position_ids = cache_position.unsqueeze(0)
+
+        if is_first:
+            model_inputs = llm_model.prepare_inputs_for_generation(
+                input_ids,
+                past_key_values=past_key_values,
+                position_ids=position_ids,
+                cache_position=cache_position,
+                attention_mask=attention_mask
+            )
+
+            print(f"model_inputs\n{model_inputs}")
+
 
         for layer in self.layers:
-            print(f"Processing hidden state from layer\n{layer}\n")
-            hidden_states = layer(
-                hidden_states,
-                position_ids=position_ids
-            )[0]
+            layer_input = input_ids if input_ids is not None else hidden_states
+            #print(f"INPUT: \n{layer_input}\n")
+            #print(f"POSITION_IDS: \n{position_ids}\n")
+            #print(f"LAYER: \n{layer}\n")
+            layer_outputs = layer(
+                model_inputs["input_ids"],
+                position_ids=model_inputs["position_ids"],
+                #attention_mask=model_inputs["attention_mask"],
+                past_key_values=model_inputs["past_key_values"],
+                return_dict=True,
+                use_cache=True
+            )
+
+        hidden_states = layer_outputs[0]
+        past_key_values = layer_outputs[1]
 
         if self.is_last:
-            norm_states = base_model.norm(hidden_states).to("cuda")
-            logits = model.lm_head(norm_states).to("cuda")
+            norm_states = model.norm(hidden_states)
+            
+            # lm_head  
+            logits = llm_model.lm_head(norm_states).to("cuda")
 
-            return (None, logits)
+            return (None, logits, past_key_values)
         
-        return (hidden_states, None)
+        return (hidden_states, None, past_key_values)
 
 async def model_half_split_test(prompt: str, model_id: str, layers: int):
     """
@@ -72,40 +137,28 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
     half_layers = int(layers / 2)
 
     # inference
-    tokenizer = await resolve_tokenizer(model_id)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     max_length = 512 #tokenizer.model_max_length
 
-    # get full model
-    if re.match(r"^Qwen|qwen", model_id):
-        model = Qwen2ForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype="auto",
-            device_map="auto",
-            # attn_implementation="eager"
-            # low_cpu_mem_usage=True
-        )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype="auto",
-            device_map="auto",
-            # low_cpu_mem_usage=True
-        )
-
-    print(model.hf_device_map)
+    # get llm model
+    llm_model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype="auto",
+        device_map="auto",
+        use_cache=True
+    )
+    
+    # get base model
+    model = llm_model.model
 
     # add pad token if none, depending on model
-    #if tokenizer.pad_token == None:
-    #    if re.match(r"Llama|llama", model_id):
-    #        tokenizer.add_special_tokens({"pad_token":"<pad>"})
-    #        model.resize_token_embeddings(len(tokenizer))
+    if tokenizer.pad_token == None:
+        if re.match(r"Llama|llama", model_id):
+            tokenizer.add_special_tokens({"pad_token":"<pad>"})
+            model.resize_token_embeddings(len(tokenizer))
 
-    shard_layers = nn.ModuleList(model.model.layers[:half_layers])#.to("cuda")
-    sharded_model = OnionHuggingFaceLM(layers=shard_layers)
-
-    print(model)
-
-    # generate first half
+    
+    # generate input_ids
     messages = [{"role": "user", "content": prompt}]
     txt = tokenizer.apply_chat_template(
         messages,
@@ -113,65 +166,100 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
         add_generation_prompt=True
     )
 
-    print(f"Generating from chat template\n{txt}")
-
     inputs = tokenizer([txt], return_tensors="pt")
     input_ids = inputs.input_ids.to("cuda")
-    input_attention_mask = inputs.attention_mask.to("cuda")
+    input_attention_mask = inputs.attention_mask.to("cuda") 
+    batch_size, seq_length = input_ids.shape[:2]
+    
+    is_finished = False
+    unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
+    logit_runs = 1
 
-    # add if first layer of model check
-    shard_hidden_states, shard_logits = sharded_model.forward(
-        model=model,
-        input_ids=input_ids
-    )
+    raw_logits = None
 
-    print(f"shard_hidden_states\n{shard_hidden_states}")
-    print(f"shard_logits\n{shard_logits}")
+    while not is_finished:
+        print(f"\n\nLOGIT RUN {logit_runs}\n\n")
 
+        print(f"input_ids:\n{input_ids}\n")
+        print(input_ids.shape)
 
-    # second half
-    print("Using first half hidden state for last half of model")
-    shard_layers = nn.ModuleList(model.model.layers[half_layers:]).to("cuda")
-    sharded_model.layers = shard_layers
-    sharded_model.is_last = True 
+        #shard_layers = nn.ModuleList(model.layers[:half_layers])#.to("cuda")
+        shard_layers = nn.ModuleList(model.layers)
+        sharded_model = OnionHuggingFaceLM(layers=shard_layers)
+        sharded_model.is_last = True
 
-    if shard_hidden_states is not None:
-        # add if last layer of model or in the middle check
-        shard_hidden_states, shard_logits = sharded_model.forward(
+        # generate first half
+        # add if first layer of model check
+        shard_hidden_states, shard_logits, shard_past_kvs = sharded_model.forward(
             model=model,
-            hidden_states=shard_hidden_states
+            llm_model=llm_model,
+            attention_mask=input_attention_mask,
+            input_ids=input_ids,
+            hidden_states=None
         )
 
-        print(f"shard_hidden_states\n{shard_hidden_states}")
-        print(f"shard_logits\n{shard_logits}")
-    else:
-        print("Sharded hidden states not found, error")
-        raise ValueError
-    
+        # second half
+        #sharded_model.layers = nn.ModuleList(model.layers[half_layers:])
+        #sharded_model.is_last = True 
 
-    print("generate from logits")
-    if shard_logits is not None:
-        print(shard_logits.dim())
-        #print(shard_logits[0])
+        #shard_hidden_states, shard_logits, shard_past_kvs = sharded_model.forward(
+        #    model=model,
+        #    llm_model=llm_model,
+        #    input_ids=None,
+        #    hidden_states=shard_hidden_states,
+        #    past_key_values=shard_past_kvs
+        #)
 
-        generated_ids = sample_logits(shard_logits, 0.1, 0.95, 30)
-        #generated_ids = torch.argmax(shard_logits/0.7, dim=-1)
-        #generated_ids = model.generate(logits)
+        # this part of the generation and _sample functions for transformers GenerationMixin
+        # ref: https://github.com/huggingface/transformers/blob/0a55d9f7376f72ad3ff296d4249840021b03bcc4/src/transformers/generation/utils.py#L1301
         
-        print("generated_ids")
-        print(generated_ids)
+        # clone logit sample 
+        logits = shard_logits[:, -1, :].clone().float()
 
-        generated_text = tokenizer.batch_decode(
-            generated_ids, 
-            skip_special_tokens=True, 
-            clean_up_tokenization_spaces=False
-        )[0]
+        raw_logits = logits 
 
-        print("Generated text:")
-        print(generated_text)
-    else:
-        print("Sharded logits missing from last layer run, error")
-        raise ValueError
+        # distribute
+        logits_processor = LogitsProcessorList([
+            TopKLogitsWarper(35),
+            TemperatureLogitsWarper(0.6),
+            TopPLogitsWarper(0.8)
+        ])
+
+        stopping_critera = StoppingCriteriaList(
+            [
+                MaxLengthCriteria(max_length=50),
+                MaxTimeCriteria(max_time=10.0),
+            ]
+        )
+        
+        next_token_scores = logits_processor(input_ids, logits)
+
+        probs = nn.functional.softmax(next_token_scores, dim=-1)
+        next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+        #next_tokens = torch.argmax(next_token_scores, dim=-1)
+
+        # get inputs ready incase not finished 
+        input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+
+        unfinished_sequences = unfinished_sequences & ~stopping_critera(input_ids, None)
+        is_finished = unfinished_sequences.max() == 0
+
+        print(f"is_finished?:\n{is_finished}\n")
+
+        logit_runs += 1
+
+        del logits
+        del shard_logits
+
+    print(f"model.generation_config\n{llm_model.generation_config}")
+
+    generated_text = tokenizer.batch_decode(
+        input_ids, 
+        skip_special_tokens=True, 
+        clean_up_tokenization_spaces=False
+    )[0]
+
+    print(f"generated_text:\n{generated_text}\n")
 
     # free model from memory
     del model
@@ -180,19 +268,20 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
 
 
 if __name__ == "__main__":
-   prompt = "In a single word only, what is the last name of the current president of the USA?"
+    #prompt = "In a single word only, what is the last name of the current president of the USA?"
+    prompt = "In a single word only, what is the color of an apple?"
 
-   print("\n-------- Test TinyLlama/TinyLlama_v1.1 ----------\n")
-   model_id = "TinyLlama/TinyLlama_v1.1"
-   model_layers = 22
+    #print("\n-------- Test TinyLlama/TinyLlama_v1.1 ----------\n")
+    #model_id = "TinyLlama/TinyLlama_v1.1"
+    #model_layers = 22
 
-   asyncio.run(
-       model_half_split_test(
-           prompt=prompt,
-           model_id=model_id,
-           layers=model_layers
-       )
-   )
+    #asyncio.run(
+    #   model_half_split_test(
+    #        prompt=prompt,
+    #        model_id=model_id,
+    #        layers=model_layers
+    #    )
+    #)
 
     #print("\n-------- Test meta-llama/Meta-Llama-3.1-8B ----------\n")
     #model_id = "meta-llama/Meta-Llama-3.1-8B"
@@ -206,15 +295,15 @@ if __name__ == "__main__":
     #    )
     #)
 
-   #print("\n-------- Test Qwen/Qwen2-57B-A14B-Instruct ----------\n")
-   #model_id = "Qwen/Qwen2-57B-A14B-Instruct"
-   #model_layers = 28
+    print("\n-------- Test Qwen/Qwen2-0.5B-Instruct ----------\n")
+    model_id = "Qwen/Qwen2-0.5B-Instruct"
+    model_layers = 24
 
-   #asyncio.run(
-   #    model_half_split_test(
-   #        prompt=prompt,
-   #        model_id=model_id,
-   #        layers=model_layers
-   #    )
-   #)
+    asyncio.run(
+        model_half_split_test(
+            prompt=prompt,
+            model_id=model_id,
+            layers=model_layers
+        )
+    )
 
