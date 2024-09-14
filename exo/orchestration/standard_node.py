@@ -50,7 +50,7 @@ class StandardNode(Node):
     await self.update_peers(wait_for_peers)
     await self.collect_topology()
     if DEBUG >= 2: print(f"Collected topology: {self.topology}")
-    asyncio.create_task(self.periodic_topology_collection(5))
+    asyncio.create_task(self.periodic_topology_collection(1.0))
 
   async def stop(self) -> None:
     await self.discovery.stop()
@@ -67,7 +67,7 @@ class StandardNode(Node):
             self.current_topology.active_node_id = None
       download_progress = None
       if status_data.get("type", "") == "download_progress":
-        if DEBUG >= 5: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
+        if DEBUG >= 8: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
         download_progress = RepoProgressEvent.from_dict(status_data.get('progress'))
         self.node_download_progress[status_data.get('node_id')] = download_progress
       if self.topology_viz:
@@ -277,23 +277,75 @@ class StandardNode(Node):
       raise ValueError(f"No current partition found for node: {self.id}")
     return shards[current_partition_index]
 
-  async def update_peers(self, wait_for_peers: int = 0) -> None:
-    self.peers = await self.discovery.discover_peers(wait_for_peers)
-    for peer in self.peers:
-      is_connected = await peer.is_connected()
-      if DEBUG >= 2 and is_connected:
-        print(f"Already connected to {peer.id()}: {is_connected}")
-      if not is_connected:
-        if DEBUG >= 2: print(f"Connecting to {peer.id()}...")
-        await peer.connect()
-        if DEBUG >= 1: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")
+  async def update_peers(self, wait_for_peers: int = 0) -> bool:
+    next_peers = await self.discovery.discover_peers(wait_for_peers)
+    current_peer_ids = {peer.id() for peer in self.peers}
+    next_peer_ids = {peer.id() for peer in next_peers}
+    peers_added = [peer for peer in next_peers if peer.id() not in current_peer_ids]
+    peers_removed = [peer for peer in self.peers if peer.id() not in next_peer_ids]
+    peers_updated = [
+      peer for peer in next_peers
+      if peer.id() in current_peer_ids and any(p.addr() != peer.addr() for p in self.peers if p.id() == peer.id())
+    ]
+    peers_unchanged = [
+      peer for peer in next_peers
+      if peer.id() in current_peer_ids and all(p.addr() == peer.addr() for p in self.peers if p.id() == peer.id())
+    ]
+    peers_to_disconnect = [peer for peer in peers_removed if await peer.is_connected()]
+    peers_to_connect = [peer for peer in peers_added + peers_updated + peers_unchanged if not await peer.is_connected()]
+
+    def _pretty(peers: List[PeerHandle]) -> List[str]:
+      return [f"{peer.id()}@{peer.addr()}" for peer in peers]
+    if DEBUG >= 2: print(f"update_peers: added={peers_added} removed={peers_removed} updated={peers_updated} unchanged={peers_unchanged} to_disconnect={peers_to_disconnect} to_connect={peers_to_connect}")
+
+    async def disconnect_with_timeout(peer, timeout=5):
+      try:
+        await asyncio.wait_for(peer.disconnect(), timeout)
+        return True
+      except Exception as e:
+        print(f"Error disconnecting peer {peer.id()}@{peer.addr()}: {e}")
+        traceback.print_exc()
+        return False
+
+    async def connect_with_timeout(peer, timeout=5):
+      try:
+        await asyncio.wait_for(peer.connect(), timeout)
+        return True
+      except Exception as e:
+        print(f"Error connecting peer {peer.id()}@{peer.addr()}: {e}")
+        traceback.print_exc()
+        return False
+
+    disconnect_results = await asyncio.gather(
+      *(disconnect_with_timeout(peer) for peer in peers_to_disconnect),
+      return_exceptions=True
+    )
+    connect_results = await asyncio.gather(
+      *(connect_with_timeout(peer) for peer in peers_to_connect),
+      return_exceptions=True
+    )
+
+    successful_disconnects = [peer for peer, result in zip(peers_to_disconnect, disconnect_results) if result is True]
+    failed_disconnects = [peer for peer, result in zip(peers_to_disconnect, disconnect_results) if result is False]
+    successful_connects = [peer for peer, result in zip(peers_to_connect, connect_results) if result is True]
+    failed_connects = [peer for peer, result in zip(peers_to_connect, connect_results) if result is False]
+    if DEBUG >= 1:
+      if successful_disconnects: print(f"Successfully disconnected peers: {_pretty(successful_disconnects)}")
+      if failed_disconnects: print(f"Failed to disconnect peers: {_pretty(failed_disconnects)}")
+      if successful_connects: print(f"Successfully connected peers: {_pretty(successful_connects)}")
+      if failed_connects: print(f"Failed to connect peers: {_pretty(failed_connects)}")
+
+    self.peers = next_peers
+    return len(peers_to_connect) > 0 or len(peers_to_disconnect) > 0
 
   async def periodic_topology_collection(self, interval: int):
     while True:
       await asyncio.sleep(interval)
       try:
-        await self.update_peers()
-        await self.collect_topology()
+        did_peers_change = await self.update_peers()
+        if DEBUG >= 2: print(f"{did_peers_change=}")
+        if did_peers_change:
+          await self.collect_topology()
       except Exception as e:
         print(f"Error collecting topology: {e}")
         traceback.print_exc()
@@ -310,7 +362,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
-    # TODO: should we add our own peer id here?
+    visited.add(self.id)
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:
@@ -325,7 +377,7 @@ class StandardNode(Node):
         continue
 
       try:
-        other_topology = await peer.collect_topology(visited, max_depth=max_depth - 1)
+        other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0)
         if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
         self.topology.merge(other_topology)
       except Exception as e:
@@ -362,7 +414,7 @@ class StandardNode(Node):
     await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
-    if DEBUG >= 5: print(f"Broadcasting opaque status: {request_id=} {status=}")
+    if DEBUG >= 8: print(f"Broadcasting opaque status: {request_id=} {status=}")
 
     async def send_status_to_peer(peer):
       try:

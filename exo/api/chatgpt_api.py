@@ -153,10 +153,10 @@ class PromptSession:
 
 
 class ChatGPTAPI:
-  def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
+  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
-    self.response_timeout_secs = response_timeout_secs
+    self.response_timeout = response_timeout
     self.on_chat_completion_request = on_chat_completion_request
     self.app = web.Application(client_max_size=100*1024*1024)  # 100MB to support image upload
     self.prompts: PrefixDict[str, PromptSession] = PrefixDict()
@@ -257,7 +257,7 @@ class ChatGPTAPI:
       return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
 
     try:
-      if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout_secs}s")
+      if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
 
       if stream:
         response = web.StreamResponse(
@@ -306,7 +306,7 @@ class ChatGPTAPI:
 
           return _request_id == request_id and is_finished
 
-        _, tokens, _ = await callback.wait(on_result, timeout=self.response_timeout_secs)
+        _, tokens, _ = await callback.wait(on_result, timeout=self.response_timeout)
         if request_id in self.stream_tasks:  # in case there is still a stream task running, wait for it to complete
           if DEBUG >= 2: print("Pending stream task. Waiting for stream task to complete.")
           try:
@@ -318,7 +318,7 @@ class ChatGPTAPI:
       else:
         _, tokens, _ = await callback.wait(
           lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
-          timeout=self.response_timeout_secs,
+          timeout=self.response_timeout,
         )
 
         finish_reason = "length"
