@@ -4,6 +4,7 @@ import os
 from typing import Tuple, Optional
 from abc import ABC, abstractmethod
 from .shard import Shard
+from ..download.shard_download import ShardDownloader
 
 
 class InferenceEngine(ABC):
@@ -16,7 +17,7 @@ class InferenceEngine(ABC):
     pass
 
 
-def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
+def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDownloader):
   if inference_engine_name == "mlx":
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 

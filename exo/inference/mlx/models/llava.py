@@ -1,5 +1,3 @@
-# Copyright © 2024 Apple Inc.
-
 import math
 import inspect
 from dataclasses import dataclass, field
