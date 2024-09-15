@@ -24,8 +24,14 @@ from transformers.generation.configuration_utils import (
     GenerationMode
 )
 
+# llama 
+from transformers.models.llama.modeling_llama import LlamaModel
+
+# qwen2
+from transformers.models.qwen2.modeling_qwen2 import Qwen2Model
+
 from exo.api.chatgpt_api import resolve_tokenizer
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union, List
 import re
 from exo.inference.pytorch.utils import sample_logits, top_k_sampling
 
@@ -36,17 +42,27 @@ class OnionHuggingFaceLM():
     def __init__(self, layers, is_last=False):
         self.layers = layers
         self.is_last = is_last
+        self.past_key_values = None
+        self.cache_position = None 
+        self.position_ids = None 
+        self.input_embed = None 
+        self.causal_mask = None 
+        self.position_embeddings = None
+        self.attention_mask = None 
+        self.input_ids = None 
+        self.hidden_states = None 
+        self.next_decoder_cache = None 
 
     def forward(
             self,
             model,
             llm_model,
-            input_ids: Optional[torch.tensor],
-            hidden_states: Optional[torch.tensor],
-            attention_mask: torch.tensor=None,
-            past_key_values: Cache=DynamicCache(),
+            input_ids: Optional[torch.tensor] = None,
+            hidden_states: Optional[torch.tensor] = None,
+            attention_mask: Optional[torch.tensor] = None,
+            past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
             **kwargs
-        ) -> Tuple[Optional[torch.tensor], Optional[torch.tensor], Optional[Cache]]:
+        ) -> Tuple[Optional[torch.tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.tensor]]:
 
         """
         Generate hidden states or logits via passing through set amount of layers of a model
@@ -54,80 +70,123 @@ class OnionHuggingFaceLM():
         layer to generate a complete output
 
         Args:
+            model: base llm model tramsformers class 
+            llm_model: llm chat model class 
             input_ids: tensor Optional
             hidden_states: tensor Optional
 
         Returns:
             Tuple of 
                 - hidden_states: tensor Optional
+                - past_key_values
                 - logits: tensor Optional
 
         """
-        is_first = False
+        output_attentions = False # outputting attention not needed
+        use_legacy_cache = False # some models still use legacy kv store 
 
         if input_ids is not None and hidden_states is not None:
             raise ValueError
 
-        if input_ids is not None:
-            # embed input_ids
-            input_ids = model.embed_tokens(input_ids)
-            # calculate position_ids
-            batch_size, seq_length = input_ids.shape[:2]
-
-            is_first = True
-
         if hidden_states is not None:
-            batch_size, seq_length = hidden_states.shape[:2] 
+            self.hidden_states = hidden_states
+
+        if input_ids is not None:
+            self.input_ids = input_ids
+
+            # embed input_ids
+            self.inputs_embeds = model.embed_tokens(self.input_ids)
         
-        # cache
-        past_key_values_length = len(past_key_values)
-        cache_position = torch.arange(
-            past_key_values_length, 
-            seq_length + past_key_values_length, 
-            dtype=torch.long,
-            device=input_ids.device if input_ids is not None else hidden_states.device
-        )
+            # cache
+            if past_key_values and not isinstance(past_key_values, Cache):
+                print("Using legacy cache")
+                use_legacy_cache = True
+                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
-        position_ids = cache_position.unsqueeze(0)
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            cache_position = torch.arange(
+                past_seen_tokens,
+                past_seen_tokens + self.inputs_embeds.shape[1],
+                device=self.inputs_embeds.device
+            )
+        
+            # position id 
+            position_ids = cache_position.unsqueeze(0)
 
-        if is_first:
+            # causal mask
+            self.attention_mask = attention_mask
+            self.causal_mask = model._update_causal_mask(
+                None,
+                self.inputs_embeds,
+                cache_position,
+                past_key_values,
+                output_attentions
+            )
+
+            #print(f"causal_mask.dim(): {self.causal_mask.dim()}")
+
+            print(f"\ncausal_mask:{self.causal_mask}\n\n")
+
+            # embed positions, some models require and some dont
+            if isinstance(model, LlamaModel):
+                self.position_embeddings = model.rotary_emb(
+                    self.inputs_embeds,
+                    position_ids
+                )
+ 
             model_inputs = llm_model.prepare_inputs_for_generation(
-                input_ids,
+                self.input_ids,
                 past_key_values=past_key_values,
+                attention_mask=self.attention_mask,
+                inputs_embeds=self.inputs_embeds,
                 position_ids=position_ids,
-                cache_position=cache_position,
-                attention_mask=attention_mask
+                cache_position=cache_position
             )
 
             print(f"model_inputs\n{model_inputs}")
 
+            self.hidden_states = self.inputs_embeds
+            self.position_ids = model_inputs["position_ids"]
+            self.cache_position = model_inputs["cache_position"]
+            self.past_key_values = model_inputs["past_key_values"]
 
-        for layer in self.layers:
-            layer_input = input_ids if input_ids is not None else hidden_states
-            #print(f"INPUT: \n{layer_input}\n")
-            #print(f"POSITION_IDS: \n{position_ids}\n")
-            #print(f"LAYER: \n{layer}\n")
-            layer_outputs = layer(
-                model_inputs["input_ids"],
-                position_ids=model_inputs["position_ids"],
-                #attention_mask=model_inputs["attention_mask"],
-                past_key_values=model_inputs["past_key_values"],
-                return_dict=True,
-                use_cache=True
+
+        for decoder_layer in self.layers:
+            layer_outputs = decoder_layer(
+                self.hidden_states,
+                attention_mask=self.causal_mask,
+                position_ids=self.position_ids,
+                past_key_values=self.past_key_values,
+                use_cache=True,
+                cache_position=self.cache_position
+
             )
 
-        hidden_states = layer_outputs[0]
-        past_key_values = layer_outputs[1]
+            self.hidden_states = layer_outputs[0]
+            self.next_decoder_cache = layer_outputs[1]
 
         if self.is_last:
-            norm_states = model.norm(hidden_states)
+            self.hidden_states = model.norm(self.hidden_states)
+
+            if use_legacy_cache:
+                self.past_key_values = self.next_decoder_cache.to_legacy_cache()
+            else:
+                self.past_key_values = self.next_decoder_cache
             
             # lm_head  
-            logits = llm_model.lm_head(norm_states).to("cuda")
+            logits = llm_model.lm_head(self.hidden_states).to("cuda")
 
-            return (None, logits, past_key_values)
+            return (
+                None,
+                None,
+                logits
+            )
         
-        return (hidden_states, None, past_key_values)
+        return (
+            self.hidden_states,
+            self.past_key_values,
+            None
+        )
 
 async def model_half_split_test(prompt: str, model_id: str, layers: int):
     """
@@ -183,14 +242,15 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
         print(f"input_ids:\n{input_ids}\n")
         print(input_ids.shape)
 
-        #shard_layers = nn.ModuleList(model.layers[:half_layers])#.to("cuda")
-        shard_layers = nn.ModuleList(model.layers)
+        print("\n first half of layers")
+        shard_layers = nn.ModuleList(model.layers[:half_layers])#.to("cuda")
+        #shard_layers = nn.ModuleList(model.layers)
         sharded_model = OnionHuggingFaceLM(layers=shard_layers)
-        sharded_model.is_last = True
+        #sharded_model.is_last = True
 
         # generate first half
         # add if first layer of model check
-        shard_hidden_states, shard_logits, shard_past_kvs = sharded_model.forward(
+        shard_hidden_states, shard_past_kvs, shard_logits = sharded_model.forward(
             model=model,
             llm_model=llm_model,
             attention_mask=input_attention_mask,
@@ -199,16 +259,16 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
         )
 
         # second half
-        #sharded_model.layers = nn.ModuleList(model.layers[half_layers:])
-        #sharded_model.is_last = True 
+        print(f"\n second half of layers")
+        sharded_model.layers = nn.ModuleList(model.layers[half_layers:])
+        sharded_model.is_last = True 
 
-        #shard_hidden_states, shard_logits, shard_past_kvs = sharded_model.forward(
-        #    model=model,
-        #    llm_model=llm_model,
-        #    input_ids=None,
-        #    hidden_states=shard_hidden_states,
-        #    past_key_values=shard_past_kvs
-        #)
+        shard_hidden_states, shard_past_kvs, shard_logits = sharded_model.forward(
+            model=model,
+            llm_model=llm_model,
+            hidden_states=shard_hidden_states,
+            past_key_values=shard_past_kvs
+        )
 
         # this part of the generation and _sample functions for transformers GenerationMixin
         # ref: https://github.com/huggingface/transformers/blob/0a55d9f7376f72ad3ff296d4249840021b03bcc4/src/transformers/generation/utils.py#L1301
@@ -268,8 +328,8 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
 
 
 if __name__ == "__main__":
-    #prompt = "In a single word only, what is the last name of the current president of the USA?"
-    prompt = "In a single word only, what is the color of an apple?"
+    prompt = "In a single word only, what is the last name of the current president of the USA?"
+    #prompt = "In a single word only, what is the color of an apple?"
 
     #print("\n-------- Test TinyLlama/TinyLlama_v1.1 ----------\n")
     #model_id = "TinyLlama/TinyLlama_v1.1"
