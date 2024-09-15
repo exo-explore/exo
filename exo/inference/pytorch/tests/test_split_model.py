@@ -33,7 +33,6 @@ from transformers.models.qwen2.modeling_qwen2 import Qwen2Model
 from exo.api.chatgpt_api import resolve_tokenizer
 from typing import Tuple, Optional, Union, List
 import re
-from exo.inference.pytorch.utils import sample_logits, top_k_sampling
 
 TEMP = 0.6
 TOP_K = 60

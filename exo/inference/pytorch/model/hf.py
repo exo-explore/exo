@@ -38,8 +38,8 @@ from transformers.models.llama.modeling_llama import LlamaModel
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Model
 
 
-class ShardedHuggingFaceModel(InferenceEngine):
-    def __init__(self, shard: Shard, ):
+class ShardedHuggingFaceModel:
+    def __init__(self, shard: Shard, device, dtype):
         # class vars 
         self.shard = shard
         self.hidden_states = None 
@@ -50,15 +50,35 @@ class ShardedHuggingFaceModel(InferenceEngine):
         self.past_key_values = None 
         self.cache_position = None 
         self.position_ids = None 
-        self.causal_mask = None 
+        self.causal_mask = None
+
+        # setup logit processors 
+        self.logits_processor = LogitsProcessorList([
+            TopKLogitsWarper(35),
+            TemperatureLogitsWarper(0.6),
+            TopPLogitsWarper(0.8)
+        ])
+
+        # setup stopping critera for generation 
+        self.stopping_critera = StoppingCriteriaList(
+            [
+                MaxLengthCriteria(max_length=50),
+                MaxTimeCriteria(max_time=10.0),
+            ]
+        )
+
+        self.device = device
+        self.torch_dtype = dtype
 
         # setup pytorch and transformer llm
         try:
-            self.base_model = AutoModelForCausalLM.from_pretrained(
+            self.llm_model = AutoModelForCausalLM.from_pretrained(
                 shard.model_id,
                 torch_dtype=self.torch_dtype,
                 device_map="auto"
-            ) 
+            )
+
+            self.model = self.llm_model.model 
         except Exception as err:
             print(f"error loading and splitting model: {err}")
             raise
@@ -67,8 +87,6 @@ class ShardedHuggingFaceModel(InferenceEngine):
     def forward(
         self,
         shard: Optional[Shard] = None,
-        model,
-        llm_model,
         input_ids: Optional[torch.tensor] = None,
         hidden_states: Optional[torch.tensor] = None,
         attention_mask: Optional[torch.tensor] = None,
@@ -108,7 +126,7 @@ class ShardedHuggingFaceModel(InferenceEngine):
             self.input_ids = input_ids
 
             # embed input_ids
-            self.inputs_embeds = model.embed_tokens(self.input_ids)
+            self.inputs_embeds = self.model.embed_tokens(self.input_ids)
         
             # cache
             if past_key_values and not isinstance(past_key_values, Cache):
@@ -128,23 +146,23 @@ class ShardedHuggingFaceModel(InferenceEngine):
 
             # casual mask and attention_mask 
             self.attention_mask = attention_mask
-            self.causal_mask = model._update_causal_mask(
+            self.causal_mask = self.model._update_causal_mask(
                 None,
                 self.inputs_embeds,
                 cache_position,
                 past_key_values,
-                output_attentions
+                False # dont out attentions
             )
 
             # embed positions, some models require and some dont
-            if isinstance(model, LlamaModel):
-                self.position_embeddings = model.rotary_emb(
+            if isinstance(self.model, LlamaModel):
+                self.position_embeddings = self.model.rotary_emb(
                     self.inputs_embeds,
                     position_ids
                 )
             
             # prepare inputs for decoder layers
-            model_inputs = llm_model.prepare_inputs_for_generation(
+            model_inputs = self.llm_model.prepare_inputs_for_generation(
                 self.input_ids,
                 past_key_values=past_key_values,
                 attention_mask=self.attention_mask,
@@ -175,27 +193,61 @@ class ShardedHuggingFaceModel(InferenceEngine):
             self.next_decoder_cache = layer_outputs[1]
 
 
-        # handle last layer to get logits 
-        if self.is_last:
-            self.hidden_states = model.norm(self.hidden_states)
-
+        # handle last layer to get logits
+        if self.shard.is_last_layer():
+            self.hidden_states = self.model.norm(self.hidden_states)
             if use_legacy_cache:
                 self.past_key_values = self.next_decoder_cache.to_legacy_cache()
             else:
                 self.past_key_values = self.next_decoder_cache
             
             # lm_head  
-            logits = llm_model.lm_head(self.hidden_states).to(self.device)
+            logits = self.llm_model.lm_head(self.hidden_states).to(self.device)
 
             return (
                 None,
                 None,
                 logits
             )
-
+        print("199")
         return (
             self.hidden_states,
             self.past_key_values,
             None
         )
+
+    def logits_sample(
+        self,
+        input_ids: torch.tensor,
+        logits: torch.tensor,
+        use_max: Optional[bool] = False
+    ) -> torch.tensor:
+        """
+        Get a sample of the logits from end of model run
+        
+        Args:
+            logits: tensor 
+            use_max: bool, if function should sample with argmax
+
+        Returns:
+            input_ids: tensor
+        """
+
+        # get a single cloned logit
+        logits = logits[:, 1, :].clone().float()
+
+                
+        next_token_scores = self.logits_processor(input_ids, logits)
+
+        if not use_max:
+            probs = nn.functional.softmax(next_token_scores, dim=-1)
+            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+        else:
+            next_tokens = torch.argmax(next_token_scores, dim=-1)
+
+        # get inputs_ids from token sample  
+        input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+
+        return input_ids
+        
         

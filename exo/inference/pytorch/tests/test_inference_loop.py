@@ -48,16 +48,16 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
    
 
 if __name__ == '__main__':
-    # try:
-    #     print(f"\n\n -------- TEST QWEN2 -------- \n\n")
-    #     asyncio.run(test_inference_engine(
-    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-    #         "Qwen/Qwen2-0.5B-Instruct",
-    #         24
-    #     ))
-    # except Exception as err:
-    #     print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
+    try:
+         print(f"\n\n -------- TEST Qwen/Qwen2-0.5B-Instruct -------- \n\n")
+         asyncio.run(test_inference_engine(
+             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+             "Qwen/Qwen2-0.5B-Instruct",
+             24
+         ))
+    except Exception as err:
+         print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
 
     # try:
     #     print(f"\n\n -------- TEST LLAMA3-1B-Base -------- \n\n")
@@ -92,14 +92,14 @@ if __name__ == '__main__':
     # except Exception as err:
     #     print(f"\n\n !!!!!!!!!!! Chickaboo/ChickaQ-Large TEST FAILED \n{err}\n")
     
-    try:
-        print(f"\n\n --------- TEST ambrosfitz/TinyLlama-1.1B-Chat-yawp -------\n\n")
-        asyncio.run(test_inference_engine(
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            "ambrosfitz/TinyLlama-1.1B-Chat-yawp",
-            22
-        ))
-    except Exception as err:
-        print(f"\n\n !!!!!!!!!!! ambrosfitz/TinyLlama-1.1B-Chat-yawp TEST FAILED \n{err}\n")
+    #try:
+    #    print(f"\n\n --------- TEST ambrosfitz/TinyLlama-1.1B-Chat-yawp -------\n\n")
+    #    asyncio.run(test_inference_engine(
+    #        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #        "ambrosfitz/TinyLlama-1.1B-Chat-yawp",
+    #        22
+    #    ))
+    #except Exception as err:
+    #    print(f"\n\n !!!!!!!!!!! ambrosfitz/TinyLlama-1.1B-Chat-yawp TEST FAILED \n{err}\n")
 
