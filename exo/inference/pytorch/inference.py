@@ -13,6 +13,11 @@ from transformers import DynamicCache
 from accelerate import disk_offload
 from exo.download.shard_download import ShardDownloader
 
+# model value options 
+TOP_K = 35
+TEMP = 0.6
+TOP_P = 0.8
+
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
     PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
@@ -29,7 +34,20 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.shard_downloader = shard_downloader
         self.stateful_sharded_model = None
         self.tokenizer = None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # setup cuda device 
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+            self.torch_dtype = torch.float32
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+            self.torch_dtype = torch.float32
+        else:
+            self.device = torch.device("cpu")
+            self.torch_dtype = torch.float16
+
+        # setup unfinished sequence
+        self.unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=self.device) 
 
     async def infer_prompt(
         self, 
@@ -41,25 +59,24 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     ) -> Tuple[np.ndarray, str, bool]:
         if DEBUG >= 4:
             print("infer_prompt called")
-            print(f"prompt: {prompt}")
         
         await self.ensure_shard(shard)
 
-        # need to make this so inference_state is not a string
-        # cant use it with dynamic cache
-           
-        inputs = self.tokenizer(prompt, return_tensors="pt")
-        input_ids = inputs.input_ids.to(self.device)
+        # setup prompt input 
+        messages = [{"role": "user", "content": prompt}]
+        txt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
 
-        # add pad token if none
-        if self.tokenizer.pad_token == None:
-            self.tokenizer.add_special_tokens({"pad_token":"<pad>"})
-            self.stateful_sharded_model.base_model.resize_token_embeddings(len(self.tokenizer))
-        
-        current_kvs = None
-
+        inputs = self.tokenizer([txt], return_tensors="pt")
+        input_ids = inputs.input_ids.to("cuda")
+        input_attention_mask = inputs.attention_mask.to("cuda") 
+        batch_size, seq_length = input_ids.shape[:2]
+       
         if DEBUG >= 4:
-            print(f"tokens: {input_ids}\n")
+            print(f"input_ids: {input_ids}\n")
             print(f"layer_count: {self.shard.get_layer_count()}")
             print(f"is_first_layer: {self.shard.is_first_layer()}")
             print(f"is_last_layer: {self.shard.is_last_layer()}")
