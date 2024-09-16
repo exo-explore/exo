@@ -327,7 +327,8 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
 
 
 if __name__ == "__main__":
-    prompt = "In a single word only, what is the last name of the current president of the USA?"
+    #prompt = "In a single word only, what is the last name of the current president of the USA?"
+    prompt = "What color is the sky? Explain why"
     #prompt = "In a single word only, what is the color of an apple?"
 
     #print("\n-------- Test TinyLlama/TinyLlama_v1.1 ----------\n")

@@ -38,7 +38,17 @@ from transformers.models.qwen2.modeling_qwen2 import Qwen2Model
 
 
 class ShardedHuggingFaceModel:
-    def __init__(self, shard: Shard, device, dtype):
+    def __init__(
+        self,
+        shard: Shard,
+        device, 
+        dtype,
+        top_k: int = 25,
+        temp: float = 0.7,
+        top_p: float = 0.9,
+        max_length: int = 50,
+        max_time: float = 10.0
+    ):
         # class vars 
         self.shard = shard
         self.hidden_states = None 
@@ -53,16 +63,16 @@ class ShardedHuggingFaceModel:
 
         # setup logit processors 
         self.logits_processor = LogitsProcessorList([
-            TopKLogitsWarper(35),
-            TemperatureLogitsWarper(0.6),
-            TopPLogitsWarper(0.8)
+            TopKLogitsWarper(top_k),
+            TemperatureLogitsWarper(temp),
+            TopPLogitsWarper(top_p)
         ])
 
         # setup stopping critera for generation 
         self.stopping_critera = StoppingCriteriaList(
             [
-                MaxLengthCriteria(max_length=50),
-                MaxTimeCriteria(max_time=10.0),
+                MaxLengthCriteria(max_length=max_length),
+                MaxTimeCriteria(max_time=max_time),
             ]
         )
 
@@ -103,10 +113,10 @@ class ShardedHuggingFaceModel:
             model: base llm model tramsformers class 
             llm_model: llm chat model class 
             input_ids: tensor optional
-            hidden_states: tensor optional
             attention_mask: tensor optional
             past_key_values: Cache or list[tensor] optional
-            use_legacy_cache: bool optional 
+            use_legacy_cache: bool optional
+            infer_tensor: bool optional, lets forward know to handle tensors
 
         Returns:
             Tuple of 
@@ -120,15 +130,9 @@ class ShardedHuggingFaceModel:
 
         # embed input_ids
         self.inputs_embeds = self.model.embed_tokens(self.input_ids)
-       
-        #if DEBUG >= 4:
-        #    print("forward called")
-        #    print(f"input_ids: {self.input_ids}")
-        #    print(f"inputs_embeds: {self.inputs_embeds}")
-
+        
         # cache
         if past_key_values and not isinstance(past_key_values, Cache):
-            print("Using legacy cache")
             use_legacy_cache = True
             past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
@@ -219,13 +223,19 @@ class ShardedHuggingFaceModel:
             # lm_head  
             logits = self.llm_model.lm_head(self.hidden_states).to(self.device)
 
+            if DEBUG >= 4:
+                print(f"logits: {logits}")
+
             return (
                 None,
                 None,
                 logits
             )
 
-        print("199")
+        if DEBUG >= 4:
+            print(f"hidden_states: {self.hidden_states}")
+            print(f"past_key_values: {self.past_key_values}")
+
         return (
             self.hidden_states,
             self.past_key_values,
@@ -261,10 +271,8 @@ class ShardedHuggingFaceModel:
         else:
             next_tokens = torch.argmax(next_token_scores, dim=-1)
 
-        print(f"next_tokens: {next_tokens[:, None]}")
-
-        # get inputs_ids from token sample  
-        # input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+        if DEBUG >= 4:
+            print(f"next_tokens: {next_tokens[:, None]}")
 
         return next_tokens[:, None]
         

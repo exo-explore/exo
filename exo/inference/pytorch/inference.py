@@ -14,13 +14,15 @@ from accelerate import disk_offload
 from exo.download.shard_download import ShardDownloader
 
 # model value options 
-TOP_K = 35
-TEMP = 0.6
-TOP_P = 0.8
+TOP_K = 25
+TEMP = 0.7
+TOP_P = 0.9
+MAX_LENGTH = 125
+MAX_TIME = 10.0
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
-    PyTorch Dynamic Shard Inference Engine for performing model inference with sharded models.
+    PyTorch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
     """
 
     def __init__(self, shard_downloader: ShardDownloader):
@@ -190,17 +192,24 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 4:
             print(f"Loading new shard: {shard}")
 
-        # need to build in shard downloader
+        # -- TO DO --
+        # Build in shard downloader but requires pulling 
+        # apart how TrainedModel loads weight in its __init__ 
+        # function in the transformer library
         # model_path = await self.shard_downloader.ensure_shard(shard)
         
-        if self.stateful_sharded_model:
-            print("Deleting model")
-            del self.stateful_sharded_model
-        #    gc.collect()
-        #    torch.cuda.empty_cache()
-        
         self.tokenizer = await resolve_tokenizer(shard.model_id)
-        self.stateful_sharded_model = ShardedHuggingFaceModel(shard, self.device, self.torch_dtype)
+        self.stateful_sharded_model = ShardedHuggingFaceModel(
+            shard=shard,
+            device=self.device,
+            dtype=self.torch_dtype,
+            top_k=TOP_K,
+            temp=TEMP,
+            top_p=TOP_P,
+            max_length=MAX_LENGTH,
+            max_time=MAX_TIME
+        )
+
         self.shard = shard
 
         if DEBUG >= 4:
