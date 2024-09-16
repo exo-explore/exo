@@ -71,7 +71,7 @@ class ShardedHuggingFaceModel:
         # setup stopping critera for generation 
         self.stopping_critera = StoppingCriteriaList(
             [
-                MaxLengthCriteria(max_length=max_length),
+                #MaxLengthCriteria(max_length=max_length),
                 MaxTimeCriteria(max_time=max_time),
             ]
         )
@@ -173,7 +173,7 @@ class ShardedHuggingFaceModel:
             cache_position=cache_position
         )
 
-        self.hidden_states = self.inputs_embeds if not infer_tensor else self.input_ids
+        self.hidden_states = self.inputs_embeds
         self.position_ids = model_inputs["position_ids"]
         self.cache_position = model_inputs["cache_position"]
         self.past_key_values = model_inputs["past_key_values"]
@@ -244,7 +244,6 @@ class ShardedHuggingFaceModel:
 
     def logits_sample(
         self,
-        input_ids: torch.tensor,
         logits: torch.tensor,
         use_max: Optional[bool] = False
     ) -> torch.tensor:
@@ -263,17 +262,21 @@ class ShardedHuggingFaceModel:
         logits = logits[:, -1, :].clone().float()
 
                 
-        next_token_scores = self.logits_processor(input_ids, logits)
+        next_token_scores = self.logits_processor(self.input_ids, logits)
 
         if not use_max:
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            next_tokens = torch.multinomial(probs, num_samples=1)
         else:
             next_tokens = torch.argmax(next_token_scores, dim=-1)
 
         if DEBUG >= 4:
+            print(f"input_ids: {self.input_ids}")
             print(f"next_tokens: {next_tokens[:, None]}")
 
-        return next_tokens[:, None]
+        input_ids = torch.cat([self.input_ids, next_tokens[:, None].squeeze(-1)], dim=-1)
+
+        return input_ids
+        #return next_tokens[:, None].squeeze(-1)
         
         

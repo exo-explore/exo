@@ -18,7 +18,7 @@ TOP_K = 25
 TEMP = 0.7
 TOP_P = 0.9
 MAX_LENGTH = 125
-MAX_TIME = 10.0
+MAX_TIME = 60.0
 
 class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     """
@@ -99,8 +99,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"\nshard_logits: {shard_logits}")
 
         if shard_logits is not None:
-            input_ids = self.stateful_sharded_model.logits_sample(input_ids, shard_logits)
-            print(input_ids)
+            input_ids = self.stateful_sharded_model.logits_sample(shard_logits)
             
         if shard_past_kvs is not None:
             cache_dict = {
@@ -158,7 +157,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         )
 
         if shard_logits is not None:
-            input_ids = self.stateful_sharded_model.logits_sample(hidden_states, shard_logits)
+            input_ids = self.stateful_sharded_model.logits_sample(shard_logits)
             
         if shard_past_kvs is not None:
             cache_dict = {
