@@ -2,6 +2,7 @@
 import numpy as np
 import torch
 import json
+import gc
 from typing import Optional, Tuple
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
@@ -75,12 +76,19 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         batch_size, seq_length = input_ids.shape[:2]
 
 
+        if inference_state is not None:
+            past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
+        else:
+            past_kvs = None
+
+
         if DEBUG >= 4:
             print(f"input_ids: {input_ids}\n")
         
         shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
             input_ids=input_ids,
-            attention_mask=input_attention_mask
+            attention_mask=input_attention_mask,
+            past_key_values=past_kvs
         )
 
         if DEBUG >= 4:
@@ -105,7 +113,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         is_finished = self.unfinished_sequences.max() == 0
 
         return (
-            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states,
+            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
             json.dumps(cache_dict),
             is_finished
         )
@@ -126,14 +134,29 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         await self.ensure_shard(shard)
 
-        hidden_states = torch.tensor(input_data)
+        if input_data.size == 1:
+            hidden_states = torch.tensor(input_data).to(self.device)
+            hidden_states = hidden_states.unsqueeze(0)
+        else:
+            hidden_states = torch.tensor(input_data).long().to(self.device)
+
+        if inference_state is not None:
+            past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
+        else:
+            past_kvs = None
+
+        if DEBUG >= 4:
+            print(f"hidden_states: {hidden_states}")
+            print(f"inference_state: {inference_state}")
 
         shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
-            hidden_states=hidden_states
+            input_ids=hidden_states,
+            past_key_values=past_kvs,
+            infer_tensor=True
         )
 
         if shard_logits is not None:
-            input_ids = self.stateful_sharded_model.logits_sample(shard_logits)
+            input_ids = self.stateful_sharded_model.logits_sample(hidden_states, shard_logits)
             
         if shard_past_kvs is not None:
             cache_dict = {
@@ -148,7 +171,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         is_finished = self.unfinished_sequences.max() == 0
 
         return (
-            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states,
+            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
             json.dumps(cache_dict),
             is_finished
         )
@@ -169,6 +192,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         # need to build in shard downloader
         # model_path = await self.shard_downloader.ensure_shard(shard)
+        
+        if self.stateful_sharded_model:
+            print("Deleting model")
+            del self.stateful_sharded_model
+        #    gc.collect()
+        #    torch.cuda.empty_cache()
         
         self.tokenizer = await resolve_tokenizer(shard.model_id)
         self.stateful_sharded_model = ShardedHuggingFaceModel(shard, self.device, self.torch_dtype)

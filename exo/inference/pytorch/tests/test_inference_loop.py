@@ -21,8 +21,8 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     )
 
     resp_full, inference_state_full, _ = await inference_engine_1.infer_prompt(
-        "A", 
-        shard=shard, 
+        "A",
+        shard=shard,
         prompt=prompt
     )
 
@@ -30,22 +30,16 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     print(resp_full)
     print("\n------------resp_full---------------\n")
 
-    next_resp_full = resp_full
-    is_finished = False
-    while not is_finished:
-        next_resp_full, _next_inference_state_full, is_finished = await inference_engine_1.infer_tensor(
-            "A",
-            shard=shard,
-            input_data=next_resp_full,
-            inference_state=inference_state_full,
-        )
+    next_resp_full, _next_inference_state_full, is_finished = await inference_engine_1.infer_tensor(
+        "A",
+        shard=shard,
+        input_data=resp_full,
+        inference_state=inference_state_full,
+    )
 
-        print("\n------------next_resp_full---------------\n")
-        print(next_resp_full)
-        print("\n------------next_resp_full---------------\n")
-    
-
-   
+    print("\n------------next_resp_full---------------\n")
+    print(next_resp_full)
+    print("\n------------next_resp_full---------------\n") 
 
 if __name__ == '__main__':
     try:

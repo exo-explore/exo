@@ -8,8 +8,14 @@ from exo.inference.shard import Shard
 from exo.helpers import DEBUG
 import os
 import numpy as np
+import time
 
-async def test_inference_engine(inference_engine_1: InferenceEngine, inference_engine_2: InferenceEngine, model_id: str, n_layers: int):
+async def test_inference_engine(
+        inference_engine_1: InferenceEngine,
+        inference_engine_2: InferenceEngine,
+        model_id: str,
+        n_layers: int):
+
     # prompt = "Why is the sky blue?"
     prompt = "In a single word only, what is the last name of the current president of the USA?"
 
@@ -30,6 +36,8 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     print(resp_full)
     print("\n------------resp_full---------------\n")
 
+    time.sleep(5)
+
     next_resp_full, _next_inference_state_full, _ = await inference_engine_1.infer_tensor(
         "A",
         shard=shard,
@@ -41,8 +49,10 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     print(next_resp_full)
     print("\n------------next_resp_full---------------\n")
 
+    time.sleep(5)
+
     pp = int(n_layers/2)
-    
+   
     resp_shard = Shard(
         model_id=model_id, 
         start_layer=0, 
@@ -66,6 +76,8 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     print("\n------------resp1---------------\n")
     print(resp1)
     print("\n------------resp1---------------\n")
+
+    time.sleep(5)
 
 
     resp2, inference_state_2, _ = await inference_engine_2.infer_tensor(
@@ -105,16 +117,16 @@ async def test_inference_engine(inference_engine_1: InferenceEngine, inference_e
     assert np.array_equal(next_resp_full, resp4)
 
 if __name__ == '__main__':
-    # try:
-    #     print(f"\n\n -------- TEST QWEN2 -------- \n\n")
-    #     asyncio.run(test_inference_engine(
-    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-    #         PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-    #         "Qwen/Qwen2-0.5B-Instruct",
-    #         24
-    #     ))
-    # except Exception as err:
-    #     print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
+     try:
+         print(f"\n\n -------- TEST QWEN2 -------- \n\n")
+         asyncio.run(test_inference_engine(
+             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+             PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+             "Qwen/Qwen2-0.5B-Instruct",
+             24
+         ))
+     except Exception as err:
+         print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
 
     # try:
     #     print(f"\n\n -------- TEST LLAMA3-1B-Base -------- \n\n")
@@ -149,14 +161,14 @@ if __name__ == '__main__':
     # except Exception as err:
     #     print(f"\n\n !!!!!!!!!!! Chickaboo/ChickaQ-Large TEST FAILED \n{err}\n")
     
-    try:
-        print(f"\n\n --------- TEST TinyLlama/TinyLlama_v1.1 -------\n\n")
-        asyncio.run(test_inference_engine(
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-            "TinyLlama/TinyLlama_v1.1",
-            22
-        ))
-    except Exception as err:
-        print(f"\n\n !!!!!!!!!!! TinyLlama/TinyLlama_v1.1 TEST FAILED \n{err}\n")
+    #try:
+    #    print(f"\n\n --------- TEST TinyLlama/TinyLlama_v1.1 -------\n\n")
+    #    asyncio.run(test_inference_engine(
+    #        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #        PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+    #        "TinyLlama/TinyLlama_v1.1",
+    #        22
+    #    ))
+    #except Exception as err:
+    #    print(f"\n\n !!!!!!!!!!! TinyLlama/TinyLlama_v1.1 TEST FAILED \n{err}\n")
 

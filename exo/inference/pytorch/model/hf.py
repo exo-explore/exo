@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import gc
 from typing import Tuple, Optional, Union, List
 
 from exo.inference.shard import Shard
@@ -75,7 +74,8 @@ class ShardedHuggingFaceModel:
             self.llm_model = AutoModelForCausalLM.from_pretrained(
                 shard.model_id,
                 torch_dtype=self.torch_dtype,
-                device_map="auto"
+                device_map="auto",
+                offload_buffers=True
             )
 
             self.model = self.llm_model.model 
@@ -88,10 +88,10 @@ class ShardedHuggingFaceModel:
         self,
         shard: Optional[Shard] = None,
         input_ids: Optional[torch.tensor] = None,
-        hidden_states: Optional[torch.tensor] = None,
         attention_mask: Optional[torch.tensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
-        use_legacy_cache: Optional[bool] = False
+        use_legacy_cache: Optional[bool] = False,
+        infer_tensor: Optional[bool] = False
     ) -> Tuple[Optional[torch.tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.tensor]]:
         
         """
@@ -116,70 +116,79 @@ class ShardedHuggingFaceModel:
 
         """
 
-        if input_ids is not None and hidden_states is not None:
-            raise ValueError
+        self.input_ids = input_ids
 
-        if hidden_states is not None:
-            self.hidden_states = hidden_states
+        # embed input_ids
+        self.inputs_embeds = self.model.embed_tokens(self.input_ids)
+       
+        #if DEBUG >= 4:
+        #    print("forward called")
+        #    print(f"input_ids: {self.input_ids}")
+        #    print(f"inputs_embeds: {self.inputs_embeds}")
 
-        if input_ids is not None:
-            self.input_ids = input_ids
+        # cache
+        if past_key_values and not isinstance(past_key_values, Cache):
+            print("Using legacy cache")
+            use_legacy_cache = True
+            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
-            # embed input_ids
-            self.inputs_embeds = self.model.embed_tokens(self.input_ids)
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        cache_position = torch.arange(
+            past_seen_tokens,
+            past_seen_tokens + self.inputs_embeds.shape[1],
+            device=self.inputs_embeds.device
+        )
         
-            # cache
-            if past_key_values and not isinstance(past_key_values, Cache):
-                print("Using legacy cache")
-                use_legacy_cache = True
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+        # position id 
+        position_ids = cache_position.unsqueeze(0)
 
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens,
-                past_seen_tokens + self.inputs_embeds.shape[1],
-                device=self.inputs_embeds.device
-            )
-        
-            # position id 
-            position_ids = cache_position.unsqueeze(0)
+        # casual mask and attention_mask 
+        self.attention_mask = attention_mask
+        self.causal_mask = self.model._update_causal_mask(
+            None,
+            self.inputs_embeds,
+            cache_position,
+            past_key_values,
+            False # dont out attentions
+        )
 
-            # casual mask and attention_mask 
-            self.attention_mask = attention_mask
-            self.causal_mask = self.model._update_causal_mask(
-                None,
+        # embed positions, some models require and some dont
+        if isinstance(self.model, LlamaModel):
+            self.position_embeddings = self.model.rotary_emb(
                 self.inputs_embeds,
-                cache_position,
-                past_key_values,
-                False # dont out attentions
+                position_ids
             )
+        
+        # prepare inputs for decoder layers
+        model_inputs = self.llm_model.prepare_inputs_for_generation(
+            self.input_ids,
+            past_key_values=past_key_values,
+            attention_mask=self.attention_mask,
+            inputs_embeds=self.inputs_embeds,
+            position_ids=position_ids,
+            cache_position=cache_position
+        )
 
-            # embed positions, some models require and some dont
-            if isinstance(self.model, LlamaModel):
-                self.position_embeddings = self.model.rotary_emb(
-                    self.inputs_embeds,
-                    position_ids
-                )
-            
-            # prepare inputs for decoder layers
-            model_inputs = self.llm_model.prepare_inputs_for_generation(
-                self.input_ids,
-                past_key_values=past_key_values,
-                attention_mask=self.attention_mask,
-                inputs_embeds=self.inputs_embeds,
-                position_ids=position_ids,
-                cache_position=cache_position
-            )
-
-            self.hidden_states = self.inputs_embeds
-            self.position_ids = model_inputs["position_ids"]
-            self.cache_position = model_inputs["cache_position"]
-            self.past_key_values = model_inputs["past_key_values"]
+        self.hidden_states = self.inputs_embeds if not infer_tensor else self.input_ids
+        self.position_ids = model_inputs["position_ids"]
+        self.cache_position = model_inputs["cache_position"]
+        self.past_key_values = model_inputs["past_key_values"]
 
         # run through decoder layers 
-        layer_amt = range(self.shard.start_layer, self.shard.end_layer + 1) 
+        layer_amt = range(self.shard.start_layer, self.shard.end_layer + 1)
+
+        if DEBUG >= 4:
+            print(f"hidden_states: {self.hidden_states}")
+            print(f"model_inputs: {model_inputs}")
+            print(f"layer_amt: {layer_amt}")
+
         for i in layer_amt:
             decoder_layer = self.model.layers[i]
+            if DEBUG >= 5:
+                print("decoder_layer before")
+                print(f"decoder_layer: {decoder_layer}")
+                print(f"hidden_states: {self.hidden_states}")
+
             layer_outputs = decoder_layer(
                 self.hidden_states,
                 attention_mask=self.causal_mask,
@@ -192,8 +201,14 @@ class ShardedHuggingFaceModel:
             self.hidden_states = layer_outputs[0]
             self.next_decoder_cache = layer_outputs[1]
 
+            if DEBUG >= 5:
+                print("decoder_layer after")
+                print(f"hidden_states: {self.hidden_states}")
+                print(f"next_decoder_cache: {self.next_decoder_cache}")
+
 
         # handle last layer to get logits
+        # shard is last layer says true at the start and not detecting last layer correctly 
         if self.shard.is_last_layer():
             self.hidden_states = self.model.norm(self.hidden_states)
             if use_legacy_cache:
@@ -209,6 +224,7 @@ class ShardedHuggingFaceModel:
                 None,
                 logits
             )
+
         print("199")
         return (
             self.hidden_states,
@@ -223,7 +239,7 @@ class ShardedHuggingFaceModel:
         use_max: Optional[bool] = False
     ) -> torch.tensor:
         """
-        Get a sample of the logits from end of model run
+        Get a sample of the logits from end of model run for next token
         
         Args:
             logits: tensor 
@@ -234,7 +250,7 @@ class ShardedHuggingFaceModel:
         """
 
         # get a single cloned logit
-        logits = logits[:, 1, :].clone().float()
+        logits = logits[:, -1, :].clone().float()
 
                 
         next_token_scores = self.logits_processor(input_ids, logits)
@@ -245,9 +261,11 @@ class ShardedHuggingFaceModel:
         else:
             next_tokens = torch.argmax(next_token_scores, dim=-1)
 
-        # get inputs_ids from token sample  
-        input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+        print(f"next_tokens: {next_tokens[:, None]}")
 
-        return input_ids
+        # get inputs_ids from token sample  
+        # input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+
+        return next_tokens[:, None]
         
         
