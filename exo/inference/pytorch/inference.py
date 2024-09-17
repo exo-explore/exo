@@ -124,7 +124,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if is_finished:
             self.past_input_ids = None
 
-        print(f"shard as numpy: {shard_hidden_states.detach().cpu().numpy()}")
+        #print(f"shard as numpy: {shard_hidden_states.detach().cpu().numpy()}")
 
         return_values = (
             input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
