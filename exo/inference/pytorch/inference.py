@@ -173,7 +173,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if DEBUG >= 4:
             print(f"input_ids: {input_ids}")
             print(f"inference_state: {inference_state}")
-            print(f"infer_state: {infer_state}")
 
         shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
             input_ids=self.past_input_ids,
