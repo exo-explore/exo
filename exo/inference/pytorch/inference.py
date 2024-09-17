@@ -123,11 +123,16 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if is_finished:
             self.past_input_ids = None
 
-        return (
-            input_ids.numpy(force=True),
+        return_values = (
+            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
             json.dumps(cache_dict),
             is_finished
         )
+
+        if DEBUG >= 4:
+            print(f"return_values: {return_values}")
+
+        return return_values
 
     async def infer_tensor(
         self, 
@@ -146,7 +151,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         await self.ensure_shard(shard)
         
         input_ids = torch.tensor(input_data).long().to(self.device)
-        self.past_input_ids = torch.cat([self.past_input_ids, input_ids], dim=-1)
+
+        if self.past_input_ids is not None:
+            self.past_input_ids = torch.cat([self.past_input_ids, input_ids], dim=-1)
+        else:
+            self.past_input_ids = input_ids
 
         if inference_state is not None:
             past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
@@ -159,8 +168,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
             input_ids=self.past_input_ids,
-            past_key_values=past_kvs,
-            infer_tensor=True
+            past_key_values=past_kvs
         )
 
         if shard_logits is not None:
@@ -178,11 +186,20 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
         is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
-        return (
-            input_ids.numpy(force=True),
+        if DEBUG >= 4:
+            print(f"\nshard_hidden_states: {shard_hidden_states}\n")
+            print(f"\nshard_past_kvs {shard_past_kvs}\n")
+            print(f"\nshard_logits: {shard_logits}")
+
+        return_values = (
+            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
             json.dumps(cache_dict),
             is_finished
         )
+
+        print(f"return_values: {return_values}")
+
+        return return_values
                 
         
     async def ensure_shard(self, shard: Optional[Shard]):

@@ -11,6 +11,7 @@ from exo.inference.shard import Shard
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import DeviceCapabilities
 
+from exo.helpers import DEBUG
 
 class GRPCPeerHandle(PeerHandle):
   def __init__(self, _id: str, address: str, device_capabilities: DeviceCapabilities):
@@ -52,6 +53,8 @@ class GRPCPeerHandle(PeerHandle):
       request_id=request_id,
       inference_state=inference_state,
     )
+
+    print(f"request: {request}")
     response = await self.stub.SendPrompt(request)
 
     if not response.tensor_data or not response.shape or not response.dtype:

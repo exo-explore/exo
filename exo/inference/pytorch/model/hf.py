@@ -100,8 +100,7 @@ class ShardedHuggingFaceModel:
         input_ids: Optional[torch.tensor] = None,
         attention_mask: Optional[torch.tensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
-        use_legacy_cache: Optional[bool] = False,
-        infer_tensor: Optional[bool] = False
+        use_legacy_cache: Optional[bool] = False
     ) -> Tuple[Optional[torch.tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.tensor]]:
         
         """
