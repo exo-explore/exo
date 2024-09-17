@@ -160,10 +160,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         input_ids = torch.tensor(input_data).long().to(self.device)
 
-        if self.past_input_ids is not None:
-            self.past_input_ids = torch.cat([self.past_input_ids, input_ids], dim=-1)
+        # detect if hidden_states or not 
+        hidden_states = None
+        if input_ids.size()[-1] > 1:
+            hidden_states = input_ids
         else:
-            self.past_input_ids = input_ids
+            if self.past_input_ids is not None:
+                self.past_input_ids = torch.cat([self.past_input_ids, input_ids], dim=-1)
+            else:
+                self.past_input_ids = input_ids
 
         if inference_state is not None:
             past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
