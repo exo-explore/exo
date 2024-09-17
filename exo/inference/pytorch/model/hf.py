@@ -126,6 +126,8 @@ class ShardedHuggingFaceModel:
 
         """
         
+        model_inputs = None
+        
         if hidden_states is not None:
             self.hidden_states = hidden_states
         else:
