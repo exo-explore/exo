@@ -126,8 +126,12 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
         is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
-        if is_finished:
-            self.past_input_ids = None
+        out_infer_state = json.dumps([cache_dict, hidden_dict])
+        if DEBUG >= 4:
+            print(f"\nshard_hidden_states: {shard_hidden_states}\n")
+            print(f"\nshard_past_kvs {shard_past_kvs}\n")
+            print(f"\nshard_logits: {shard_logits}")
+            print(f"\nout_infer_state: {out_infer_state}")
 
         return_values = (
             input_ids.numpy(force=True), #if shard_logits is not None else shard_hidden_states.numpy(force=True),
@@ -206,14 +210,16 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
         is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
+        out_infer_state = json.dumps([cache_dict, hidden_dict])
         if DEBUG >= 4:
             print(f"\nshard_hidden_states: {shard_hidden_states}\n")
             print(f"\nshard_past_kvs {shard_past_kvs}\n")
             print(f"\nshard_logits: {shard_logits}")
+            print(f"\nout_infer_state: {out_infer_state}")
 
         return_values = (
             input_ids.numpy(force=True), #if shard_logits is not None else shard_hidden_states.numpy(force=True),
-            json.dumps([cache_dict, hidden_dict]),
+            out_infer_state,
             is_finished
         )
 
