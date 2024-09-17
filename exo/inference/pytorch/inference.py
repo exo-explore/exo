@@ -117,6 +117,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             cache_dict = None
 
         stopping_critera = self.stateful_sharded_model.stopping_critera
+        print("set stopping critera")
         self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
         is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
