@@ -124,7 +124,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             self.past_input_ids = None
 
         return (
-            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
+            input_ids.numpy(force=True),
             json.dumps(cache_dict),
             is_finished
         )
@@ -179,7 +179,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
         return (
-            input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
+            input_ids.numpy(force=True),
             json.dumps(cache_dict),
             is_finished
         )
