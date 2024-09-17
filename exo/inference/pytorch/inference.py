@@ -176,7 +176,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
             input_ids=self.past_input_ids,
-            hidden_states=hidden_states,
             past_key_values=past_kvs
         )
 

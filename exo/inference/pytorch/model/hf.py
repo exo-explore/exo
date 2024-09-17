@@ -98,7 +98,6 @@ class ShardedHuggingFaceModel:
         self,
         shard: Optional[Shard] = None,
         input_ids: Optional[torch.tensor] = None,
-        hidden_states: Optional[torch.tensor] = None,
         attention_mask: Optional[torch.tensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         use_legacy_cache: Optional[bool] = False
@@ -125,60 +124,58 @@ class ShardedHuggingFaceModel:
                 - logits: tensor Optional
 
         """
-        if hidden_states is not None:
-            self.hidden_states = hidden_states
-        else:
-            self.input_ids = input_ids
 
-            # embed input_ids
-            self.inputs_embeds = self.model.embed_tokens(self.input_ids)
+        self.input_ids = input_ids
+
+        # embed input_ids
+        self.inputs_embeds = self.model.embed_tokens(self.input_ids)
         
-            # cache
-            if past_key_values and not isinstance(past_key_values, Cache):
-                use_legacy_cache = True
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+        # cache
+        if past_key_values and not isinstance(past_key_values, Cache):
+            use_legacy_cache = True
+            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens,
-                past_seen_tokens + self.inputs_embeds.shape[1],
-                device=self.inputs_embeds.device
-            )
-            
-            # position id 
-            position_ids = cache_position.unsqueeze(0)
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        cache_position = torch.arange(
+            past_seen_tokens,
+            past_seen_tokens + self.inputs_embeds.shape[1],
+            device=self.inputs_embeds.device
+        )
+        
+        # position id 
+        position_ids = cache_position.unsqueeze(0)
 
-            # casual mask and attention_mask 
-            self.attention_mask = attention_mask
-            self.causal_mask = self.model._update_causal_mask(
-                None,
+        # casual mask and attention_mask 
+        self.attention_mask = attention_mask
+        self.causal_mask = self.model._update_causal_mask(
+            None,
+            self.inputs_embeds,
+            cache_position,
+            past_key_values,
+            False # dont out attentions
+        )
+
+        # embed positions, some models require and some dont
+        if isinstance(self.model, LlamaModel):
+            self.position_embeddings = self.model.rotary_emb(
                 self.inputs_embeds,
-                cache_position,
-                past_key_values,
-                False # dont out attentions
+                position_ids
             )
+        
+        # prepare inputs for decoder layers
+        model_inputs = self.llm_model.prepare_inputs_for_generation(
+            self.input_ids,
+            past_key_values=past_key_values,
+            attention_mask=self.attention_mask,
+            inputs_embeds=self.inputs_embeds,
+            position_ids=position_ids,
+            cache_position=cache_position
+        )
 
-            # embed positions, some models require and some dont
-            if isinstance(self.model, LlamaModel):
-                self.position_embeddings = self.model.rotary_emb(
-                    self.inputs_embeds,
-                    position_ids
-                )
-            
-            # prepare inputs for decoder layers
-            model_inputs = self.llm_model.prepare_inputs_for_generation(
-                self.input_ids,
-                past_key_values=past_key_values,
-                attention_mask=self.attention_mask,
-                inputs_embeds=self.inputs_embeds,
-                position_ids=position_ids,
-                cache_position=cache_position
-            )
-
-            self.hidden_states = self.inputs_embeds
-            self.position_ids = model_inputs["position_ids"]
-            self.cache_position = model_inputs["cache_position"]
-            self.past_key_values = model_inputs["past_key_values"]
+        self.hidden_states = self.inputs_embeds
+        self.position_ids = model_inputs["position_ids"]
+        self.cache_position = model_inputs["cache_position"]
+        self.past_key_values = model_inputs["past_key_values"]
 
         # run through decoder layers 
         layer_amt = range(self.shard.start_layer, self.shard.end_layer + 1)
