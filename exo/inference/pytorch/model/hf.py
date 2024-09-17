@@ -212,24 +212,24 @@ class ShardedHuggingFaceModel:
 
         # handle last layer to get logits
         # shard is last layer says true at the start and not detecting last layer correctly 
-        if self.shard.is_last_layer():
-            self.hidden_states = self.model.norm(self.hidden_states)
-            if use_legacy_cache:
-                self.past_key_values = self.next_decoder_cache.to_legacy_cache()
-            else:
-                self.past_key_values = self.next_decoder_cache
-            
-            # lm_head  
-            logits = self.llm_model.lm_head(self.hidden_states).to(self.device)
+        #if self.shard.is_last_layer():
+        self.hidden_states = self.model.norm(self.hidden_states)
+        if use_legacy_cache:
+            self.past_key_values = self.next_decoder_cache.to_legacy_cache()
+        else:
+            self.past_key_values = self.next_decoder_cache
+        
+        # lm_head  
+        logits = self.llm_model.lm_head(self.hidden_states).to(self.device)
 
-            if DEBUG >= 4:
-                print(f"logits: {logits}")
+        if DEBUG >= 4:
+            print(f"logits: {logits}")
 
-            return (
-                None,
-                None,
-                logits
-            )
+        return (
+            None,
+            None,
+            logits
+        )
 
         if DEBUG >= 4:
             print(f"hidden_states: {self.hidden_states}")
