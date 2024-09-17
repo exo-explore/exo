@@ -88,7 +88,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if inference_state is not None:
             infer_state = json.loads(inference_state)
-            if len(infer_state["key_cache"]) == 0:
+            if not infer_state:
                 past_kvs = DynamicCache()
             else:
                 past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
@@ -173,7 +173,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         if inference_state is not None:
             infer_state = json.loads(inference_state)
-            if len(infer_state["key_cache"]) == 0:
+            if not infer_state:
                 past_kvs = DynamicCache()
             else:
                 past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
