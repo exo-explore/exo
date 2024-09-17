@@ -197,7 +197,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             is_finished
         )
 
-        print(f"return_values: {return_values}")
+        if DEBUG >= 4:
+            print(f"return_values: {return_values}")
 
         return return_values
                 
