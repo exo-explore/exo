@@ -68,6 +68,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print("infer_prompt called")
             print(f"prompt: {prompt}")
             print(f"shard: {shard}")
+            print(f"inference_state: {inference_state}")
         
         await self.ensure_shard(shard)
         
@@ -118,14 +119,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         else:
             cache_dict = None
 
-        stopping_critera = self.stateful_sharded_model.stopping_critera
-        self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
-
-        hit_eos = False
+        is_finished = False
         if next_token is not None:
-            hit_eos = next_token.item() == self.tokenizer.eos_token_id
-
-        is_finished = self.unfinished_sequences.max() == 0 or hit_eos
+            is_finished = next_token.item() == self.tokenizer.eos_token_id
 
         if DEBUG >= 4:
             print(f"\ninput_ids: {input_ids}")
@@ -155,6 +151,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print("infer_tensor called")
             print(f"input_data: {input_data}")
             print(f"shard: {shard}")
+            print(f"inference_state: {inference_state}")
 
         await self.ensure_shard(shard)
 
@@ -202,14 +199,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         else:
             cache_dict = None
 
-        stopping_critera = self.stateful_sharded_model.stopping_critera
-        self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
+        #stopping_critera = self.stateful_sharded_model.stopping_critera
+        #self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
         
-        hit_eos = False
+        is_finished = False
         if next_token is not None:
-            hit_eos = next_token.item() == self.tokenizer.eos_token_id
+            is_finished = next_token.item() == self.tokenizer.eos_token_id
 
-        is_finished = self.unfinished_sequences.max() == 0 or hit_eos
+        #is_finished = self.unfinished_sequences.max() == 0 or hit_eos
 
         if DEBUG >= 4:
             print(f"\ninput_ids: {input_ids}")
