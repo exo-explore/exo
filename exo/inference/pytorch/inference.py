@@ -14,8 +14,8 @@ from accelerate import disk_offload
 from exo.download.shard_download import ShardDownloader
 
 # model value options 
-TOP_K = 25
-TEMP = 0.7
+TOP_K = 20
+TEMP = 0.6
 TOP_P = 0.9
 MAX_LENGTH = 125
 MAX_TIME = 60.0
@@ -36,6 +36,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         self.shard_downloader = shard_downloader
         self.stateful_sharded_model = None
         self.tokenizer = None
+
+        # the whole history with new logits need to 
+        # be passed to the model to reach the end token 
+        # even with caching
+        self.past_input_ids = None 
 
         # setup cuda device 
         if torch.cuda.is_available():
@@ -99,8 +104,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"\nshard_logits: {shard_logits}")
 
         if shard_logits is not None:
-            input_ids = self.stateful_sharded_model.logits_sample(shard_logits)
-            
+            next_token = self.stateful_sharded_model.logits_sample(shard_logits)
+            self.past_input_ids = torch.cat([input_ids, next_token[:, None].squeeze(-1)], dim=-1)
+            input_ids = next_token
+
         if shard_past_kvs is not None:
             cache_dict = {
                 'key_cache': [tensor.tolist() for tensor in shard_past_kvs.key_cache],
@@ -111,7 +118,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         stopping_critera = self.stateful_sharded_model.stopping_critera
         self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
-        is_finished = self.unfinished_sequences.max() == 0
+        is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
+
+        if is_finished:
+            self.past_input_ids = None
 
         return (
             input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
@@ -134,12 +144,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             print(f"shard: {self.shard}")
 
         await self.ensure_shard(shard)
-
-        if input_data.size == 1:
-            hidden_states = torch.tensor(input_data).to(self.device)
-            hidden_states = hidden_states.unsqueeze(0)
-        else:
-            hidden_states = torch.tensor(input_data).long().to(self.device)
+        
+        input_ids = torch.tensor(input_data).long().to(self.device)
+        self.past_input_ids = torch.cat([self.past_input_ids, input_ids], dim=-1)
 
         if inference_state is not None:
             past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
@@ -147,11 +154,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             past_kvs = None
 
         if DEBUG >= 4:
-            print(f"hidden_states: {hidden_states}")
+            print(f"input_ids: {input_ids}")
             print(f"inference_state: {inference_state}")
 
         shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
-            input_ids=hidden_states,
+            input_ids=self.past_input_ids,
             past_key_values=past_kvs,
             infer_tensor=True
         )
@@ -169,7 +176,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         stopping_critera = self.stateful_sharded_model.stopping_critera
         self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
-        is_finished = self.unfinished_sequences.max() == 0
+        is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
         return (
             input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),

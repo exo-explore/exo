@@ -70,9 +70,16 @@ def generate_completion(
     }
 
   choice = completion["choices"][0]
+  print(f"\nchoice {choice}")
   if object_type.startswith("chat.completion"):
     key_name = "delta" if stream else "message"
-    choice[key_name] = {"role": "assistant", "content": tokenizer.decode(tokens)}
+
+    token_decode = tokenizer.batch_decode(
+       tokens,
+       skip_special_tokens=True,
+       clean_up_tokenization_spaces=False
+    )
+    choice[key_name] = {"role": "assistant", "content": token_decode}
   elif object_type == "text_completion":
     choice["text"] = tokenizer.decode(tokens)
   else:

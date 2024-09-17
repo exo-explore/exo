@@ -255,28 +255,24 @@ class ShardedHuggingFaceModel:
             use_max: bool, if function should sample with argmax
 
         Returns:
-            input_ids: tensor
+            next_token: tensor 
         """
 
         # get a single cloned logit
         logits = logits[:, -1, :].clone().float()
 
-                
         next_token_scores = self.logits_processor(self.input_ids, logits)
 
         if not use_max:
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            next_tokens = torch.multinomial(probs, num_samples=1)
+            next_token = torch.multinomial(probs, num_samples=1)
         else:
-            next_tokens = torch.argmax(next_token_scores, dim=-1)
+            next_token = torch.argmax(next_token_scores, dim=-1)
 
         if DEBUG >= 4:
             print(f"input_ids: {self.input_ids}")
-            print(f"next_tokens: {next_tokens[:, None]}")
+            print(f"next_token: {next_token}") 
 
-        input_ids = torch.cat([self.input_ids, next_tokens[:, None].squeeze(-1)], dim=-1)
-
-        return input_ids
-        #return next_tokens[:, None].squeeze(-1)
+        return next_token[:, None].squeeze(-1)
         
         
