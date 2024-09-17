@@ -113,7 +113,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if shard_past_kvs is not None:
             cache_dict = {
                 'key_cache': [tensor.tolist() for tensor in shard_past_kvs.key_cache],
-                'value_cache': [tensor.tolist() for tensor in shard_past_kvs_kvs.value_cache]
+                'value_cache': [tensor.tolist() for tensor in shard_past_kvs.value_cache]
             }
         else:
             cache_dict = None
@@ -197,7 +197,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if shard_past_kvs is not None:
             cache_dict = {
                 'key_cache': [tensor.tolist() for tensor in shard_past_kvs.key_cache],
-                'value_cache': [tensor.tolist() for tensor in shard_past_kvs_kvs.value_cache]
+                'value_cache': [tensor.tolist() for tensor in shard_past_kvs.value_cache]
             }
         else:
             cache_dict = None
