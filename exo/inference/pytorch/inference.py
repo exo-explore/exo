@@ -106,6 +106,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if shard_logits is not None:
             next_token = self.stateful_sharded_model.logits_sample(shard_logits)
             self.past_input_ids = torch.cat([input_ids, next_token[:, None].squeeze(-1)], dim=-1)
+
+            stopping_critera = self.stateful_sharded_model.stopping_critera
+            print("set stopping critera")
+            self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
             input_ids = next_token
 
         if shard_past_kvs is not None:
@@ -116,9 +120,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         else:
             cache_dict = None
 
-        stopping_critera = self.stateful_sharded_model.stopping_critera
-        print("set stopping critera")
-        self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
         is_finished = self.unfinished_sequences.max() == 0 or input_ids.item() == self.tokenizer.eos_token_id
 
         if is_finished:
