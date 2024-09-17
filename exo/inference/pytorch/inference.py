@@ -189,7 +189,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if shard_hidden_states is not None:
             hidden_dict = {"hidden_states": shard_hidden_states.tolist()}
 
-        next_token is not None 
+        next_token = None 
         if shard_logits is not None:
             next_token = self.stateful_sharded_model.logits_sample(shard_logits)
             input_ids = next_token
