@@ -101,7 +101,7 @@ class ShardedHuggingFaceModel:
         hidden_states: Optional[torch.tensor] = None,
         attention_mask: Optional[torch.tensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
-        use_legacy_cache: Optional[bool] = False
+        use_legacy_cache: bool = False
     ) -> Tuple[Optional[torch.tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.tensor]]:
         
         """
@@ -198,6 +198,11 @@ class ShardedHuggingFaceModel:
                 print(f"decoder_layer: {decoder_layer}")
                 print(f"hidden_states: {self.hidden_states}")
 
+            # TODO: fix caching as decoder layer is not returning
+            # present_key_value from attention layer on models 
+            # might have some other generation functions needed to do it 
+            # see https://github.com/huggingface/transformers/blob/main/src/transformers/generation/utils.py#L2917
+            # for qwen2 exhttps://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py#L291
             layer_outputs = decoder_layer(
                 self.hidden_states,
                 attention_mask=self.causal_mask,
@@ -212,6 +217,8 @@ class ShardedHuggingFaceModel:
 
             if DEBUG >= 5:
                 print("decoder_layer after")
+                print(f"layer_outputs: {layer_outputs}\n")
+                print(f"self.next_decoder_cache: {self.next_decoder_cache}")
                 print(f"hidden_states: {self.hidden_states}")
                 print(f"next_decoder_cache: {self.next_decoder_cache}")
 

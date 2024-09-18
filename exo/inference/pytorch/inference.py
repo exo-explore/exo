@@ -161,25 +161,48 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         input_ids = torch.tensor(input_data).long().to(self.device)
 
+        # setup cache and cached input_ids 
+        past_kvs = None
+        past_iids = None
+        cached_iids = None
+        if inference_state is not None:
+            try:
+                infer_state = json.loads(inference_state)
+            except ValueError:
+                infer_state = None
+            
+            if infer_state is not None:
+                # setup cache 
+                cached_kvs = infer_state[0]
+                if not cached_kvs or (cached_kvs and len(cached_kvs["key_cache"]) == 0):
+                    past_kvs = DynamicCache()
+                else:
+                    past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
+
+                # setup cached input_ids with one coming in, if any cached
+                cached_iids = infer_state[1]
+                if cached_iids is not None:
+                    past_iids = None
+                    if len(cached_iids) > 0:
+                        cached_iids_tensor = torch.tensor(cached_iids["input_ids"]).to(self.device)
+                        past_iids = torch.cat([cached_iids_tensor, input_ids], dim=-1).to(self.device)
+                        cached_iids = {"input_ids": past_iids.tolist()}
+
+                if DEBUG >= 4:
+                    print(f"past_kvs: {past_kvs}")
+                    print(f"cached_iids: {cached_iids}")
+
         # detect if hidden_states or not 
         hidden_states = None
         if input_ids.size()[-1] > 1:
             hidden_states = input_ids
+            self.past_input_ids = None
         else:
-            if self.past_input_ids is not None:
-                self.past_input_ids = torch.cat([self.past_input_ids, input_ids], dim=-1)
+            if past_iids is not None:
+                self.past_input_ids = past_iids
             else:
                 self.past_input_ids = input_ids
-
-        if inference_state is not None:
-            infer_state = json.loads(inference_state)
-            if not infer_state or (infer_state and len(infer_state["key_cache"]) == 0):                
-                past_kvs = DynamicCache()
-            else:
-                past_kvs = DynamicCache.from_legacy_cache(json.loads(inference_state))
-        else:
-            past_kvs = None
-
+ 
         if DEBUG >= 4:
             print(f"input_ids: {input_ids}")
             print(f"inference_state: {inference_state}")
@@ -199,6 +222,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             next_token = self.stateful_sharded_model.logits_sample(shard_logits)
             input_ids = next_token
             
+        #cache 
         if shard_past_kvs is not None:
             cache_dict = {
                 'key_cache': [tensor.tolist() for tensor in shard_past_kvs.key_cache],
@@ -206,6 +230,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             }
         else:
             cache_dict = None
+
+        if self.past_input_ids is not None:
+            next_cached_logits = torch.cat([self.past_input_ids, input_ids], dim=-1).to(self.device)
+            cached_iids = {"input_ids": next_cached_logits.tolist()}
 
         #stopping_critera = self.stateful_sharded_model.stopping_critera
         #self.unfinished_sequences = self.unfinished_sequences & ~stopping_critera(input_ids, None)
@@ -224,7 +252,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         return_values = (
             input_ids.numpy(force=True), #if shard_logits is not None else shard_hidden_states.numpy(force=True),
-            json.dumps(cache_dict),
+            json.dumps([cache_dict, cached_iids]),
             is_finished
         )
 
