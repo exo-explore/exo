@@ -71,7 +71,7 @@ def _add_wildcard_to_directories(pattern: str) -> str:
   return pattern
 
 def get_hf_endpoint() -> str:
-    return os.environ.get('HF_ENDPOINT', "https://huggingface.co/")
+    return os.environ.get('HF_ENDPOINT', "https://huggingface.co")
 
 def get_hf_home() -> Path:
   """Get the Hugging Face home directory."""
