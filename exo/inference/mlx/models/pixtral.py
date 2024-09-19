@@ -4,6 +4,7 @@ from typing import Optional, List
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 
 @dataclass
@@ -31,12 +32,11 @@ class PixtralVisionConfig:
 def position_ids_in_meshgrid(patch_embeds_list, max_width):
     positions = []
     for patch in patch_embeds_list:
-        height, width = patch.shape[-2:]
+        height, width = patch.shape[1:3]
         mesh = mx.meshgrid(mx.arange(height), mx.arange(width), indexing="ij")
-        h_grid, v_grid = mx.stack(mesh, dim=-1).reshape(-1, 2).chunk(2, -1)
+        h_grid, v_grid = mesh[0].reshape(-1), mesh[1].reshape(-1)
         ids = h_grid * max_width + v_grid
-        positions.append(ids[:, 0])
-        mx.meshgrid
+        positions.append(ids)
     return mx.concatenate(positions)
 
 
@@ -53,16 +53,17 @@ class PixtralRotaryEmbedding(nn.Module):
 
         freqs_h = mx.outer(h, freqs[::2])
         freqs_w = mx.outer(w, freqs[1::2])
-        self.inv_freq = mx.concatenate(
+        inv_freq = mx.concatenate(
             [
-                freqs_h[:, None, :].repeat(1, max_patches_per_side, 1),
-                freqs_w[None, :, :].repeat(max_patches_per_side, 1, 1),
+                mx.repeat(freqs_h[:, None, :], repeats=max_patches_per_side, axis=1),
+                mx.repeat(freqs_w[None, :, :], repeats=max_patches_per_side, axis=0),
             ],
-            dim=-1,
+            axis=-1,
         ).reshape(-1, dim // 2)
+        self._inv_freq = mx.concatenate((inv_freq, inv_freq), axis=-1)
 
-    def __call__(self, x, position_ids):
-        freqs = self.inv_freq[position_ids]
+    def __call__(self, _, position_ids):
+        freqs = self._inv_freq[position_ids]
         return mx.cos(freqs), mx.sin(freqs)
 
 
@@ -70,9 +71,9 @@ def rotate_half(x: mx.array) -> mx.array:
     x1, x2 = mx.split(x, 2, axis=-1)
     return mx.concatenate([-x2, x1], axis=-1)
 
-def apply_rotary_pos_emb(q: mx.array, k: mx.array, cos: mx.array, sin: mx.array, unsqueeze_dim: int = 1) -> tuple[mx.array, mx.array]:
-    cos = mx.expand_dims(cos, axis=unsqueeze_dim)
-    sin = mx.expand_dims(sin, axis=unsqueeze_dim)
+def apply_rotary_pos_emb(q: mx.array, k: mx.array, cos: mx.array, sin: mx.array, axis: int = 1):
+    cos = mx.expand_dims(cos, axis=axis)
+    sin = mx.expand_dims(sin, axis=axis)
     
     q_embed = q * cos + rotate_half(q) * sin
     k_embed = k * cos + rotate_half(k) * sin
@@ -107,19 +108,19 @@ class PixtralAttention(nn.Module):
         keys = self.k_proj(h)
         values = self.v_proj(h)
         
-        queries = queries.reshape(B, L, self.num_heads, -1).transpose(0, 2, 1, 3)
-        keys = keys.reshape(B, L, self.num_heads, -1).transpose(0, 2, 1, 3)
-        values = values.reshape(B, L, self.num_heads, -1).transpose(0, 2, 1, 3)
-
+        queries = queries.reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        keys = keys.reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        values = values.reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        
         if position_embeddings is not None:
             cos, sin = position_embeddings
-            queries, keys = apply_rotary_pos_emb(queries, keys, cos, sin, unsqueeze_dim=0)
-
-        scores = (queries * self.scale) @ keys
-
+            queries, keys = apply_rotary_pos_emb(queries, keys, cos, sin, axis=0)
+        
+        scores = (queries*self.scale) @ keys.transpose(0, 1, 3, 2)
+        
         if attention_mask is not None:
-            scores = scores + attention_mask.astype(scores.dtype)
-
+            scores = scores + attention_mask
+        
         scores = mx.softmax(scores, axis=-1)
         values_hat = (scores @ values).transpose(0, 2, 1, 3).reshape(B, L, -1)
 
@@ -127,11 +128,11 @@ class PixtralAttention(nn.Module):
 
 
 class PixtralMLP(nn.Module):
-    def __init__(self, dim, hidden_dim):
+    def __init__(self, config):
         super().__init__()
-        self.gate_proj = nn.Linear(dim, hidden_dim, bias=False)
-        self.up_proj = nn.Linear(dim, hidden_dim, bias=False)
-        self.down_proj = nn.Linear(dim, hidden_dim, bias=False)
+        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.gelu = nn.GELU()
 
     def __call__(self, h):
@@ -144,7 +145,7 @@ class PixtralRMSNorm(nn.Module):
         self.weight = mx.ones((hidden_size,))
         self.eps = eps
 
-    def forward(self, h: mx.array):
+    def __call__(self, h: mx.array):
         v = mx.mean(h ** 2, axis=-1, keepdims=True)
         h = h * mx.rsqrt(v + self.eps)
         return self.weight * h
@@ -198,13 +199,14 @@ class PixtralTransformer(nn.Module):
 
 def generate_block_attention_mask(patch_embeds_list, input_array):
     seq_len = input_array.shape[1]
-    causal_mask = mx.full((seq_len, seq_len), fill_value=-float('inf'))
+    dmin = np.finfo(np.array(input_array).dtype).min
+    causal_mask = mx.full((seq_len, seq_len), dmin, dtype=input_array.dtype)
 
-    block_end_idx = mx.cumsum(mx.array(patch_embeds_list), axis=-1)
-    block_start_idx = mx.cumsum(mx.array([0] + patch_embeds_list[:-1]), axis=-1)
+    block_end_idx = mx.cumsum(mx.array(patch_embeds_list), axis=-1).tolist()
+    block_start_idx = mx.cumsum(mx.array([0] + patch_embeds_list[:-1]), axis=-1).tolist()
     
     for start, end in zip(block_start_idx, block_end_idx):
-        causal_mask = causal_mask.at[start:end, start:end].set(0)
+        causal_mask[start:end, start:end] = 0
 
     causal_mask = mx.broadcast_to(causal_mask[None, None, :, :], (input_array.shape[0], 1, seq_len, seq_len))
     return causal_mask
@@ -212,7 +214,7 @@ def generate_block_attention_mask(patch_embeds_list, input_array):
 
 class PixtralModel(nn.Module):
     def __init__(self, config: PixtralVisionConfig):
-        super().__init__(config)
+        super().__init__()
         self.config = config
         self.patch_conv = nn.Conv2d(
             in_channels=config.num_channels,
@@ -226,9 +228,9 @@ class PixtralModel(nn.Module):
         self.patch_positional_embedding = PixtralRotaryEmbedding(config)
 
     def __call__(self, pixel_values: List[mx.array]):
-        patch_embeds_list = [self.patch_conv(mx.expand_dims(img, axis=0)) for img in pixel_values]
+        patch_embeds_list = [self.patch_conv(mx.expand_dims(img, axis=0).transpose(0, 2, 3, 1)) for img in pixel_values]
 
-        patch_embeds = mx.concatenate([p.reshape(p.shape[0], p.shape[1], -1).transpose(0, 2, 1) for p in patch_embeds_list], axis=1)
+        patch_embeds = mx.concatenate([p.flatten(1, 2) for p in patch_embeds_list], axis=1)
         patch_embeds = self.ln_pre(patch_embeds)
 
         position_ids = position_ids_in_meshgrid(
@@ -237,6 +239,17 @@ class PixtralModel(nn.Module):
 
         position_embedding = self.patch_positional_embedding(patch_embeds, position_ids)
         attention_mask = generate_block_attention_mask(
-            [p.shape[-2] * p.shape[-1] for p in patch_embeds_list], patch_embeds
+            [p.shape[1] * p.shape[2] for p in patch_embeds_list], patch_embeds
         )
         return self.transformer(patch_embeds, attention_mask, position_embedding)
+    
+    def sanitize(self, weights):
+        sanitized_weights = {}
+
+        for key, value in weights.items():
+            if "patch_conv" in key:
+                sanitized_weights[key] = value.transpose(0, 2, 3, 1)
+            else:
+                sanitized_weights[key] = value
+
+        return sanitized_weights
