@@ -158,7 +158,7 @@ Here we explicitly tell exo to use the **tinygrad** inference engine.
 
 #### Device 2 (Linux):
 ```sh
-python3 main.py
+CUDA=1 python3 main.py
 ```
 
 Linux devices will automatically default to using the **tinygrad** inference engine.
