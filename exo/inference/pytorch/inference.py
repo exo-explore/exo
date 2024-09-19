@@ -216,8 +216,8 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
             input_ids = next_token
             
         #cache
-        if self.past_input_ids is not None:
-            next_cached_logits = torch.cat([self.past_input_ids, input_ids], dim=-1).to(self.device)
+        if next_token is not None:
+            next_cached_logits = torch.cat([self.past_input_ids, next_token], dim=-1).to(self.device)
             cached_iids = {"input_ids": next_cached_logits.tolist()}
 
         is_finished = False
