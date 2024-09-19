@@ -181,7 +181,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
         await self.ensure_shard(shard)
 
-        input_ids = torch.tensor(input_data).long().to(self.device)
+        input_ids = torch.tensor(input_data).to(self.device)
 
         # get cache from inference_state
         past_iids, cached_iids = self.infer_caching(inference_state)
