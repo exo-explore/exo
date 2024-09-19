@@ -149,10 +149,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         if next_token is not None:
             is_finished = next_token.item() == self.tokenizer.eos_token_id
 
-        if is_finished:
-            # clear cache 
-            cached_iids = {"input_ids": []}
-
         if DEBUG >= 4:
             print(f"\ninput_ids: {input_ids}")
             print(f"\nshard_hidden_states: {shard_hidden_states}\n")
