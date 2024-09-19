@@ -58,6 +58,9 @@ def generate_completion(
       "finish_reason": finish_reason,
     }],
   }
+  
+  if DEBUG >= 3:
+    print(f"completion: {completion}")
 
   if not stream:
     completion["usage"] = {
@@ -67,9 +70,16 @@ def generate_completion(
     }
 
   choice = completion["choices"][0]
+  print(f"\nchoice {choice}")
   if object_type.startswith("chat.completion"):
     key_name = "delta" if stream else "message"
-    choice[key_name] = {"role": "assistant", "content": tokenizer.decode(tokens)}
+
+    token_decode = tokenizer.batch_decode(
+       tokens,
+       skip_special_tokens=True,
+       clean_up_tokenization_spaces=False
+    )
+    choice[key_name] = {"role": "assistant", "content": token_decode}
   elif object_type == "text_completion":
     choice["text"] = tokenizer.decode(tokens)
   else:
@@ -113,16 +123,9 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 
 
 def build_prompt(tokenizer, _messages: List[Message]):
-  if len(_messages) == 1:
-    user_msg = _messages[0]
-
-    # get instruct sys message
-    sys_msg = Message(role="system", content="You are a helpful assistant.")
-
-    # restructure for sys_msg to go first
-    _messages = [sys_msg, user_msg]
-
   messages = remap_messages(_messages)
+  if DEBUG >= 3:
+    print(f"messages: {messages}")
   prompt = tokenizer.apply_chat_template(
     messages, 
     tokenize=False, 
@@ -140,7 +143,7 @@ def build_prompt(tokenizer, _messages: List[Message]):
       continue
 
     for content in message.content:
-      # note: we only support one image at a time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
+      # note: wae only support one image at  time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
       # follows the convention in https://platform.openai.com/docs/guides/vision
       if isinstance(content, dict) and content.get("type", None) == "image":
         image_str = content.get("image", None)
@@ -171,10 +174,10 @@ class PromptSession:
 
 
 class ChatGPTAPI:
-  def __init__(self, node: Node, inference_engine_classname: str, response_timeout_secs: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
+  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
-    self.response_timeout_secs = response_timeout_secs
+    self.response_timeout = response_timeout
     self.on_chat_completion_request = on_chat_completion_request
     self.app = web.Application(client_max_size=100*1024*1024)  # 100MB to support image upload
     self.prompts: PrefixDict[str, PromptSession] = PrefixDict()
@@ -273,7 +276,7 @@ class ChatGPTAPI:
       return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
 
     try:
-      if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout_secs}s")
+      if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
 
       if stream:
         response = web.StreamResponse(
@@ -322,7 +325,7 @@ class ChatGPTAPI:
 
           return _request_id == request_id and is_finished
 
-        _, tokens, _ = await callback.wait(on_result, timeout=self.response_timeout_secs)
+        _, tokens, _ = await callback.wait(on_result, timeout=self.response_timeout)
         if request_id in self.stream_tasks:  # in case there is still a stream task running, wait for it to complete
           if DEBUG >= 2: print("Pending stream task. Waiting for stream task to complete.")
           try:
@@ -334,7 +337,7 @@ class ChatGPTAPI:
       else:
         _, tokens, _ = await callback.wait(
           lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
-          timeout=self.response_timeout_secs,
+          timeout=self.response_timeout,
         )
 
         finish_reason = "length"

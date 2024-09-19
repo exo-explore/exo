@@ -8,6 +8,7 @@ import psutil
 import uuid
 import netifaces
 from pathlib import Path
+import tempfile
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -33,7 +34,7 @@ def get_system_info():
   return "Non-Mac, non-Linux system"
 
 def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 65535) -> int:
-  used_ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".exo_used_ports")
+  used_ports_file = os.path.join(tempfile.gettempdir(), "exo_used_ports")
 
   def read_used_ports():
     if os.path.exists(used_ports_file):
