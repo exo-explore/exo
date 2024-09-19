@@ -5,12 +5,12 @@
   <img alt="exo logo" src="/docs/exo-logo-transparent.png" width="50%" height="50%">
 </picture>
 
-exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
+exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
 
 
 <h3>
 
-[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs_)
+[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs)
 
 </h3>
 
@@ -30,7 +30,7 @@ Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU:
 
 ## Get Involved
 
-exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs_) team will strive to resolve issues quickly.
+exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
 
 We also welcome contributions from the community. We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/d/1cTCpTIp48UnnIvHeLEUNg1iMy_Q6lRybgECSFCoVJpE/edit?usp=sharing).
 
