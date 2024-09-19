@@ -127,6 +127,7 @@ class ShardedHuggingFaceModel:
         """
         
         model_inputs = None
+        self.hidden_states = None
         
         if hidden_states is not None:
             self.hidden_states = hidden_states
@@ -183,12 +184,14 @@ class ShardedHuggingFaceModel:
             self.cache_position = model_inputs["cache_position"]
             self.past_key_values = model_inputs["past_key_values"]
 
+            if DEBUG >= 4:
+                print(f"model_inputs: {model_inputs}")
+
         # run through decoder layers 
         layer_amt = range(self.shard.start_layer, self.shard.end_layer + 1)
 
         if DEBUG >= 4:
             print(f"hidden_states: {self.hidden_states}")
-            print(f"model_inputs: {model_inputs}")
             print(f"layer_amt: {layer_amt}")
 
         for i in layer_amt:
