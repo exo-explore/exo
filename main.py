@@ -5,10 +5,10 @@ import json
 import time
 import traceback
 import uuid
-from asyncio import CancelledError
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
-from exo.networking.grpc.grpc_discovery import GRPCDiscovery
+from exo.networking.udp_discovery import UDPDiscovery
+from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent
@@ -34,7 +34,7 @@ parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast 
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
 parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
-parser.add_argument("--chatgpt-api-response-timeout-secs", type=int, default=90, help="ChatGPT API response timeout in seconds")
+parser.add_argument("--chatgpt-api-response-timeout", type=int, default=90, help="ChatGPT API response timeout in seconds")
 parser.add_argument("--max-generate-tokens", type=int, default=1024, help="Max tokens to generate in each request")
 parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
@@ -57,7 +57,6 @@ if args.node_port is None:
   if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()
-discovery = GRPCDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, discovery_timeout=args.discovery_timeout)
 chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip in get_all_ip_addresses()]
 web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip in get_all_ip_addresses()]
 if DEBUG >= 0:
@@ -67,6 +66,8 @@ if DEBUG >= 0:
   print("ChatGPT API endpoint served at:")
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
+
+discovery = UDPDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout)
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
 
 node = StandardNode(
@@ -74,10 +75,7 @@ node = StandardNode(
   None,
   inference_engine,
   discovery,
-  chatgpt_api_endpoints=chatgpt_api_endpoints,
-  web_chat_urls=web_chat_urls,
   partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
-  disable_tui=args.disable_tui,
   max_generate_tokens=args.max_generate_tokens,
   topology_viz=topology_viz
 )
@@ -86,14 +84,12 @@ node.server = server
 api = ChatGPTAPI(
   node,
   inference_engine.__class__.__name__,
-  response_timeout_secs=args.chatgpt_api_response_timeout_secs,
+  response_timeout=args.chatgpt_api_response_timeout,
   on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None
 )
 node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
-
-
 def preemptively_start_download(request_id: str, opaque_status: str):
   try:
     status = json.loads(opaque_status)
@@ -105,15 +101,13 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     if DEBUG >= 2:
       print(f"Failed to preemptively start download: {e}")
       traceback.print_exc()
-
-
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
+
 if args.prometheus_client_port:
   from exo.stats.metrics import start_metrics_server
   start_metrics_server(node, args.prometheus_client_port)
 
 last_broadcast_time = 0
-
 
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
   global last_broadcast_time
