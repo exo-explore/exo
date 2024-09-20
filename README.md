@@ -5,12 +5,12 @@
   <img alt="exo logo" src="/docs/exo-logo-transparent.png" width="50%" height="50%">
 </picture>
 
-exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
+exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
 
 
 <h3>
 
-[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs_)
+[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs)
 
 </h3>
 
@@ -25,14 +25,12 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 <div align="center">
-  <h2>Update: Exo Supports Llama 3.1</h2>
-  <p>Run 8B, 70B and 405B parameter Llama 3.1 models on your own devices</p>
-  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/llama.py">See the code</a></p>
+  <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
 </div>
 
 ## Get Involved
 
-exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs_) team will strive to resolve issues quickly.
+exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
 
 We also welcome contributions from the community. We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/d/1cTCpTIp48UnnIvHeLEUNg1iMy_Q6lRybgECSFCoVJpE/edit?usp=sharing).
 
@@ -148,12 +146,38 @@ curl http://localhost:8000/v1/chat/completions \
    }'
 ```
 
+### Example Usage on Multiple Heterogenous Devices (MacOS + Linux)
+
+#### Device 1 (MacOS):
+
+```sh
+python3 main.py --inference-engine tinygrad
+```
+
+Here we explicitly tell exo to use the **tinygrad** inference engine.
+
+#### Device 2 (Linux):
+```sh
+python3 main.py
+```
+
+Linux devices will automatically default to using the **tinygrad** inference engine.
+
+You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/env_vars/). For example, you can configure tinygrad to use the cpu by specifying `CLANG=1`.
+
+
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).
 
 ```sh
 DEBUG=9 python3 main.py
+```
+
+For the **tinygrad** inference engine specifically, there is a separate DEBUG flag `TINYGRAD_DEBUG` that can be used to enable debug logs (1-6).
+
+```sh
+TINYGRAD_DEBUG=2 python3 main.py
 ```
 
 ## Known Issues
