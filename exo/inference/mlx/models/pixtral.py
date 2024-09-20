@@ -1,10 +1,16 @@
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List
 
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
+
+from mlx_lm.models.base import BaseModelArgs
+
+from exo.inference.shard import Shard
+from exo.inference.mlx.models.llama import LlamaModel, ModelArgs as LlamaModelArgs
+from exo.inference.mlx.models.llava import LlavaMultiModalProjector
 
 
 @dataclass
@@ -251,5 +257,161 @@ class PixtralModel(nn.Module):
                 sanitized_weights[key] = value.transpose(0, 2, 3, 1)
             else:
                 sanitized_weights[key] = value
-
         return sanitized_weights
+    
+class LanguageModel(nn.Module):
+  def __init__(self, config: LlamaModelArgs):
+    super().__init__()
+    self.model_type = config.model_type
+    self.shard = config.shard
+    self.model = LlamaModel(config)
+    if self.shard.is_last_layer():
+      self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+  def __call__(
+    self,
+    inputs: mx.array,
+    cache=None,
+    inputs_embeds=None,
+  ):
+    out = self.model(inputs, cache, inputs_embeds)
+    if self.shard.is_last_layer():
+      out = self.lm_head(out)
+    return out
+
+  def sanitize(self, weights):
+    shard_state_dict = {}
+    for key, value in weights.items():
+      if key.startswith('language_model.model.layers.'):
+        layer_num = int(key.split('.')[3])
+        if layer_num < self.shard.start_layer or layer_num > self.shard.end_layer:
+          continue
+      if not self.shard.is_first_layer() and key.startswith('language_model.model.embed_tokens'):
+        continue
+      elif not self.shard.is_last_layer() and (key.startswith('language_model.model.norm') or key.startswith('language_model.lm_head')):
+        continue
+
+      shard_state_dict[key] = value
+
+    return shard_state_dict
+    
+@dataclass
+class PixtralConfig(BaseModelArgs):
+  text_config: LlamaModelArgs
+  vision_config: PixtralVisionConfig = None
+  model_type: str = "pixtral"
+  ignore_index: int = -100
+  image_token_index: int = 32000
+  vision_feature_select_strategy: str = "default"
+  vision_feature_layer: int = -2
+  vocab_size: int = 32000
+
+  @classmethod
+  def from_dict(cls, params):
+    updated_params = {}
+    class_params = inspect.signature(cls).parameters
+    for k, v in params.items():
+      if k in class_params:
+        if k in ["text_config", "vision_config"]:
+          v = class_params[k].annotation.from_dict(v)
+        updated_params.update({k: v})
+
+    return cls(**updated_params)
+    
+@dataclass
+class ModelArgs(PixtralConfig):
+  shard: Shard = field(default_factory=lambda: Shard("", 0, 0, 0))
+
+  def __post_init__(self):
+    if isinstance(self.shard, dict):
+      self.shard = Shard(**self.shard)
+
+    if not isinstance(self.shard, Shard):
+      raise TypeError(f"Expected shard to be a Shard instance or a dict, got {type(self.shard)} instead")
+
+    if not self.shard.is_first_layer():
+      self.vision_config = None
+      
+    self.text_config.shard = self.shard
+
+
+class Model(nn.Module):
+  def __init__(self, config: ModelArgs):
+    super().__init__()
+    self.config = config
+    self.model_type = config.model_type
+
+    if config.vision_config:
+      self.vision_tower = PixtralModel(config.vision_config)
+      self.multi_modal_projector = LlavaMultiModalProjector(config)
+      self.vision_feature_layer = config.vision_feature_layer
+      self.vision_feature_select_strategy = config.vision_feature_select_strategy
+    self.language_model = LanguageModel(config.text_config)
+
+  def get_input_embeddings(
+    self,
+    input_ids: Optional[mx.array] = None,
+    pixel_values: Optional[mx.array] = None,
+  ):
+    if pixel_values is None:
+      return self.language_model(input_ids)
+    inputs_embeds = self.language_model.model.embed_tokens(input_ids)
+    hidden_states = self.vision_tower(pixel_values)
+    selected_image_feature = hidden_states[self.vision_feature_layer]
+
+    if self.vision_feature_select_strategy == "default":
+      selected_image_feature = selected_image_feature[:, 1:]
+    elif self.vision_feature_select_strategy == "full":
+      selected_image_feature = selected_image_feature
+    else:
+      raise ValueError("Unexpected feature selection strategy: "
+                       f"{self.vision_feature_select_strategy}")
+
+    image_features = mx.expand_dims(self.multi_modal_projector(selected_image_feature), axis=0)
+
+    
+    special_image_mask = mx.expand_dims(input_ids == self.config.image_token_index, axis=-1)
+    special_image_mask = mx.broadcast_to(special_image_mask, inputs_embeds.shape)
+    inputs_embeds = self.masked_scatter(inputs_embeds, special_image_mask, image_features)
+    return inputs_embeds
+
+  def masked_scatter(self, inputs_embeds, special_image_mask, image_features):
+    flat_result = inputs_embeds.reshape(-1)
+    flat_mask = special_image_mask.reshape(-1)
+    flat_source = image_features.reshape(-1)
+    
+    indices = mx.array(np.flatnonzero(flat_mask))
+    num_masked = indices.size
+    if flat_source.size < num_masked:
+        raise Exception("Number of elements of source < number of ones in mask")
+    
+    flat_result[indices] = flat_source[:num_masked]
+    return flat_result.reshape(inputs_embeds.shape)
+
+
+  def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None):
+    input_embddings = None
+    if pixel_values is not None:
+      input_embddings = self.get_input_embeddings(input_ids, pixel_values)
+    logits = self.language_model(input_ids, cache=cache, inputs_embeds=input_embddings)
+    return logits
+
+  def sanitize(self, weights):
+    if self.config.vision_config:
+      weights = self.vision_tower.sanitize(weights)
+    else:
+      weights = {k: v for k, v in weights.items() if not k.startswith(('vision_tower', 'multi_modal_projector', 'vision_feature_layer', 'vision_feature_select_strategy'))}
+    weights = self.language_model.sanitize(weights)
+    return weights
+
+  @property
+  def layers(self):
+    return self.language_model.model.layers
+
+  @property
+  def head_dim(self):
+    return (self.language_model.model.head_dim or self.language_model.model.hidden_size // self.language_model.model.num_attention_heads)
+
+  @property
+  def n_kv_heads(self):
+    return self.language_model.model.num_key_value_heads

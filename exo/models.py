@@ -30,4 +30,6 @@ model_base_shards = {
   "deepseek-coder-v2-lite": {"MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", start_layer=0, end_layer=0, n_layers=27),},
   ### llava
   "llava-1.5-7b-hf": {"MLXDynamicShardInferenceEngine": Shard(model_id="llava-hf/llava-1.5-7b-hf", start_layer=0, end_layer=0, n_layers=32),},
+  ### pixtral
+  "pixtral-12b": {"MLXDynamicShardInferenceEngine": Shard(model_id="varb15/hf-internal-testing-pixtral-12b", start_layer=0, end_layer=0, n_layers=40),},
 }

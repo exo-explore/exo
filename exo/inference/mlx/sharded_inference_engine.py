@@ -8,6 +8,7 @@ from typing import Optional
 from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 class MLXDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
@@ -20,8 +21,13 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     loop = asyncio.get_running_loop()
     if image_str:
       image = await get_image_from_str(image_str)
-      inputs = await loop.run_in_executor(self.executor, self.tokenizer, prompt, image, return_tensors="np")
-      pixel_values = mx.array(inputs["pixel_values"])
+      tokenize = partial(self.tokenizer, prompt, image, return_tensors="np")
+      inputs = await loop.run_in_executor(self.executor, tokenize)
+      pixel_values = inputs["pixel_values"]
+      if type(pixel_values) == np.ndarray:
+        pixel_values = mx.array(pixel_values)
+      else:
+        pixel_values = [mx.array(pv) for pv in pixel_values[0]]
       input_ids = mx.array(inputs["input_ids"])
       output_data: np.ndarray = np.array(await loop.run_in_executor(self.executor, self.stateful_sharded_model.step, request_id, input_ids, pixel_values))
     else:
