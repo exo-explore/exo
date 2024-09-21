@@ -8,6 +8,7 @@ import psutil
 import uuid
 import netifaces
 from pathlib import Path
+import tempfile
 from collections import deque
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
@@ -35,7 +36,7 @@ def get_system_info():
 
 
 def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 65535) -> int:
-  used_ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".exo_used_ports")
+  used_ports_file = os.path.join(tempfile.gettempdir(), "exo_used_ports")
 
   def read_used_ports():
     if os.path.exists(used_ports_file):
@@ -116,7 +117,7 @@ class AsyncCallback(Generic[T]):
   def set(self, *args: T) -> None:
     self.result.append(args)
     for observer in self.observers:
-        observer(*args)
+      observer(*args)
     asyncio.create_task(self.notify())
 
   async def notify(self) -> None:

@@ -113,6 +113,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
   async def SendOpaqueStatus(self, request, context):
     request_id = request.request_id
     status = request.status
-    if DEBUG >= 5: print(f"Received SendOpaqueStatus request: {request_id=} {status=}")
+    if DEBUG >= 8: print(f"Received SendOpaqueStatus request: {request_id=} {status=}")
     self.node.on_opaque_status.trigger_all(request_id, status)
     return node_service_pb2.Empty()

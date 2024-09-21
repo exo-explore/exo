@@ -76,76 +76,58 @@ class StandardNode(Node):
       if DEBUG >= 1: print(f"Error updating visualization: {e}")
       if DEBUG >= 1: traceback.print_exc()
 
-  async def start(self, wait_for_peers: int = 0) -> None:
-    await self.server.start()
-    await self.discovery.start()
-    await self.update_peers(wait_for_peers)
-    await self.collect_topology()
-    if DEBUG >= 2: print(f"Collected topology: {self.topology}")
-    asyncio.create_task(self.periodic_topology_collection(5))
-
-  async def stop(self) -> None:
-    await self.discovery.stop()
-    await self.server.stop()
-
   async def process_prompt(self, base_shard: Shard, prompts: List[str], image_strs: Optional[List[str]] = None, request_ids: Optional[List[str]] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     _image_strs = image_strs if image_strs else [None] * len(prompts)
     request_ids = request_ids if request_ids else [str(uuid.uuid4()) for _ in range(len(prompts))]
-
+    
     for prompt, image_str, request_id in zip(prompts, _image_strs, request_ids):
-      asyncio.create_task(
+        asyncio.create_task(
         self.broadcast_opaque_status(
-          request_ids,
-          json.dumps(
-            {
-              "type": "node_status",
-              "node_id": self.id,
-              "status": "start_process_prompt",
-              "base_shard": base_shard.to_dict(),
-              "shard": shard.to_dict(),
-              "prompt": prompt,
-              "image_str": image_str,
-              "inference_state": inference_state,
-              "request_id": request_id,
-            }
-          ),
+            request_id,
+            json.dumps({
+            "type": "node_status",
+            "node_id": self.id,
+            "status": "start_process_prompt",
+            "base_shard": base_shard.to_dict(),
+            "shard": shard.to_dict(),
+            "prompt": prompt,
+            "image_str": image_str,
+            "inference_state": inference_state,
+            "request_id": request_id,
+            }),
         )
-      )
+        )
     start_time = time.perf_counter_ns()
     resp = await self._process_prompt(base_shard, prompts, image_strs, request_ids, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     for prompt, image_str, request_id in zip(prompts, _image_strs, request_ids):
-      asyncio.create_task(
+        asyncio.create_task(
         self.broadcast_opaque_status(
-          request_id,
-          json.dumps(
-            {
-              "type": "node_status",
-              "node_id": self.id,
-              "status": "end_process_prompt",
-              "base_shard": base_shard.to_dict(),
-              "shard": shard.to_dict(),
-              "prompt": prompt,
-              "image_str": image_str,
-              "inference_state": inference_state,
-              "request_id": request_id,
-              "elapsed_time_ns": elapsed_time_ns,
-              "result_size": resp.size if resp is not None else 0,
-            }
-          ),
+            request_id,
+            json.dumps({
+            "type": "node_status",
+            "node_id": self.id,
+            "status": "end_process_prompt",
+            "base_shard": base_shard.to_dict(),
+            "shard": shard.to_dict(),
+            "prompt": prompt,
+            "image_str": image_str,
+            "inference_state": inference_state,
+            "request_id": request_id,
+            "elapsed_time_ns": elapsed_time_ns,
+            "result_size": resp.size if resp is not None else 0,
+            }),
         )
-      )
+        )
     return resp
 
   async def _process_prompt(self, base_shard: Shard, prompts: List[str], image_strs: Optional[List[str]] = None, request_ids: Optional[List[str]] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     assert len(request_ids) == len(prompts)
-
     for idx, request_id in enumerate(request_ids):
       if request_id not in self.buffered_token_output:
         self.buffered_token_output[request_id] = ([], False)
-
     shard = self.get_current_shard(base_shard)
 
     if DEBUG >= 2: print(f"[{request_ids}] process prompt: {base_shard=} {shard=} {prompts=} {image_strs=}")
@@ -156,24 +138,25 @@ class StandardNode(Node):
 
     result, inference_state, is_finished = await self.inference_engine.infer_prompt(request_ids, shard, prompts, image_strs, inference_state=inference_state)
     is_finished = is_finished or len(self.buffered_token_output[request_ids[0]][0]) >= self.max_generate_tokens
-
     for request_id in request_ids:
       if is_finished:
         self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
       asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))  # TODO: this is n^2 communication complexity
 
     assert result.shape[0] == len(request_ids)
-
+    
     for _result, request_id in zip(result, request_ids):
       if _result.size == 1:
         self.buffered_token_output[request_id][0].append(_result.item())
         self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
       if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
+
     if not is_finished:
       asyncio.create_task(self.forward_to_next_shard(shard, result, request_ids, image_strs=image_strs, inference_state=inference_state))
 
     return np.array([self.buffered_token_output[request_id][0] for request_id in request_ids]) if len(self.buffered_token_output[request_ids[0]][0]) > 0 else None
+
 
   async def process_tensor(
     self,
@@ -185,48 +168,44 @@ class StandardNode(Node):
     shard = self.get_current_shard(base_shard)
     if request_ids is None:
       request_ids = [str(uuid.uuid4()) for _ in range(tensor.shape[0])]
-
-    for request_id in request_ids:
-      asyncio.create_task(
+      
+    for request_id in request_ids: 
+        asyncio.create_task(
         self.broadcast_opaque_status(
-          request_id,
-          json.dumps(
-            {
-              "type": "node_status",
-              "node_id": self.id,
-              "status": "start_process_tensor",
-              "base_shard": base_shard.to_dict(),
-              "shard": shard.to_dict(),
-              "tensor_size": tensor.size,
-              "tensor_shape": tensor.shape,
-              "request_id": request_id,
-              "inference_state": inference_state,
-            }
-          ),
+            request_id,
+            json.dumps({
+            "type": "node_status",
+            "node_id": self.id,
+            "status": "start_process_tensor",
+            "base_shard": base_shard.to_dict(),
+            "shard": shard.to_dict(),
+            "tensor_size": tensor.size,
+            "tensor_shape": tensor.shape,
+            "request_id": request_id,
+            "inference_state": inference_state,
+            }),
         )
-      )
+        )
     start_time = time.perf_counter_ns()
     resp = await self._process_tensor(shard, tensor, request_ids, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     for request_id in request_ids:
-      asyncio.create_task(
+        asyncio.create_task(
         self.broadcast_opaque_status(
-          request_id,
-          json.dumps(
-            {
-              "type": "node_status",
-              "node_id": self.id,
-              "status": "end_process_tensor",
-              "base_shard": base_shard.to_dict(),
-              "shard": shard.to_dict(),
-              "request_id": request_id,
-              "elapsed_time_ns": elapsed_time_ns,
-              "result_size": resp.size if resp is not None else 0,
-            }
-          ),
+            request_id,
+            json.dumps({
+            "type": "node_status",
+            "node_id": self.id,
+            "status": "end_process_tensor",
+            "base_shard": base_shard.to_dict(),
+            "shard": shard.to_dict(),
+            "request_id": request_id,
+            "elapsed_time_ns": elapsed_time_ns,
+            "result_size": resp.size if resp is not None else 0,
+            }),
         )
-      )
+        )
     return resp
 
   async def _process_tensor(
@@ -237,23 +216,22 @@ class StandardNode(Node):
     inference_state: Optional[str] = None,
   ) -> Optional[np.ndarray]:
     assert len(request_ids) == tensor.shape[0]
-
+    
     for idx, request_id in enumerate(request_ids):
       if request_id not in self.buffered_token_output:
         self.buffered_token_output[request_id] = ([], False)
-
+    
     shard = self.get_current_shard(base_shard)
 
     try:
       if DEBUG >= 1: print(f"[{request_ids}] process_tensor: {tensor.size=} {tensor.shape=}")
       result, inference_state, is_finished = await self.inference_engine.infer_tensor(request_ids, shard, tensor, inference_state=inference_state)
       is_finished = is_finished or len(self.buffered_token_output[request_ids[0]][0]) >= self.max_generate_tokens
-
       for request_id in request_ids:
         if is_finished:
           self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
         asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))  # TODO: this is n^2 communication complexity
-
+        
       assert result.shape[0] == len(request_ids)
 
       for _result, request_id in zip(result, request_ids):
@@ -274,7 +252,7 @@ class StandardNode(Node):
   async def forward_to_next_shard(
     self,
     base_shard: Shard,
-    tensor_or_prompt: Union[np.ndarray, List[str]],
+    tensor_or_prompt: Union[np.ndarray, str],
     request_ids: List[str],
     image_strs: Optional[List[str]] = None,
     inference_state: Optional[str] = None,
@@ -320,23 +298,75 @@ class StandardNode(Node):
       raise ValueError(f"No current partition found for node: {self.id}")
     return shards[current_partition_index]
 
-  async def update_peers(self, wait_for_peers: int = 0) -> None:
-    self.peers = await self.discovery.discover_peers(wait_for_peers)
-    for peer in self.peers:
-      is_connected = await peer.is_connected()
-      if DEBUG >= 2 and is_connected:
-        print(f"Already connected to {peer.id()}: {is_connected}")
-      if not is_connected:
-        if DEBUG >= 2: print(f"Connecting to {peer.id()}...")
-        await peer.connect()
-        if DEBUG >= 1: print(f"Connected to peer {peer.device_capabilities()} ({peer.id()=})")
+  async def update_peers(self, wait_for_peers: int = 0) -> bool:
+    next_peers = await self.discovery.discover_peers(wait_for_peers)
+    current_peer_ids = {peer.id() for peer in self.peers}
+    next_peer_ids = {peer.id() for peer in next_peers}
+    peers_added = [peer for peer in next_peers if peer.id() not in current_peer_ids]
+    peers_removed = [peer for peer in self.peers if peer.id() not in next_peer_ids]
+    peers_updated = [
+      peer for peer in next_peers
+      if peer.id() in current_peer_ids and any(p.addr() != peer.addr() for p in self.peers if p.id() == peer.id())
+    ]
+    peers_unchanged = [
+      peer for peer in next_peers
+      if peer.id() in current_peer_ids and all(p.addr() == peer.addr() for p in self.peers if p.id() == peer.id())
+    ]
+    peers_to_disconnect = [peer for peer in peers_removed if await peer.is_connected()]
+    peers_to_connect = [peer for peer in peers_added + peers_updated + peers_unchanged if not await peer.is_connected()]
+
+    def _pretty(peers: List[PeerHandle]) -> List[str]:
+      return [f"{peer.id()}@{peer.addr()}" for peer in peers]
+    if DEBUG >= 2: print(f"update_peers: added={peers_added} removed={peers_removed} updated={peers_updated} unchanged={peers_unchanged} to_disconnect={peers_to_disconnect} to_connect={peers_to_connect}")
+
+    async def disconnect_with_timeout(peer, timeout=5):
+      try:
+        await asyncio.wait_for(peer.disconnect(), timeout)
+        return True
+      except Exception as e:
+        print(f"Error disconnecting peer {peer.id()}@{peer.addr()}: {e}")
+        traceback.print_exc()
+        return False
+
+    async def connect_with_timeout(peer, timeout=5):
+      try:
+        await asyncio.wait_for(peer.connect(), timeout)
+        return True
+      except Exception as e:
+        print(f"Error connecting peer {peer.id()}@{peer.addr()}: {e}")
+        traceback.print_exc()
+        return False
+
+    disconnect_results = await asyncio.gather(
+      *(disconnect_with_timeout(peer) for peer in peers_to_disconnect),
+      return_exceptions=True
+    )
+    connect_results = await asyncio.gather(
+      *(connect_with_timeout(peer) for peer in peers_to_connect),
+      return_exceptions=True
+    )
+
+    successful_disconnects = [peer for peer, result in zip(peers_to_disconnect, disconnect_results) if result is True]
+    failed_disconnects = [peer for peer, result in zip(peers_to_disconnect, disconnect_results) if result is False]
+    successful_connects = [peer for peer, result in zip(peers_to_connect, connect_results) if result is True]
+    failed_connects = [peer for peer, result in zip(peers_to_connect, connect_results) if result is False]
+    if DEBUG >= 1:
+      if successful_disconnects: print(f"Successfully disconnected peers: {_pretty(successful_disconnects)}")
+      if failed_disconnects: print(f"Failed to disconnect peers: {_pretty(failed_disconnects)}")
+      if successful_connects: print(f"Successfully connected peers: {_pretty(successful_connects)}")
+      if failed_connects: print(f"Failed to connect peers: {_pretty(failed_connects)}")
+
+    self.peers = next_peers
+    return len(peers_to_connect) > 0 or len(peers_to_disconnect) > 0
 
   async def periodic_topology_collection(self, interval: int):
     while True:
       await asyncio.sleep(interval)
       try:
-        await self.update_peers()
-        await self.collect_topology()
+        did_peers_change = await self.update_peers()
+        if DEBUG >= 2: print(f"{did_peers_change=}")
+        if did_peers_change:
+          await self.collect_topology()
       except Exception as e:
         print(f"Error collecting topology: {e}")
         traceback.print_exc()
@@ -353,7 +383,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
     prev_visited = visited.copy()
-    # TODO: should we add our own peer id here?
+    visited.add(self.id)
     visited.update(p.id() for p in self.peers)
 
     for peer in self.peers:
@@ -368,7 +398,7 @@ class StandardNode(Node):
         continue
 
       try:
-        other_topology = await peer.collect_topology(visited, max_depth=max_depth - 1)
+        other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0)
         if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
         self.topology.merge(other_topology)
       except Exception as e:
@@ -405,7 +435,7 @@ class StandardNode(Node):
     await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
-    if DEBUG >= 5: print(f"Broadcasting opaque status: {request_id=} {status=}")
+    if DEBUG >= 8: print(f"Broadcasting opaque status: {request_id=} {status=}")
 
     async def send_status_to_peer(peer):
       try:
