@@ -89,6 +89,14 @@ source install.sh
 
 - If running on Mac, MLX has an [install guide](https://ml-explore.github.io/mlx/build/html/install.html) with troubleshooting steps.
 
+### Performance
+
+- There are a number of things users have empirically found to improve performance on Apple Silicon Macs:
+
+1. Upgrade to the latest version of MacOS 15.
+2. Run `./configure_mlx.sh`. This runs commands to optimize GPU memory allocation on Apple Silicon Macs.
+
+
 ## Documentation
 
 ### Example Usage on Multiple MacOS Devices
