@@ -23,6 +23,7 @@ install_requires = [
   "requests==2.32.3",
   "rich==13.7.1",
   "safetensors==0.4.3",
+  "tailscale==0.6.1",
   "tenacity==9.0.0",
   "tiktoken==0.7.0",
   "tokenizers==0.19.1",
