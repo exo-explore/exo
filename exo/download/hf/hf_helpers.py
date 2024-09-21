@@ -408,4 +408,4 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
   if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
   allowed_patterns = list(default_patterns)
   allowed_patterns.extend(shard_specific_patterns)
-  return allowed_patterns
+  return list(set(allowed_patterns))
