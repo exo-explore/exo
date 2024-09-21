@@ -29,13 +29,20 @@
 <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
 <option selected="" value="llama-3.1-8b">Llama 3.1 8B</option>
 <option value="llama-3.1-70b">Llama 3.1 70B</option>
+<option value="llama-3.1-70b-bf16">Llama 3.1 70B (BF16)</option>
 <option value="llama-3.1-405b">Llama 3.1 405B</option>
 <option value="llama-3-8b">Llama 3 8B</option>
 <option value="llama-3-70b">Llama 3 70B</option>
 <option value="mistral-nemo">Mistral Nemo</option>
 <option value="mistral-large">Mistral Large</option>
 <option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
+<option value="deepseek-coder-v2.5">Deepseek Coder V2.5</option>
 <option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
+<option value="qwen-2.5-7b">Qwen 2.5 7B</option>
+<option value="qwen-2.5-math-7b">Qwen 2.5 7B (Math)</option>
+<option value="qwen-2.5-14b">Qwen 2.5 14B</option>
+<option value="qwen-2.5-72b">Qwen 2.5 72B</option>
+<option value="qwen-2.5-math-72b">Qwen 2.5 72B (Math)</option>
 </select>
 </div>
 <div @popstate.window="

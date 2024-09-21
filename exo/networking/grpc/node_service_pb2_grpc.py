@@ -17,7 +17,7 @@ try:
 except ImportError:
     _version_not_supported = True
 
-if _version_not_supported:
+if _version_not_supported:  
     warnings.warn(
         f'The grpc package installed is at version {GRPC_VERSION},'
         + f' but the generated code in node_service_pb2_grpc.py depends on'
