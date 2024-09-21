@@ -161,7 +161,7 @@ class TopologyViz:
 
     # Calculate total FLOPS and position on the bar
     total_flops = sum(self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16 for partition in self.partitions)
-    bar_pos = (math.tanh(total_flops/20 - 2) + 1)/2
+    bar_pos = (math.tanh(math.cbrt(total_flops)/2.5 - 2) + 1)
 
     # Add GPU poor/rich bar
     bar_width = 30
