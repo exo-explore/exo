@@ -1,6 +1,7 @@
 import asyncio
 import time
 import traceback
+from datetime import datetime, timezone
 from typing import List, Dict, Callable, Tuple
 from tailscale import Tailscale, Device
 from .discovery import Discovery
@@ -56,18 +57,26 @@ class TailscaleDiscovery(Discovery):
     while True:
       try:
         devices: dict[str, Device] = await self.tailscale.devices()
-        print("Devices:", devices)
-        current_time = time.time()
+        current_time = datetime.now(timezone.utc).timestamp()
 
-        for device in devices.values():
+        # Filter out devices last seen more than 1 minute ago
+        active_devices = {
+          name: device for name, device in devices.items()
+          if device.last_seen is not None and (current_time - device.last_seen.timestamp()) < 30
+        }
+
+        if DEBUG_DISCOVERY >= 4: print(f"Found tailscale devices: {devices}")
+        if DEBUG_DISCOVERY >= 2: print(f"Active tailscale devices: {len(active_devices)}/{len(devices)}")
+        if DEBUG_DISCOVERY >= 2: print("Time since last seen tailscale devices", [(current_time  - device.last_seen.timestamp()) for device in devices.values()])
+
+        for device in active_devices.values():
           if device.name != self.node_id:
             peer_id = device.name
             peer_host = device.addresses[0]  # Assuming the first address is the one we want
             peer_port = self.node_port  # Assuming all peers use the same port
 
             if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
-              if DEBUG >= 1:
-                print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
+              if DEBUG >= 1: print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
               self.known_peers[peer_id] = (
                 self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", self.device_capabilities),
                 current_time,
