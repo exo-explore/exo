@@ -4,7 +4,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from mlx_lm.models.base import create_attention_mask
-from mlx_lm.models.llama import TransformerBlock, ModelArgs
+from mlx_lm.models.qwen2 import TransformerBlock, ModelArgs
 
 from ...shard import Shard
 from .base import IdentityBlock
@@ -24,8 +24,7 @@ class ModelArgs(ModelArgs):
 
     self.shard = Shard(**self.shard)
 
-
-class LlamaModel(nn.Module):
+class Qwen2Model(nn.Module):
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
@@ -54,14 +53,14 @@ class LlamaModel(nn.Module):
       h = inputs
 
     mask = None
-    if h.ndim > 1 and h.shape[1] > 1:
+    if h.shape[1] > 1:
       mask = create_attention_mask(h, cache)
 
     if cache is None:
-      cache = [None]*len(self.layers)
+      cache = [None] * len(self.layers)
 
     for layer, c in zip(self.layers, cache):
-      h = layer(h, mask, cache=c)
+      h = layer(h, mask, c)
 
     if self.args.shard.is_last_layer():
       h = self.norm(h)
@@ -73,7 +72,7 @@ class Model(nn.Module):
     super().__init__()
     self.args = args
     self.model_type = args.model_type
-    self.model = LlamaModel(args)
+    self.model = Qwen2Model(args)
     if self.args.shard.is_last_layer():
       if not args.tie_word_embeddings:
         self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
@@ -110,6 +109,9 @@ class Model(nn.Module):
       elif self.args.shard.is_last_layer() and (key.startswith('model.norm')):
         shard_state_dict[key] = value
 
+    if self.args.tie_word_embeddings:
+      shard_state_dict.pop("lm_head.weight", None)
+
     return shard_state_dict
 
   @property
@@ -118,7 +120,7 @@ class Model(nn.Module):
 
   @property
   def head_dim(self):
-    return (self.args.head_dim or self.args.hidden_size // self.args.num_attention_heads)
+    return self.args.hidden_size // self.args.num_attention_heads
 
   @property
   def n_kv_heads(self):
