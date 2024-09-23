@@ -2,10 +2,9 @@ import json
 import asyncio
 import aiohttp
 import re
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple
 from exo.helpers import DEBUG_DISCOVERY
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
-from datetime import datetime, timezone
 
 async def get_device_id() -> str:
   try:
@@ -39,8 +38,7 @@ async def update_device_attributes(device_id: str, api_key: str, node_id: str, n
       "custom:exo_device_capability_memory": str(device_capabilities.memory),
       "custom:exo_device_capability_flops_fp16": str(device_capabilities.flops.fp16),
       "custom:exo_device_capability_flops_fp32": str(device_capabilities.flops.fp32),
-      "custom:exo_device_capability_flops_int8": str(device_capabilities.flops.int8),
-      "custom:exo_updated_at": str(int(datetime.now(timezone.utc).timestamp()))
+      "custom:exo_device_capability_flops_int8": str(device_capabilities.flops.int8)
     }
 
     for attr_name, attr_value in attributes.items():
@@ -52,7 +50,7 @@ async def update_device_attributes(device_id: str, api_key: str, node_id: str, n
         else:
           print(f"Failed to update device posture attribute {attr_name}: {response.status} {await response.text()}")
 
-async def get_device_attributes(device_id: str, api_key: str) -> Tuple[str, int, DeviceCapabilities, int]:
+async def get_device_attributes(device_id: str, api_key: str) -> Tuple[str, int, DeviceCapabilities]:
   async with aiohttp.ClientSession() as session:
     url = f"https://api.tailscale.com/api/v2/device/{device_id}/attributes"
     headers = {
@@ -74,12 +72,10 @@ async def get_device_attributes(device_id: str, api_key: str) -> Tuple[str, int,
             int8=float(attributes.get("custom:exo_device_capability_flops_int8", 0))
           )
         )
-        updated_at_str = attributes.get("custom:exo_updated_at")
-        updated_at = int(updated_at_str) if updated_at_str else 0
-        return node_id, node_port, device_capabilities, updated_at
+        return node_id, node_port, device_capabilities
       else:
         print(f"Failed to fetch posture attributes for {device_id}: {response.status}")
-        return "", 0, DeviceCapabilities(model="", chip="", memory=0, flops=DeviceFlops(fp16=0, fp32=0, int8=0)), 0
+        return "", 0, DeviceCapabilities(model="", chip="", memory=0, flops=DeviceFlops(fp16=0, fp32=0, int8=0))
 
 def parse_device_attributes(data: Dict[str, str]) -> Dict[str, Any]:
   result = {}

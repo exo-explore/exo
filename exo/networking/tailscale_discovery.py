@@ -1,7 +1,6 @@
 import asyncio
 import time
 import traceback
-from datetime import datetime, timezone
 from typing import List, Dict, Callable, Tuple
 from tailscale import Tailscale, Device
 from .discovery import Discovery
@@ -68,7 +67,7 @@ class TailscaleDiscovery(Discovery):
     while True:
       try:
         devices: dict[str, Device] = await self.tailscale.devices()
-        current_time = datetime.now(timezone.utc).timestamp()
+        current_time = time.time()
 
         active_devices = {
           name: device for name, device in devices.items()
@@ -80,16 +79,11 @@ class TailscaleDiscovery(Discovery):
         if DEBUG_DISCOVERY >= 2: print("Time since last seen tailscale devices", [(current_time  - device.last_seen.timestamp()) for device in devices.values()])
 
         for device in active_devices.values():
-          if device.name == self.node_id:
-            continue
+          if device.name == self.node_id: continue
           peer_host = device.addresses[0]
-          peer_id, peer_port, device_capabilities, updated_at = await get_device_attributes(device.device_id, self.tailscale.api_key)
+          peer_id, peer_port, device_capabilities = await get_device_attributes(device.device_id, self.tailscale.api_key)
           if not peer_id:
             if DEBUG_DISCOVERY >= 4: print(f"{device.device_id} does not have exo node attributes. skipping.")
-            continue
-          if current_time - updated_at > self.discovery_timeout:
-            if DEBUG_DISCOVERY >= 3: print(f"{device.device_id} has outdated exo node attributes. skipping.")
-            if peer_id in self.known_peers: del self.known_peers[peer_id]
             continue
 
           if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
