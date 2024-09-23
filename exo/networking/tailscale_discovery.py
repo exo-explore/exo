@@ -80,26 +80,27 @@ class TailscaleDiscovery(Discovery):
         if DEBUG_DISCOVERY >= 2: print("Time since last seen tailscale devices", [(current_time  - device.last_seen.timestamp()) for device in devices.values()])
 
         for device in active_devices.values():
-          if device.name != self.node_id:
-            peer_host = device.addresses[0]
-            peer_id, peer_port, device_capabilities, updated_at = await get_device_attributes(device.device_id, self.tailscale.api_key)
-            if not peer_id:
-              if DEBUG_DISCOVERY >= 4: print(f"{device.device_id} does not have exo node attributes. skipping.")
-              continue
-            if current_time - updated_at > self.discovery_timeout:
-              if DEBUG_DISCOVERY >= 3: print(f"{device.device_id} has outdated exo node attributes. skipping.")
-              if peer_id in self.known_peers: del self.known_peers[peer_id]
-              continue
+          if device.name == self.node_id:
+            continue
+          peer_host = device.addresses[0]
+          peer_id, peer_port, device_capabilities, updated_at = await get_device_attributes(device.device_id, self.tailscale.api_key)
+          if not peer_id:
+            if DEBUG_DISCOVERY >= 4: print(f"{device.device_id} does not have exo node attributes. skipping.")
+            continue
+          if current_time - updated_at > self.discovery_timeout:
+            if DEBUG_DISCOVERY >= 3: print(f"{device.device_id} has outdated exo node attributes. skipping.")
+            if peer_id in self.known_peers: del self.known_peers[peer_id]
+            continue
 
-            if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
-              if DEBUG >= 1: print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
-              self.known_peers[peer_id] = (
-                self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities),
-                current_time,
-                current_time,
-              )
-            else:
-              self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], current_time)
+          if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
+            if DEBUG >= 1: print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
+            self.known_peers[peer_id] = (
+              self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities),
+              current_time,
+              current_time,
+            )
+          else:
+            self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], current_time)
 
       except Exception as e:
         print(f"Error in discover peers: {e}")
