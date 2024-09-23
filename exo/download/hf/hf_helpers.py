@@ -405,5 +405,7 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
       shard_specific_patterns.add(sorted_file_names[-1])
   else:
     shard_specific_patterns = ["*.safetensors"]
-    if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
-    return list(default_patterns | shard_specific_patterns)
+  if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
+  allowed_patterns = list(default_patterns)
+  allowed_patterns.extend(shard_specific_patterns)
+  return list(set(allowed_patterns))
