@@ -46,8 +46,7 @@ class GRPCPeerHandle(PeerHandle):
     self.stub = None
 
   async def _ensure_connected(self):
-    if not await self.is_connected():
-      await self.connect()
+    if not await self.is_connected(): await asyncio.wait_for(self.connect(), timeout=5)
 
   async def health_check(self) -> bool:
     try:
