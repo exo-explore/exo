@@ -16,8 +16,9 @@ class TailscaleDiscovery(Discovery):
     node_id: str,
     node_port: int,
     create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle],
-    discovery_interval: int = 10,
+    discovery_interval: int = 5,
     discovery_timeout: int = 30,
+    update_interval: int = 15,
     device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     tailscale_api_key: str = None,
     tailnet: str = None,
@@ -27,6 +28,7 @@ class TailscaleDiscovery(Discovery):
     self.create_peer_handle = create_peer_handle
     self.discovery_interval = discovery_interval
     self.discovery_timeout = discovery_timeout
+    self.update_interval = update_interval
     self.device_capabilities = device_capabilities
     self.known_peers: Dict[str, Tuple[PeerHandle, float, float]] = {}
     self.discovery_task = None
@@ -51,7 +53,7 @@ class TailscaleDiscovery(Discovery):
         print(f"Error updating device posture attributes: {e}")
         print(traceback.format_exc())
       finally:
-        await asyncio.sleep(self.discovery_interval)
+        await asyncio.sleep(self.update_interval)
 
   async def get_device_id(self):
     if self._device_id:
