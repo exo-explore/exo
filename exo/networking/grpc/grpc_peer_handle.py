@@ -3,7 +3,6 @@ import numpy as np
 import asyncio
 from typing import Optional, Tuple, List
 
-# These would be generated from the .proto file
 from . import node_service_pb2
 from . import node_service_pb2_grpc
 
