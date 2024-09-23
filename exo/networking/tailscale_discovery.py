@@ -8,6 +8,7 @@ from .discovery import Discovery
 from .peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.helpers import DEBUG, DEBUG_DISCOVERY
+from .tailscale_helpers import get_device_id, update_device_attributes, get_device_attributes, update_device_attributes
 
 class TailscaleDiscovery(Discovery):
   def __init__(
@@ -31,11 +32,59 @@ class TailscaleDiscovery(Discovery):
     self.discovery_task = None
     self.cleanup_task = None
     self.tailscale = Tailscale(api_key=tailscale_api_key, tailnet=tailnet)
+    self._device_id = None
 
   async def start(self):
     self.device_capabilities = device_capabilities()
+    await self.update_device_posture_attributes()  # Fetch and update device posture attributes
     self.discovery_task = asyncio.create_task(self.task_discover_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
+
+  async def get_device_id(self):
+    if self._device_id:
+      return self._device_id
+    self._device_id = await get_device_id()
+    return self._device_id
+
+  async def update_device_posture_attributes(self):
+    await update_device_attributes(await self.get_device_id(), self.tailscale.api_key, self.node_id, self.node_port, self.device_capabilities)
+
+  async def task_discover_peers(self):
+    while True:
+      try:
+        devices: dict[str, Device] = await self.tailscale.devices()
+        current_time = datetime.now(timezone.utc).timestamp()
+
+        active_devices = {
+          name: device for name, device in devices.items()
+          if device.last_seen is not None and (current_time - device.last_seen.timestamp()) < 30
+        }
+
+        if DEBUG_DISCOVERY >= 4: print(f"Found tailscale devices: {devices}")
+        if DEBUG_DISCOVERY >= 2: print(f"Active tailscale devices: {len(active_devices)}/{len(devices)}")
+        if DEBUG_DISCOVERY >= 2: print("Time since last seen tailscale devices", [(current_time  - device.last_seen.timestamp()) for device in devices.values()])
+
+        for device in active_devices.values():
+          if device.name != self.node_id:
+            peer_host = device.addresses[0]
+            peer_id, peer_port, device_capabilities = await get_device_attributes(device.device_id, self.tailscale.api_key)
+            print("retrieved attributes", peer_id, peer_host, peer_port, device_capabilities)
+
+            if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
+              if DEBUG >= 1: print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
+              self.known_peers[peer_id] = (
+                self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities),
+                current_time,
+                current_time,
+              )
+            else:
+              self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], current_time)
+
+      except Exception as e:
+        print(f"Error in discover peers: {e}")
+        print(traceback.format_exc())
+      finally:
+        await asyncio.sleep(self.discovery_interval)
 
   async def stop(self):
     if self.discovery_task:
@@ -52,44 +101,6 @@ class TailscaleDiscovery(Discovery):
           print(f"Current peers: {len(self.known_peers)}/{wait_for_peers}. Waiting for more peers...")
         await asyncio.sleep(0.1)
     return [peer_handle for peer_handle, _, _ in self.known_peers.values()]
-
-  async def task_discover_peers(self):
-    while True:
-      try:
-        devices: dict[str, Device] = await self.tailscale.devices()
-        current_time = datetime.now(timezone.utc).timestamp()
-
-        # Filter out devices last seen more than 1 minute ago
-        active_devices = {
-          name: device for name, device in devices.items()
-          if device.last_seen is not None and (current_time - device.last_seen.timestamp()) < 30
-        }
-
-        if DEBUG_DISCOVERY >= 4: print(f"Found tailscale devices: {devices}")
-        if DEBUG_DISCOVERY >= 2: print(f"Active tailscale devices: {len(active_devices)}/{len(devices)}")
-        if DEBUG_DISCOVERY >= 2: print("Time since last seen tailscale devices", [(current_time  - device.last_seen.timestamp()) for device in devices.values()])
-
-        for device in active_devices.values():
-          if device.name != self.node_id:
-            peer_id = device.name
-            peer_host = device.addresses[0]  # Assuming the first address is the one we want
-            peer_port = self.node_port  # Assuming all peers use the same port
-
-            if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
-              if DEBUG >= 1: print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
-              self.known_peers[peer_id] = (
-                self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", self.device_capabilities),
-                current_time,
-                current_time,
-              )
-            else:
-              self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], current_time)
-
-      except Exception as e:
-        print(f"Error in discover peers: {e}")
-        print(traceback.format_exc())
-      finally:
-        await asyncio.sleep(self.discovery_interval)
 
   async def task_cleanup_peers(self):
     while True:
