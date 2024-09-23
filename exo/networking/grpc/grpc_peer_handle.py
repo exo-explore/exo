@@ -1,5 +1,6 @@
 import grpc
 import numpy as np
+import asyncio
 from typing import Optional, Tuple, List
 
 # These would be generated from the .proto file
@@ -42,6 +43,16 @@ class GRPCPeerHandle(PeerHandle):
       await self.channel.close()
     self.channel = None
     self.stub = None
+
+  async def health_check(self) -> bool:
+    try:
+      request = node_service_pb2.HealthCheckRequest()
+      response = await asyncio.wait_for(self.stub.HealthCheck(request), timeout=5)
+      return response.is_healthy
+    except asyncio.TimeoutError:
+      return False
+    except:
+      return False
 
   async def send_prompt(self, shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.PromptRequest(
