@@ -88,6 +88,7 @@ class TailscaleDiscovery(Discovery):
               continue
             if current_time - updated_at > self.discovery_timeout:
               if DEBUG_DISCOVERY >= 3: print(f"{device.device_id} has outdated exo node attributes. skipping.")
+              if peer_id in self.known_peers: del self.known_peers[peer_id]
               continue
 
             if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
@@ -132,13 +133,10 @@ class TailscaleDiscovery(Discovery):
           peer_handle.id() for peer_handle, connected_at, last_seen in self.known_peers.values()
           if (not await peer_handle.is_connected() and current_time - connected_at > self.discovery_timeout) or current_time - last_seen > self.discovery_timeout
         ]
-        if DEBUG_DISCOVERY >= 2:
-          print("Peer statuses:", {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}" for peer_handle, connected_at, last_seen in self.known_peers.values()})
+        if DEBUG_DISCOVERY >= 2: print("Peer statuses:", {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, {connected_at=}, {last_seen=}" for peer_handle, connected_at, last_seen in self.known_peers.values()})
         for peer_id in peers_to_remove:
-          if peer_id in self.known_peers:
-            del self.known_peers[peer_id]
-          if DEBUG_DISCOVERY >= 2:
-            print(f"Removed peer {peer_id} due to inactivity.")
+          if peer_id in self.known_peers: del self.known_peers[peer_id]
+          if DEBUG_DISCOVERY >= 2: print(f"Removed peer {peer_id} due to inactivity.")
       except Exception as e:
         print(f"Error in cleanup peers: {e}")
         print(traceback.format_exc())
