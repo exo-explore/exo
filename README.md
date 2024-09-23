@@ -38,7 +38,7 @@ We also welcome contributions from the community. We have a list of bounties in 
 
 ### Wide Model Support
 
-exo supports LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
+exo supports different models including LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)), Mistral, LlaVA, Qwen and Deepseek.
 
 ### Dynamic Model Partitioning
 
