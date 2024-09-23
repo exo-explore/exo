@@ -1,6 +1,7 @@
 import json
 import asyncio
 import aiohttp
+import re
 from typing import Dict, Any, Tuple
 from exo.helpers import DEBUG_DISCOVERY
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
@@ -32,8 +33,8 @@ async def update_device_attributes(device_id: str, api_key: str, node_id: str, n
     attributes = {
       "custom:exo_node_id": node_id.replace('-', '_'),
       "custom:exo_node_port": node_port,
-      "custom:exo_device_capability_chip": device_capabilities.chip.replace(' ', '_'),
-      "custom:exo_device_capability_model": device_capabilities.model.replace(' ', '_'),
+      "custom:exo_device_capability_chip": sanitize_attribute(device_capabilities.chip),
+      "custom:exo_device_capability_model": sanitize_attribute(device_capabilities.model),
       "custom:exo_device_capability_memory": str(device_capabilities.memory),
       "custom:exo_device_capability_flops_fp16": str(device_capabilities.flops.fp16),
       "custom:exo_device_capability_flops_fp32": str(device_capabilities.flops.fp32),
@@ -87,3 +88,9 @@ def parse_device_attributes(data: Dict[str, str]) -> Dict[str, Any]:
       elif attr_name in ["device_capability_memory", "device_capability_flops_fp16", "device_capability_flops_fp32", "device_capability_flops_int8"]:
         result[attr_name] = float(value)
   return result
+
+def sanitize_attribute(value: str) -> str:
+  # Replace invalid characters with underscores
+  sanitized_value = re.sub(r'[^a-zA-Z0-9_.]', '_', value)
+  # Truncate to 50 characters
+  return sanitized_value[:50]
