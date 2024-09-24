@@ -100,8 +100,8 @@ class TailscaleDiscovery(Discovery):
             )
           else:
             if not await self.known_peers[peer_id][0].health_check():
-              if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Deleting.")
-              del self.known_peers[peer_id]
+              if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Removing.")
+              if peer_id in self.known_peers: del self.known_peers[peer_id]
               continue
             self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], current_time)
 
