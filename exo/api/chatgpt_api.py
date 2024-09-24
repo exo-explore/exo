@@ -220,11 +220,13 @@ class ChatGPTAPI:
         {"detail": f"Unsupported model: {chat_request.model} with inference engine {self.inference_engine_classname}. Supported models for this engine: {supported_models}"},
         status=400,
       )
-
-    tokenizer = await resolve_tokenizer(shard.model_id)
-    if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
-
-    prompt, image_str = build_prompt(tokenizer, chat_request.messages)
+    if self.inference_engine_classname != "LlamaCppDynamicShardEngine":
+        tokenizer = await resolve_tokenizer(shard.model_id)
+        if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
+        prompt, image_str = build_prompt(tokenizer, chat_request.messages)
+    # just pass the default prompt for now
+    prompt = chat_request.messages[0].content
+    image_str = None
     request_id = str(uuid.uuid4())
     if self.on_chat_completion_request:
       try:

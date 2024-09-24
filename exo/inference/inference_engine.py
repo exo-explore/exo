@@ -1,3 +1,4 @@
+from llama_cpp.llama import Llama
 import numpy as np
 import os
 
@@ -27,5 +28,9 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  elif inference_engine_name == "llama_cpp":
+    from exo.inference.llama_cpp.inference import LlamaCppDynamicShardEngine
+    return LlamaCppDynamicShardEngine(shard_downloader)
+
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")
