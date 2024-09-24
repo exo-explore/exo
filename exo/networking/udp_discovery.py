@@ -53,7 +53,7 @@ class UDPDiscovery(Discovery):
     self.broadcast_interval = broadcast_interval
     self.discovery_timeout = discovery_timeout
     self.device_capabilities = device_capabilities
-    self.known_peers: Dict[str, Tuple[PeerHandle, float, float, bool]] = {}
+    self.known_peers: Dict[str, Tuple[PeerHandle, float, float]] = {}
     self.broadcast_task = None
     self.listen_task = None
     self.cleanup_task = None
@@ -141,9 +141,17 @@ class UDPDiscovery(Discovery):
       device_capabilities = DeviceCapabilities(**message["device_capabilities"])
 
       if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
+        new_peer_handle = self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
+        if not await new_peer_handle.health_check():
+          if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Skipping.")
+          return
         if DEBUG >= 1: print(f"Adding {peer_id=} at {peer_host}:{peer_port}. Replace existing peer_id: {peer_id in self.known_peers}")
-        self.known_peers[peer_id] = (self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities), time.time(), time.time())
+        self.known_peers[peer_id] = (new_peer_handle, time.time(), time.time())
       else:
+        if not await self.known_peers[peer_id][0].health_check():
+          if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Removing.")
+          if peer_id in self.known_peers: del self.known_peers[peer_id]
+          return
         self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], time.time())
 
   async def task_listen_for_peers(self):
