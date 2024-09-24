@@ -92,7 +92,7 @@ jobs:
   unit_test:
     macos:
       xcode: "16.0.0"
-    resource_class: macos.m1.medium.gen1
+    resource_class: macos.m1.large.gen1
     steps:
       - checkout
       - run:
@@ -159,6 +159,7 @@ jobs:
   chatgpt_api_integration_test_mlx:
     macos:
       xcode: "15.4.0"
+    resource_class: macos.m1.large.gen1
     steps:
       - checkout
       - run:
