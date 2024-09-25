@@ -194,6 +194,12 @@ TINYGRAD_DEBUG=2 python3 main.py
 
 ## Known Issues
 
+- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually: 
+
+```sh
+/Applications/Python 3.x/Install Certificates.command
+```
+
 - 🚧 As the library is evolving so quickly, the iOS implementation has fallen behind Python. We have decided for now not to put out the buggy iOS version and receive a bunch of GitHub issues for outdated code. We are working on solving this properly and will make an announcement when it's ready. If you would like access to the iOS implementation now, please email alex@exolabs.net with your GitHub username explaining your use-case and you will be granted access on GitHub.
 
 ## Inference Engines
