@@ -254,9 +254,9 @@ class PixtralModel(nn.Module):
 
         for key, value in weights.items():
             if "patch_conv" in key:
-                sanitized_weights[key] = value.transpose(0, 2, 3, 1)
+                sanitized_weights[key] = value.transpose(0, 2, 3, 1).astype(mx.float16)
             else:
-                sanitized_weights[key] = value
+                sanitized_weights[key] = value.astype(mx.float16)
         return sanitized_weights
     
 class LanguageModel(nn.Module):
@@ -291,7 +291,7 @@ class LanguageModel(nn.Module):
       elif not self.shard.is_last_layer() and (key.startswith('language_model.model.norm') or key.startswith('language_model.lm_head')):
         continue
 
-      shard_state_dict[key] = value
+      shard_state_dict[key] = value.astype(mx.float16)
 
     return shard_state_dict
     
