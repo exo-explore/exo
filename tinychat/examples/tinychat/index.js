@@ -13,6 +13,7 @@ document.addEventListener("alpine:init", () => {
     home: 0,
     generating: false,
     endpoint: `${window.location.origin}/v1`,
+    errorMessage: null,
 
     // performance tracking
     time_till_first: 0,
@@ -51,7 +52,8 @@ document.addEventListener("alpine:init", () => {
 
 
     async handleSend() {
-      const el = document.getElementById("input-form");
+      try {
+        const el = document.getElementById("input-form");
       const value = el.value.trim();
       if (!value && !this.imagePreview) return;
 
@@ -181,8 +183,15 @@ document.addEventListener("alpine:init", () => {
       } catch (error) {
         console.error("Failed to save histories to localStorage:", error);
       }
-
-      this.generating = false;
+      } catch (error) {
+        console.error('error', error)
+        this.errorMessage = error;
+        setTimeout(() => {
+          this.errorMessage = null;
+        }, 5 * 1000)
+      } finally {
+        this.generating = false;
+      }
     },
 
     async handleEnter(event) {
@@ -218,7 +227,12 @@ document.addEventListener("alpine:init", () => {
         }),
       });
       if (!response.ok) {
-        throw new Error("Failed to fetch");
+        const errorResBody = await response.json()
+        if (errorResBody?.detail) {
+          throw new Error(`Failed to fetch completions: ${errorResBody.detail}`);
+        } else {
+          throw new Error("Failed to fetch completions: Unknown error");
+        }
       }
 
       const reader = response.body.pipeThrough(new TextDecoderStream())
