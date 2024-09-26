@@ -25,6 +25,9 @@
 </link></head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
+     <!-- Error Toast -->
+    <div x-show="errorMessage" x-transition.opacity x-text="errorMessage" class="toast">
+    </div>
 <div class="model-selector">
 <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
 <option selected="" value="llama-3.2-1b">Llama 3.2 1B</option>
