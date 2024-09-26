@@ -23,20 +23,21 @@ install_requires = [
   "requests==2.32.3",
   "rich==13.7.1",
   "safetensors==0.4.3",
+  "tailscale==0.6.1",
   "tenacity==9.0.0",
   "tiktoken==0.7.0",
   "tokenizers==0.19.1",
   "tqdm==4.66.4",
   "transformers==4.43.3",
   "uuid==1.30",
-  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@639af3f823cf242a1945dc24183e52a9df0af2b7",
+  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
 ]
 
 # Add macOS-specific packages if on Darwin (macOS)
 if sys.platform.startswith("darwin"):
   install_requires.extend([
-    "mlx==0.17.1",
-    "mlx-lm==0.17.0",
+    "mlx==0.17.3",
+    "mlx-lm==0.18.2",
   ])
 
 extras_require = {

@@ -25,9 +25,14 @@
 </head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
+     <!-- Error Toast -->
+    <div x-show="errorMessage" x-transition.opacity x-text="errorMessage" class="toast">
+    </div>
 <div class="model-selector">
 <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
-<option selected="" value="llama-3.1-8b">Llama 3.1 8B</option>
+<option selected="" value="llama-3.2-1b">Llama 3.2 1B</option>
+<option value="llama-3.2-3b">Llama 3.2 3B</option>
+<option value="llama-3.1-8b">Llama 3.1 8B</option>
 <option value="llama-3.1-70b">Llama 3.1 70B</option>
 <option value="llama-3.1-70b-bf16">Llama 3.1 70B (BF16)</option>
 <option value="llama-3.1-405b">Llama 3.1 405B</option>
@@ -36,6 +41,7 @@
 <option value="mistral-nemo">Mistral Nemo</option>
 <option value="mistral-large">Mistral Large</option>
 <option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
+<option value="deepseek-coder-v2.5">Deepseek Coder V2.5</option>
 <option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
 <option value="qwen-2.5-7b">Qwen 2.5 7B</option>
 <option value="qwen-2.5-math-7b">Qwen 2.5 7B (Math)</option>
