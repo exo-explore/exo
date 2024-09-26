@@ -54,135 +54,135 @@ document.addEventListener("alpine:init", () => {
     async handleSend() {
       try {
         const el = document.getElementById("input-form");
-      const value = el.value.trim();
-      if (!value && !this.imagePreview) return;
+        const value = el.value.trim();
+        if (!value && !this.imagePreview) return;
 
-      if (this.generating) return;
-      this.generating = true;
-      if (this.home === 0) this.home = 1;
+        if (this.generating) return;
+        this.generating = true;
+        if (this.home === 0) this.home = 1;
 
-      // ensure that going back in history will go back to home
-      window.history.pushState({}, "", "/");
+        // ensure that going back in history will go back to home
+        window.history.pushState({}, "", "/");
 
-      // add message to list
-      if (value) {
-        this.cstate.messages.push({ role: "user", content: value });
-      }
-
-      // clear textarea
-      el.value = "";
-      el.style.height = "auto";
-      el.style.height = el.scrollHeight + "px";
-
-      // reset performance tracking
-      const prefill_start = Date.now();
-      let start_time = 0;
-      let tokens = 0;
-      this.tokens_per_second = 0;
-
-      // prepare messages for API request
-      let apiMessages = this.cstate.messages.map(msg => {
-        if (msg.content.startsWith('![Uploaded Image]')) {
-          return {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: this.imageUrl
-                }
-              },
-              {
-                type: "text",
-                text: value // Use the actual text the user typed
-              }
-            ]
-          };
-        } else {
-          return {
-            role: msg.role,
-            content: msg.content
-          };
+        // add message to list
+        if (value) {
+          this.cstate.messages.push({ role: "user", content: value });
         }
-      });
-      const containsImage = apiMessages.some(msg => Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url'));
-      if (containsImage) {
-        // Map all messages with string content to object with type text
-        apiMessages = apiMessages.map(msg => {
-          if (typeof msg.content === 'string') {
+
+        // clear textarea
+        el.value = "";
+        el.style.height = "auto";
+        el.style.height = el.scrollHeight + "px";
+
+        // reset performance tracking
+        const prefill_start = Date.now();
+        let start_time = 0;
+        let tokens = 0;
+        this.tokens_per_second = 0;
+
+        // prepare messages for API request
+        let apiMessages = this.cstate.messages.map(msg => {
+          if (msg.content.startsWith('![Uploaded Image]')) {
             return {
-              ...msg,
+              role: "user",
               content: [
                 {
+                  type: "image_url",
+                  image_url: {
+                    url: this.imageUrl
+                  }
+                },
+                {
                   type: "text",
-                  text: msg.content
+                  text: value // Use the actual text the user typed
                 }
               ]
+            };
+          } else {
+            return {
+              role: msg.role,
+              content: msg.content
+            };
+          }
+        });
+        const containsImage = apiMessages.some(msg => Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url'));
+        if (containsImage) {
+          // Map all messages with string content to object with type text
+          apiMessages = apiMessages.map(msg => {
+            if (typeof msg.content === 'string') {
+              return {
+                ...msg,
+                content: [
+                  {
+                    type: "text",
+                    text: msg.content
+                  }
+                ]
+              };
+            }
+            return msg;
+          });
+        }
+
+
+        // start receiving server sent events
+        let gottenFirstChunk = false;
+        for await (
+          const chunk of this.openaiChatCompletion(this.cstate.selectedModel, apiMessages)
+        ) {
+          if (!gottenFirstChunk) {
+            this.cstate.messages.push({ role: "assistant", content: "" });
+            gottenFirstChunk = true;
+          }
+
+          // add chunk to the last message
+          this.cstate.messages[this.cstate.messages.length - 1].content += chunk;
+
+          // calculate performance tracking
+          tokens += 1;
+          this.total_tokens += 1;
+          if (start_time === 0) {
+            start_time = Date.now();
+            this.time_till_first = start_time - prefill_start;
+          } else {
+            const diff = Date.now() - start_time;
+            if (diff > 0) {
+              this.tokens_per_second = tokens / (diff / 1000);
+            }
+          }
+        }
+
+        // Clean the cstate before adding it to histories
+        const cleanedCstate = JSON.parse(JSON.stringify(this.cstate));
+        cleanedCstate.messages = cleanedCstate.messages.map(msg => {
+          if (Array.isArray(msg.content)) {
+            return {
+              ...msg,
+              content: msg.content.map(item =>
+                item.type === 'image_url' ? { type: 'image_url', image_url: { url: '[IMAGE_PLACEHOLDER]' } } : item
+              )
             };
           }
           return msg;
         });
-      }
 
-
-      // start receiving server sent events
-      let gottenFirstChunk = false;
-      for await (
-        const chunk of this.openaiChatCompletion(this.cstate.selectedModel, apiMessages)
-      ) {
-        if (!gottenFirstChunk) {
-          this.cstate.messages.push({ role: "assistant", content: "" });
-          gottenFirstChunk = true;
-        }
-
-        // add chunk to the last message
-        this.cstate.messages[this.cstate.messages.length - 1].content += chunk;
-
-        // calculate performance tracking
-        tokens += 1;
-        this.total_tokens += 1;
-        if (start_time === 0) {
-          start_time = Date.now();
-          this.time_till_first = start_time - prefill_start;
+        // Update the state in histories or add it if it doesn't exist
+        const index = this.histories.findIndex((cstate) => cstate.time === cleanedCstate.time);
+        cleanedCstate.time = Date.now();
+        if (index !== -1) {
+          // Update the existing entry
+          this.histories[index] = cleanedCstate;
         } else {
-          const diff = Date.now() - start_time;
-          if (diff > 0) {
-            this.tokens_per_second = tokens / (diff / 1000);
-          }
+          // Add a new entry
+          this.histories.push(cleanedCstate);
         }
-      }
-
-      // Clean the cstate before adding it to histories
-      const cleanedCstate = JSON.parse(JSON.stringify(this.cstate));
-      cleanedCstate.messages = cleanedCstate.messages.map(msg => {
-        if (Array.isArray(msg.content)) {
-          return {
-            ...msg,
-            content: msg.content.map(item =>
-              item.type === 'image_url' ? { type: 'image_url', image_url: { url: '[IMAGE_PLACEHOLDER]' } } : item
-            )
-          };
+        console.log(this.histories)
+        // update in local storage
+        try {
+          localStorage.setItem("histories", JSON.stringify(this.histories));
+        } catch (error) {
+          console.error("Failed to save histories to localStorage:", error);
         }
-        return msg;
-      });
-
-      // Update the state in histories or add it if it doesn't exist
-      const index = this.histories.findIndex((cstate) => cstate.time === cleanedCstate.time);
-      cleanedCstate.time = Date.now();
-      if (index !== -1) {
-        // Update the existing entry
-        this.histories[index] = cleanedCstate;
-      } else {
-        // Add a new entry
-        this.histories.push(cleanedCstate);
-      }
-      console.log(this.histories)
-      // update in local storage
-      try {
-        localStorage.setItem("histories", JSON.stringify(this.histories));
-      } catch (error) {
-        console.error("Failed to save histories to localStorage:", error);
-      }
       } catch (error) {
         console.error('error', error)
         this.errorMessage = error;
