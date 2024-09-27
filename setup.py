@@ -36,7 +36,7 @@ install_requires = [
 # Add macOS-specific packages if on Darwin (macOS)
 if sys.platform.startswith("darwin"):
   install_requires.extend([
-    "mlx==0.17.3",
+    "mlx==0.18.0",
     "mlx-lm==0.18.2",
   ])
 
