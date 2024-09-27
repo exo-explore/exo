@@ -7,8 +7,8 @@ import traceback
 import uuid
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
-from exo.networking.udp_discovery import UDPDiscovery
-from exo.networking.tailscale_discovery import TailscaleDiscovery
+from exo.networking.udp.udp_discovery import UDPDiscovery
+from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
