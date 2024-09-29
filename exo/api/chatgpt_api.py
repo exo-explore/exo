@@ -122,8 +122,7 @@ def build_prompt(tokenizer, _messages: List[Message]):
       continue
 
     for content in message.content:
-      # note: we only support one image at a time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
-      # follows the convention in https://platform.openai.com/docs/guides/vision
+      # Supports only one image currently
       if isinstance(content, dict) and content.get("type", None) == "image":
         image_str = content.get("image", None)
         break
@@ -208,10 +207,16 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)
     chat_request = parse_chat_request(data)
-    if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to llama instead
+
+    # Handle model redirects for backward compatibility
+    if chat_request.model and chat_request.model.startswith("gpt-"):
       chat_request.model = "llama-3.1-8b"
+
+    # Check if model is valid
     if not chat_request.model or chat_request.model not in model_base_shards:
-      if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_base_shards.keys())}. Defaulting to llama-3.1-8b")
+      if DEBUG >= 1:
+        print(f"Invalid model: {chat_request.model}. Supported: {list(model_base_shards.keys())}. Defaulting to llama-3.1
+
       chat_request.model = "llama-3.1-8b"
     shard = model_base_shards[chat_request.model].get(self.inference_engine_classname, None)
     if not shard:
