@@ -120,7 +120,9 @@ That's it! No configuration required - exo will automatically discover the other
 
 exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:8000
 
-For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Example with curls:
+For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Examples with curl:
+
+#### Llama 3.1 8B:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
@@ -131,6 +133,20 @@ curl http://localhost:8000/v1/chat/completions \
      "temperature": 0.7
    }'
 ```
+
+#### Llama 3.1 405B:
+
+```sh
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "llama-3.1-405b",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
+
+#### Llava 1.5 7B (Vision Language Model):
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
