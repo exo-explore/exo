@@ -224,11 +224,11 @@ exo supports the following inference engines:
 
 - ✅ [MLX](exo/inference/mlx/sharded_inference_engine.py)
 - ✅ [tinygrad](exo/inference/tinygrad/inference.py)
-- 🚧 [llama.cpp](TODO)
+- 🚧 [PyTorch](https://github.com/exo-explore/exo/pull/139)
+- 🚧 [llama.cpp](https://github.com/exo-explore/exo/issues/167)
 
 ## Networking Modules
 
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
-
