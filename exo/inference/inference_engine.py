@@ -17,7 +17,7 @@ class InferenceEngine(ABC):
     pass
 
 
-def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDownloader, quantize: Optional[str] = None):
+def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDownloader):
   if inference_engine_name == "mlx":
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 
@@ -27,6 +27,6 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
     import tinygrad.helpers
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
-    return TinygradDynamicShardInferenceEngine(shard_downloader, quantize)
+    return TinygradDynamicShardInferenceEngine(shard_downloader)
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")

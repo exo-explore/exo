@@ -230,19 +230,23 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
     return v.reshape(n_heads, 2, v.shape[0] // n_heads // 2, v.shape[1]).transpose(1, 2).reshape(*v.shape[:2])
 
   keymap = {
-    "model.embed_tokens.weight": "tok_embeddings.weight",
-    **{f"model.layers.{l}.input_layernorm.weight": f"layers.{l}.attention_norm.weight"
+    **{f"model.embed_tokens.{_type}": f"tok_embeddings.{_type}" for _type in ["weight", "scales", "biases"]},
+    **{f"model.layers.{l}.input_layernorm.{_type}": f"layers.{l}.attention_norm.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.self_attn.{x}_proj.weight": f"layers.{l}.attention.w{x}.weight"
+    **{f"model.layers.{l}.self_attn.{x}_proj.{_type}": f"layers.{l}.attention.w{x}.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for x in ["q", "k", "v", "o"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.post_attention_layernorm.weight": f"layers.{l}.ffn_norm.weight"
+    **{f"model.layers.{l}.post_attention_layernorm.{_type}": f"layers.{l}.ffn_norm.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.mlp.{x}_proj.weight": f"layers.{l}.feed_forward.w{y}.weight"
+    **{f"model.layers.{l}.mlp.{x}_proj.{_type}": f"layers.{l}.feed_forward.w{y}.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for x, y in {"gate": "1", "down": "2", "up": "3"}.items()
        for l in range(len(model.layers))},
-    "model.norm.weight": "norm.weight",
-    "lm_head.weight": "output.weight",
+    **{f"model.norm.{_type}": f"norm.{_type}" for _type in ["weight", "scales", "biases"]},
+    **{f"lm_head.{_type}": f"output.{_type}" for _type in ["weight", "scales", "biases"]},
   }
   sd = {}
   for k, v in weights.items():

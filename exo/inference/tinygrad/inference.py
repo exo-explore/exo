@@ -29,77 +29,88 @@ MODEL_PARAMS = {
   "70B": {"args": {"dim": 8192, "n_heads": 64, "n_kv_heads": 8, "n_layers": 80, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 28672}, "files": 8}
 }
 
-# **** quantized linears ****
-class Int8Linear:
-  def __init__(self, in_features, out_features, bias=False):
-    assert bias == False
-    self.weight = Tensor.ones(out_features, in_features, dtype=dtypes.int8)
-    self.scale = Tensor.ones(out_features, dtype=dtypes.half)
+
+class MLXQuantizedLinear:
+  def __init__(self, in_features, out_features, bits=4, group_size=64, bias=False):
+    assert in_features % group_size == 0
+    assert 32 % bits == 0
+    assert (in_features * bits) % 32 == 0
+    self.weight = Tensor.ones(out_features, (in_features * bits) // 32, dtype=dtypes.uint32)
+    self.scales = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
+    if bias:
+      self.biases = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
+    self.bits = bits
+    self.group_size = group_size
 
   def __call__(self, x):
-    return x.dot(self.weight.cast(dtype=dtypes.half).T*self.scale)
+    M, K = x.shape
+    N, K_packed = self.weight.shape
 
-  @staticmethod
-  def quantize(tensors, device):
-    new_tensors = {}
-    for name,v in tensors.items():
-      if "feed_forward" in name or "attention.w" in name:
-        assert "weight" in name, name
-        scale = v.abs().max(axis=1) / 127.0
-        int8_weight = (v.T/scale).T.cast(dtype=dtypes.int8)
-        new_tensors[name] = int8_weight
-        new_tensors[name.replace('weight', 'scale')] = scale
-        if isinstance(device, tuple):
-          new_tensors[name].shard_(device, axis=-1)
-          new_tensors[name.replace('weight', 'scale')].shard_(device, axis=None)
-      else:
-        new_tensors[name] = v
-    return new_tensors
+    num_values_per_uint32 = 32 // self.bits
+    K_unpacked = K_packed * num_values_per_uint32
+    num_groups = K // self.group_size
+    packs_per_group = self.group_size // num_values_per_uint32
 
-def NF4Linear(block_size):
-  _CODE = [
-    -1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453, -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
-    0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224, 0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1.0,
-  ]
-  CODE = Tensor.stack(*[Tensor(c, dtype=dtypes.float16) for c in _CODE])
-  class _NF4Linear:
-    def __init__(self, in_features, out_features, bias=False):
-      assert not bias, "bias not supported"
-      self.in_features, self.out_features = in_features, out_features
-      self.weight = Tensor.empty(int(out_features * in_features / 2), dtype=dtypes.uint8)
-      self.scale = Tensor.empty(int(out_features * in_features / block_size), 1, dtype=dtypes.float16)
+    assert K == K_unpacked, f"Mismatch in K dimensions: {K} vs {K_unpacked}"
+    assert self.scales.shape == self.biases.shape == (N, num_groups), f"Scales must have shape (N, {num_groups}), got {self.scales.shape}"
+    assert K % self.group_size == 0, "K must be divisible by the number of groups"
 
-    def __call__(self, x: Tensor) -> Tensor:
-      high_bits = self.weight
-      low_bits = (self.weight * 2 ** 4).contiguous()
-      unpacked = Tensor.stack(high_bits, low_bits, dim=-1).div(2 ** 4, upcast=False)
-      unscaled = CODE[unpacked].to(x.device).reshape(-1, block_size) * self.scale
-      return x.linear(unscaled.reshape(self.out_features, self.in_features).T)
+    bitmask = (1 << self.bits) - 1
 
-    @staticmethod
-    def quantize(state_dict: dict[str, Tensor], device) -> dict[str, Tensor]:
-      new_state_dict = {}
-      for k, v in state_dict.items():
-        if "feed_forward" in k or "attention.w" in k:
-          grouped = v.reshape(-1, block_size)
-          scale = (grouped.abs().max(axis=1, keepdim=True))
-          coded = ((grouped / scale).unsqueeze(-1) - CODE.to(v.device)).abs().argmin(axis=-1).cast(dtypes.uint8).flatten()
-          new_state_dict[k] = coded[::2] * 2 ** 4 + coded[1::2]
-          new_state_dict[k.replace(".weight", ".scale")] = scale.cast(dtypes.float16)
-          if isinstance(device, tuple):
-            new_state_dict[k].shard_(device, axis=-1)
-            new_state_dict[k.replace('weight', 'scale')].shard_(device, axis=None)
-        else:
-          new_state_dict[k] = v
-      return new_state_dict
-  return _NF4Linear
+    x_grouped = x.reshape(M, num_groups, self.group_size)
 
+    output = Tensor.zeros((M, N), dtype=dtypes.float16)
 
-def build_transformer(model_path: Path, shard: Shard, model_size="8B", quantize=None, device=None):
+    shift_list = [i * self.bits for i in range(num_values_per_uint32)]
+
+    for g in range(num_groups):
+        scale_g = self.scales[:, g].reshape(N, 1)
+        bias_g = self.biases[:, g].reshape(N, 1)
+
+        pack_start = g * packs_per_group
+        pack_end = pack_start + packs_per_group
+        w_packed_group = self.weight[:, pack_start:pack_end]
+
+        unpacked_values = []
+
+        for shift_amount in shift_list:
+            shifted = w_packed_group >> shift_amount
+            masked = (shifted & bitmask).cast(dtypes.float16)
+            masked = masked.reshape(N, -1)
+
+            unpacked_values.append(masked)
+
+        w_unpacked_stack = Tensor.stack(*unpacked_values, dim=0)
+        w_unpacked_group = w_unpacked_stack.permute(1, 2, 0).reshape(N, self.group_size)
+        w_group = w_unpacked_group * scale_g + bias_g
+
+        x_group = x_grouped[:, g, :]
+
+        partial_output = x_group @ w_group.T
+        output += partial_output
+
+    return output
+  
+# class MLXQuantizedEmbedding:
+#   def __init__(self, vocab_size, embed_size, bits = 4, group_size= 64):
+#     self.vocab_sz, self.embed_sz = vocab_size, embed_size
+#     self.bits = bits
+#     self.group_size = group_size
+#     self.weight = 
+#     Tensor.glorot_uniform(vocab_size, embed_size)
+
+def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
+  try:
+    with open(model_path/"config.json", "r") as f:
+      config = json.load(f)
+  except FileNotFoundError:
+    raise Exception(f"Config file not found in {model_path}")
+  
   # build model
-  if quantize == "int8": linear = Int8Linear
-  elif quantize == "nf4": linear = NF4Linear(64)
-  else: linear = nn.Linear
+  if (quantization := config.get("quantization", None)) is not None:
+    linear = partial(MLXQuantizedLinear, **quantization)
+  else:
+    linear = nn.Linear
   with Context(THREEFRY=0):
     model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
 
@@ -114,33 +125,15 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", quantize=
   weights = fix_bf16(weights)
 
   with Context(BEAM=0):
-    # quantize
-    if quantize is not None:
-      weights = linear.quantize(weights, device)
-      for _,v in weights.items(): v.realize()
-
-    # shard
-    if isinstance(device, tuple):
-      for k,v in nn.state.get_state_dict(model).items():
-        if 'scale' in k: v.shard_(device, axis=None)  # from quantized
-        elif '.attention.' in k: v.shard_(device, axis=-1)
-        elif '.feed_forward.w1.' in k: v.shard_(device, axis=0)
-        elif '.feed_forward.w3.' in k: v.shard_(device, axis=0)
-        elif '.feed_forward.' in k: v.shard_(device, axis=-1)
-        elif 'tok_embeddings.weight' in k: v.shard_(device, axis=0)
-        elif 'output.weight' in k: v.shard_(device, axis=0)
-        else: v.shard_(device, axis=None)
-        
     # replace weights in model
     load_state_dict(model, weights, strict=False, consume=False)  # consume=True
   return model
 
 
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
-  def __init__(self, shard_downloader: ShardDownloader, quantize: Optional[str] = None):
+  def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
-    self.quantize = quantize
     self.executor = ThreadPoolExecutor(max_workers=1)
 
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
@@ -182,7 +175,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     model_path = await self.shard_downloader.ensure_shard(shard)
 
     if self.shard != shard:
-      self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B", self.quantize)
+      self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B")
 
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
