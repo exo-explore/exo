@@ -254,6 +254,27 @@ document.addEventListener("alpine:init", () => {
         }
       }
     },
+
+    newModel: '',
+
+    addModel() {
+      if (this.newModel.trim() !== '') {
+        const newOption = document.createElement('option');
+        newOption.value = this.newModel;
+        newOption.text = this.newModel;
+        document.querySelector('.model-selector select').appendChild(newOption);
+        this.newModel = '';
+      }
+    },
+
+    removeModel() {
+      const select = document.querySelector('.model-selector select');
+      const selectedOption = select.options[select.selectedIndex];
+      if (selectedOption) {
+        select.removeChild(selectedOption);
+        this.cstate.selectedModel = select.options.length > 0 ? select.options[0].value : '';
+      }
+    },
   }));
 });
 

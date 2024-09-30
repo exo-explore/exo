@@ -15,6 +15,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.models import model_base_shards
 from typing import Callable
+import requests  # Add this import
 
 
 class Message:
@@ -208,12 +209,40 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)
     chat_request = parse_chat_request(data)
+    
     if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to llama instead
       chat_request.model = "llama-3.1-8b"
-    if not chat_request.model or chat_request.model not in model_base_shards:
-      if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_base_shards.keys())}. Defaulting to llama-3.1-8b")
+    
+    if not chat_request.model:
+      if DEBUG >= 1: print(f"No model provided. Defaulting to llama-3.1-8b")
       chat_request.model = "llama-3.1-8b"
-    shard = model_base_shards[chat_request.model].get(self.inference_engine_classname, None)
+    
+    shard = None
+    if chat_request.model in model_base_shards:
+      shard = model_base_shards[chat_request.model].get(self.inference_engine_classname, None)
+    else:
+      # HF models
+      hf_model_url = f"https://huggingface.co/{chat_request.model}"
+      response = requests.get(hf_model_url)
+      if response.status_code == 404:
+        return web.json_response(
+          {"detail": f"Model {chat_request.model} does not exist on HuggingFace."},
+          status=400,
+        )
+      elif response.status_code == 200:
+        try:
+          shard = create_shard_from_hf_model(chat_request.model, self.inference_engine_classname)
+        except Exception as e:
+          return web.json_response(
+            {"detail": f"Error loading model {chat_request.model}: {str(e)}"},
+            status=500,
+          )
+      else:
+        return web.json_response(
+          {"detail": f"Error finding model on HuggingFace: {response.status_code}"},
+          status=500,
+        )
+
     if not shard:
       supported_models = [model for model, engines in model_base_shards.items() if self.inference_engine_classname in engines]
       return web.json_response(
@@ -338,3 +367,19 @@ class ChatGPTAPI:
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
+
+
+def create_shard_from_hf_model(model_name: str, inference_engine_classname: str):
+  config_url = f"https://huggingface.co/{model_name}/resolve/main/config.json"
+  response = requests.get(config_url)
+  response.raise_for_status()
+  config = response.json()
+  n_layers = config.get("num_hidden_layers")
+  if n_layers is None:
+    raise ValueError("num_hidden_layers not found in config")
+  if inference_engine_classname.startswith("MLX") and not model_name.startswith("mlx-community"):
+    raise ValueError("MLX engine only supports mlx models")
+  if not inference_engine_classname.startswith("MLX") and model_name.startswith("mlx-community"):
+    raise ValueError("Non-MLX engine cannot use mlx models")
+  
+  return Shard(model_id=model_name, start_layer=0, end_layer=0, n_layers=n_layers)

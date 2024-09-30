@@ -310,8 +310,12 @@ p {
   display: flex;
   justify-content: center;
   padding: 20px 0;
+  gap: 10px; /* Add gap between elements */
 }
-.model-selector select {
+
+.model-selector select,
+.model-selector .model-input,
+.model-selector .model-add-button {
   padding: 10px 20px;
   font-size: 16px;
   border: 1px solid #ccc;
@@ -319,7 +323,26 @@ p {
   background-color: #f8f8f8;
   cursor: pointer;
 }
-.model-selector select:focus {
+
+.model-selector .model-input {
+  flex: 1; /* Make the input take up available space */
+}
+
+.model-selector .model-add-button {
+  background-color: var(--secondary-color);
+  color: var(--foreground-color);
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.model-selector .model-add-button:hover {
+  background-color: var(--secondary-color-transparent);
+}
+
+.model-selector select:focus,
+.model-selector .model-input:focus,
+.model-selector .model-add-button:focus {
   outline: none;
   border-color: #007bff;
   box-shadow: 0 0 0 2px rgba(0,123,255,.25);
@@ -393,4 +416,19 @@ p {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+.model-selector .model-remove-button {
+  background-color: var(--red-color);
+  color: var(--foreground-color);
+  border: none;
+  padding: 10px 20px;
+  font-size: 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.model-selector .model-remove-button:hover {
+  background-color: var(--red-color-transparent);
 }
