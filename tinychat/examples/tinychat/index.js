@@ -25,6 +25,7 @@ document.addEventListener("alpine:init", () => {
 
     // download progress
     downloadProgress: null,
+    downloadProgressInterval: null, // To keep track of the polling interval
 
     removeHistory(cstate) {
       const index = this.histories.findIndex((state) => {
@@ -45,6 +46,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     formatDuration(seconds) {
+      if (seconds === null || seconds === undefined || isNaN(seconds)) return '';
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
       const s = Math.floor(seconds % 60);
@@ -93,6 +95,9 @@ document.addEventListener("alpine:init", () => {
         el.value = "";
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
+
+        // Start polling for download progress
+        this.startDownloadProgressPolling();
 
         // reset performance tracking
         const prefill_start = Date.now();
@@ -278,6 +283,7 @@ document.addEventListener("alpine:init", () => {
     async fetchDownloadProgress() {
       try {
         console.log("fetching download progress");
+        await new Promise(resolve => setTimeout(resolve, 2000));
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
@@ -289,6 +295,8 @@ document.addEventListener("alpine:init", () => {
             // Check if download is complete
             if (progress.status === "complete" || progress.status === "failed") {
               this.downloadProgress = null; // Hide the progress section
+              // Stop polling
+              this.stopDownloadProgressPolling();
             } else {
               // Compute human-readable strings
               progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
@@ -302,19 +310,34 @@ document.addEventListener("alpine:init", () => {
           } else {
             // No ongoing download
             this.downloadProgress = null;
+            // Stop polling
+            this.stopDownloadProgressPolling();
           }
         }
       } catch (error) {
         console.error("Error fetching download progress:", error);
         this.downloadProgress = null;
+        // Stop polling in case of error
+        this.stopDownloadProgressPolling();
       }
     },
-    // Initialize the component
-    init() {
-      // Start polling for download progress every second
-      setInterval(() => {
+
+    startDownloadProgressPolling() {
+      if (this.downloadProgressInterval) {
+        // Already polling
+        return;
+      }
+      this.fetchDownloadProgress(); // Fetch immediately
+      this.downloadProgressInterval = setInterval(() => {
         this.fetchDownloadProgress();
-      }, 1000);
+      }, 1000); // Poll every second
+    },
+
+    stopDownloadProgressPolling() {
+      if (this.downloadProgressInterval) {
+        clearInterval(this.downloadProgressInterval);
+        this.downloadProgressInterval = null;
+      }
     },
   }));
 });
