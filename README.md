@@ -82,10 +82,10 @@ The current recommended way to install exo is from source.
 | Component          | MLX Requirements                                              | TinyGrad Requirements (for Llama-3.1-8B or similar)                    |
 |--------------------|---------------------------------------------------------------|------------------------------------------------------------------------|
 | **CPU**            | Apple Silicon (M1, M2, or later) only                         | Minimum: Intel Core i7-12700 or AMD Ryzen 7 5800X <br>Recommended: Intel Core i9-12900K or AMD Ryzen 9 5900X |
-| **GPU**            | Apple Silicon Integrated GPU                                  | Minimum: NVIDIA RTX 4070 (12 GB VRAM) or AMD RX 6800 (16 GB VRAM) <br>Recommended: NVIDIA RTX 4080 (16 GB VRAM) or AMD RX 7900 XT (20 GB VRAM) |
+| **GPU**            | Apple Silicon Integrated GPU                                  | Minimum: NVIDIA RTX 4070 (12 GB VRAM) <br>Recommended: NVIDIA RTX 4080 (16 GB VRAM)  |
 | **RAM**            | Minimum: 16 GB <br>Recommended: 32 GB                         | Minimum: 32 GB <br>Recommended: 64 GB                                  |
 | **Storage**        | Minimum: 256 GB SSD <br>Recommended: 512 GB SSD               | Minimum: 512 GB SSD <br>Recommended: 1 TB SSD                          |
-| **Operating System**| macOS 11.0 (Big Sur) or later                                | macOS, Linux, or Windows                                               |
+| **Operating System**| macOS 11.0 (Big Sur) or later                                | Ubuntu                                              |
 
 **Note**:  
 - For **MLX**, you can currently run **smaller models** such as **Llama-3.2-1B**, which are optimized for Apple Silicon hardware.
