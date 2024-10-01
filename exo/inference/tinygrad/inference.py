@@ -35,15 +35,17 @@ class MLXQuantizedLinear:
     assert in_features % group_size == 0
     assert 32 % bits == 0
     assert (in_features * bits) % 32 == 0
-    self.weight = Tensor.ones(out_features, (in_features * bits) // 32, dtype=dtypes.uint32)
-    self.scales = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
+    self.weight = Tensor.kaiming_uniform(out_features, (in_features * bits) // 32, dtype=dtypes.uint32)
+    self.scales = Tensor.uniform(out_features, in_features // group_size, dtype=dtypes.half)
     if bias:
-      self.biases = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
+      self.biases = Tensor.uniform(out_features, in_features // group_size, dtype=dtypes.half)
+    else:
+      self.biases = Tensor.zeros(out_features, in_features // group_size, dtype=dtypes.half)
     self.bits = bits
     self.group_size = group_size
 
   def __call__(self, x):
-    M, K = x.shape
+    B, M, K = x.shape
     N, K_packed = self.weight.shape
 
     num_values_per_uint32 = 32 // self.bits
@@ -57,9 +59,9 @@ class MLXQuantizedLinear:
 
     bitmask = (1 << self.bits) - 1
 
-    x_grouped = x.reshape(M, num_groups, self.group_size)
+    x_grouped = x.reshape(B, M, num_groups, self.group_size)
 
-    output = Tensor.zeros((M, N), dtype=dtypes.float16)
+    output = Tensor.zeros((B, M, N), dtype=dtypes.half)
 
     shift_list = [i * self.bits for i in range(num_values_per_uint32)]
 
@@ -72,19 +74,17 @@ class MLXQuantizedLinear:
         w_packed_group = self.weight[:, pack_start:pack_end]
 
         unpacked_values = []
-
         for shift_amount in shift_list:
             shifted = w_packed_group >> shift_amount
-            masked = (shifted & bitmask).cast(dtypes.float16)
+            masked = (shifted & bitmask).cast(dtypes.half)
             masked = masked.reshape(N, -1)
-
             unpacked_values.append(masked)
 
         w_unpacked_stack = Tensor.stack(*unpacked_values, dim=0)
         w_unpacked_group = w_unpacked_stack.permute(1, 2, 0).reshape(N, self.group_size)
         w_group = w_unpacked_group * scale_g + bias_g
 
-        x_group = x_grouped[:, g, :]
+        x_group = x_grouped[:, :, g, :]
 
         partial_output = x_group @ w_group.T
         output += partial_output
