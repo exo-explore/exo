@@ -46,3 +46,24 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
       self.shard = shard
+
+  async def preload_model(self, shard: Shard) -> None:
+    # Implement MLX-specific preloading logic
+    # This might involve loading weights into memory
+    # without fully initializing the model
+    if self.model is None:
+      # Load the model configuration
+      config = await self.load_config(shard)
+      
+      # Load the model weights into memory
+      # but don't initialize the full model yet
+      self.weights = await self.load_weights(config, shard)
+
+  async def load_weights(self, config, shard):
+    # Implement weight loading logic here
+    # This should load the weights into memory without full model initialization
+    pass
+
+  def initialize_model(self, weights):
+    # Implement full model initialization using preloaded weights
+    pass
