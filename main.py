@@ -87,6 +87,8 @@ node = StandardNode(
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
+node.download_progress = {}  # Initialize download progress tracking
+node.node_download_progress = {}  # For tracking per-node download progress
 api = ChatGPTAPI(
   node,
   inference_engine.__class__.__name__,
@@ -116,12 +118,17 @@ if args.prometheus_client_port:
 last_broadcast_time = 0
 
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
-  global last_broadcast_time
-  current_time = time.time()
-  if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
-    last_broadcast_time = current_time
-    asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
-
+    global last_broadcast_time
+    current_time = time.time()
+    if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
+        last_broadcast_time = current_time
+        node.download_progress[event.repo_id] = event.to_dict()
+        node.node_download_progress[node.id] = event.to_dict()
+        asyncio.create_task(node.broadcast_opaque_status("", json.dumps({
+            "type": "download_progress",
+            "node_id": node.id,
+            "progress": event.to_dict()
+        })))
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 

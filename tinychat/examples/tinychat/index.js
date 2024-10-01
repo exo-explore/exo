@@ -23,6 +23,9 @@ document.addEventListener("alpine:init", () => {
     // image handling
     imagePreview: null,
 
+    // download progress
+    downloadProgress: null,
+
     removeHistory(cstate) {
       const index = this.histories.findIndex((state) => {
         return state.time === cstate.time;
@@ -31,6 +34,23 @@ document.addEventListener("alpine:init", () => {
         this.histories.splice(index, 1);
         localStorage.setItem("histories", JSON.stringify(this.histories));
       }
+    },
+    // Utility functions
+    formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
+
+    formatDuration(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
     },
 
     async handleImageUpload(event) {
@@ -253,6 +273,48 @@ document.addEventListener("alpine:init", () => {
           }
         }
       }
+    },
+
+    async fetchDownloadProgress() {
+      try {
+        console.log("fetching download progress");
+        const response = await fetch(`${this.endpoint}/download/progress`);
+        if (response.ok) {
+          const data = await response.json();
+          // Since we're only interested in our own node's progress, extract it
+          // Assuming the server returns progress only for the local node
+          const progressArray = Object.values(data);
+          if (progressArray.length > 0) {
+            const progress = progressArray[0];
+            // Check if download is complete
+            if (progress.status === "complete" || progress.status === "failed") {
+              this.downloadProgress = null; // Hide the progress section
+            } else {
+              // Compute human-readable strings
+              progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
+              progress.total_bytes_display = this.formatBytes(progress.total_bytes);
+              progress.overall_speed_display = progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '';
+              progress.overall_eta_display = progress.overall_eta ? this.formatDuration(progress.overall_eta) : '';
+              progress.percentage = ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2);
+
+              this.downloadProgress = progress;
+            }
+          } else {
+            // No ongoing download
+            this.downloadProgress = null;
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching download progress:", error);
+        this.downloadProgress = null;
+      }
+    },
+    // Initialize the component
+    init() {
+      // Start polling for download progress every second
+      setInterval(() => {
+        this.fetchDownloadProgress();
+      }, 1000);
     },
   }));
 });
