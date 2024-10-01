@@ -90,6 +90,8 @@ The current recommended way to install exo is from source.
 **Note**:  
 - For **MLX**, you can currently run **smaller models** such as **Llama-3.2-1B**, which are optimized for Apple Silicon hardware.
 - For **TinyGrad**, the **smallest model** currently supported is **Llama-3.1-8B**, which requires more robust hardware to run effectively.
+- **Hardware requirements are indicative**: The overall load is distributed across the **CPU, RAM**, and **GPU/VRAM**, not solely on the GPU. Therefore, your system's performance depends on its ability to handle this distribution effectively.
+- It is also **possible to run models in a cluster mode**, utilizing multiple devices to distribute the computation load across multiple machines or GPUs, enhancing performance.
 
 ### From source
 
