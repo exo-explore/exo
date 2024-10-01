@@ -1,0 +1,39 @@
+# Core dependencies
+numpy>=1.20.0
+scipy>=1.6.0
+astropy>=4.2
+matplotlib>=3.3.0
+pandas>=1.2.0
+
+# Machine learning
+scikit-learn>=0.24.0
+tensorflow>=2.4.0
+keras>=2.4.0
+
+# Data handling and processing
+h5py>=3.1.0
+openpyxl>=3.0.5
+
+# Astronomy specific
+lightkurve>=2.0.0
+astroquery>=0.4.1
+
+# Utilities
+tqdm>=4.56.0
+
+# Documentation
+sphinx>=3.4.3
+sphinx-rtd-theme>=0.5.1
+
+# Testing
+pytest>=6.2.0
+
+# Optional dependencies (uncomment if needed)
+# batman-package>=2.4.8
+# corner>=2.2.1
+# emcee>=3.0.2
+
+# Development dependencies
+black>=20.8b1
+flake8>=3.8.4
+isort>=5.7.0
