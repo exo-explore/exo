@@ -85,7 +85,7 @@ The current recommended way to install exo is from source.
 | **GPU**            | Apple Silicon Integrated GPU                                  | Minimum: NVIDIA RTX 4070 (12 GB VRAM) <br>Recommended: NVIDIA RTX 4080 (16 GB VRAM)  |
 | **RAM**            | Minimum: 16 GB <br>Recommended: 32 GB                         | Minimum: 32 GB <br>Recommended: 64 GB                                  |
 | **Storage**        | Minimum: 256 GB SSD <br>Recommended: 512 GB SSD               | Minimum: 512 GB SSD <br>Recommended: 1 TB SSD                          |
-| **Operating System**| macOS 11.0 (Big Sur) or later                                | Ubuntu                                              |
+| **Operating System**| macOS (Big Sur)                               | Ubuntu                                              |
 
 **Note**:  
 - For **MLX**, you can currently run **smaller models** such as **Llama-3.2-1B**, which are optimized for Apple Silicon hardware.
