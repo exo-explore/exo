@@ -60,7 +60,7 @@ Exo supports different [partitioning strategies](exo/topology/partitioning_strat
 
 <p>
     <picture>
-        <img alt="ring topology" src="docs/ring-topology.png" width="30%" height="30%">
+        <img alt="ring topology" src="docs/ring-topology.png" width="40%" height="40%">
     </picture>
 </p>
 
