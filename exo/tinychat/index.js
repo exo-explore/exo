@@ -27,6 +27,15 @@ document.addEventListener("alpine:init", () => {
     downloadProgress: null,
     downloadProgressInterval: null, // To keep track of the polling interval
 
+    // Pending message storage
+    pendingMessage: null,
+
+    init() {
+      // Clean up any pending messages
+      this.pendingMessage = null;
+      localStorage.removeItem("pendingMessage");
+    },
+
     removeHistory(cstate) {
       const index = this.histories.findIndex((state) => {
         return state.time === cstate.time;
@@ -96,9 +105,43 @@ document.addEventListener("alpine:init", () => {
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
 
+        // Proceed to handle the message
+        this.processMessage(value);
+
         // Start polling for download progress
         this.startDownloadProgressPolling();
 
+        // Delay the check for downloadProgress by 8 seconds without blocking execution
+        setTimeout(async () => {
+          this.pendingMessageHandler(value);
+        }, 8000);
+
+      } catch (error) {
+        console.error('error', error)
+        this.errorMessage = error.message || 'Errore durante l\'invio del messaggio.';
+        setTimeout(() => {
+          this.errorMessage = null;
+        }, 5 * 1000)
+      }
+    },
+
+    async pendingMessageHandler(value) {
+      console.log("Pending message handler called");
+      // Check if download is in progress
+      if (this.downloadProgress && this.downloadProgress.status !== "complete") {
+        // Save the message in pendingMessage
+        this.pendingMessage = value;
+        localStorage.setItem("pendingMessage", value);
+        console.log("Pending message saved:", localStorage.getItem("pendingMessage"));
+        // Inform the user
+        this.cstate.messages.push({ role: "system", content: "Download is in progress. Your message will be processed once the download completes." });
+        this.generating = false; // Reset generating
+        return;
+      }
+    },
+
+    async processMessage(value) {
+      try {
         // reset performance tracking
         const prefill_start = Date.now();
         let start_time = 0;
@@ -283,12 +326,10 @@ document.addEventListener("alpine:init", () => {
     async fetchDownloadProgress() {
       try {
         console.log("fetching download progress");
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 4000)); // Necessary delay
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
-          // Since we're only interested in our own node's progress, extract it
-          // Assuming the server returns progress only for the local node
           const progressArray = Object.values(data);
           if (progressArray.length > 0) {
             const progress = progressArray[0];
@@ -297,6 +338,19 @@ document.addEventListener("alpine:init", () => {
               this.downloadProgress = null; // Hide the progress section
               // Stop polling
               this.stopDownloadProgressPolling();
+
+              if (progress.status === "complete") {
+                // Download is complete
+                // Check for pendingMessage
+                const savedMessage = localStorage.getItem("pendingMessage");
+                if (savedMessage) {
+                  // Clear pendingMessage
+                  this.pendingMessage = null;
+                  localStorage.removeItem("pendingMessage");
+                  // Call processMessage() with savedMessage
+                  await this.processMessage(savedMessage);
+                }
+              }
             } else {
               // Compute human-readable strings
               progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
