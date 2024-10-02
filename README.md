@@ -79,7 +79,10 @@ The current recommended way to install exo is from source.
 
 ### Hardware Requirements
 
-- The only requirement to run exo is to have enough memory across all your devices to fit the entire model into memory.
+- The only requirement to run exo is to have enough memory across all your devices to fit the entire model into memory. For example, if you are running llama 3.1 8B (fp16), you need 16GB of memory across all devices. Any of the following configurations would work since they each have more than 16GB of memory in total:
+  - 2 x 8GB M3 MacBook Airs
+  - 1 x 16GB NVIDIA RTX 4070 Ti Laptop
+  - 2 x Raspberry Pi 400 with 4GB of RAM each (running on CPU) + 1 x 8GB Mac Mini
 - exo is designed to run on devices with heterogeneous capabilities. For example, you can have some devices with powerful GPUs and others with integrated GPUs or even CPUs. Adding less capable devices will slow down individual inference latency but will increase the overall throughput of the cluster.
 
 ### From source
