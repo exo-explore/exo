@@ -91,7 +91,7 @@ The current recommended way to install exo is from source.
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
-pip install .
+pip install -e .
 # alternatively, with venv
 source install.sh
 ```
