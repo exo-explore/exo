@@ -5,37 +5,19 @@ from typing import Tuple, Optional, Union, List
 
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
-from exo.inference.inference_engine import InferenceEngine
-from exo.download.shard_download import ShardDownloader
 
 from transformers import (
-    AutoModel,
     AutoModelForCausalLM,
-    AutoTokenizer,
     DynamicCache,
     Cache,
     LogitsProcessorList,
-    #MinLengthLogitsProcessor,
-    LogitsWarper,
     TopKLogitsWarper,
     TopPLogitsWarper,
-    TemperatureLogitsWarper,
-    StoppingCriteriaList,
-    MaxLengthCriteria,
-    MaxTimeCriteria
-)
-
-from transformers.generation.configuration_utils import (
-    GenerationConfig,
-    GenerationMode
+    TemperatureLogitsWarper
 )
 
 # llama 
 from transformers.models.llama.modeling_llama import LlamaModel
-
-# qwen2
-from transformers.models.qwen2.modeling_qwen2 import Qwen2Model
-
 
 class ShardedHuggingFaceModel:
     def __init__(
@@ -67,14 +49,6 @@ class ShardedHuggingFaceModel:
             TemperatureLogitsWarper(temp),
             TopPLogitsWarper(top_p)
         ])
-
-        # setup stopping critera for generation 
-        self.stopping_critera = StoppingCriteriaList(
-            [
-                #MaxLengthCriteria(max_length=max_length),
-                MaxTimeCriteria(max_time=max_time),
-            ]
-        )
 
         self.device = device
         self.torch_dtype = dtype

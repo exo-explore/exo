@@ -2,15 +2,13 @@
 import numpy as np
 import torch
 import json
-import gc
+
 from typing import Optional, Tuple
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
 from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
-from transformers import DynamicCache, Cache
-from accelerate import disk_offload
 from exo.download.shard_download import ShardDownloader
 
 # model value options 
