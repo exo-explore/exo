@@ -4,8 +4,8 @@ import socket
 import time
 import traceback
 from typing import List, Dict, Callable, Tuple, Coroutine
-from .discovery import Discovery
-from .peer_handle import PeerHandle
+from exo.networking.discovery import Discovery
+from exo.networking.peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.helpers import DEBUG, DEBUG_DISCOVERY, get_all_ip_addresses
 
