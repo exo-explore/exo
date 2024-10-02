@@ -209,14 +209,10 @@ class ChatGPTAPI:
   async def handle_get_download_progress(self, request):
     progress_data = {}
     for node_id, progress_event in self.node.node_download_progress.items():
-        if isinstance(progress_event, RepoProgressEvent):
-            # Convert to dict if not already
-            progress_data[node_id] = progress_event.to_dict()
-        elif isinstance(progress_event, dict):
-            progress_data[node_id] = progress_event
-        else:
-            # Handle unexpected types
-            progress_data[node_id] = str(progress_event)
+      if isinstance(progress_event, RepoProgressEvent):
+        progress_data[node_id] = progress_event.to_dict()
+      else:
+        print(f"Unknown progress event type: {type(progress_event)}. {progress_event}")
     return web.json_response(progress_data)
 
 
