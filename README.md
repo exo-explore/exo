@@ -79,19 +79,11 @@ The current recommended way to install exo is from source.
 
 ### Hardware Requirements
 
-| Component          | MLX Requirements                                              | TinyGrad Requirements (for Llama-3.1-8B or similar)                    |
-|--------------------|---------------------------------------------------------------|------------------------------------------------------------------------|
-| **CPU**            | Apple Silicon (M1, M2, or later) only                         | Minimum: Intel Core i7-12700 or AMD Ryzen 7 5800X <br>Recommended: Intel Core i9-12900K or AMD Ryzen 9 5900X |
-| **GPU**            | Apple Silicon Integrated GPU                                  | Minimum: NVIDIA RTX 4070 (12 GB VRAM) <br>Recommended: NVIDIA RTX 4080 (16 GB VRAM)  |
-| **RAM**            | Minimum: 16 GB <br>Recommended: 32 GB                         | Minimum: 32 GB <br>Recommended: 64 GB                                  |
-| **Storage**        | Minimum: 256 GB SSD <br>Recommended: 512 GB SSD               | Minimum: 512 GB SSD <br>Recommended: 1 TB SSD                          |
-| **Operating System**| macOS (Big Sur)                               | Ubuntu                                              |
-
-**Note**:  
-- For **MLX**, you can currently run **smaller models** such as **Llama-3.2-1B**, which are optimized for Apple Silicon hardware.
-- For **TinyGrad**, the **smallest model** currently supported is **Llama-3.1-8B**, which requires more robust hardware to run effectively.
-- **Hardware requirements are indicative**: The overall load is distributed across the **CPU, RAM**, and **GPU/VRAM**, not solely on the GPU. Therefore, your system's performance depends on its ability to handle this distribution effectively.
-- It is also **possible to run models in a cluster mode**, utilizing multiple devices to distribute the computation load across multiple machines or GPUs, enhancing performance.
+- The only requirement to run exo is to have enough memory across all your devices to fit the entire model into memory. For example, if you are running llama 3.1 8B (fp16), you need 16GB of memory across all devices. Any of the following configurations would work since they each have more than 16GB of memory in total:
+  - 2 x 8GB M3 MacBook Airs
+  - 1 x 16GB NVIDIA RTX 4070 Ti Laptop
+  - 2 x Raspberry Pi 400 with 4GB of RAM each (running on CPU) + 1 x 8GB Mac Mini
+- exo is designed to run on devices with heterogeneous capabilities. For example, you can have some devices with powerful GPUs and others with integrated GPUs or even CPUs. Adding less capable devices will slow down individual inference latency but will increase the overall throughput of the cluster.
 
 ### From source
 
@@ -99,7 +91,7 @@ The current recommended way to install exo is from source.
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
-pip install .
+pip install -e .
 # alternatively, with venv
 source install.sh
 ```
@@ -124,12 +116,12 @@ source install.sh
 #### Device 1:
 
 ```sh
-python3 main.py
+exo
 ```
 
 #### Device 2:
 ```sh
-python3 main.py
+exo
 ```
 
 That's it! No configuration required - exo will automatically discover the other device(s).
@@ -138,13 +130,13 @@ exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.c
 
 For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Examples with curl:
 
-#### Llama 3.1 8B:
+#### Llama 3.2 3B:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-     "model": "llama-3.1-8b",
+     "model": "llama-3.2-3b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
@@ -195,38 +187,49 @@ curl http://localhost:8000/v1/chat/completions \
 #### Device 1 (MacOS):
 
 ```sh
-python3 main.py --inference-engine tinygrad
+exo --inference-engine tinygrad
 ```
 
 Here we explicitly tell exo to use the **tinygrad** inference engine.
 
 #### Device 2 (Linux):
 ```sh
-python3 main.py
+exo
 ```
 
 Linux devices will automatically default to using the **tinygrad** inference engine.
 
 You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/env_vars/). For example, you can configure tinygrad to use the cpu by specifying `CLANG=1`.
 
+### Example Usage on a single device with "exo run" command
+
+```sh
+exo run llama-3.2-3b
+```
+
+With a custom prompt:
+
+```sh
+exo run llama-3.2-3b --prompt "What is the meaning of exo?"
+```
 
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).
 
 ```sh
-DEBUG=9 python3 main.py
+DEBUG=9 exo
 ```
 
 For the **tinygrad** inference engine specifically, there is a separate DEBUG flag `TINYGRAD_DEBUG` that can be used to enable debug logs (1-6).
 
 ```sh
-TINYGRAD_DEBUG=2 python3 main.py
+TINYGRAD_DEBUG=2 exo
 ```
 
 ## Known Issues
 
-- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually: 
+- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually:
 
 ```sh
 /Applications/Python 3.x/Install Certificates.command
