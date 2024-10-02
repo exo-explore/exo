@@ -91,7 +91,7 @@ The current recommended way to install exo is from source.
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
-pip install .
+pip install -e .
 # alternatively, with venv
 source install.sh
 ```
@@ -130,13 +130,13 @@ exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.c
 
 For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Examples with curl:
 
-#### Llama 3.1 8B:
+#### Llama 3.2 3B:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-     "model": "llama-3.1-8b",
+     "model": "llama-3.2-3b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
@@ -201,6 +201,17 @@ Linux devices will automatically default to using the **tinygrad** inference eng
 
 You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/env_vars/). For example, you can configure tinygrad to use the cpu by specifying `CLANG=1`.
 
+### Example Usage on a single device with "exo run" command
+
+```sh
+exo run llama-3.2-3b
+```
+
+With a custom prompt:
+
+```sh
+exo run llama-3.2-3b --prompt "What is the meaning of exo?"
+```
 
 ## Debugging
 
