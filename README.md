@@ -79,19 +79,8 @@ The current recommended way to install exo is from source.
 
 ### Hardware Requirements
 
-| Component          | MLX Requirements                                              | TinyGrad Requirements (for Llama-3.1-8B or similar)                    |
-|--------------------|---------------------------------------------------------------|------------------------------------------------------------------------|
-| **CPU**            | Apple Silicon (M1, M2, or later) only                         | Minimum: Intel Core i7-12700 or AMD Ryzen 7 5800X <br>Recommended: Intel Core i9-12900K or AMD Ryzen 9 5900X |
-| **GPU**            | Apple Silicon Integrated GPU                                  | Minimum: NVIDIA RTX 4070 (12 GB VRAM) <br>Recommended: NVIDIA RTX 4080 (16 GB VRAM)  |
-| **RAM**            | Minimum: 16 GB <br>Recommended: 32 GB                         | Minimum: 32 GB <br>Recommended: 64 GB                                  |
-| **Storage**        | Minimum: 256 GB SSD <br>Recommended: 512 GB SSD               | Minimum: 512 GB SSD <br>Recommended: 1 TB SSD                          |
-| **Operating System**| macOS (Big Sur)                               | Ubuntu                                              |
-
-**Note**:  
-- For **MLX**, you can currently run **smaller models** such as **Llama-3.2-1B**, which are optimized for Apple Silicon hardware.
-- For **TinyGrad**, the **smallest model** currently supported is **Llama-3.1-8B**, which requires more robust hardware to run effectively.
-- **Hardware requirements are indicative**: The overall load is distributed across the **CPU, RAM**, and **GPU/VRAM**, not solely on the GPU. Therefore, your system's performance depends on its ability to handle this distribution effectively.
-- It is also **possible to run models in a cluster mode**, utilizing multiple devices to distribute the computation load across multiple machines or GPUs, enhancing performance.
+- The only requirement to run exo is to have enough memory across all your devices to fit the entire model into memory.
+- exo is designed to run on devices with heterogeneous capabilities. For example, you can have some devices with powerful GPUs and others with integrated GPUs or even CPUs. Adding less capable devices will slow down individual inference latency but will increase the overall throughput of the cluster.
 
 ### From source
 
