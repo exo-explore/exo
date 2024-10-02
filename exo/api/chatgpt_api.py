@@ -124,19 +124,7 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 
 def build_prompt(tokenizer, _messages: List[Message]):
   messages = remap_messages(_messages)
-  if DEBUG >= 3:
-    print(f"messages: {messages}")
-  prompt = tokenizer.apply_chat_template(
-    messages, 
-    tokenize=False, 
-    add_generation_prompt=True
-  )
-
-  if DEBUG >= 3:
-    print(f"prompt: {str(prompt)}")
-    for msg in messages:
-      print(f"chat role: {msg.role}\ncontent: {msg.content}")
-
+  prompt = tokenizer.apply_chat_template([m.to_dict() for m in messages], tokenize=False, add_generation_prompt=True)
   image_str = None
   for message in messages:
     if not isinstance(message.content, list):
@@ -197,7 +185,7 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
 
-    self.static_dir = Path(__file__).parent.parent.parent/"tinychat/examples/tinychat"
+    self.static_dir = Path(__file__).parent.parent/"tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 

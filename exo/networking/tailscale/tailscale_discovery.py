@@ -3,8 +3,8 @@ import time
 import traceback
 from typing import List, Dict, Callable, Tuple
 from tailscale import Tailscale, Device
-from .discovery import Discovery
-from .peer_handle import PeerHandle
+from exo.networking.discovery import Discovery
+from exo.networking.peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.helpers import DEBUG, DEBUG_DISCOVERY
 from .tailscale_helpers import get_device_id, update_device_attributes, get_device_attributes, update_device_attributes
