@@ -22,7 +22,7 @@
 <link href="/static/unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/vs2015.min.css" rel="stylesheet"/>
 <link href="/index.css" rel="stylesheet"/>
 <link href="/common.css" rel="stylesheet"/>
-</link></head>
+</head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
      <!-- Error Toast -->
@@ -43,6 +43,8 @@
 <option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
 <option value="deepseek-coder-v2.5">Deepseek Coder V2.5</option>
 <option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
+<option value="qwen-2.5-coder-1.5b">Qwen 2.5 Coder 1.5B</option>
+<option value="qwen-2.5-coder-7b">Qwen 2.5 Coder 7B</option>
 <option value="qwen-2.5-7b">Qwen 2.5 7B</option>
 <option value="qwen-2.5-math-7b">Qwen 2.5 7B (Math)</option>
 <option value="qwen-2.5-14b">Qwen 2.5 14B</option>
@@ -147,6 +149,21 @@
       $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
     " x-ref="messages" x-show="home === 2" x-transition="">
 </div>
+
+<!-- Download Progress Section -->
+<template x-if="downloadProgress">
+<div class="download-progress message message-role-assistant">
+  <h2>Download Progress</h2>
+  <div class="download-progress-node">
+    <p><strong>Model:</strong> <span x-text="downloadProgress.repo_id + '@' + downloadProgress.repo_revision"></span></p>
+    <p><strong>Progress:</strong> <span x-text="`${downloadProgress.downloaded_bytes_display} / ${downloadProgress.total_bytes_display} (${downloadProgress.percentage}%)`"></span></p>
+    <p><strong>Speed:</strong> <span x-text="downloadProgress.overall_speed_display || 'N/A'"></span></p>
+    <p><strong>ETA:</strong> <span x-text="downloadProgress.overall_eta_display || 'N/A'"></span></p>
+  </div>
+</div>
+</template>
+
+
 <div class="input-container">
 <div class="input-performance">
 <span class="input-performance-point">

@@ -5,6 +5,7 @@ import json
 import time
 import traceback
 import uuid
+import sys
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
@@ -24,6 +25,8 @@ from exo.viz.topology_viz import TopologyViz
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
+parser.add_argument("command", nargs="?", choices=["run"], help="Command to run")
+parser.add_argument("model_name", nargs="?", help="Model name to run")
 parser.add_argument("--node-id", type=str, default=None, help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=None, help="Node port")
@@ -116,12 +119,15 @@ if args.prometheus_client_port:
 last_broadcast_time = 0
 
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
-  global last_broadcast_time
-  current_time = time.time()
-  if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
-    last_broadcast_time = current_time
-    asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
-
+    global last_broadcast_time
+    current_time = time.time()
+    if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
+        last_broadcast_time = current_time
+        asyncio.create_task(node.broadcast_opaque_status("", json.dumps({
+            "type": "download_progress",
+            "node_id": node.id,
+            "progress": event.to_dict()
+        })))
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
@@ -179,14 +185,18 @@ async def main():
 
   await node.start(wait_for_peers=args.wait_for_peers)
 
-  if args.run_model:
-    await run_model_cli(node, inference_engine, args.run_model, args.prompt)
+  if args.command == "run" or args.run_model:
+    model_name = args.model_name or args.run_model
+    if not model_name:
+      print("Error: Model name is required when using 'run' command or --run-model")
+      return
+    await run_model_cli(node, inference_engine, model_name, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
 
 
-if __name__ == "__main__":
+def run():
   loop = asyncio.new_event_loop()
   asyncio.set_event_loop(loop)
   try:
@@ -196,3 +206,6 @@ if __name__ == "__main__":
   finally:
     loop.run_until_complete(shutdown(signal.SIGTERM, loop))
     loop.close()
+
+if __name__ == "__main__":
+  run()
