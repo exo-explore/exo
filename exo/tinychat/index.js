@@ -32,8 +32,10 @@ document.addEventListener("alpine:init", () => {
 
     init() {
       // Clean up any pending messages
-      this.pendingMessage = null;
       localStorage.removeItem("pendingMessage");
+
+      // Start polling for download progress
+      this.startDownloadProgressPolling();
     },
 
     removeHistory(cstate) {
@@ -105,38 +107,16 @@ document.addEventListener("alpine:init", () => {
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
 
-        // Proceed to handle the message
+        localStorage.setItem("pendingMessage", value);
         this.processMessage(value);
-
-        // Start polling for download progress
-        this.startDownloadProgressPolling();
-
-        // Delay the check for downloadProgress by 8 seconds without blocking execution
-        setTimeout(async () => {
-          this.pendingMessageHandler(value);
-        }, 8000);
-
       } catch (error) {
         console.error('error', error)
-        this.errorMessage = error.message || 'Errore durante l\'invio del messaggio.';
+        this.lastErrorMessage = error.message || 'Unknown error on handleSend';
+        this.errorMessage = error.message || 'Unknown error on handleSend';
         setTimeout(() => {
           this.errorMessage = null;
         }, 5 * 1000)
-      }
-    },
-
-    async pendingMessageHandler(value) {
-      console.log("Pending message handler called");
-      // Check if download is in progress
-      if (this.downloadProgress && this.downloadProgress.status !== "complete") {
-        // Save the message in pendingMessage
-        this.pendingMessage = value;
-        localStorage.setItem("pendingMessage", value);
-        console.log("Pending message saved:", localStorage.getItem("pendingMessage"));
-        // Inform the user
-        this.cstate.messages.push({ role: "system", content: "Download is in progress. Your message will be processed once the download completes." });
-        this.generating = false; // Reset generating
-        return;
+        this.generating = false;
       }
     },
 
@@ -253,6 +233,7 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (error) {
         console.error('error', error)
+        this.lastErrorMessage = error;
         this.errorMessage = error;
         setTimeout(() => {
           this.errorMessage = null;
@@ -325,8 +306,6 @@ document.addEventListener("alpine:init", () => {
 
     async fetchDownloadProgress() {
       try {
-        console.log("fetching download progress");
-        await new Promise(resolve => setTimeout(resolve, 4000)); // Necessary delay
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
@@ -336,8 +315,6 @@ document.addEventListener("alpine:init", () => {
             // Check if download is complete
             if (progress.status === "complete" || progress.status === "failed") {
               this.downloadProgress = null; // Hide the progress section
-              // Stop polling
-              this.stopDownloadProgressPolling();
 
               if (progress.status === "complete") {
                 // Download is complete
@@ -345,11 +322,13 @@ document.addEventListener("alpine:init", () => {
                 const savedMessage = localStorage.getItem("pendingMessage");
                 if (savedMessage) {
                   // Clear pendingMessage
-                  this.pendingMessage = null;
                   localStorage.removeItem("pendingMessage");
                   // Call processMessage() with savedMessage
-                  await this.processMessage(savedMessage);
+                  if (this.lastErrorMessage) {
+                    await this.processMessage(savedMessage);
+                  }
                 }
+                this.lastErrorMessage = null;
               }
             } else {
               // Compute human-readable strings
@@ -364,15 +343,11 @@ document.addEventListener("alpine:init", () => {
           } else {
             // No ongoing download
             this.downloadProgress = null;
-            // Stop polling
-            this.stopDownloadProgressPolling();
           }
         }
       } catch (error) {
         console.error("Error fetching download progress:", error);
         this.downloadProgress = null;
-        // Stop polling in case of error
-        this.stopDownloadProgressPolling();
       }
     },
 
@@ -385,13 +360,6 @@ document.addEventListener("alpine:init", () => {
       this.downloadProgressInterval = setInterval(() => {
         this.fetchDownloadProgress();
       }, 1000); // Poll every second
-    },
-
-    stopDownloadProgressPolling() {
-      if (this.downloadProgressInterval) {
-        clearInterval(this.downloadProgressInterval);
-        this.downloadProgressInterval = null;
-      }
     },
   }));
 });
