@@ -107,15 +107,15 @@ document.addEventListener("alpine:init", () => {
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
 
-        // Proceed to handle the message
+        localStorage.setItem("pendingMessage", value);
         this.processMessage(value);
       } catch (error) {
         console.error('error', error)
-        this.errorMessage = error.message || 'Errore durante l\'invio del messaggio.';
+        this.lastErrorMessage = error.message || 'Unknown error on handleSend';
+        this.errorMessage = error.message || 'Unknown error on handleSend';
         setTimeout(() => {
           this.errorMessage = null;
         }, 5 * 1000)
-        localStorage.setItem("pendingMessage", value);
         this.generating = false;
       }
     },
@@ -233,6 +233,7 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (error) {
         console.error('error', error)
+        this.lastErrorMessage = error;
         this.errorMessage = error;
         setTimeout(() => {
           this.errorMessage = null;
@@ -323,8 +324,11 @@ document.addEventListener("alpine:init", () => {
                   // Clear pendingMessage
                   localStorage.removeItem("pendingMessage");
                   // Call processMessage() with savedMessage
-                  await this.processMessage(savedMessage);
+                  if (this.lastErrorMessage) {
+                    await this.processMessage(savedMessage);
+                  }
                 }
+                this.lastErrorMessage = null;
               }
             } else {
               // Compute human-readable strings
@@ -344,8 +348,6 @@ document.addEventListener("alpine:init", () => {
       } catch (error) {
         console.error("Error fetching download progress:", error);
         this.downloadProgress = null;
-        // Stop polling in case of error
-        this.stopDownloadProgressPolling();
       }
     },
 
