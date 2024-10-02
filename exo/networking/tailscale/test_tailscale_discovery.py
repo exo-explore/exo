@@ -2,7 +2,7 @@ import os
 import asyncio
 import unittest
 from unittest import mock
-from exo.networking.tailscale_discovery import TailscaleDiscovery
+from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.peer_handle import PeerHandle
 
 class TestTailscaleDiscovery(unittest.IsolatedAsyncioTestCase):
