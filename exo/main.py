@@ -186,7 +186,7 @@ async def main():
     await asyncio.Event().wait()
 
 
-if __name__ == "__main__":
+def run():
   loop = asyncio.new_event_loop()
   asyncio.set_event_loop(loop)
   try:
@@ -196,3 +196,6 @@ if __name__ == "__main__":
   finally:
     loop.run_until_complete(shutdown(signal.SIGTERM, loop))
     loop.close()
+
+if __name__ == "__main__":
+  run()
