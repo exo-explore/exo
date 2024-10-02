@@ -9,6 +9,7 @@ install_requires = [
   "aiofiles==24.1.0",
   "grpcio==1.64.1",
   "grpcio-tools==1.64.1",
+  "Jinja2==3.1.4",
   "netifaces==0.11.0",
   "numpy==2.0.0",
   "pillow==10.4.0",
