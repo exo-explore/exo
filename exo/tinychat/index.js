@@ -23,6 +23,19 @@ document.addEventListener("alpine:init", () => {
     // image handling
     imagePreview: null,
 
+    // download progress
+    downloadProgress: null,
+    downloadProgressInterval: null, // To keep track of the polling interval
+
+    // Pending message storage
+    pendingMessage: null,
+
+    init() {
+      // Clean up any pending messages
+      this.pendingMessage = null;
+      localStorage.removeItem("pendingMessage");
+    },
+
     removeHistory(cstate) {
       const index = this.histories.findIndex((state) => {
         return state.time === cstate.time;
@@ -31,6 +44,24 @@ document.addEventListener("alpine:init", () => {
         this.histories.splice(index, 1);
         localStorage.setItem("histories", JSON.stringify(this.histories));
       }
+    },
+    // Utility functions
+    formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
+
+    formatDuration(seconds) {
+      if (seconds === null || seconds === undefined || isNaN(seconds)) return '';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
     },
 
     async handleImageUpload(event) {
@@ -74,6 +105,43 @@ document.addEventListener("alpine:init", () => {
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
 
+        // Proceed to handle the message
+        this.processMessage(value);
+
+        // Start polling for download progress
+        this.startDownloadProgressPolling();
+
+        // Delay the check for downloadProgress by 8 seconds without blocking execution
+        setTimeout(async () => {
+          this.pendingMessageHandler(value);
+        }, 8000);
+
+      } catch (error) {
+        console.error('error', error)
+        this.errorMessage = error.message || 'Errore durante l\'invio del messaggio.';
+        setTimeout(() => {
+          this.errorMessage = null;
+        }, 5 * 1000)
+      }
+    },
+
+    async pendingMessageHandler(value) {
+      console.log("Pending message handler called");
+      // Check if download is in progress
+      if (this.downloadProgress && this.downloadProgress.status !== "complete") {
+        // Save the message in pendingMessage
+        this.pendingMessage = value;
+        localStorage.setItem("pendingMessage", value);
+        console.log("Pending message saved:", localStorage.getItem("pendingMessage"));
+        // Inform the user
+        this.cstate.messages.push({ role: "system", content: "Download is in progress. Your message will be processed once the download completes." });
+        this.generating = false; // Reset generating
+        return;
+      }
+    },
+
+    async processMessage(value) {
+      try {
         // reset performance tracking
         const prefill_start = Date.now();
         let start_time = 0;
@@ -252,6 +320,77 @@ document.addEventListener("alpine:init", () => {
             yield choice.delta.content;
           }
         }
+      }
+    },
+
+    async fetchDownloadProgress() {
+      try {
+        console.log("fetching download progress");
+        await new Promise(resolve => setTimeout(resolve, 4000)); // Necessary delay
+        const response = await fetch(`${this.endpoint}/download/progress`);
+        if (response.ok) {
+          const data = await response.json();
+          const progressArray = Object.values(data);
+          if (progressArray.length > 0) {
+            const progress = progressArray[0];
+            // Check if download is complete
+            if (progress.status === "complete" || progress.status === "failed") {
+              this.downloadProgress = null; // Hide the progress section
+              // Stop polling
+              this.stopDownloadProgressPolling();
+
+              if (progress.status === "complete") {
+                // Download is complete
+                // Check for pendingMessage
+                const savedMessage = localStorage.getItem("pendingMessage");
+                if (savedMessage) {
+                  // Clear pendingMessage
+                  this.pendingMessage = null;
+                  localStorage.removeItem("pendingMessage");
+                  // Call processMessage() with savedMessage
+                  await this.processMessage(savedMessage);
+                }
+              }
+            } else {
+              // Compute human-readable strings
+              progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
+              progress.total_bytes_display = this.formatBytes(progress.total_bytes);
+              progress.overall_speed_display = progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '';
+              progress.overall_eta_display = progress.overall_eta ? this.formatDuration(progress.overall_eta) : '';
+              progress.percentage = ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2);
+
+              this.downloadProgress = progress;
+            }
+          } else {
+            // No ongoing download
+            this.downloadProgress = null;
+            // Stop polling
+            this.stopDownloadProgressPolling();
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching download progress:", error);
+        this.downloadProgress = null;
+        // Stop polling in case of error
+        this.stopDownloadProgressPolling();
+      }
+    },
+
+    startDownloadProgressPolling() {
+      if (this.downloadProgressInterval) {
+        // Already polling
+        return;
+      }
+      this.fetchDownloadProgress(); // Fetch immediately
+      this.downloadProgressInterval = setInterval(() => {
+        this.fetchDownloadProgress();
+      }, 1000); // Poll every second
+    },
+
+    stopDownloadProgressPolling() {
+      if (this.downloadProgressInterval) {
+        clearInterval(this.downloadProgressInterval);
+        this.downloadProgressInterval = null;
       }
     },
   }));

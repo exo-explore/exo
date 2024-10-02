@@ -149,6 +149,21 @@
       $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
     " x-ref="messages" x-show="home === 2" x-transition="">
 </div>
+
+<!-- Download Progress Section -->
+<template x-if="downloadProgress">
+<div class="download-progress message message-role-assistant">
+  <h2>Download Progress</h2>
+  <div class="download-progress-node">
+    <p><strong>Model:</strong> <span x-text="downloadProgress.repo_id + '@' + downloadProgress.repo_revision"></span></p>
+    <p><strong>Progress:</strong> <span x-text="`${downloadProgress.downloaded_bytes_display} / ${downloadProgress.total_bytes_display} (${downloadProgress.percentage}%)`"></span></p>
+    <p><strong>Speed:</strong> <span x-text="downloadProgress.overall_speed_display || 'N/A'"></span></p>
+    <p><strong>ETA:</strong> <span x-text="downloadProgress.overall_eta_display || 'N/A'"></span></p>
+  </div>
+</div>
+</template>
+
+
 <div class="input-container">
 <div class="input-performance">
 <span class="input-performance-point">
