@@ -28,9 +28,23 @@ MODEL_PARAMS = {
 }
 
 
+def select_bits(w, bits, start):
+    shift_left = 32 - (start + bits)
+    shift_right = shift_left + start
+    return (w * (2**shift_left)) // (2**shift_right)
+
+
+def dequantize(w, scales, biases, bits=4):
+    w_full = Tensor.cat(
+        *[select_bits(w, bits, i)[..., None] for i in range(0, 32, bits)], dim=-1
+    )
+    w_full = w_full.reshape(len(w), scales.shape[-1], -1)
+    w_full = scales[..., None] * w_full + biases[..., None]
+    return w_full.reshape(len(w), -1)
+
+
 class MLXQuantizedLinear:
   def __init__(self, in_features, out_features, bits=4, group_size=64, bias=False):
-    print("init", in_features, out_features)
     assert in_features % group_size == 0
     assert 32 % bits == 0
     assert (in_features * bits) % 32 == 0
@@ -44,60 +58,22 @@ class MLXQuantizedLinear:
     self.group_size = group_size
 
   def __call__(self, x):
-    print("call", x.shape)
-    B, M, K = x.shape
-    N, K_packed = self.weight.shape
-
-    num_values_per_uint32 = 32 // self.bits
-    K_unpacked = K_packed * num_values_per_uint32
-    num_groups = K // self.group_size
-    packs_per_group = self.group_size // num_values_per_uint32
-
-    assert K == K_unpacked, f"Mismatch in K dimensions: {K} vs {K_unpacked}"
-    assert self.scales.shape == self.biases.shape == (N, num_groups), f"Scales must have shape (N, {num_groups}), got {self.scales.shape}"
-    assert K % self.group_size == 0, "K must be divisible by the number of groups"
-
-    bitmask = (1 << self.bits) - 1
-
-    x_grouped = x.reshape(B, M, num_groups, self.group_size)
-
-    output = Tensor.zeros((B, M, N), dtype=dtypes.half)
-
-    shift_list = [i * self.bits for i in range(num_values_per_uint32)]
-
-    for g in range(num_groups):
-        scale_g = self.scales[:, g].reshape(N, 1)
-        bias_g = self.biases[:, g].reshape(N, 1)
-
-        pack_start = g * packs_per_group
-        pack_end = pack_start + packs_per_group
-        w_packed_group = self.weight[:, pack_start:pack_end]
-
-        unpacked_values = []
-        for shift_amount in shift_list:
-            shifted = w_packed_group >> shift_amount
-            masked = (shifted & bitmask).cast(dtypes.half)
-            masked = masked.reshape(N, -1)
-            unpacked_values.append(masked)
-
-        w_unpacked_stack = Tensor.stack(*unpacked_values, dim=0)
-        w_unpacked_group = w_unpacked_stack.permute(1, 2, 0).reshape(N, self.group_size)
-        w_group = w_unpacked_group * scale_g + bias_g
-
-        x_group = x_grouped[:, :, g, :]
-
-        partial_output = x_group @ w_group.T
-        output += partial_output
-
-    return output
+    return x.dot(dequantize(self.weight, self.scales, self.biases, self.bits).T)
   
-# class MLXQuantizedEmbedding:
-#   def __init__(self, vocab_size, embed_size, bits = 4, group_size= 64):
-#     self.vocab_sz, self.embed_sz = vocab_size, embed_size
-#     self.bits = bits
-#     self.group_size = group_size
-#     self.weight = 
-#     Tensor.glorot_uniform(vocab_size, embed_size)
+class MLXQuantizedEmbedding:
+  def __init__(self, vocab_size, embed_size, bits = 4, group_size= 64):
+    self.vocab_sz, self.embed_sz = vocab_size, embed_size
+    self.bits = bits
+    self.group_size = group_size
+    self.weight = Tensor.glorot_uniform(vocab_size, (embed_size * bits) // 32)
+    self.scales = Tensor.uniform(vocab_size, embed_size // group_size)
+    self.biases = Tensor.zeros(vocab_size, embed_size // group_size)
+    
+  def __call__(self, x):
+      s = x.shape
+      x = x.flatten()
+      return dequantize(self.weight[x], self.scales[x], self.biases[x], self.bits).reshape(*s, -1)
+    
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
   try:
@@ -105,14 +81,6 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
       config = json.load(f)
   except FileNotFoundError:
     raise Exception(f"Config file not found in {model_path}")
-  
-  # build model
-  if (quantization := config.get("quantization", None)) is not None:
-    linear = partial(MLXQuantizedLinear, **quantization)
-  else:
-    linear = nn.Linear
-  with Context(THREEFRY=0):
-    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
 
   # load weights
   if model_path.is_dir():
@@ -121,6 +89,19 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
     else: weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
   else:
     weights = load(str(model_path), shard)
+    
+  # build model
+  if (quantization := config.get("quantization", None)) is not None:
+    linear = partial(MLXQuantizedLinear, **quantization)
+  else:
+    linear = nn.Linear
+  if "model.embed_tokens.scales" in weights.keys():
+    tok_embeddings = partial(MLXQuantizedEmbedding, **quantization)
+  else:
+    tok_embeddings = nn.Embedding
+  
+  with Context(THREEFRY=0):
+    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, tok_embeddings=tok_embeddings, max_context=8192, jit=True, shard=shard)
   weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
   weights = fix_bf16(weights)
 

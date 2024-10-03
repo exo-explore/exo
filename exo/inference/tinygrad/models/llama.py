@@ -174,6 +174,7 @@ class Transformer:
     vocab_size,
     shard: Shard = None,
     linear=nn.Linear,
+    tok_embeddings=nn.Embedding,
     n_kv_heads=None,
     rope_theta=10000,
     max_context=1024,
@@ -187,7 +188,7 @@ class Transformer:
       else:
         self.layers.append(IdentityBlock())
     if shard.is_first_layer():
-      self.tok_embeddings = nn.Embedding(vocab_size, dim)
+      self.tok_embeddings = tok_embeddings(vocab_size, dim)
     if shard.is_last_layer():
       self.norm = nn.RMSNorm(dim, norm_eps)
       self.output = linear(dim, vocab_size, bias=False)
