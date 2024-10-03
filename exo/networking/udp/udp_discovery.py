@@ -81,7 +81,6 @@ class UDPDiscovery(Discovery):
   async def task_broadcast_presence(self):
     if DEBUG_DISCOVERY >= 2:
       print("Starting task_broadcast_presence...")
-      print(f"\nBroadcast message: {message}")
 
     while True:
       # Explicitly broadcasting on all assigned ips since broadcasting on `0.0.0.0` on MacOS does not broadcast over
@@ -94,6 +93,7 @@ class UDPDiscovery(Discovery):
           "device_capabilities": self.device_capabilities.to_dict(),
           "priority": 1, # For now, every interface has the same priority. We can make this better by prioriting interfaces based on bandwidth, latency, and jitter e.g. prioritise Thunderbolt over WiFi.
         })
+        if DEBUG_DISCOVERY >= 3: print(f"Broadcasting presence at ({addr}): {message}")
 
         transport = None
         try:
