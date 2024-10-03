@@ -27,7 +27,7 @@ install_requires = [
   "tiktoken==0.7.0",
   "tokenizers==0.19.1",
   "tqdm==4.66.4",
-  "transformers==4.43.3",
+  "transformers==4.45.1",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@639af3f823cf242a1945dc24183e52a9df0af2b7",
 ]
