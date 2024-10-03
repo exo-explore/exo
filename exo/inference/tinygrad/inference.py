@@ -4,9 +4,8 @@ import os
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
-from tinygrad.nn.state import safe_load, torch_load, load_state_dict
-from tinygrad import Tensor, dtypes, nn, Context
-from transformers import AutoTokenizer
+from tinygrad.nn.state import load_state_dict
+from tinygrad import Tensor, nn, Context
 from exo.inference.inference_engine import InferenceEngine
 from typing import Optional, Tuple
 import numpy as np
@@ -14,8 +13,6 @@ from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
-import threading
-from functools import partial
 
 Tensor.no_grad = True
 # default settings

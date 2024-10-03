@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from unittest import mock
-from exo.networking.udp_discovery import UDPDiscovery
+from exo.networking.udp.udp_discovery import UDPDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.orchestration.node import Node

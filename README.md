@@ -5,12 +5,12 @@
   <img alt="exo logo" src="/docs/exo-logo-transparent.png" width="50%" height="50%">
 </picture>
 
-exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs_).
+exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
 
 
 <h3>
 
-[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs_)
+[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs)
 
 </h3>
 
@@ -25,14 +25,12 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
 
 <div align="center">
-  <h2>Update: Exo Supports Llama 3.1</h2>
-  <p>Run 8B, 70B and 405B parameter Llama 3.1 models on your own devices</p>
-  <p><a href="https://github.com/exo-explore/exo/blob/main/exo/inference/mlx/models/llama.py">See the code</a></p>
+  <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
 </div>
 
 ## Get Involved
 
-exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs_) team will strive to resolve issues quickly.
+exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
 
 We also welcome contributions from the community. We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/d/1cTCpTIp48UnnIvHeLEUNg1iMy_Q6lRybgECSFCoVJpE/edit?usp=sharing).
 
@@ -40,7 +38,7 @@ We also welcome contributions from the community. We have a list of bounties in 
 
 ### Wide Model Support
 
-exo supports LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)) and other popular models.
+exo supports different models including LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)), Mistral, LlaVA, Qwen and Deepseek.
 
 ### Dynamic Model Partitioning
 
@@ -74,6 +72,18 @@ The current recommended way to install exo is from source.
 ### Prerequisites
 
 - Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
+- Linux (with NVIDIA card):
+  - NVIDIA driver (test with `nvidia-smi`)
+  - CUDA (https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#cuda-cross-platform-installation) (test with `nvcc --version`)
+  - cuDNN (https://developer.nvidia.com/cudnn-downloads) (test with [link](https://docs.nvidia.com/deeplearning/cudnn/latest/installation/linux.html#verifying-the-install-on-linux:~:text=at%20a%20time.-,Verifying%20the%20Install%20on%20Linux,Test%20passed!,-Upgrading%20From%20Older))
+
+### Hardware Requirements
+
+- The only requirement to run exo is to have enough memory across all your devices to fit the entire model into memory. For example, if you are running llama 3.1 8B (fp16), you need 16GB of memory across all devices. Any of the following configurations would work since they each have more than 16GB of memory in total:
+  - 2 x 8GB M3 MacBook Airs
+  - 1 x 16GB NVIDIA RTX 4070 Ti Laptop
+  - 2 x Raspberry Pi 400 with 4GB of RAM each (running on CPU) + 1 x 8GB Mac Mini
+- exo is designed to run on devices with heterogeneous capabilities. For example, you can have some devices with powerful GPUs and others with integrated GPUs or even CPUs. Adding less capable devices will slow down individual inference latency but will increase the overall throughput of the cluster.
 
 ### From source
 
@@ -81,7 +91,7 @@ The current recommended way to install exo is from source.
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
-pip install .
+pip install -e .
 # alternatively, with venv
 source install.sh
 ```
@@ -91,6 +101,14 @@ source install.sh
 
 - If running on Mac, MLX has an [install guide](https://ml-explore.github.io/mlx/build/html/install.html) with troubleshooting steps.
 
+### Performance
+
+- There are a number of things users have empirically found to improve performance on Apple Silicon Macs:
+
+1. Upgrade to the latest version of MacOS 15.
+2. Run `./configure_mlx.sh`. This runs commands to optimize GPU memory allocation on Apple Silicon Macs.
+
+
 ## Documentation
 
 ### Example Usage on Multiple MacOS Devices
@@ -98,29 +116,45 @@ source install.sh
 #### Device 1:
 
 ```sh
-python3 main.py
+exo
 ```
 
 #### Device 2:
 ```sh
-python3 main.py
+exo
 ```
 
 That's it! No configuration required - exo will automatically discover the other device(s).
 
 exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:8000
 
-For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Example with curls:
+For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:8000/v1/chat/completions. Examples with curl:
+
+#### Llama 3.2 3B:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-     "model": "llama-3.1-8b",
+     "model": "llama-3.2-3b",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
 ```
+
+#### Llama 3.1 405B:
+
+```sh
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "llama-3.1-405b",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
+
+#### Llava 1.5 7B (Vision Language Model):
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
@@ -148,15 +182,58 @@ curl http://localhost:8000/v1/chat/completions \
    }'
 ```
 
+### Example Usage on Multiple Heterogenous Devices (MacOS + Linux)
+
+#### Device 1 (MacOS):
+
+```sh
+exo --inference-engine tinygrad
+```
+
+Here we explicitly tell exo to use the **tinygrad** inference engine.
+
+#### Device 2 (Linux):
+```sh
+exo
+```
+
+Linux devices will automatically default to using the **tinygrad** inference engine.
+
+You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/env_vars/). For example, you can configure tinygrad to use the cpu by specifying `CLANG=1`.
+
+### Example Usage on a single device with "exo run" command
+
+```sh
+exo run llama-3.2-3b
+```
+
+With a custom prompt:
+
+```sh
+exo run llama-3.2-3b --prompt "What is the meaning of exo?"
+```
+
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).
 
 ```sh
-DEBUG=9 python3 main.py
+DEBUG=9 exo
+```
+
+For the **tinygrad** inference engine specifically, there is a separate DEBUG flag `TINYGRAD_DEBUG` that can be used to enable debug logs (1-6).
+
+```sh
+TINYGRAD_DEBUG=2 exo
 ```
 
 ## Known Issues
+
+- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually:
+
+```sh
+/Applications/Python 3.x/Install Certificates.command
+```
 
 - 🚧 As the library is evolving so quickly, the iOS implementation has fallen behind Python. We have decided for now not to put out the buggy iOS version and receive a bunch of GitHub issues for outdated code. We are working on solving this properly and will make an announcement when it's ready. If you would like access to the iOS implementation now, please email alex@exolabs.net with your GitHub username explaining your use-case and you will be granted access on GitHub.
 
@@ -166,11 +243,11 @@ exo supports the following inference engines:
 
 - ✅ [MLX](exo/inference/mlx/sharded_inference_engine.py)
 - ✅ [tinygrad](exo/inference/tinygrad/inference.py)
-- 🚧 [llama.cpp](TODO)
+- 🚧 [PyTorch](https://github.com/exo-explore/exo/pull/139)
+- 🚧 [llama.cpp](https://github.com/exo-explore/exo/issues/167)
 
 ## Networking Modules
 
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
-

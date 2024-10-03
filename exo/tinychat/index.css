@@ -164,9 +164,25 @@ main {
   border-right: 2px solid var(--secondary-color);
   box-shadow: 10px 10px 20px 2px var(--secondary-color-transparent);
 }
-
+.download-progress{
+  margin-bottom: 20em;
+}
 .message > pre {
   white-space: pre-wrap;
+}
+
+.toast {
+    width: 100%; /* Take up the full width of the page */
+    background-color: #fc2a2a; /* Dark background color */
+    color: #fff; /* White text color */
+    text-align: center; /* Centered text */
+    border-radius: 2px; /* Rounded borders */
+    padding: 16px; /* Padding */
+    position: fixed; /* Sit on top of the screen content */
+    z-index: 9999; /* Add a z-index if needed */
+    top: 0; /* Position at the top of the page */
+    left: 0; /* Extend from the left edge */
+    right: 0; /* Extend to the right edge */
 }
 
 .hljs {

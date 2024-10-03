@@ -17,11 +17,11 @@ commands:
             source env/bin/activate
 
             # Start first instance
-            HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout 900 2>&1 | tee output1.log &
+            HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout 900 2>&1 | tee output1.log &
             PID1=$!
 
             # Start second instance
-            HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout 900 2>&1 | tee output2.log &
+            HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout 900 2>&1 | tee output2.log &
             PID2=$!
 
             # Wait for discovery
@@ -91,8 +91,8 @@ commands:
 jobs:
   unit_test:
     macos:
-      xcode: "15.4.0"
-    resource_class: macos.m1.medium.gen1
+      xcode: "16.0.0"
+    resource_class: macos.m1.large.gen1
     steps:
       - checkout
       - run:
@@ -113,7 +113,7 @@ jobs:
             source env/bin/activate
             # set TEMPERATURE to 0 for deterministic sampling
             echo "Running inference engine tests..."
-            METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
+            METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
             echo "Running tokenizer tests..."
             python3 ./test/test_tokenizers.py
 
@@ -138,13 +138,13 @@ jobs:
           name: Run discovery integration test
           command: |
             source env/bin/activate
-            DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
+            DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
             PID1=$!
-            DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 > output2.log 2>&1 &
+            DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 > output2.log 2>&1 &
             PID2=$!
             sleep 10
             kill $PID1 $PID2
-            if grep -q "Successfully connected peers: \['node2@.*:.*'\]" output1.log && ! grep -q "Failed to connect peers:" output1.log && grep -q "Successfully connected peers: \['node1@.*:.*'\]" output2.log && ! grep -q "Failed to connect peers:" output2.log; then
+            if grep -q "Peer statuses: {\\'node2\\': \\'is_connected=True, health_check=True" output1.log && ! grep -q "Failed to connect peers:" output1.log && grep -q "Peer statuses: {\\'node1\\': \\'is_connected=True, health_check=True" output2.log && ! grep -q "Failed to connect peers:" output2.log; then
               echo "Test passed: Both instances discovered each other"
               exit 0
             else
@@ -159,6 +159,7 @@ jobs:
   chatgpt_api_integration_test_mlx:
     macos:
       xcode: "15.4.0"
+    resource_class: macos.m1.large.gen1
     steps:
       - checkout
       - run:

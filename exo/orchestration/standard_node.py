@@ -336,7 +336,7 @@ class StandardNode(Node):
       if failed_connects: print(f"Failed to connect peers: {_pretty(failed_connects)}")
 
     self.peers = next_peers
-    return len(peers_to_connect) > 0 or len(peers_to_disconnect) > 0
+    return len(peers_added) > 0 or len(peers_removed) > 0 or len(peers_updated) > 0
 
   async def periodic_topology_collection(self, interval: int):
     while True:

@@ -22,12 +22,17 @@
 <link href="/static/unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/vs2015.min.css" rel="stylesheet"/>
 <link href="/index.css" rel="stylesheet"/>
 <link href="/common.css" rel="stylesheet"/>
-</link></head>
+</head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
+     <!-- Error Toast -->
+    <div x-show="errorMessage" x-transition.opacity x-text="errorMessage" class="toast">
+    </div>
 <div class="model-selector">
 <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
-<option selected="" value="llama-3.1-8b">Llama 3.1 8B</option>
+<option selected="" value="llama-3.2-1b">Llama 3.2 1B</option>
+<option value="llama-3.2-3b">Llama 3.2 3B</option>
+<option value="llama-3.1-8b">Llama 3.1 8B</option>
 <option value="llama-3.1-70b">Llama 3.1 70B</option>
 <option value="llama-3.1-70b-bf16">Llama 3.1 70B (BF16)</option>
 <option value="llama-3.1-405b">Llama 3.1 405B</option>
@@ -36,7 +41,15 @@
 <option value="mistral-nemo">Mistral Nemo</option>
 <option value="mistral-large">Mistral Large</option>
 <option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
+<option value="deepseek-coder-v2.5">Deepseek Coder V2.5</option>
 <option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
+<option value="qwen-2.5-coder-1.5b">Qwen 2.5 Coder 1.5B</option>
+<option value="qwen-2.5-coder-7b">Qwen 2.5 Coder 7B</option>
+<option value="qwen-2.5-7b">Qwen 2.5 7B</option>
+<option value="qwen-2.5-math-7b">Qwen 2.5 7B (Math)</option>
+<option value="qwen-2.5-14b">Qwen 2.5 14B</option>
+<option value="qwen-2.5-72b">Qwen 2.5 72B</option>
+<option value="qwen-2.5-math-72b">Qwen 2.5 72B (Math)</option>
 </select>
 </div>
 <div @popstate.window="
@@ -136,6 +149,21 @@
       $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
     " x-ref="messages" x-show="home === 2" x-transition="">
 </div>
+
+<!-- Download Progress Section -->
+<template x-if="downloadProgress">
+<div class="download-progress message message-role-assistant">
+  <h2>Download Progress</h2>
+  <div class="download-progress-node">
+    <p><strong>Model:</strong> <span x-text="downloadProgress.repo_id + '@' + downloadProgress.repo_revision"></span></p>
+    <p><strong>Progress:</strong> <span x-text="`${downloadProgress.downloaded_bytes_display} / ${downloadProgress.total_bytes_display} (${downloadProgress.percentage}%)`"></span></p>
+    <p><strong>Speed:</strong> <span x-text="downloadProgress.overall_speed_display || 'N/A'"></span></p>
+    <p><strong>ETA:</strong> <span x-text="downloadProgress.overall_eta_display || 'N/A'"></span></p>
+  </div>
+</div>
+</template>
+
+
 <div class="input-container">
 <div class="input-performance">
 <span class="input-performance-point">

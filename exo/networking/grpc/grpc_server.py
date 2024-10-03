@@ -116,3 +116,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     if DEBUG >= 8: print(f"Received SendOpaqueStatus request: {request_id=} {status=}")
     self.node.on_opaque_status.trigger_all(request_id, status)
     return node_service_pb2.Empty()
+
+  async def HealthCheck(self, request, context):
+    return node_service_pb2.HealthCheckResponse(is_healthy=True)
