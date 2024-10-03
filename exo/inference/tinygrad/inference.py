@@ -5,7 +5,7 @@ from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggin
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import load_state_dict
-from tinygrad import Tensor, nn, Context
+from tinygrad import Tensor, nn, Context, dtypes
 from exo.inference.inference_engine import InferenceEngine
 from typing import Optional, Tuple
 import numpy as np
@@ -13,6 +13,7 @@ from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+from functools import partial
 
 Tensor.no_grad = True
 # default settings
@@ -29,6 +30,7 @@ MODEL_PARAMS = {
 
 class MLXQuantizedLinear:
   def __init__(self, in_features, out_features, bits=4, group_size=64, bias=False):
+    print("init", in_features, out_features)
     assert in_features % group_size == 0
     assert 32 % bits == 0
     assert (in_features * bits) % 32 == 0
@@ -42,6 +44,7 @@ class MLXQuantizedLinear:
     self.group_size = group_size
 
   def __call__(self, x):
+    print("call", x.shape)
     B, M, K = x.shape
     N, K_packed = self.weight.shape
 
