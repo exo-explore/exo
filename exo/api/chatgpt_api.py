@@ -268,7 +268,13 @@ class ChatGPTAPI:
     callback = self.node.on_token.register(callback_id)
 
     if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {image_str=}")
-    asyncio.create_task(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))
+    try:
+        await asyncio.gather(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))
+    except Exception as e:
+        if DEBUG >= 2:
+            traceback.print_exc()
+        return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
+
 
     try:
       if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
