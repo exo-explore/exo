@@ -9,6 +9,7 @@ service NodeService {
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
   rpc SendResult (SendResultRequest) returns (Empty) {}
   rpc SendOpaqueStatus (SendOpaqueStatusRequest) returns (Empty) {}
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse) {}
 }
 
 message Shard {
@@ -84,6 +85,12 @@ message SendResultRequest {
 message SendOpaqueStatusRequest {
   string request_id = 1;
   string status = 2;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool is_healthy = 1;
 }
 
 message Empty {}

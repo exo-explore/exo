@@ -9,6 +9,7 @@ from aiohttp import web
 import aiohttp_cors
 import traceback
 from exo import DEBUG, VERSION
+from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
@@ -115,7 +116,7 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 
 def build_prompt(tokenizer, _messages: List[Message]):
   messages = remap_messages(_messages)
-  prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+  prompt = tokenizer.apply_chat_template([m.to_dict() for m in messages], tokenize=False, add_generation_prompt=True)
   image_str = None
   for message in messages:
     if not isinstance(message.content, list):
@@ -175,13 +176,22 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/v1/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
     cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+    cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
 
-    self.static_dir = Path(__file__).parent.parent.parent/"tinychat/examples/tinychat"
+    self.static_dir = Path(__file__).parent.parent / "tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 
-    # Add middleware to log every request
+    self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)
+
+  async def timeout_middleware(self, app, handler):
+    async def middleware(request):
+      try:
+        return await asyncio.wait_for(handler(request), timeout=self.response_timeout)
+      except asyncio.TimeoutError:
+        return web.json_response({"detail": "Request timed out"}, status=408)
+    return middleware
 
   async def log_request(self, app, handler):
     async def middleware(request):
@@ -202,6 +212,16 @@ class ChatGPTAPI:
     messages = [parse_message(msg) for msg in data.get("messages", [])]
     tokenizer = await resolve_tokenizer(shard.model_id)
     return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
+
+  async def handle_get_download_progress(self, request):
+    progress_data = {}
+    for node_id, progress_event in self.node.node_download_progress.items():
+      if isinstance(progress_event, RepoProgressEvent):
+        progress_data[node_id] = progress_event.to_dict()
+      else:
+        print(f"Unknown progress event type: {type(progress_event)}. {progress_event}")
+    return web.json_response(progress_data)
+
 
   async def handle_post_chat_completions(self, request):
     data = await request.json()
@@ -248,11 +268,7 @@ class ChatGPTAPI:
     callback = self.node.on_token.register(callback_id)
 
     if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {image_str=}")
-    try:
-      await self.node.process_prompt(shard, prompt, image_str, request_id=request_id)
-    except Exception as e:
-      if DEBUG >= 2: traceback.print_exc()
-      return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
+    asyncio.create_task(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))
 
     try:
       if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")

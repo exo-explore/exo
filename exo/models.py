@@ -2,6 +2,12 @@ from exo.inference.shard import Shard
 
 model_base_shards = {
   ### llama
+  "llama-3.2-1b": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.2-1B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=16),
+  },
+  "llama-3.2-3b": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.2-3B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
+  },
   "llama-3.1-8b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
     "TinygradDynamicShardInferenceEngine": Shard(model_id="mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated", start_layer=0, end_layer=0, n_layers=32),
@@ -34,6 +40,12 @@ model_base_shards = {
   ### pixtral
   "pixtral-12b": {"MLXDynamicShardInferenceEngine": Shard(model_id="varb15/hf-internal-testing-pixtral-12b", start_layer=0, end_layer=0, n_layers=40),},
   ### qwen
+  "qwen-2.5-coder-1.5b": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
+  },
+  "qwen-2.5-coder-7b": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2.5-Coder-7B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
+  },
   "qwen-2.5-7b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2.5-7B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
   },
