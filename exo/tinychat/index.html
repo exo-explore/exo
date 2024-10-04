@@ -187,7 +187,7 @@
 <input @change="$data.handleImageUpload($event)" accept="image/*" id="image-upload" style="display: none;" type="file" x-ref="imageUpload"/>
 <div class="image-preview-container" x-show="imagePreview">
 <img :src="imagePreview" alt="Uploaded Image" class="image-preview"/>
-<button @click="imagePreview = null; imageUrl = null;" class="remove-image-button">
+<button @click="imagePreview = null; imageUrl = null; $refs.imageUpload.value = '';" class="remove-image-button">
 <i class="fas fa-times"></i>
 </button>
 </div>

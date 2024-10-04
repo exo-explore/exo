@@ -23,6 +23,21 @@ document.addEventListener("alpine:init", () => {
     // image handling
     imagePreview: null,
 
+    // download progress
+    downloadProgress: null,
+    downloadProgressInterval: null, // To keep track of the polling interval
+
+    // Pending message storage
+    pendingMessage: null,
+
+    init() {
+      // Clean up any pending messages
+      localStorage.removeItem("pendingMessage");
+
+      // Start polling for download progress
+      this.startDownloadProgressPolling();
+    },
+
     removeHistory(cstate) {
       const index = this.histories.findIndex((state) => {
         return state.time === cstate.time;
@@ -31,6 +46,24 @@ document.addEventListener("alpine:init", () => {
         this.histories.splice(index, 1);
         localStorage.setItem("histories", JSON.stringify(this.histories));
       }
+    },
+    // Utility functions
+    formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
+
+    formatDuration(seconds) {
+      if (seconds === null || seconds === undefined || isNaN(seconds)) return '';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
     },
 
     async handleImageUpload(event) {
@@ -58,7 +91,7 @@ document.addEventListener("alpine:init", () => {
         const imageInput = document.getElementById("image-upload");
 
         // Check if there's an image file selected
-        const hasImage = imageInput && imageInput.files && imageInput.files.length > 0;
+        const hasImage = imageInput && imageInput.files && imageInput.files.length > 0; 
         
         if (!value && !this.imagePreview) return;
 
@@ -79,6 +112,21 @@ document.addEventListener("alpine:init", () => {
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
 
+        localStorage.setItem("pendingMessage", value);
+        this.processMessage(value);
+      } catch (error) {
+        console.error('error', error)
+        this.lastErrorMessage = error.message || 'Unknown error on handleSend';
+        this.errorMessage = error.message || 'Unknown error on handleSend';
+        setTimeout(() => {
+          this.errorMessage = null;
+        }, 5 * 1000)
+        this.generating = false;
+      }
+    },
+
+    async processMessage(value) {
+      try {
         // reset performance tracking
         const prefill_start = Date.now();
         let start_time = 0;
@@ -104,19 +152,9 @@ document.addEventListener("alpine:init", () => {
               ]
             };
           } else {
-            return {
-              role: msg.role,
-              content: msg.content
-            };
-          }
-        });
-        const containsImage = apiMessages.some(msg => Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url'));
-        if (containsImage) {
-          // Map all messages with string content to object with type text
-          apiMessages = apiMessages.map(msg => {
-            if (typeof msg.content === 'string') {
+            if (this.cstate.selectedModel === 'llava-1.5-7b-hf') {
               return {
-                ...msg,
+                role: msg.role,
                 content: [
                   {
                     type: "text",
@@ -124,12 +162,15 @@ document.addEventListener("alpine:init", () => {
                   }
                 ]
               };
+            } else {
+              return {
+                role: msg.role,
+                content: msg.content
+              };
             }
-            return msg;
-          });
-        }
-
-
+          }
+        });
+        
         // start receiving server sent events
         let gottenFirstChunk = false;
         for await (
@@ -190,6 +231,7 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (error) {
         console.error('error', error)
+        this.lastErrorMessage = error;
         this.errorMessage = error;
         setTimeout(() => {
           this.errorMessage = null;
@@ -258,6 +300,64 @@ document.addEventListener("alpine:init", () => {
           }
         }
       }
+    },
+
+    async fetchDownloadProgress() {
+      try {
+        const response = await fetch(`${this.endpoint}/download/progress`);
+        if (response.ok) {
+          const data = await response.json();
+          const progressArray = Object.values(data);
+          if (progressArray.length > 0) {
+            const progress = progressArray[0];
+            // Check if download is complete
+            if (progress.status === "complete" || progress.status === "failed") {
+              this.downloadProgress = null; // Hide the progress section
+
+              if (progress.status === "complete") {
+                // Download is complete
+                // Check for pendingMessage
+                const savedMessage = localStorage.getItem("pendingMessage");
+                if (savedMessage) {
+                  // Clear pendingMessage
+                  localStorage.removeItem("pendingMessage");
+                  // Call processMessage() with savedMessage
+                  if (this.lastErrorMessage) {
+                    await this.processMessage(savedMessage);
+                  }
+                }
+                this.lastErrorMessage = null;
+              }
+            } else {
+              // Compute human-readable strings
+              progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
+              progress.total_bytes_display = this.formatBytes(progress.total_bytes);
+              progress.overall_speed_display = progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '';
+              progress.overall_eta_display = progress.overall_eta ? this.formatDuration(progress.overall_eta) : '';
+              progress.percentage = ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2);
+
+              this.downloadProgress = progress;
+            }
+          } else {
+            // No ongoing download
+            this.downloadProgress = null;
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching download progress:", error);
+        this.downloadProgress = null;
+      }
+    },
+
+    startDownloadProgressPolling() {
+      if (this.downloadProgressInterval) {
+        // Already polling
+        return;
+      }
+      this.fetchDownloadProgress(); // Fetch immediately
+      this.downloadProgressInterval = setInterval(() => {
+        this.fetchDownloadProgress();
+      }, 1000); // Poll every second
     },
   }));
 });
