@@ -62,8 +62,9 @@ class LatencyAwareMemoryAndFlopsPartitioningStrategy(PartitioningStrategy):
         total_throughput = sum(throughput for _, (_, throughput) in neighbors.items()) if neighbors else 0
         
         # Normalize total latency and throughput
-        normalized_total_latency = total_latency / (max_latency * len(neighbors)) if max_latency != 0 else 0
-        normalized_total_throughput = total_throughput / (max_throughput * len(neighbors)) if max_throughput != 0 else 0
+        num_neighbors = len(neighbors)
+        normalized_total_latency = total_latency / (max_latency * num_neighbors) if num_neighbors != 0 else 0
+        normalized_total_throughput = total_throughput / (max_throughput * num_neighbors) if num_neighbors != 0 else 0
         
         logging.debug(f"Node: {node[0]}, Normalized total latency: {normalized_total_latency}, Normalized total throughput: {normalized_total_throughput}")
         
