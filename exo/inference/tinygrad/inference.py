@@ -49,16 +49,21 @@ class MLXQuantizedLinear:
     assert 32 % bits == 0
     assert (in_features * bits) % 32 == 0
     self.weight = Tensor.kaiming_uniform(out_features, (in_features * bits) // 32, dtype=dtypes.uint32)
-    self.scales = Tensor.uniform(out_features, in_features // group_size, dtype=dtypes.half)
+    self.scales = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
     if bias:
-      self.biases = Tensor.uniform(out_features, in_features // group_size, dtype=dtypes.half)
+      self.biases = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
     else:
       self.biases = Tensor.zeros(out_features, in_features // group_size, dtype=dtypes.half)
     self.bits = bits
     self.group_size = group_size
 
   def __call__(self, x):
-    return x.dot(dequantize(self.weight, self.scales, self.biases, self.bits).T)
+    w_full = Tensor.cat(
+        *[(self.weight // (2**i))[..., None] for i in range(0, 32, self.bits)], dim=-1
+    )
+    w_full = self.scales[..., None] * w_full.reshape(len(self.weight), self.scales.shape[-1], -1) + self.biases[..., None]
+    return x.dot(w_full.reshape(len(self.weight), -1).T)
+  
   
 class MLXQuantizedEmbedding:
   def __init__(self, vocab_size, embed_size, bits = 4, group_size= 64):
@@ -66,13 +71,18 @@ class MLXQuantizedEmbedding:
     self.bits = bits
     self.group_size = group_size
     self.weight = Tensor.glorot_uniform(vocab_size, (embed_size * bits) // 32)
-    self.scales = Tensor.uniform(vocab_size, embed_size // group_size)
-    self.biases = Tensor.zeros(vocab_size, embed_size // group_size)
+    self.scales = Tensor.glorot_uniform(vocab_size, embed_size // group_size)
     
   def __call__(self, x):
       s = x.shape
       x = x.flatten()
-      return dequantize(self.weight[x], self.scales[x], self.biases[x], self.bits).reshape(*s, -1)
+      w = self.weight[x]
+      scales = self.scales[x]
+      w_full = Tensor.cat(
+        *[(w // (2**i))[..., None] for i in range(0, 32, self.bits)], dim=-1
+      )
+      w_full = scales[..., None] * w_full.reshape(len(w), scales.shape[-1], -1)
+      return w_full.reshape(*s, -1)
     
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
