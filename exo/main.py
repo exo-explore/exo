@@ -8,10 +8,10 @@ import uuid
 import sys
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
-from exo.networking.udp.udp_discovery import UDPDiscovery
+from exo.networking.udp.latency_aware_discovery import LatencyAwareDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
-from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
+from exo.topology.latency_aware_memory_and_flops_partitioning_strategy import LatencyAwareMemoryAndFlopsPartitioningStrategy
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -75,7 +75,10 @@ if DEBUG >= 0:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
 if args.discovery_module == "udp":
-  discovery = UDPDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout)
+  discovery = LatencyAwareDiscovery(args.node_id, args.node_port, args.listen_port,
+                                    args.broadcast_port, lambda peer_id, address,
+                                    device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
+                                    discovery_timeout=args.discovery_timeout)
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(args.node_id, args.node_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout, tailscale_api_key=args.tailscale_api_key, tailnet=args.tailnet_name)
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
@@ -84,7 +87,7 @@ node = StandardNode(
   None,
   inference_engine,
   discovery,
-  partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
+  partitioning_strategy=LatencyAwareMemoryAndFlopsPartitioningStrategy(),
   max_generate_tokens=args.max_generate_tokens,
   topology_viz=topology_viz
 )
