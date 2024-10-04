@@ -1,0 +1,188 @@
+import unittest
+from exo.topology.latency_aware_memory_and_flops_partitioning_strategy import LatencyAwareMemoryAndFlopsPartitioningStrategy
+from exo.topology.topology import Topology
+from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
+from exo.topology.partitioning_strategy import Partition
+
+class TestLatencyAwareMemoryAndFlopsPartitioningStrategy(unittest.TestCase):
+
+    def test_partitions_add_up_to_one(self):
+        topology = Topology()
+        topology.update_node(
+            "node1",
+            DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node2",
+            DeviceCapabilities(model="test2", chip="test2", memory=1000, flops=DeviceFlops(fp32=500, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node3",
+            DeviceCapabilities(model="test3", chip="test3", memory=6000, flops=DeviceFlops(fp32=2000, fp16=0, int8=0)),
+        )
+        topology.add_edge("node1", "node2", latency=10, throughput=100)
+        topology.add_edge("node2", "node3", latency=20, throughput=200)
+        topology.add_edge("node3", "node1", latency=30, throughput=300)
+        topology.add_edge("node2", "node1", latency=10, throughput=100)
+        topology.add_edge("node3", "node2", latency=20, throughput=200)
+        topology.add_edge("node1", "node3", latency=30, throughput=300)
+
+        strategy = LatencyAwareMemoryAndFlopsPartitioningStrategy()
+        partitions = strategy.partition(topology)
+
+        self.assertEqual(len(partitions), 3)
+        self.assertAlmostEqual(sum(p.end - p.start for p in partitions), 1.0, places=4)
+        self.assertEqual(len(topology.all_edges()), 6)  # Check for 6 edges
+
+    def test_memory_case_with_high_and_low_flops(self):
+        topology = Topology()
+        topology.update_node(
+            "node1",
+            DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node2",
+            DeviceCapabilities(model="test2", chip="test2", memory=3000, flops=DeviceFlops(fp32=500, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node3",
+            DeviceCapabilities(model="test3", chip="test3", memory=3000, flops=DeviceFlops(fp32=250, fp16=0, int8=0)),
+        )
+        topology.add_edge("node1", "node2", latency=10, throughput=100)
+        topology.add_edge("node2", "node3", latency=10, throughput=100)
+        topology.add_edge("node3", "node1", latency=10, throughput=100)
+        topology.add_edge("node2", "node1", latency=10, throughput=100)
+        topology.add_edge("node3", "node2", latency=10, throughput=100)
+        topology.add_edge("node1", "node3", latency=10, throughput=100)
+
+        strategy = LatencyAwareMemoryAndFlopsPartitioningStrategy()
+        partitions = strategy.partition(topology)
+
+        self.assertEqual(len(partitions), 3)
+        self.assertAlmostEqual(sum(p.end - p.start for p in partitions), 1.0, places=4)
+        self.assertGreater(partitions[0].end - partitions[0].start, partitions[1].end - partitions[1].start)
+        self.assertGreater(partitions[1].end - partitions[1].start, partitions[2].end - partitions[2].start)
+        self.assertEqual(len(topology.all_edges()), 6)  # Check for 6 edges
+
+    def test_memory_case_with_high_and_low_latency(self):
+        topology = Topology()
+        topology.update_node(
+            "node1",
+            DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node2",
+            DeviceCapabilities(model="test2", chip="test2", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node3",
+            DeviceCapabilities(model="test3", chip="test3", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.add_edge("node1", "node2", latency=10, throughput=100)
+        topology.add_edge("node2", "node3", latency=100, throughput=100)
+        topology.add_edge("node3", "node1", latency=10, throughput=100)
+        topology.add_edge("node2", "node1", latency=50, throughput=100)
+        topology.add_edge("node3", "node2", latency=100, throughput=100)
+        topology.add_edge("node1", "node3", latency=10, throughput=100)
+
+        strategy = LatencyAwareMemoryAndFlopsPartitioningStrategy()
+        partitions = strategy.partition(topology)
+
+        self.assertEqual(len(partitions), 3)
+        self.assertAlmostEqual(sum(p.end - p.start for p in partitions), 1.0, places=4)
+        self.assertGreater(partitions[0].end - partitions[0].start, partitions[1].end - partitions[1].start)
+        self.assertGreater(partitions[1].end - partitions[1].start, partitions[2].end - partitions[2].start)
+        self.assertEqual(len(topology.all_edges()), 6)  # Check for 6 edges
+
+    def test_memory_case_with_high_and_low_throughput(self):
+        topology = Topology()
+        topology.update_node(
+            "node1",
+            DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node2",
+            DeviceCapabilities(model="test2", chip="test2", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node3",
+            DeviceCapabilities(model="test3", chip="test3", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.add_edge("node1", "node2", latency=10, throughput=100)
+        topology.add_edge("node2", "node3", latency=10, throughput=50)
+        topology.add_edge("node3", "node1", latency=10, throughput=25)
+        topology.add_edge("node2", "node1", latency=10, throughput=100)
+        topology.add_edge("node3", "node2", latency=10, throughput=50)
+        topology.add_edge("node1", "node3", latency=10, throughput=25)
+
+        strategy = LatencyAwareMemoryAndFlopsPartitioningStrategy()
+        partitions = strategy.partition(topology)
+
+        self.assertEqual(len(partitions), 3)
+        self.assertAlmostEqual(sum(p.end - p.start for p in partitions), 1.0, places=4)
+        self.assertGreater(partitions[0].end - partitions[0].start, partitions[1].end - partitions[1].start)
+        self.assertGreater(partitions[1].end - partitions[1].start, partitions[2].end - partitions[2].start)
+        self.assertEqual(len(topology.all_edges()), 6)  # Check for 6 edges
+
+    def test_memory_case_with_high_and_low_latency_and_throughput(self):
+        topology = Topology()
+        topology.update_node(
+            "node1",
+            DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node2",
+            DeviceCapabilities(model="test2", chip="test2", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node3",
+            DeviceCapabilities(model="test3", chip="test3", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.add_edge("node1", "node2", latency=10, throughput=100)
+        topology.add_edge("node2", "node3", latency=20, throughput=50)
+        topology.add_edge("node3", "node1", latency=30, throughput=25)
+        topology.add_edge("node2", "node1", latency=10, throughput=100)
+        topology.add_edge("node3", "node2", latency=20, throughput=50)
+        topology.add_edge("node1", "node3", latency=30, throughput=25)
+
+        strategy = LatencyAwareMemoryAndFlopsPartitioningStrategy()
+        partitions = strategy.partition(topology)
+
+        self.assertEqual(len(partitions), 3)
+        self.assertAlmostEqual(sum(p.end - p.start for p in partitions), 1.0, places=4)
+        self.assertGreater(partitions[0].end - partitions[0].start, partitions[1].end - partitions[1].start)
+        self.assertGreater(partitions[1].end - partitions[1].start, partitions[2].end - partitions[2].start)
+        self.assertEqual(len(topology.all_edges()), 6)  # Check for 6 edges
+
+    def test_memory_case_with_high_and_low_flops_latency_and_throughput(self):
+        topology = Topology()
+        topology.update_node(
+            "node1",
+            DeviceCapabilities(model="test1", chip="test1", memory=3000, flops=DeviceFlops(fp32=1000, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node2",
+            DeviceCapabilities(model="test2", chip="test2", memory=3000, flops=DeviceFlops(fp32=500, fp16=0, int8=0)),
+        )
+        topology.update_node(
+            "node3",
+            DeviceCapabilities(model="test3", chip="test3", memory=3000, flops=DeviceFlops(fp32=250, fp16=0, int8=0)),
+        )
+        topology.add_edge("node1", "node2", latency=10, throughput=100)
+        topology.add_edge("node2", "node3", latency=20, throughput=50)
+        topology.add_edge("node3", "node1", latency=30, throughput=25)
+        topology.add_edge("node2", "node1", latency=10, throughput=100)
+        topology.add_edge("node3", "node2", latency=20, throughput=50)
+        topology.add_edge("node1", "node3", latency=30, throughput=25)
+
+        strategy = LatencyAwareMemoryAndFlopsPartitioningStrategy()
+        partitions = strategy.partition(topology)
+
+        self.assertEqual(len(partitions), 3)
+        self.assertAlmostEqual(sum(p.end - p.start for p in partitions), 1.0, places=4)
+        self.assertGreater(partitions[0].end - partitions[0].start, partitions[1].end - partitions[1].start)
+        self.assertGreater(partitions[1].end - partitions[1].start, partitions[2].end - partitions[2].start)
+        self.assertEqual(len(topology.all_edges()), 6)  # Check for 6 edges
+
+if __name__ == "__main__":
+    unittest.main()
