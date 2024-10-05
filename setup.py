@@ -20,7 +20,6 @@ install_requires = [
   "requests==2.32.3",
   "rich==13.7.1",
   "safetensors==0.4.3",
-  "tailscale==0.6.1",
   "tenacity==9.0.0",
   "tqdm==4.66.4",
   "transformers==4.43.3",
