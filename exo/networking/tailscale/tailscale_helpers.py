@@ -2,9 +2,32 @@ import json
 import asyncio
 import aiohttp
 import re
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List, Optional
 from exo.helpers import DEBUG_DISCOVERY
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
+from datetime import datetime, timezone
+
+class Device:
+  def __init__(self, device_id: str, name: str, addresses: List[str], last_seen: Optional[datetime] = None):
+    self.device_id = device_id
+    self.name = name
+    self.addresses = addresses
+    self.last_seen = last_seen
+
+  @classmethod
+  def from_dict(cls, data: Dict[str, Any]) -> 'Device':
+    return cls(
+      device_id=data.get('id', ''),
+      name=data.get('name', ''),
+      addresses=data.get('addresses', []),
+      last_seen=cls.parse_datetime(data.get('lastSeen'))
+    )
+
+  @staticmethod
+  def parse_datetime(date_string: Optional[str]) -> Optional[datetime]:
+    if not date_string:
+      return None
+    return datetime.strptime(date_string, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 async def get_device_id() -> str:
   try:
@@ -94,3 +117,20 @@ def sanitize_attribute(value: str) -> str:
   sanitized_value = re.sub(r'[^a-zA-Z0-9_.]', '_', value)
   # Truncate to 50 characters
   return sanitized_value[:50]
+
+async def get_tailscale_devices(api_key: str, tailnet: str) -> Dict[str, Device]:
+  async with aiohttp.ClientSession() as session:
+    url = f"https://api.tailscale.com/api/v2/tailnet/{tailnet}/devices"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    async with session.get(url, headers=headers) as response:
+      response.raise_for_status()
+      data = await response.json()
+
+      devices = {}
+      for device_data in data.get("devices", []):
+        print("Device data: ", device_data)
+        device = Device.from_dict(device_data)
+        devices[device.name] = device
+
+      return devices
