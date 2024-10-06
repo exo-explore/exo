@@ -31,16 +31,7 @@ MODEL_PARAMS = {
 def select_bits(w, bits, start):
     shift_left = 32 - (start + bits)
     shift_right = shift_left + start
-    return (w * (2**shift_left)) // (2**shift_right)
-
-
-def dequantize(w, scales, biases, bits=4):
-    w_full = Tensor.cat(
-        *[select_bits(w, bits, i)[..., None] for i in range(0, 32, bits)], dim=-1
-    )
-    w_full = w_full.reshape(len(w), scales.shape[-1], -1)
-    w_full = scales[..., None] * w_full + biases[..., None]
-    return w_full.reshape(len(w), -1)
+    return (w * (2**shift_left)) // (2**shift_right)  
 
 
 class MLXQuantizedLinear:
@@ -59,9 +50,9 @@ class MLXQuantizedLinear:
 
   def __call__(self, x):
     w_full = Tensor.cat(
-        *[(self.weight // (2**i))[..., None] for i in range(0, 32, self.bits)], dim=-1
-    )
-    w_full = self.scales[..., None] * w_full.reshape(len(self.weight), self.scales.shape[-1], -1) + self.biases[..., None]
+        *[select_bits(self.weight, self.bits, i)[..., None] for i in range(0, 32, self.bits)], dim=-1
+    ).reshape(len(self.weight), self.scales.shape[-1], -1)
+    w_full = self.scales[..., None] * w_full + self.biases[..., None]
     return x.dot(w_full.reshape(len(self.weight), -1).T)
   
   
@@ -72,16 +63,18 @@ class MLXQuantizedEmbedding:
     self.group_size = group_size
     self.weight = Tensor.glorot_uniform(vocab_size, (embed_size * bits) // 32)
     self.scales = Tensor.glorot_uniform(vocab_size, embed_size // group_size)
+    self.biases = Tensor.glorot_uniform(vocab_size, embed_size // group_size)
     
   def __call__(self, x):
       s = x.shape
       x = x.flatten()
       w = self.weight[x]
       scales = self.scales[x]
+      biases = self.biases[x]
       w_full = Tensor.cat(
-        *[(w // (2**i))[..., None] for i in range(0, 32, self.bits)], dim=-1
-      )
-      w_full = scales[..., None] * w_full.reshape(len(w), scales.shape[-1], -1)
+        *[select_bits(w, self.bits, i)[..., None] for i in range(0, 32, self.bits)], dim=-1
+      ).reshape(len(w), scales.shape[-1], -1)
+      w_full = scales[..., None] * w_full + biases[..., None]
       return w_full.reshape(*s, -1)
     
 
