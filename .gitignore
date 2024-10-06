@@ -173,3 +173,6 @@ cython_debug/
 
 # PyTorch interface
 .offload
+
+# neovim/vim settings 
+.vimrc

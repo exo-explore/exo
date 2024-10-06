@@ -36,8 +36,8 @@ model_base_shards = {
   "llama-3-1B-Base": {
     "PyTorchDynamicShardInferenceEngine": Shard(model_id="andrijdavid/Llama3-1B-Base", start_layer=0, end_layer=0, n_layers=3),
   },
-  "TinyLlama-1.1B-Chat-yaw": {
-      "PyTorchDynamicShardInferenceEngine": Shard(model_id="ambrosfitz/TinyLlama-1.1B-Chat-yawp", start_layer=0, end_layer=0, n_layers=22),
+  "meta-llama/Llama-3.2-1B-Instruct": {
+      "PyTorchDynamicShardInferenceEngine": Shard(model_id="meta-llama/Llama-3.2-1B-Instruct", start_layer=0, end_layer=0, n_layers=24),
   },
   ### mistral
   "mistral-nemo": {"MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Nemo-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=40),},
@@ -47,11 +47,6 @@ model_base_shards = {
   "deepseek-coder-v2.5": {"MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/DeepSeek-V2.5-MLX-AQ4_1_64", start_layer=0, end_layer=0, n_layers=60),},
   ### llava
   "llava-1.5-7b-hf": {"MLXDynamicShardInferenceEngine": Shard(model_id="llava-hf/llava-1.5-7b-hf", start_layer=0, end_layer=0, n_layers=32),},
-  ### qwen
-  "Qwen2-0.5B-Instruct": {
-    "PyTorchDynamicShardInferenceEngine": Shard(model_id="Qwen/Qwen2-0.5B-Instruct", start_layer=0, end_layer=0, n_layers=24),  
-  },
-
   ### qwen
   "qwen-2.5-coder-1.5b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
@@ -73,5 +68,8 @@ model_base_shards = {
   },
   "qwen-2.5-math-72b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2.5-Math-72B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
+  },
+  "Qwen2-0.5B-Instruct": {
+    "PyTorchDynamicShardInferenceEngine": Shard(model_id="Qwen/Qwen2-0.5B-Instruct", start_layer=0, end_layer=0, n_layers=24),  
   },
 }

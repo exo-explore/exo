@@ -3,14 +3,11 @@ import torch.nn as nn
 import asyncio
 import gc
 from transformers import (
-    AutoModel,
     AutoModelForCausalLM,
     AutoTokenizer,
     DynamicCache,
     Cache,
     LogitsProcessorList,
-    #MinLengthLogitsProcessor,
-    LogitsWarper,
     TopKLogitsWarper,
     TopPLogitsWarper,
     TemperatureLogitsWarper,
@@ -286,8 +283,8 @@ async def model_half_split_test(prompt: str, model_id: str, layers: int):
 
         stopping_critera = StoppingCriteriaList(
             [
-                MaxLengthCriteria(max_length=50),
-                MaxTimeCriteria(max_time=10.0),
+                MaxLengthCriteria(max_length=255),
+                MaxTimeCriteria(max_time=100.0),
             ]
         )
         
@@ -355,9 +352,21 @@ if __name__ == "__main__":
     #    )
     #)
 
-    print("\n-------- Test Qwen/Qwen2-0.5B-Instruct ----------\n")
-    model_id = "Qwen/Qwen2-0.5B-Instruct"
-    model_layers = 24
+    #print("\n-------- Test Qwen/Qwen2-0.5B-Instruct ----------\n")
+    #model_id = "Qwen/Qwen2-0.5B-Instruct"
+    #model_layers = 24
+
+    #asyncio.run(
+    #    model_half_split_test(
+    #        prompt=prompt,
+    #        model_id=model_id,
+    #        layers=model_layers
+    #    )
+    #)
+
+    print("\n-------- Test meta-llama/Llama-3.2-1B-Instruct ----------\n")
+    model_id = "meta-llama/Llama-3.2-1B-Instruct"
+    model_layers = 32
 
     asyncio.run(
         model_half_split_test(
