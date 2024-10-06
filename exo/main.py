@@ -120,12 +120,15 @@ if args.prometheus_client_port:
 last_broadcast_time = 0
 
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
-  global last_broadcast_time
-  current_time = time.time()
-  if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
-    last_broadcast_time = current_time
-    asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
-
+    global last_broadcast_time
+    current_time = time.time()
+    if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
+        last_broadcast_time = current_time
+        asyncio.create_task(node.broadcast_opaque_status("", json.dumps({
+            "type": "download_progress",
+            "node_id": node.id,
+            "progress": event.to_dict()
+        })))
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
