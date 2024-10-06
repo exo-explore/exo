@@ -16,7 +16,7 @@ from transformers import (
     TemperatureLogitsWarper
 )
 
-# llama 
+# llama
 from transformers.models.llama.modeling_llama import LlamaModel
 
 class ShardedHuggingFaceModel:

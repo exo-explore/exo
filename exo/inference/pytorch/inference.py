@@ -12,6 +12,9 @@ from exo.api.chatgpt_api import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
+# llama
+from transformers.models.llama.modeling_llama import LlamaModel
+
 # model value options
 TOP_K = 20
 TEMP = 0.6
@@ -52,7 +55,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     if torch.cuda.is_available():
       self.device = torch.device("cuda")
-      self.torch_dtype = torch.float32
+      self.torch_dtype = torch.float16
     elif torch.backends.mps.is_available():
       self.device = torch.device("mps")
       self.torch_dtype = torch.float32
@@ -105,10 +108,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"prompt: {prompt}")
       print(f"shard: {shard}")
       print(f"inference_state: {inference_state}")
-   
+
     await self.ensure_shard(shard)
-   
-    # setup prompt input 
+
+    # setup prompt input
     messages = [{"role": "user", "content": prompt}]
     txt = self.tokenizer.apply_chat_template(
       messages,
@@ -174,9 +177,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
   async def infer_tensor(
    self, 
-   request_id: str, 
-   shard: Shard, 
-   input_data: np.ndarray, 
+   request_id: str,
+   shard: Shard,
+   input_data: np.ndarray,
    inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
     if DEBUG >= 4:
@@ -192,13 +195,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     # get cache from inference_state
     past_iids, cached_iids = self.infer_caching(inference_state)
     
-    # detect if hidden_states or not 
+    # detect if hidden_states or not
     hidden_states = None
     self.past_input_ids = None
     if input_ids.size()[-1] > 1:
       hidden_states = input_ids
     else:
-      if past_iids is not None: 
+      if past_iids is not None:
         self.past_input_ids = past_iids
       else:
         self.past_input_ids = input_ids
