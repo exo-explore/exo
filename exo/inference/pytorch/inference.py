@@ -1,5 +1,6 @@
 # experimental, based off of tinygrad/inference.py
-import os 
+import os
+import re
 import numpy as np
 import torch
 import json
@@ -295,6 +296,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
         model_path if model_path is not None else shard.model_id,
         trust_remote_code=True
       )
+
+      if len(re.findall(r"3\.1", shard.model_id)) > 0:
+        self.tokenizer.add_special_tokens({"pad_token":"<pad>"})
+
     else:
       self.tokenizer = await resolve_tokenizer(shard.model_id)
 
