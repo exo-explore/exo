@@ -2,12 +2,11 @@ import asyncio
 import time
 import traceback
 from typing import List, Dict, Callable, Tuple
-from tailscale import Tailscale, Device
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.helpers import DEBUG, DEBUG_DISCOVERY
-from .tailscale_helpers import get_device_id, update_device_attributes, get_device_attributes, update_device_attributes
+from .tailscale_helpers import get_device_id, update_device_attributes, get_device_attributes, update_device_attributes, get_tailscale_devices, Device
 
 class TailscaleDiscovery(Discovery):
   def __init__(
@@ -32,7 +31,8 @@ class TailscaleDiscovery(Discovery):
     self.known_peers: Dict[str, Tuple[PeerHandle, float, float]] = {}
     self.discovery_task = None
     self.cleanup_task = None
-    self.tailscale = Tailscale(api_key=tailscale_api_key, tailnet=tailnet)
+    self.tailscale_api_key = tailscale_api_key
+    self.tailnet = tailnet
     self._device_id = None
     self.update_task = None
 
@@ -61,12 +61,12 @@ class TailscaleDiscovery(Discovery):
     return self._device_id
 
   async def update_device_posture_attributes(self):
-    await update_device_attributes(await self.get_device_id(), self.tailscale.api_key, self.node_id, self.node_port, self.device_capabilities)
+    await update_device_attributes(await self.get_device_id(), self.tailscale_api_key, self.node_id, self.node_port, self.device_capabilities)
 
   async def task_discover_peers(self):
     while True:
       try:
-        devices: dict[str, Device] = await self.tailscale.devices()
+        devices: dict[str, Device] = await get_tailscale_devices(self.tailscale_api_key, self.tailnet)
         current_time = time.time()
 
         active_devices = {
@@ -81,7 +81,7 @@ class TailscaleDiscovery(Discovery):
         for device in active_devices.values():
           if device.name == self.node_id: continue
           peer_host = device.addresses[0]
-          peer_id, peer_port, device_capabilities = await get_device_attributes(device.device_id, self.tailscale.api_key)
+          peer_id, peer_port, device_capabilities = await get_device_attributes(device.device_id, self.tailscale_api_key)
           if not peer_id:
             if DEBUG_DISCOVERY >= 4: print(f"{device.device_id} does not have exo node attributes. skipping.")
             continue
