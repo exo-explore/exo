@@ -1,3 +1,4 @@
+from .benchmark import benchmark
 from exo import DEBUG
 from dataclasses import dataclass, asdict
 import subprocess
@@ -163,7 +164,7 @@ def mac_device_capabilities() -> DeviceCapabilities:
     memory = memory_value
 
   # Assuming static values for other attributes for demonstration
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0)))
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(*benchmark())))
 
 
 def linux_device_capabilities() -> DeviceCapabilities:
@@ -185,7 +186,7 @@ def linux_device_capabilities() -> DeviceCapabilities:
       model=f"Linux Box ({gpu_name})",
       chip=gpu_name,
       memory=gpu_memory_info.total // 2**20,
-      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(*benchmark())),
     )
   elif Device.DEFAULT == "AMD":
     # TODO AMD support
@@ -200,5 +201,5 @@ def linux_device_capabilities() -> DeviceCapabilities:
       model=f"Linux Box (Device: {Device.DEFAULT})",
       chip=f"Unknown Chip (Device: {Device.DEFAULT})",
       memory=psutil.virtual_memory().total // 2**20,
-      flops=DeviceFlops(fp32=0, fp16=0, int8=0),
+      flops=DeviceFlops(*benchmark()),
     )
