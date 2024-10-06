@@ -8,10 +8,11 @@ from typing import Optional, Tuple
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
-from exo.api.chatgpt_api import resolve_tokenizer
+from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
+from transformers import AutoTokenizer
 # llama
 from transformers.models.llama.modeling_llama import LlamaModel
 
@@ -176,7 +177,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     return return_values
 
   async def infer_tensor(
-   self, 
+   self,
    request_id: str,
    shard: Shard,
    input_data: np.ndarray,
@@ -259,7 +260,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     return return_values
 
 
-  async def ensure_shard(self, shard: Optional[Shard]):
+  async def ensure_shard(self, shard: Shard):
     """
     Ensure the model shard is loaded and ready for inference.
 
@@ -276,7 +277,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     if DEBUG >= 4:
       print(f"model_path: {model_path}")
 
-    self.tokenizer = await resolve_tokenizer(shard.model_id)
     self.stateful_sharded_model = ShardedHuggingFaceModel(
       shard=shard,
       local_model_path=model_path,
@@ -288,8 +288,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       max_length=MAX_LENGTH,
       max_time=MAX_TIME
     )
-
     self.shard = shard
+
+    if isinstance(self.stateful_sharded_model.model, LlamaModel):
+      self.tokenizer = AutoTokenizer.from_pretrained(
+        model_path if model_path is not None else shard.model_id,
+        trust_remote_code=True
+      )
+    else:
+      self.tokenizer = await resolve_tokenizer(shard.model_id)
 
     if DEBUG >= 4:
       print(f"Shard loaded successfully: {shard}")
