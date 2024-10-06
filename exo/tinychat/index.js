@@ -73,11 +73,6 @@ document.addEventListener("alpine:init", () => {
         reader.onload = (e) => {
           this.imagePreview = e.target.result;
           this.imageUrl = e.target.result; // Store the image URL
-          // Add image preview to the chat
-          this.cstate.messages.push({
-            role: "user",
-            content: `![Uploaded Image](${this.imagePreview})`,
-          });
         };
         reader.readAsDataURL(file);
       }
@@ -91,8 +86,8 @@ document.addEventListener("alpine:init", () => {
         const imageInput = document.getElementById("image-upload");
 
         // Check if there's an image file selected
-        const hasImage = imageInput && imageInput.files && imageInput.files.length > 0; 
-        
+        const hasImage = imageInput && imageInput.files && imageInput.files.length > 0;
+
         if (!value && !this.imagePreview) return;
 
         if (this.generating) return;
@@ -103,7 +98,13 @@ document.addEventListener("alpine:init", () => {
         window.history.pushState({}, "", "/");
 
         // add message to list
-        if (!hasImage && value) {
+        if (hasImage || this.imagePreview) {
+          this.cstate.messages.push({
+            role: "user",
+            content: `![Uploaded Image](${this.imagePreview})`,
+          });
+        }
+        else if (value) {
           this.cstate.messages.push({ role: "user", content: value });
         }
 
