@@ -16,14 +16,15 @@ from transformers import (
     TemperatureLogitsWarper
 )
 
-# llama 
+# llama
 from transformers.models.llama.modeling_llama import LlamaModel
 
 class ShardedHuggingFaceModel:
     def __init__(
         self,
         shard: Shard,
-        device, 
+        local_model_path,
+        device,
         dtype,
         top_k: int = 25,
         temp: float = 0.7,
@@ -31,19 +32,20 @@ class ShardedHuggingFaceModel:
         max_length: int = 50,
         max_time: float = 10.0
     ):
-        # class vars 
+        # class vars
         self.shard = shard
-        self.hidden_states = None 
+        self.hidden_states = None
         self.input_ids = None
         self.inputs_embeds = None
         self.attention_mask = None
-        self.position_embeddings = None 
-        self.past_key_values = None 
-        self.cache_position = None 
-        self.position_ids = None 
+        self.position_embeddings = None
+        self.past_key_values = None
+        self.cache_position = None
+        self.position_ids = None
         self.causal_mask = None
+        self.local_model_path = local_model_path
 
-        # setup logit processors 
+        # setup logit processors
         self.logits_processor = LogitsProcessorList([
             TopKLogitsWarper(top_k),
             TemperatureLogitsWarper(temp),
@@ -56,13 +58,13 @@ class ShardedHuggingFaceModel:
         # setup pytorch and transformer llm
         try:
             self.llm_model = AutoModelForCausalLM.from_pretrained(
-                shard.model_id,
+                pretrained_model_name_or_path=self.local_model_path,
                 torch_dtype=self.torch_dtype,
                 device_map="auto",
                 offload_buffers=True
             )
 
-            self.model = self.llm_model.model 
+            self.model = self.llm_model.model
         except Exception as err:
             print(f"error loading and splitting model: {err}")
             raise
@@ -70,7 +72,6 @@ class ShardedHuggingFaceModel:
 
     def forward(
         self,
-        shard: Optional[Shard] = None,
         input_ids: Optional[torch.tensor] = None,
         hidden_states: Optional[torch.tensor] = None,
         attention_mask: Optional[torch.tensor] = None,
@@ -93,7 +94,7 @@ class ShardedHuggingFaceModel:
             infer_tensor: bool optional, lets forward know to handle tensors
 
         Returns:
-            Tuple of 
+            Tuple of
                 - hidden_states: tensor optional
                 - past_key_values: Cache or list[tensor] optional 
                 - logits: tensor Optional
@@ -199,9 +200,8 @@ class ShardedHuggingFaceModel:
                 print(f"hidden_states: {self.hidden_states}")
                 print(f"next_decoder_cache: {self.next_decoder_cache}")
 
-
         # handle last layer to get logits
-        # shard is last layer says true at the start and not detecting last layer correctly 
+        # shard is last layer says true at the start and not detecting last layer correctly
         if self.shard.is_last_layer():
             self.hidden_states = self.model.norm(self.hidden_states)
             if use_legacy_cache:
@@ -209,7 +209,7 @@ class ShardedHuggingFaceModel:
             else:
                 self.past_key_values = self.next_decoder_cache
             
-            # lm_head  
+            # lm_head 
             logits = self.llm_model.lm_head(self.hidden_states).to(self.device)
 
             if DEBUG >= 4:
