@@ -104,6 +104,12 @@ class ShardedHuggingFaceModel:
     self.hidden_states = hidden_states
     self.input_ids = input_ids
 
+    if DEBUG >= 2:
+      print("hf forward called")
+      print(f"hidden_states: {self.hidden_states}")
+      print(f"input_ids: {self.input_ids}")
+      print(f"self.position_ids: {self.position_ids}")
+
     if self.hidden_states is None or self.position_ids is None:
       # embed input_ids
       self.inputs_embeds = self.model.embed_tokens(self.input_ids)
