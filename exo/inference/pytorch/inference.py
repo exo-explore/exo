@@ -13,7 +13,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
-from transformers import AutoTokenizer
+from tokenizers import Tokenizer
 # llama
 from transformers.models.llama.modeling_llama import LlamaModel
 
@@ -114,14 +114,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     await self.ensure_shard(shard)
 
     # setup prompt input
-    messages = [{"role": "user", "content": prompt}]
-    txt = self.tokenizer.apply_chat_template(
-      messages,
-      tokenize=False,
-      add_generation_prompt=True
-    )
+    #messages = [{"role": "user", "content": prompt}]
+    #txt = self.tokenizer.apply_chat_template(
+    #  messages,
+    #  tokenize=False,
+    #  add_generation_prompt=True
+    #)
 
-    inputs = self.tokenizer([txt], return_tensors="pt")
+    inputs = self.tokenizer([prompt], return_tensors="pt")
     input_ids = inputs.input_ids.to(self.device)
     input_attention_mask = inputs.attention_mask.to(self.device) 
     batch_size, seq_length = input_ids.shape[:2]
@@ -292,7 +292,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     self.shard = shard
 
     if isinstance(self.stateful_sharded_model.model, LlamaModel):
-      self.tokenizer = AutoTokenizer.from_pretrained(
+      self.tokenizer = Tokenizer.from_pretrained(
         model_path if model_path is not None else shard.model_id,
         trust_remote_code=True
       )
