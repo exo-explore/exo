@@ -1,5 +1,6 @@
 # experimental, based off of tinygrad/inference.py
-import os 
+import os
+import re
 import numpy as np
 import torch
 import json
@@ -8,10 +9,11 @@ from typing import Optional, Tuple
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
-from exo.api.chatgpt_api import resolve_tokenizer
+from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
+from transformers import AutoTokenizer
 # llama
 from transformers.models.llama.modeling_llama import LlamaModel
 
@@ -69,7 +71,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
   def infer_caching(
     self,
     inference_state: Optional[str] = None
-  ) -> Tuple[Optional[torch.tensor], Optional[dict]]:
+  ) -> Tuple[Optional[torch.Tensor], Optional[dict]]:
     """
     inference caching from inference_state json
     """
@@ -97,9 +99,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
   async def infer_prompt(
     self,
-    request_id: Optional[str] = None,
-    shard: Optional[Shard] = None, 
-    prompt: Optional[str] = "", 
+    request_id: str,
+    shard: Shard,
+    prompt: str, 
     image_str: Optional[str] = None, 
     inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
@@ -111,15 +113,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     await self.ensure_shard(shard)
 
-    # setup prompt input
-    messages = [{"role": "user", "content": prompt}]
-    txt = self.tokenizer.apply_chat_template(
-      messages,
-      tokenize=False,
-      add_generation_prompt=True
-    )
-
-    inputs = self.tokenizer([txt], return_tensors="pt")
+    inputs = self.tokenizer([prompt], return_tensors="pt")
     input_ids = inputs.input_ids.to(self.device)
     input_attention_mask = inputs.attention_mask.to(self.device) 
     batch_size, seq_length = input_ids.shape[:2]
@@ -176,7 +170,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     return return_values
 
   async def infer_tensor(
-   self, 
+   self,
    request_id: str,
    shard: Shard,
    input_data: np.ndarray,
@@ -194,7 +188,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     # get cache from inference_state
     past_iids, cached_iids = self.infer_caching(inference_state)
-    
+
     # detect if hidden_states or not
     hidden_states = None
     self.past_input_ids = None
@@ -259,7 +253,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     return return_values
 
 
-  async def ensure_shard(self, shard: Optional[Shard]):
+  async def ensure_shard(self, shard: Shard):
     """
     Ensure the model shard is loaded and ready for inference.
 
@@ -276,7 +270,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     if DEBUG >= 4:
       print(f"model_path: {model_path}")
 
-    self.tokenizer = await resolve_tokenizer(shard.model_id)
     self.stateful_sharded_model = ShardedHuggingFaceModel(
       shard=shard,
       local_model_path=model_path,
@@ -288,8 +281,19 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       max_length=MAX_LENGTH,
       max_time=MAX_TIME
     )
-
     self.shard = shard
+
+    if isinstance(self.stateful_sharded_model.model, LlamaModel):
+      self.tokenizer = AutoTokenizer.from_pretrained(
+        model_path if model_path is not None else shard.model_id,
+        trust_remote_code=True
+      )
+
+      if len(re.findall(r"3\.1", shard.model_id)) > 0:
+        self.tokenizer.add_special_tokens({"pad_token":"<pad>"})
+
+    else:
+      self.tokenizer = await resolve_tokenizer(shard.model_id)
 
     if DEBUG >= 4:
       print(f"Shard loaded successfully: {shard}")
