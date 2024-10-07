@@ -194,7 +194,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     self.past_input_ids = None
     if input_ids.size()[-1] > 1:
       hidden_states = input_ids
-      self.past_input_ids = torch.tensor(cached_iids["input_ids"])
+      self.past_input_ids = torch.tensor(cached_iids["input_ids"]).to(self.device)
     else:
       if past_iids is not None:
         self.past_input_ids = past_iids
