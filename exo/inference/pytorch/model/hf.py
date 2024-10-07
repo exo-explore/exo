@@ -104,14 +104,6 @@ class ShardedHuggingFaceModel:
     self.hidden_states = hidden_states
     self.input_ids = input_ids
 
-    if DEBUG >= 2:
-      print("hf forward called")
-      print(f"hidden_states: {self.hidden_states}")
-      print(f"input_ids: {self.input_ids}")
-      print(f"self.position_ids: {self.position_ids}")
-      print(f"past_key_values: {past_key_values}")
-
-    # skip if there is a hidden state with position_ids already calculated
     # if there is hidden states and no position_ids, will need to be calculated
     # this is not needed for Qwen model but Llama requires it
 
@@ -133,6 +125,14 @@ class ShardedHuggingFaceModel:
     # position id
     position_ids = cache_position.unsqueeze(0)
 
+    if DEBUG >= 2:
+      print("hf forward called")
+      print(f"hidden_states: {self.hidden_states}")
+      print(f"input_ids: {self.input_ids}")
+      print(f"self.position_ids: {self.position_ids}")
+      print(f"past_key_values: {past_key_values}")
+
+    
     if self.hidden_states is None:
       # casual mask and attention_mask
       self.attention_mask = attention_mask
