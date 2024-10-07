@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 from typing import Tuple, Optional, Union, List
 
 from exo.inference.shard import Shard
@@ -69,7 +68,6 @@ class ShardedHuggingFaceModel:
       print(f"error loading and splitting model: {err}")
       raise
 
-
   def forward(
     self,
     input_ids: Optional[torch.Tensor] = None,
@@ -84,8 +82,8 @@ class ShardedHuggingFaceModel:
     layer to generate a complete output
 
     Args:
-      model: base llm model tramsformers class 
-      llm_model: llm chat model class 
+      model: base llm model tramsformers class
+      llm_model: llm chat model class
       input_ids: tensor optional
       attention_mask: tensor optional
       past_key_values: Cache or list[tensor] optional
@@ -95,7 +93,7 @@ class ShardedHuggingFaceModel:
     Returns:
       Tuple of
         - hidden_states: tensor optional
-        - past_key_values: Cache or list[tensor] optional 
+        - past_key_values: Cache or list[tensor] optional
         - logits: tensor Optional
 
     """
@@ -132,7 +130,6 @@ class ShardedHuggingFaceModel:
       print(f"position_ids: {self.position_ids}")
       print(f"past_key_values: {past_key_values}")
 
-    
     if self.hidden_states is None:
       # casual mask and attention_mask
       self.attention_mask = attention_mask
@@ -169,7 +166,7 @@ class ShardedHuggingFaceModel:
       if DEBUG >= 4:
         print(f"model_inputs: {model_inputs}")
 
-    # run through decoder layers 
+    # run through decoder layers
     layer_amt = range(self.shard.start_layer, self.shard.end_layer + 1)
 
     if DEBUG >= 4:
@@ -186,8 +183,8 @@ class ShardedHuggingFaceModel:
         print(f"position_embeddings: {self.position_embeddings}")
 
       # TODO: fix caching as decoder layer is not returning
-      # present_key_value from attention layer on models 
-      # might have some other generation functions needed to do it 
+      # present_key_value from attention layer on models
+      # might have some other generation functions needed to do it
       # see https://github.com/huggingface/transformers/blob/main/src/transformers/generation/utils.py#L2917
       # for qwen2 exhttps://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py#L291
       layer_outputs = decoder_layer(
@@ -217,8 +214,8 @@ class ShardedHuggingFaceModel:
         self.past_key_values = self.next_decoder_cache.to_legacy_cache()
       else:
         self.past_key_values = self.next_decoder_cache
-      
-      # lm_head 
+
+      # lm_head
       logits = self.llm_model.lm_head(self.hidden_states).to(self.device)
 
       if DEBUG >= 4:

@@ -34,7 +34,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     Initialize the inference engine.
 
     Args:
-      debug (bool): If True, enables debug logging. Defaults to False.
+      shard_downloader: Model and weights sharding download
     """
     self.shard = None
     self.shard_downloader = shard_downloader
@@ -49,15 +49,15 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     # setup cuda device
     if os.environ.get("PYTORCH_DEVICE"):
       pytorch_device = os.environ["PYTOCH_DEVICE"]
-      if pytorch_device not in ["cuda", "mps", "cpu"]:
+      if pytorch_device not in ["cuda", "mps"]:
         pytorch_device = "cpu"
 
       self.device = pytorch_device
-      self.torch_dtype = torch.float32 if pytorch_device != "cpu" else torch.float16
+      self.torch_dtype = torch.float16 if pytorch_device != "cpu" else torch.float32
 
     if torch.cuda.is_available():
       self.device = torch.device("cuda")
-      self.torch_dtype = torch.float16
+      self.torch_dtype = torch.float32
     elif torch.backends.mps.is_available():
       self.device = torch.device("mps")
       self.torch_dtype = torch.float32
@@ -101,11 +101,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     self,
     request_id: str,
     shard: Shard,
-    prompt: str, 
-    image_str: Optional[str] = None, 
+    prompt: str,
+    image_str: Optional[str] = None,
     inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print("infer_prompt called")
       print(f"prompt: {prompt}")
       print(f"shard: {shard}")
@@ -115,26 +115,25 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     inputs = self.tokenizer([prompt], return_tensors="pt")
     input_ids = inputs.input_ids.to(self.device)
-    input_attention_mask = inputs.attention_mask.to(self.device) 
-    batch_size, seq_length = input_ids.shape[:2]
+    input_attention_mask = inputs.attention_mask.to(self.device)
 
     # get cache from inference_state
     past_iids, cached_iids = self.infer_caching(inference_state)
 
     if past_iids is not None:
-      self.past_input_ids = past_iids,
+      self.past_input_ids = past_iids
     else:
       self.past_input_ids = input_ids
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"past_input_ids: {self.past_input_ids}\n")
-   
+
     shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
       input_ids=self.past_input_ids,
       attention_mask=input_attention_mask
     )
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
       print(f"\nshard_past_kvs {shard_past_kvs}\n")
       print(f"\nshard_logits: {shard_logits}")
@@ -152,7 +151,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     if next_token is not None:
       is_finished = next_token.item() == self.tokenizer.eos_token_id
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"\ninput_ids: {input_ids}")
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
       print(f"\nshard_past_kvs {shard_past_kvs}\n")
@@ -164,7 +163,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       is_finished
     )
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"return_values: {return_values}")
 
     return return_values
@@ -176,7 +175,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
    input_data: np.ndarray,
    inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print("infer_tensor called")
       print(f"input_data: {input_data}")
       print(f"shard: {shard}")
@@ -201,7 +200,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       else:
         self.past_input_ids = input_ids
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"past_input_ids: {self.past_input_ids}")
       print(f"hidden_state: {hidden_states}")
       print(f"inference_state: {inference_state}")
@@ -211,22 +210,18 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       hidden_states=hidden_states
     )
 
-    hidden_dict = None
-    if shard_hidden_states is not None:
-      hidden_dict = {"hidden_states": shard_hidden_states.tolist()}
-
-    next_token = None 
+    next_token = None
     if shard_logits is not None:
       next_token = self.stateful_sharded_model.logits_sample(shard_logits)
       input_ids = next_token
-      
+
     #cache
     if next_token is not None:
       if self.past_input_ids is not None:
         next_cached_logits = torch.cat([self.past_input_ids, next_token], dim=-1).to(self.device)
       elif past_iids is not None:
         next_cached_logits = torch.cat([past_iids, next_token], dim=-1).to(self.device)
-      
+
       cached_iids = {"input_ids": next_cached_logits.tolist()}
 
     is_finished = False
@@ -234,10 +229,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       is_finished = next_token.item() == self.tokenizer.eos_token_id
 
     if is_finished:
-      # clear cache 
+      # clear cache
       cached_iids = {"input_ids": []}
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"\ninput_ids: {input_ids}")
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
       print(f"\nshard_past_kvs {shard_past_kvs}\n")
@@ -245,15 +240,14 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     return_values = (
       input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
-      json.dumps({"cached_iids": cached_iids}), 
+      json.dumps({"cached_iids": cached_iids}),
       is_finished
     )
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"return_values: {return_values}")
 
     return return_values
-
 
   async def ensure_shard(self, shard: Shard):
     """
@@ -265,12 +259,10 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print(f"Loading new shard: {shard}")
 
     model_path = await self.shard_downloader.ensure_shard(shard)
-    if DEBUG >= 2:
-      print(f"model_path: {model_path}")
 
     self.stateful_sharded_model = ShardedHuggingFaceModel(
       shard=shard,
