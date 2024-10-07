@@ -105,7 +105,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     image_str: Optional[str] = None, 
     inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print("infer_prompt called")
       print(f"prompt: {prompt}")
       print(f"shard: {shard}")
@@ -126,7 +126,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     else:
       self.past_input_ids = input_ids
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"past_input_ids: {self.past_input_ids}\n")
    
     shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
@@ -134,7 +134,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       attention_mask=input_attention_mask
     )
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
       print(f"\nshard_past_kvs {shard_past_kvs}\n")
       print(f"\nshard_logits: {shard_logits}")
@@ -152,7 +152,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     if next_token is not None:
       is_finished = next_token.item() == self.tokenizer.eos_token_id
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"\ninput_ids: {input_ids}")
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
       print(f"\nshard_past_kvs {shard_past_kvs}\n")
@@ -164,7 +164,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       is_finished
     )
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"return_values: {return_values}")
 
     return return_values
@@ -176,7 +176,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
    input_data: np.ndarray,
    inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print("infer_tensor called")
       print(f"input_data: {input_data}")
       print(f"shard: {shard}")
@@ -194,14 +194,16 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     self.past_input_ids = None
     if input_ids.size()[-1] > 1:
       hidden_states = input_ids
+      self.past_input_ids = past_iids
     else:
       if past_iids is not None:
         self.past_input_ids = past_iids
       else:
         self.past_input_ids = input_ids
 
-    if DEBUG >= 4:
-      print(f"input_ids: {input_ids}")
+    if DEBUG >= 2:
+      print(f"past_input_ids: {self.past_input_ids}")
+      print(f"hidden_state: {hidden_states}")
       print(f"inference_state: {inference_state}")
 
     shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
@@ -235,7 +237,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       # clear cache 
       cached_iids = {"input_ids": []}
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"\ninput_ids: {input_ids}")
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
       print(f"\nshard_past_kvs {shard_past_kvs}\n")
@@ -247,7 +249,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       is_finished
     )
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"return_values: {return_values}")
 
     return return_values
@@ -263,11 +265,11 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"Loading new shard: {shard}")
 
     model_path = await self.shard_downloader.ensure_shard(shard)
-    if DEBUG >= 4:
+    if DEBUG >= 2:
       print(f"model_path: {model_path}")
 
     self.stateful_sharded_model = ShardedHuggingFaceModel(
