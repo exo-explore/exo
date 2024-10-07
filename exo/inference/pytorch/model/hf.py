@@ -109,8 +109,15 @@ class ShardedHuggingFaceModel:
       print(f"hidden_states: {self.hidden_states}")
       print(f"input_ids: {self.input_ids}")
       print(f"self.position_ids: {self.position_ids}")
+      print(f"past_key_values: {past_key_values}")
 
-    if self.hidden_states is None:
+    # skip if there is a hidden state with position_ids already calculated
+    # if there is hidden states and no position_ids, will need to be calculated
+    # this is not needed for Qwen model but Llama requires it
+    if (self.hidden_states is None or
+        (self.hidden_states is not None and self.position_ids is None)
+      ):
+
       # embed input_ids
       self.inputs_embeds = self.model.embed_tokens(self.input_ids)
 
@@ -228,6 +235,8 @@ class ShardedHuggingFaceModel:
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
       print(f"past_key_values: {self.past_key_values}")
+      print(f"position_ids: {self.position_ids}")
+      print(f"input_ids: {self.input_ids}")
 
     return (
       self.hidden_states,
