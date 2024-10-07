@@ -72,13 +72,12 @@ class ShardedHuggingFaceModel:
 
   def forward(
     self,
-    input_ids: Optional[torch.tensor] = None,
-    hidden_states: Optional[torch.tensor] = None,
-    attention_mask: Optional[torch.tensor] = None,
+    input_ids: Optional[torch.Tensor] = None,
+    hidden_states: Optional[torch.Tensor] = None,
+    attention_mask: Optional[torch.Tensor] = None,
     past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
     use_legacy_cache: bool = False
-  ) -> Tuple[Optional[torch.tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.tensor]]:
-    
+  ) -> Tuple[Optional[torch.Tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.Tensor]]:
     """
     Generate hidden states or logits via passing through set amount of layers of a model
     To be passed only input_ids OR hidden_state and not both. This is for connecting the model
@@ -125,7 +124,7 @@ class ShardedHuggingFaceModel:
     # position id
     self.position_ids = cache_position.unsqueeze(0)
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print("hf forward called")
       print(f"hidden_states: {self.hidden_states}")
       print(f"input_ids: {self.input_ids}")
@@ -231,7 +230,7 @@ class ShardedHuggingFaceModel:
         logits
       )
 
-    if DEBUG >= 2:
+    if DEBUG >= 4:
       print("hf out [no logit]")
       print(f"hidden_states: {self.hidden_states}")
       print(f"past_key_values: {self.past_key_values}")
@@ -246,18 +245,18 @@ class ShardedHuggingFaceModel:
 
   def logits_sample(
     self,
-    logits: torch.tensor,
+    logits: torch.Tensor,
     use_max: Optional[bool] = False
-  ) -> torch.tensor:
+  ) -> torch.Tensor:
     """
     Get a sample of the logits from end of model run for next token
-    
+
     Args:
-      logits: tensor 
+      logits: tensor
       use_max: bool, if function should sample with argmax
 
     Returns:
-      next_token: tensor 
+      next_token: tensor
     """
 
     # get a single cloned logit
@@ -273,6 +272,6 @@ class ShardedHuggingFaceModel:
 
     if DEBUG >= 4:
       print(f"input_ids: {self.input_ids}")
-      print(f"next_token: {next_token}") 
+      print(f"next_token: {next_token}")
 
     return next_token[:, None].squeeze(-1)
