@@ -32,7 +32,7 @@ class StandardNode(Node):
     self.inference_engine = inference_engine
     self.server = server
     self.discovery = discovery
-    self.partitioning_strategy = partitioning_strategy
+    self.partitioning_strategy = partitioning_strategy or AvailableMemoryWeightedPartitioningStrategy()
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
     self.device_capabilities = device_capabilities()
