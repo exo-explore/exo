@@ -79,8 +79,7 @@ class UDPDiscovery(Discovery):
     return [peer_handle for peer_handle, _, _, _ in self.known_peers.values()]
 
   async def task_broadcast_presence(self):
-    if DEBUG_DISCOVERY >= 2:
-      print("Starting task_broadcast_presence...")
+    if DEBUG_DISCOVERY >= 2: print("Starting task_broadcast_presence...")
 
     while True:
       # Explicitly broadcasting on all assigned ips since broadcasting on `0.0.0.0` on MacOS does not broadcast over
