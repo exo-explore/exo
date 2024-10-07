@@ -123,13 +123,14 @@ class ShardedHuggingFaceModel:
     )
 
     # position id
-    position_ids = cache_position.unsqueeze(0)
+    self.position_ids = cache_position.unsqueeze(0)
 
     if DEBUG >= 2:
       print("hf forward called")
       print(f"hidden_states: {self.hidden_states}")
       print(f"input_ids: {self.input_ids}")
-      print(f"self.position_ids: {self.position_ids}")
+      print(f"input_embeds: {self.inputs_embeds}")
+      print(f"position_ids: {self.position_ids}")
       print(f"past_key_values: {past_key_values}")
 
     
@@ -148,7 +149,7 @@ class ShardedHuggingFaceModel:
       if isinstance(self.model, LlamaModel):
         self.position_embeddings = self.model.rotary_emb(
           self.inputs_embeds,
-          position_ids
+          self.position_ids
         )
 
       # prepare inputs for decoder layers
@@ -157,7 +158,7 @@ class ShardedHuggingFaceModel:
         past_key_values=past_key_values,
         attention_mask=self.attention_mask,
         inputs_embeds=self.inputs_embeds,
-        position_ids=position_ids,
+        position_ids=self.position_ids,
         cache_position=cache_position
       )
 
