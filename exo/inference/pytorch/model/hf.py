@@ -232,7 +232,8 @@ class ShardedHuggingFaceModel:
         logits
       )
 
-    if DEBUG >= 4:
+    if DEBUG >= 2:
+      print("hf out [no logit]")
       print(f"hidden_states: {self.hidden_states}")
       print(f"past_key_values: {self.past_key_values}")
       print(f"position_ids: {self.position_ids}")
