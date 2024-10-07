@@ -270,7 +270,10 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {image_str=}")
 
     try:
-      await asyncio.wait_for(self.node.process_prompt(shard, prompt, image_str, request_id=request_id), timeout=self.response_timeout)
+      await asyncio.wait_for(
+        asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))),
+        timeout=self.response_timeout
+      )
 
       if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
 
