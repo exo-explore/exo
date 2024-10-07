@@ -13,7 +13,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
-from tokenizers import Tokenizer
+from transformers import AutoTokenizer
 # llama
 from transformers.models.llama.modeling_llama import LlamaModel
 
@@ -71,7 +71,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
   def infer_caching(
     self,
     inference_state: Optional[str] = None
-  ) -> Tuple[Optional[torch.tensor], Optional[dict]]:
+  ) -> Tuple[Optional[torch.Tensor], Optional[dict]]:
     """
     inference caching from inference_state json
     """
@@ -99,9 +99,9 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
   async def infer_prompt(
     self,
-    request_id: Optional[str] = None,
-    shard: Optional[Shard] = None, 
-    prompt: Optional[str] = "", 
+    request_id: str,
+    shard: Shard,
+    prompt: str, 
     image_str: Optional[str] = None, 
     inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
@@ -112,14 +112,6 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"inference_state: {inference_state}")
 
     await self.ensure_shard(shard)
-
-    # setup prompt input
-    #messages = [{"role": "user", "content": prompt}]
-    #txt = self.tokenizer.apply_chat_template(
-    #  messages,
-    #  tokenize=False,
-    #  add_generation_prompt=True
-    #)
 
     inputs = self.tokenizer([prompt], return_tensors="pt")
     input_ids = inputs.input_ids.to(self.device)
@@ -196,7 +188,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
 
     # get cache from inference_state
     past_iids, cached_iids = self.infer_caching(inference_state)
-    
+
     # detect if hidden_states or not
     hidden_states = None
     self.past_input_ids = None
@@ -292,7 +284,7 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     self.shard = shard
 
     if isinstance(self.stateful_sharded_model.model, LlamaModel):
-      self.tokenizer = Tokenizer.from_pretrained(
+      self.tokenizer = AutoTokenizer.from_pretrained(
         model_path if model_path is not None else shard.model_id,
         trust_remote_code=True
       )
