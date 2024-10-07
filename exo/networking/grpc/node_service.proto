@@ -70,10 +70,11 @@ message DeviceFlops {
 }
 
 message DeviceCapabilities {
-  string model = 1;
-  string chip = 2;
-  int32 memory = 3;
-  DeviceFlops flops = 4;
+    string model = 1;
+    string chip = 2;
+    int32 memory = 3;
+    DeviceFlops flops = 4;
+    int32 memory_available = 5;
 }
 
 message SendResultRequest {
