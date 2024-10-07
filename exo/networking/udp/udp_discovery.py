@@ -79,8 +79,7 @@ class UDPDiscovery(Discovery):
     return [peer_handle for peer_handle, _, _, _ in self.known_peers.values()]
 
   async def task_broadcast_presence(self):
-    if DEBUG_DISCOVERY >= 2:
-      print("Starting task_broadcast_presence...")
+    if DEBUG_DISCOVERY >= 2: print("Starting task_broadcast_presence...")
 
     while True:
       # Explicitly broadcasting on all assigned ips since broadcasting on `0.0.0.0` on MacOS does not broadcast over
@@ -159,7 +158,7 @@ class UDPDiscovery(Discovery):
           if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Removing.")
           if peer_id in self.known_peers: del self.known_peers[peer_id]
           return
-        self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], time.time(), peer_prio)
+        if peer_id in self.known_peers: self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], time.time(), peer_prio)
 
   async def task_listen_for_peers(self):
     await asyncio.get_event_loop().create_datagram_endpoint(lambda: ListenProtocol(self.on_listen_message),
@@ -171,19 +170,39 @@ class UDPDiscovery(Discovery):
       try:
         current_time = time.time()
         peers_to_remove = []
-        for peer_id, (peer_handle, connected_at, last_seen, prio) in self.known_peers.items():
-          if (not await peer_handle.is_connected() and current_time - connected_at > self.discovery_timeout) or \
-             (current_time - last_seen > self.discovery_timeout) or \
-             (not await peer_handle.health_check()):
-            peers_to_remove.append(peer_id)
 
-        if DEBUG_DISCOVERY >= 2: print("Peer statuses:", {peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, health_check={await peer_handle.health_check()}, {connected_at=}, {last_seen=}, {prio=}" for peer_handle, connected_at, last_seen, prio in self.known_peers.values()})
+        peer_ids = list(self.known_peers.keys())
+        results = await asyncio.gather(*[self.check_peer(peer_id, current_time) for peer_id in peer_ids], return_exceptions=True)
+
+        for peer_id, should_remove in zip(peer_ids, results):
+          if should_remove: peers_to_remove.append(peer_id)
+
+        if DEBUG_DISCOVERY >= 2: print("Peer statuses:", { peer_handle.id(): f"is_connected={await peer_handle.is_connected()}, health_check={await peer_handle.health_check()}, connected_at={connected_at}, last_seen={last_seen}, prio={prio}" for peer_handle, connected_at, last_seen, prio in self.known_peers.values() })
 
         for peer_id in peers_to_remove:
-          if peer_id in self.known_peers: del self.known_peers[peer_id]
-          if DEBUG_DISCOVERY >= 2: print(f"Removed peer {peer_id} due to inactivity or failed health check.")
+          if peer_id in self.known_peers:
+            del self.known_peers[peer_id]
+            if DEBUG_DISCOVERY >= 2: print(f"Removed peer {peer_id} due to inactivity or failed health check.")
       except Exception as e:
         print(f"Error in cleanup peers: {e}")
         print(traceback.format_exc())
       finally:
         await asyncio.sleep(self.broadcast_interval)
+
+  async def check_peer(self, peer_id: str, current_time: float) -> bool:
+    peer_handle, connected_at, last_seen, prio = self.known_peers.get(peer_id, (None, None, None, None))
+    if peer_handle is None: return False
+
+    try:
+      is_connected = await peer_handle.is_connected()
+      health_ok = await peer_handle.health_check()
+    except Exception as e:
+      if DEBUG_DISCOVERY >= 2: print(f"Error checking peer {peer_id}: {e}")
+      return True
+
+    should_remove = (
+      (not is_connected and current_time - connected_at > self.discovery_timeout) or
+      (current_time - last_seen > self.discovery_timeout) or
+      (not health_ok)
+    )
+    return should_remove
