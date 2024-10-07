@@ -110,7 +110,7 @@ class ShardedHuggingFaceModel:
       print(f"input_ids: {self.input_ids}")
       print(f"self.position_ids: {self.position_ids}")
 
-    if self.hidden_states is None or self.position_ids is None:
+    if self.hidden_states is None:
       # embed input_ids
       self.inputs_embeds = self.model.embed_tokens(self.input_ids)
 
