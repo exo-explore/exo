@@ -41,10 +41,8 @@ class MLXQuantizedLinear:
     assert (in_features * bits) % 32 == 0
     self.weight = Tensor.kaiming_uniform(out_features, (in_features * bits) // 32, dtype=dtypes.uint32)
     self.scales = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
-    if bias:
-      self.biases = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
-    else:
-      self.biases = Tensor.zeros(out_features, in_features // group_size, dtype=dtypes.half)
+    self.biases = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
+    self.bias = Tensor.uniform(out_features, low=0, high=1.0) if bias else None
     self.bits = bits
     self.group_size = group_size
 
@@ -53,7 +51,7 @@ class MLXQuantizedLinear:
         *[select_bits(self.weight, self.bits, i)[..., None] for i in range(0, 32, self.bits)], dim=-1
     ).reshape(len(self.weight), self.scales.shape[-1], -1)
     w_full = self.scales[..., None] * w_full + self.biases[..., None]
-    return x.dot(w_full.reshape(len(self.weight), -1).T)
+    return x.linear(w_full.reshape(len(self.weight), -1).T, self.bias)
   
   
 class MLXQuantizedEmbedding:
