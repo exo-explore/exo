@@ -114,28 +114,26 @@ class ShardedHuggingFaceModel:
     # skip if there is a hidden state with position_ids already calculated
     # if there is hidden states and no position_ids, will need to be calculated
     # this is not needed for Qwen model but Llama requires it
-    if (self.hidden_states is None or
-        (self.hidden_states is not None and self.position_ids is None)
-      ):
 
-      # embed input_ids
-      self.inputs_embeds = self.model.embed_tokens(self.input_ids)
+    # embed input_ids
+    self.inputs_embeds = self.model.embed_tokens(self.input_ids)
 
-      # cache
-      if past_key_values and not isinstance(past_key_values, Cache):
-        use_legacy_cache = True
-        past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+    # cache
+    if past_key_values and not isinstance(past_key_values, Cache):
+      use_legacy_cache = True
+      past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
-      past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-      cache_position = torch.arange(
-        past_seen_tokens,
-        past_seen_tokens + self.inputs_embeds.shape[1],
-        device=self.inputs_embeds.device
-      )
+    past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+    cache_position = torch.arange(
+      past_seen_tokens,
+      past_seen_tokens + self.inputs_embeds.shape[1],
+      device=self.inputs_embeds.device
+    )
 
-      # position id
-      position_ids = cache_position.unsqueeze(0)
+    # position id
+    position_ids = cache_position.unsqueeze(0)
 
+    if self.hidden_states is None:
       # casual mask and attention_mask
       self.attention_mask = attention_mask
       self.causal_mask = self.model._update_causal_mask(
