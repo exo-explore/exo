@@ -79,7 +79,7 @@ if DEBUG >= 0:
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout)
 elif args.discovery_module == "manual":
-  discovery = ManualDiscovery(discovery_config=args.discovery_config, discovery_timeout=args.discovery_timeout)
+  discovery = ManualDiscovery(lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_config=args.discovery_config, discovery_timeout=args.discovery_timeout)
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(args.node_id, args.node_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout, tailscale_api_key=args.tailscale_api_key, tailnet=args.tailnet_name)
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None

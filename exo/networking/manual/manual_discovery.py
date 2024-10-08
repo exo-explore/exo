@@ -4,16 +4,17 @@ import traceback
 from typing import List, Dict, Callable, Tuple
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
-from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
+from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.helpers import DEBUG, DEBUG_DISCOVERY
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
-import yaml
 import socket
+import yaml
 
 class ManualDiscovery(Discovery):
   def __init__(
     self,
     create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle],
+    device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     discovery_config: str = "topology.yml",
     discovery_interval: int = 5,
     discovery_timeout: int = 30,
@@ -52,7 +53,8 @@ class ManualDiscovery(Discovery):
     self.discovery_interval = discovery_interval
     self.discovery_timeout = discovery_timeout
     self.update_interval = update_interval
-    self.device_capabilities=GRPCPeerHandle(self.node_id, self.node_address, DeviceCapabilities(model=self.model, chip=self.chip, memory=self.memory, flops=DeviceFlops(fp32=self.fp32, fp16=self.fp16, int8=self.int8)))
+    self.device_capabilities = device_capabilities
+    self.device_capabilities = GRPCPeerHandle(self.node_id, self.node_address, DeviceCapabilities(model=self.model, chip=self.chip, memory=self.memory, flops=DeviceFlops(fp32=self.fp32, fp16=self.fp16, int8=self.int8)))
     self.known_peers: Dict[str, Tuple[PeerHandle, float, float]] = {}
     self.discovery_task = None
     self.cleanup_task = None
