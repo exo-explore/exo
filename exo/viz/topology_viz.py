@@ -124,140 +124,109 @@ class TopologyViz:
     )
 
   def _generate_main_layout(self) -> str:
-    # Calculate visualization parameters
-    num_partitions = len(self.partitions)
-    radius_x = 30
-    radius_y = 12
-    center_x, center_y = 50, 24  # Increased center_y to add more space
+      # Calculate visualization parameters
+      num_partitions = len(self.partitions)
+      radius_x = 30
+      radius_y = 12
+      center_x, center_y = 50, 24  # Increased center_y to add more space
 
-    # Generate visualization
-    visualization = [[" " for _ in range(100)] for _ in range(48)]  # Increased height to 48
+      # Generate visualization
+      visualization = [[" " for _ in range(100)] for _ in range(48)]  # Increased height to 48
 
-    # Add exo_text at the top in bright yellow
-    exo_lines = exo_text.split("\n")
-    yellow_style = Style(color="bright_yellow")
-    max_line_length = max(len(line) for line in exo_lines)
-    for i, line in enumerate(exo_lines):
-      centered_line = line.center(max_line_length)
-      start_x = (100-max_line_length) // 2 + 15
-      colored_line = Text(centered_line, style=yellow_style)
-      for j, char in enumerate(str(colored_line)):
-        if 0 <= start_x + j < 100 and i < len(visualization):
-          visualization[i][start_x + j] = char
+      # Add exo_text at the top in bright yellow
+      exo_lines = exo_text.split("\n")
+      yellow_style = Style(color="bright_yellow")
+      max_line_length = max(len(line) for line in exo_lines)
+      for i, line in enumerate(exo_lines):
+          centered_line = line.center(max_line_length)
+          start_x = (100 - max_line_length) // 2 + 15
+          for j, char in enumerate(centered_line):
+              if 0 <= start_x + j < 100 and i < len(visualization):
+                  visualization[i][start_x + j] = char
 
-    # Display chatgpt_api_endpoints and web_chat_urls
-    info_lines = []
-    if len(self.web_chat_urls) > 0:
-      info_lines.append(f"Web Chat URL (tinychat): {' '.join(self.web_chat_urls[:1])}")
-    if len(self.chatgpt_api_endpoints) > 0:
-      info_lines.append(f"ChatGPT API endpoint: {' '.join(self.chatgpt_api_endpoints[:1])}")
+      # Display chatgpt_api_endpoints and web_chat_urls
+      info_lines = []
+      if len(self.web_chat_urls) > 0:
+          info_lines.append(f"Web Chat URL (tinychat): {' '.join(self.web_chat_urls[:1])}")
+      if len(self.chatgpt_api_endpoints) > 0:
+          info_lines.append(f"ChatGPT API endpoint: {' '.join(self.chatgpt_api_endpoints[:1])}")
 
-    info_start_y = len(exo_lines) + 1
-    for i, line in enumerate(info_lines):
-      start_x = (100 - len(line)) // 2 + 15
-      for j, char in enumerate(line):
-        if 0 <= start_x + j < 100 and info_start_y + i < 48:
-          visualization[info_start_y + i][start_x + j] = char
+      info_start_y = len(exo_lines) + 1
+      for i, line in enumerate(info_lines):
+          start_x = (100 - len(line)) // 2 + 15
+          for j, char in enumerate(line):
+              if 0 <= start_x + j < 100 and info_start_y + i < 48:
+                  visualization[info_start_y + i][start_x + j] = char
 
-    # Calculate total FLOPS and position on the bar
-    total_flops = sum(self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16 for partition in self.partitions)
-    bar_pos = (math.tanh(math.cbrt(total_flops)/2.5 - 2) + 1)
+      # Calculate total FLOPS and position on the bar
+      total_flops = sum(
+          self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16
+          for partition in self.partitions
+      )
+      bar_pos = (math.tanh(math.cbrt(total_flops)/2.5 - 2) + 1)
 
-    # Add GPU poor/rich bar
-    bar_width = 30
-    bar_start_x = (100-bar_width) // 2
-    bar_y = info_start_y + len(info_lines) + 1
+      # Calculate total memory available in GB
+      total_memory_mb = sum(
+          self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).memory_available
+          for partition in self.partitions
+      )
+      total_memory_gb = total_memory_mb / 1024  # Convert MB to GB
 
-    # Create a gradient bar using emojis
-    gradient_bar = Text()
-    emojis = ["🟥", "🟧", "🟨", "🟩"]
-    for i in range(bar_width):
-      emoji_index = min(int(i/(bar_width/len(emojis))), len(emojis) - 1)
-      gradient_bar.append(emojis[emoji_index])
+      # Add GPU poor/rich bar
+      bar_width = 30
+      bar_start_x = (100 - bar_width) // 2
+      bar_y = info_start_y + len(info_lines) + 4  # Adjusted for additional text lines
 
-    # Add the gradient bar to the visualization
-    visualization[bar_y][bar_start_x - 1] = "["
-    visualization[bar_y][bar_start_x + bar_width] = "]"
-    for i, segment in enumerate(str(gradient_bar)):
-      visualization[bar_y][bar_start_x + i] = segment
+      # Create a gradient bar using emojis
+      gradient_bar = Text()
+      emojis = ["🟥", "🟧", "🟨", "🟩"]
+      for i in range(bar_width):
+          emoji_index = min(int(i / (bar_width / len(emojis))), len(emojis) - 1)
+          gradient_bar.append(emojis[emoji_index])
 
-    # Add labels
-    visualization[bar_y - 1][bar_start_x - 10:bar_start_x - 3] = "GPU poor"
-    visualization[bar_y - 1][bar_start_x + bar_width*2 + 2:bar_start_x + bar_width*2 + 11] = "GPU rich"
+      # Add the gradient bar to the visualization
+      visualization[bar_y][bar_start_x - 1] = "["
+      visualization[bar_y][bar_start_x + bar_width] = "]"
+      for i, segment in enumerate(str(gradient_bar)):
+          visualization[bar_y][bar_start_x + i] = segment
 
-    # Add position indicator and FLOPS value
-    pos_x = bar_start_x + int(bar_pos*bar_width)
-    flops_str = f"{total_flops:.2f} TFLOPS"
-    visualization[bar_y - 1][pos_x] = "▼"
-    visualization[bar_y + 1][pos_x - len(flops_str) // 2:pos_x + len(flops_str) // 2 + len(flops_str) % 2] = flops_str
-    visualization[bar_y + 2][pos_x] = "▲"
+      # Add labels "GPU poor" and "GPU rich"
+      gpu_poor_str = "GPU poor"
+      gpu_poor_x = bar_start_x - len(gpu_poor_str) - 2
+      gpu_poor_y = bar_y
+      for i, char in enumerate(gpu_poor_str):
+          visualization[gpu_poor_y][gpu_poor_x + i] = char
 
-    # Add an extra empty line for spacing
-    bar_y += 4
+      gpu_rich_str = "GPU rich"
+      gpu_rich_x = bar_start_x + bar_width + 2
+      gpu_rich_y = bar_y
+      for i, char in enumerate(gpu_rich_str):
+          visualization[gpu_rich_y][gpu_rich_x + i] = char
 
-    for i, partition in enumerate(self.partitions):
-      device_capabilities = self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES)
+      # Add position indicators
+      pos_x = bar_start_x + int(bar_pos * bar_width)
+      visualization[bar_y - 1][pos_x] = "▼"
+      visualization[bar_y + 1][pos_x] = "▲"
 
-      angle = 2*math.pi*i/num_partitions
-      x = int(center_x + radius_x*math.cos(angle))
-      y = int(center_y + radius_y*math.sin(angle))
+      # Add total memory available at the top of the bar
+      memory_str = f"{total_memory_gb:.2f} GB AVAILABLE"
+      memory_str_x = (100 - len(memory_str)) // 2
+      memory_str_y = bar_y - 3  # Position above the bar
+      for i, char in enumerate(memory_str):
+          visualization[memory_str_y][memory_str_x + i] = char
 
-      # Place node with different color for active node and this node
-      if partition.node_id == self.topology.active_node_id:
-        visualization[y][x] = "🔴"
-      elif partition.node_id == self.node_id:
-        visualization[y][x] = "🟢"
-      else:
-        visualization[y][x] = "🔵"
+      # Add total FLOPS available at the bottom of the bar
+      flops_str = f"{total_flops:.2f} TFLOPS AVAILABLE"
+      flops_str_x = (100 - len(flops_str)) // 2
+      flops_str_y = bar_y + 3  # Position below the bar
+      for i, char in enumerate(flops_str):
+          visualization[flops_str_y][flops_str_x + i] = char
 
-      # Place node info (model, memory, TFLOPS, partition) on three lines
-      node_info = [
-        f"{device_capabilities.model} {device_capabilities.memory // 1024}GB",
-        f"{device_capabilities.flops.fp16}TFLOPS",
-        f"[{partition.start:.2f}-{partition.end:.2f}]",
-      ]
+      # Proceed with the rest of your visualization code...
 
-      # Calculate info position based on angle
-      info_distance_x = radius_x + 6
-      info_distance_y = radius_y + 3
-      info_x = int(center_x + info_distance_x*math.cos(angle))
-      info_y = int(center_y + info_distance_y*math.sin(angle))
+      # Convert to string
+      return "\n".join("".join(char for char in row) for row in visualization)
 
-      # Adjust text position to avoid overwriting the node icon and prevent cutoff
-      if info_x < x:
-        info_x = max(0, x - len(max(node_info, key=len)) - 1)
-      elif info_x > x:
-        info_x = min(99 - len(max(node_info, key=len)), info_x)
-
-      # Adjust for top and bottom nodes
-      if 5*math.pi/4 < angle < 7*math.pi/4:
-        info_x += 4
-      elif math.pi/4 < angle < 3*math.pi/4:
-        info_x += 3
-        info_y -= 2
-
-      for j, line in enumerate(node_info):
-        for k, char in enumerate(line):
-          if 0 <= info_y + j < 48 and 0 <= info_x + k < 100:
-            if info_y + j != y or info_x + k != x:
-              visualization[info_y + j][info_x + k] = char
-
-      # Draw line to next node
-      next_i = (i+1) % num_partitions
-      next_angle = 2*math.pi*next_i/num_partitions
-      next_x = int(center_x + radius_x*math.cos(next_angle))
-      next_y = int(center_y + radius_y*math.sin(next_angle))
-
-      # Simple line drawing
-      steps = max(abs(next_x - x), abs(next_y - y))
-      for step in range(1, steps):
-        line_x = int(x + (next_x-x)*step/steps)
-        line_y = int(y + (next_y-y)*step/steps)
-        if 0 <= line_y < 48 and 0 <= line_x < 100:
-          visualization[line_y][line_x] = "-"
-
-    # Convert to string
-    return "\n".join("".join(str(char) for char in row) for row in visualization)
 
   def _generate_download_layout(self) -> Table:
     summary = Table(show_header=False, box=None, padding=(0, 1), expand=True)
