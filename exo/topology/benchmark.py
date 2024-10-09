@@ -36,20 +36,21 @@ def _benchmark_tflops(n, dtype='f32', num_iterations=100):
             C = torch.mm(A, B)
         elapsed_time = time.perf_counter() - start_time
 
+    print(elapsed_time)
     flops_per_iteration = 2 * (n ** 3)
     total_flops = flops_per_iteration * num_iterations
     tflops = (total_flops / elapsed_time) / 1e12
 
     return float(f"{tflops:.2f}")
 
-
-def benchmark():
-    fp32=_benchmark_tflops(2048)
-    fp16=_benchmark_tflops(2048, dtype='f16')
-    int8=_benchmark_tflops(2048, dtype='int8')
+def benchmark(n):
+    fp32=_benchmark_tflops(n)
+    fp16=_benchmark_tflops(n, dtype='f16')
+    int8=_benchmark_tflops(n, dtype='int8')
 
     return (fp32, fp16, int8)
 
 
 if __name__ == '__main__':
-    print(*benchmark())
+    for n in range(14):
+        *benchmark(n)

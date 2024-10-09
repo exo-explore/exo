@@ -1,4 +1,4 @@
-import time
+from exo.topology.mlx_benchmark import benchmark_tflops
 import numpy as np
 import mlx.core as mx
 from ..inference_engine import InferenceEngine
@@ -47,37 +47,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
       self.shard = shard
-
-  def _benchmark_tflops(n, dtype='f32', num_iterations=10):
-    
-    if dtype == 'f32':
-        A = mx.random.normal((n, n), dtype=mx.float32)
-        B = mx.random.normal((n, n), dtype=mx.float32)
-    elif dtype == 'f16':
-        A = mx.random.normal((n, n), dtype=mx.float16)
-        B = mx.random.normal((n, n), dtype=mx.float16)
-    elif dtype == 'int8':
-        A = (mx.random.randint(-128, 127, (n, n), dtype=mx.int8)).astype(mx.float32)
-        B = (mx.random.randint(-128, 127, (n, n), dtype=mx.int8)).astype(mx.float32)
-    else:
-        raise ValueError("Unsupported data type. Use 'f32', 'f16', or 'int8'.")
-
-    start_time = time.perf_counter()
-    for _ in range(num_iterations):
-        C = mx.matmul(A, B)
-        mx.synchronize()
-    elapsed_time = time.perf_counter() - start_time
-
-    flops_per_iteration = 2 * (n ** 3)
-    total_flops = flops_per_iteration * num_iterations
-    tflops = (total_flops / elapsed_time) / 1e12
-
-    return float(f"{tflops:.2f}")
   
-def benchmark_tflops(self):
-    n = 2**8
-    fp32=self._benchmark_tflops(n)
-    fp16=self._benchmark_tflops(n, dtype='f16')
-    int8=self._benchmark_tflops(n, dtype='int8')
-
-    return (fp32, fp16, int8)
+  def benchmark_tflops(self):
+    return benchmark_tflops()
