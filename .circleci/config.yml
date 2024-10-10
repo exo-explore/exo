@@ -92,7 +92,7 @@ jobs:
   unit_test:
     macos:
       xcode: "16.0.0"
-    resource_class: macos.m1.large.gen1
+    resource_class: m2pro.large
     steps:
       - checkout
       - run:
@@ -119,7 +119,7 @@ jobs:
 
   discovery_integration_test:
     macos:
-      xcode: "15.4.0"
+      xcode: "16.0.0"
     steps:
       - checkout
       - run:
@@ -158,8 +158,8 @@ jobs:
 
   chatgpt_api_integration_test_mlx:
     macos:
-      xcode: "15.4.0"
-    resource_class: macos.m1.large.gen1
+      xcode: "16.0.0"
+    resource_class: m2pro.large
     steps:
       - checkout
       - run:
@@ -176,7 +176,7 @@ jobs:
             pip install .
       - run_chatgpt_api_test:
           inference_engine: mlx
-          model_id: llama-3.1-8b
+          model_id: llama-3.2-1b
 
   chatgpt_api_integration_test_torch_linux_cpu:
     machine:
@@ -224,16 +224,16 @@ jobs:
 
   test_macos_m1:
     macos:
-      xcode: "15.4.0"
-    resource_class: macos.m1.large.gen1
+      xcode: "16.0.0"
+    resource_class: m2pro.large
     steps:
       - checkout
       - run: system_profiler SPHardwareDataType
 
   # chatgpt_api_integration_test_tinygrad:
   #   macos:
-  #     xcode: "15.4.0"
-  #   resource_class: macos.m1.large.gen1
+  #     xcode: "16.0.0"
+  #   resource_class: m2pro.large
   #   steps:
   #     - checkout
   #     - run:
