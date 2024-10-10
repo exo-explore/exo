@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple, Union, List
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
+from exo.inference.torch.model.hf import ShardedHuggingFaceModel
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -28,9 +28,9 @@ TOP_P = 0.9
 MAX_LENGTH = 125
 MAX_TIME = 60.0
 
-class PyTorchDynamicShardInferenceEngine(InferenceEngine):
+class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
-  PyTorch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
+  Torch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
   """
 
   def __init__(self, shard_downloader: HFShardDownloader):
@@ -49,13 +49,13 @@ class PyTorchDynamicShardInferenceEngine(InferenceEngine):
     self.past_input_ids = None
 
     # setup cuda device
-    if os.environ.get("PYTORCH_DEVICE"):
-      pytorch_device = os.environ["PYTOCH_DEVICE"]
-      if pytorch_device not in ["cuda", "mps"]:
-        pytorch_device = "cpu"
+    if os.environ.get("TORCH_DEVICE"):
+      torch_device = os.environ["PYTOCH_DEVICE"]
+      if torch_device not in ["cuda", "mps"]:
+        torch_device = "cpu"
 
-      self.device = pytorch_device
-      self.torch_dtype = torch.float16 if pytorch_device != "cpu" else torch.float32
+      self.device = torch_device
+      self.torch_dtype = torch.float16 if torch_device != "cpu" else torch.float32
 
     if torch.cuda.is_available():
       self.device = torch.device("cuda")
