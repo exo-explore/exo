@@ -4,7 +4,6 @@ from typing import Optional, List
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
 
 from mlx_lm.models.base import BaseModelArgs
 
@@ -205,8 +204,7 @@ class PixtralTransformer(nn.Module):
 
 def generate_block_attention_mask(patch_embeds_list, input_array):
     seq_len = input_array.shape[1]
-    dmin = np.finfo(np.array(input_array).dtype).min
-    causal_mask = mx.full((seq_len, seq_len), dmin, dtype=input_array.dtype)
+    causal_mask = mx.full((seq_len, seq_len), -1e9, dtype=input_array.dtype)
 
     block_end_idx = mx.cumsum(mx.array(patch_embeds_list), axis=-1).tolist()
     block_start_idx = mx.cumsum(mx.array([0] + patch_embeds_list[:-1]), axis=-1).tolist()
@@ -380,7 +378,7 @@ class Model(nn.Module):
     flat_mask = special_image_mask.reshape(-1)
     flat_source = image_features.reshape(-1)
     
-    indices = mx.array(np.flatnonzero(flat_mask))
+    indices = mx.arange(flat_mask.size)[flat_mask != 0]
     num_masked = indices.size
     if flat_source.size < num_masked:
         raise Exception("Number of elements of source < number of ones in mask")
