@@ -25,6 +25,7 @@ install_requires = [
   "transformers==4.43.3",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
+  "pyyaml==6.0.2",
 ]
 
 # Add macOS-specific packages if on Darwin (macOS)
