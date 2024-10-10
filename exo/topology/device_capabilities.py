@@ -1,3 +1,4 @@
+from exo.topology.mlx_benchmark import mlx_benchmark_tflops
 from exo import DEBUG
 from dataclasses import dataclass, asdict
 import subprocess
@@ -163,7 +164,8 @@ def mac_device_capabilities() -> DeviceCapabilities:
     memory = memory_value
 
   # Assuming static values for other attributes for demonstration
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0)))
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=DeviceFlops(*mlx_benchmark_tflops()))
+  # return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(*mlx_benchmark_tflops())))
 
 
 def linux_device_capabilities() -> DeviceCapabilities:

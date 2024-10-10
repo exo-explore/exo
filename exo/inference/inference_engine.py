@@ -15,6 +15,10 @@ class InferenceEngine(ABC):
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
     pass
 
+  @abstractmethod
+  def benchmark_tflops(self):
+    pass
+
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
   if inference_engine_name == "mlx":

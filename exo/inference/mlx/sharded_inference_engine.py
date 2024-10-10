@@ -1,3 +1,4 @@
+from exo.topology.mlx_benchmark import mlx_benchmark_tflops
 import numpy as np
 import mlx.core as mx
 from ..inference_engine import InferenceEngine
@@ -46,3 +47,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
       self.shard = shard
+  
+  def benchmark_tflops(self):
+    return mlx_benchmark_tflops()
