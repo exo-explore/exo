@@ -280,9 +280,6 @@ workflows:
       - chatgpt_api_integration_test_torch_mac:
           requires:
             - approve_run
-      # - chatgpt_api_integration_test_tinygrad:
-      #     requires:
-      #       - approve_run
 
   # Run jobs without approval on the main branch
   main_branch_workflow:
@@ -311,7 +308,3 @@ workflows:
           filters:
             branches:
               only: main
-      # - chatgpt_api_integration_test_tinygrad:
-      #     filters:
-      #       branches:
-      #         only: main
