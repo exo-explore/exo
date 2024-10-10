@@ -176,7 +176,7 @@ jobs:
             pip install .
       - run_chatgpt_api_test:
           inference_engine: mlx
-          model_id: llama-3.1-8b
+          model_id: llama-3.2-1b
 
   test_macos_m1:
     macos:
