@@ -178,6 +178,50 @@ jobs:
           inference_engine: mlx
           model_id: llama-3.1-8b
 
+  chatgpt_api_integration_test_torch_linux_cpu:
+    machine:
+      image: ubuntu-2404:2024.08.1
+    resource_class: large
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: torch
+          model_id: llama-3.2-1b
+
+  chatgpt_api_integration_test_torch_mac:
+    macos:
+      xcode: "15.4.0"
+    resource_class: macos.m1.large.gen1
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: torch
+          model_id: llama-3.2-1b
+
   test_macos_m1:
     macos:
       xcode: "15.4.0"
