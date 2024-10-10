@@ -1,3 +1,7 @@
+import random  # Import missing random module
+import asyncio
+import numpy as np  # Import numpy for generating random outputs
+
 class DummyInferenceEngine:
     def __init__(self, output_type="static", output_value=None, output_shape=(1,), latency_mean=0.1, latency_stddev=0.01):
         self.output_type = output_type
@@ -6,6 +10,7 @@ class DummyInferenceEngine:
         self.latency_mean = latency_mean
         self.latency_stddev = latency_stddev
         
+        # Validation for static output type
         if self.output_type == "static" and self.output_value is None:
             raise ValueError("output_value must be provided when output_type is 'static'.")
 
@@ -14,15 +19,17 @@ class DummyInferenceEngine:
         latency = max(0, random.normalvariate(self.latency_mean, self.latency_stddev))  # Non-negative latency
         await asyncio.sleep(latency)
         
-        # Generate output
+        # Generate output based on the specified output type
         if self.output_type == "static":
-            return self.output_value
+            return self.output_value  # Return the static output
         elif self.output_type == "random":
-            return np.random.randn(*self.output_shape).tolist()
+            self.output_value = np.random.randn(*self.output_shape).tolist()  # Generate random output and store it
+            return self.output_value
 
     async def get_latency(self):
         # Simulate and return the latency
         return max(0, random.normalvariate(self.latency_mean, self.latency_stddev))
+
 
 # Example usage and testing
 async def test_dummy_engine():
@@ -39,4 +46,4 @@ async def test_dummy_engine():
     print(f"Simulated Inference Latency: {latency}s")
 
 # Run the test
-asyncio.run(test_dummy_engine())
+# asyncio.run(test_dummy_engine())

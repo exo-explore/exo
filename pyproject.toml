@@ -5,3 +5,6 @@ max-line-length = 200
 [tool.autopep8]
 max_line_length = 200
 indent_size = 2
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
