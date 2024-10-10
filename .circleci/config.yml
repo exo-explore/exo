@@ -256,10 +256,62 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - unit_test
-      - discovery_integration_test
-      - chatgpt_api_integration_test_mlx
-      - test_macos_m1
-      - chatgpt_api_integration_test_torch_linux_cpu
-      - chatgpt_api_integration_test_torch_mac
-      # - chatgpt_api_integration_test_tinygrad
+      - approve_run:
+          type: approval
+          requires: []
+          filters:
+            branches:
+              ignore: main
+      - unit_test:
+          requires:
+            - approve_run
+      - discovery_integration_test:
+          requires:
+            - approve_run
+      - chatgpt_api_integration_test_mlx:
+          requires:
+            - approve_run
+      - test_macos_m1:
+          requires:
+            - approve_run
+      - chatgpt_api_integration_test_torch_linux_cpu:
+          requires:
+            - approve_run
+      - chatgpt_api_integration_test_torch_mac:
+          requires:
+            - approve_run
+      # - chatgpt_api_integration_test_tinygrad:
+      #     requires:
+      #       - approve_run
+
+  # Run jobs without approval on the main branch
+  main_branch_workflow:
+    jobs:
+      - unit_test:
+          filters:
+            branches:
+              only: main
+      - discovery_integration_test:
+          filters:
+            branches:
+              only: main
+      - chatgpt_api_integration_test_mlx:
+          filters:
+            branches:
+              only: main
+      - test_macos_m1:
+          filters:
+            branches:
+              only: main
+      - chatgpt_api_integration_test_torch_linux_cpu:
+          filters:
+            branches:
+              only: main
+      - chatgpt_api_integration_test_torch_mac:
+          filters:
+            branches:
+              only: main
+      # - chatgpt_api_integration_test_tinygrad:
+      #     filters:
+      #       branches:
+      #         only: main
