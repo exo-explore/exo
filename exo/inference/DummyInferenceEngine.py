@@ -1,6 +1,6 @@
-import random  # Import missing random module
+import random  
 import asyncio
-import numpy as np  # Import numpy for generating random outputs
+import numpy as np  
 
 class DummyInferenceEngine:
     def __init__(self, output_type="static", output_value=None, output_shape=(1,), latency_mean=0.1, latency_stddev=0.1):
