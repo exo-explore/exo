@@ -406,7 +406,7 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
       shard_specific_patterns.add(sorted_file_names[0])
     elif shard.is_last_layer():
       shard_specific_patterns.add(sorted_file_names[-1])
-
+  # TODO: Support more models in a cleaner manner
   elif shard.model_id.endswith("GGUF"):
       return ["Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"]
   else:
