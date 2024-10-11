@@ -1,7 +1,7 @@
 
 import asyncio
 from exo.inference.shard import Shard
-from exo.inference.pytorch.inference import PyTorchDynamicShardInferenceEngine
+from exo.inference.torch.inference import TorchDynamicShardInferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
@@ -120,8 +120,8 @@ if __name__ == '__main__':
   # try:
   #   print("\n\n -------- TEST QWEN2 -------- \n\n")
   #   asyncio.run(test_inference_engine(
-  #     PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-  #     PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #     TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #     TorchDynamicShardInferenceEngine(HFShardDownloader()),
   #     "Qwen/Qwen2-0.5B-Instruct",
   #     24
   #   ))
@@ -131,8 +131,8 @@ if __name__ == '__main__':
   try:
     print("\n-------- Test meta-llama/Llama-3.2-1B-Instruct ----------\n")
     asyncio.run(test_inference_engine(
-      PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
-      PyTorchDynamicShardInferenceEngine(HFShardDownloader()),
+      TorchDynamicShardInferenceEngine(HFShardDownloader()),
+      TorchDynamicShardInferenceEngine(HFShardDownloader()),
       "meta-llama/Llama-3.2-1B-Instruct",
       24
     ))

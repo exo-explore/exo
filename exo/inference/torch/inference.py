@@ -13,7 +13,7 @@ import torch
 from typing import Optional, Tuple, Union, List
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.pytorch.model.hf import ShardedHuggingFaceModel
+from exo.inference.torch.model.hf import ShardedHuggingFaceModel
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -30,9 +30,9 @@ TOP_P = 0.9
 MAX_LENGTH = 125
 MAX_TIME = 60.0
 
-class PyTorchDynamicShardInferenceEngine(InferenceEngine):
+class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
-  PyTorch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
+  Torch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
   """
 
   def __init__(self, shard_downloader: HFShardDownloader):
