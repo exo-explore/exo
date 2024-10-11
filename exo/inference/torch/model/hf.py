@@ -59,7 +59,7 @@ class ShardedHuggingFaceModel:
       self.llm_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
         torch_dtype=self.torch_dtype,
-        device_map="auto",
+        device_map={"": self.device},
         offload_buffers=True
       )
 
