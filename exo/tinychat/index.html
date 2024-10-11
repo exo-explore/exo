@@ -151,16 +151,22 @@
 </div>
 
 <!-- Download Progress Section -->
-<template x-if="downloadProgress">
-<div class="download-progress message message-role-assistant">
-  <h2>Download Progress</h2>
-  <div class="download-progress-node">
-    <p><strong>Model:</strong> <span x-text="downloadProgress.repo_id + '@' + downloadProgress.repo_revision"></span></p>
-    <p><strong>Progress:</strong> <span x-text="`${downloadProgress.downloaded_bytes_display} / ${downloadProgress.total_bytes_display} (${downloadProgress.percentage}%)`"></span></p>
-    <p><strong>Speed:</strong> <span x-text="downloadProgress.overall_speed_display || 'N/A'"></span></p>
-    <p><strong>ETA:</strong> <span x-text="downloadProgress.overall_eta_display || 'N/A'"></span></p>
+<template x-if="downloadProgress && downloadProgress.length > 0">
+  <div class="download-progress message message-role-assistant">
+    <h2>Download Progress</h2>
+    <br>
+    <template x-for="(progress, index) in downloadProgress" :key="index">
+      <div class="download-progress-node">
+        <br>
+        <h3 x-text="`Download ${index + 1}`"></h3>
+        <p><strong>Model:</strong> <span x-text="progress.repo_id + '@' + progress.repo_revision"></span></p>
+        <p><strong>Progress:</strong> <span x-text="`${progress.downloaded_bytes_display} / ${progress.total_bytes_display} (${progress.percentage}%)`"></span></p>
+        <p><strong>Speed:</strong> <span x-text="progress.overall_speed_display || 'N/A'"></span></p>
+        <p><strong>ETA:</strong> <span x-text="progress.overall_eta_display || 'N/A'"></span></p>
+        <p><strong>Status:</strong> <span x-text="progress.status"></span></p>
+      </div>
+    </template>
   </div>
-</div>
 </template>
 
 
