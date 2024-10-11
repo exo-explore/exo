@@ -1,4 +1,4 @@
-from exo.topology.mlx_benchmark import mlx_benchmark_tflops
+from exo.inference.inference_engine import InferenceEngine
 from exo import DEBUG
 from dataclasses import dataclass, asdict
 import subprocess
@@ -133,9 +133,9 @@ CHIP_FLOPS.update({f"{key} LAPTOP GPU": value for key, value in CHIP_FLOPS.items
 CHIP_FLOPS.update({f"{key} Laptop GPU": value for key, value in CHIP_FLOPS.items()})
 
 
-def device_capabilities() -> DeviceCapabilities:
+def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   if psutil.MACOS:
-    return mac_device_capabilities()
+    return mac_device_capabilities(inference_engine)
   elif psutil.LINUX:
     return linux_device_capabilities()
   else:
@@ -147,7 +147,7 @@ def device_capabilities() -> DeviceCapabilities:
     )
 
 
-def mac_device_capabilities() -> DeviceCapabilities:
+def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   # Fetch the model of the Mac using system_profiler
   model = subprocess.check_output(["system_profiler", "SPHardwareDataType"]).decode("utf-8")
   model_line = next((line for line in model.split("\n") if "Model Name" in line), None)
@@ -163,9 +163,7 @@ def mac_device_capabilities() -> DeviceCapabilities:
   else:
     memory = memory_value
 
-  # Assuming static values for other attributes for demonstration
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=DeviceFlops(*mlx_benchmark_tflops()))
-  # return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(*mlx_benchmark_tflops())))
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=DeviceFlops(*inference_engine.benchmark_tflops()))
 
 
 def linux_device_capabilities() -> DeviceCapabilities:

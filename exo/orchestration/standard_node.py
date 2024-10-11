@@ -15,6 +15,7 @@ from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import RepoProgressEvent
+from exo.topology.device_capabilities import DeviceCapabilities
 
 
 class StandardNode(Node):
@@ -24,6 +25,7 @@ class StandardNode(Node):
     server: Server,
     inference_engine: InferenceEngine,
     discovery: Discovery,
+    device_capabilities: DeviceCapabilities,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
     topology_viz: Optional[TopologyViz] = None,
@@ -33,9 +35,9 @@ class StandardNode(Node):
     self.server = server
     self.discovery = discovery
     self.partitioning_strategy = partitioning_strategy
+    self.device_capabilities = device_capabilities
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
-    self.device_capabilities = device_capabilities()
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
