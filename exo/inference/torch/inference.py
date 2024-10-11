@@ -114,7 +114,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     )
 
     with ThreadPoolExecutor() as pool:
-        result = await loop.run_in_executor(pool, forward_partial)
+      result = await loop.run_in_executor(pool, forward_partial)
 
     return result
 
