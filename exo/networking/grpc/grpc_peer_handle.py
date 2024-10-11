@@ -113,15 +113,26 @@ class GRPCPeerHandle(PeerHandle):
     )
 
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
-    request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
+    request = node_service_pb2.CollectTopologyRequest(visited=list(visited), max_depth=max_depth)
     response = await self.stub.CollectTopology(request)
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
-      device_capabilities = DeviceCapabilities(model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory, flops=capabilities.flops)
-      topology.update_node(node_id, device_capabilities)
+        device_capabilities = DeviceCapabilities(
+            model=capabilities.model,
+            chip=capabilities.chip,
+            memory=capabilities.memory,
+            flops=DeviceFlops(
+                fp32=capabilities.flops.fp32,
+                fp16=capabilities.flops.fp16,
+                int8=capabilities.flops.int8,
+            ),
+        )
+        topology.update_node(node_id, device_capabilities)
     for node_id, peers in response.peer_graph.items():
-      for peer_id in peers.peer_ids:
-        topology.add_edge(node_id, peer_id)
+        for connection in peers.connections:
+            peer_id = connection.peer_id
+            latency = connection.latency
+            topology.add_edge(node_id, peer_id, latency)
     return topology
 
   async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:

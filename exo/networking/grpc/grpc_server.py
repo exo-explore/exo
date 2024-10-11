@@ -89,16 +89,22 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     visited = set(request.visited)
     topology = await self.node.collect_topology(visited, max_depth)
     nodes = {
-      node_id:
-        node_service_pb2.DeviceCapabilities(
-          model=cap.model,
-          chip=cap.chip,
-          memory=cap.memory,
-          flops=node_service_pb2.DeviceFlops(fp32=cap.flops.fp32, fp16=cap.flops.fp16, int8=cap.flops.int8),
-        )
-      for node_id, cap in topology.nodes.items()
+        node_id:
+            node_service_pb2.DeviceCapabilities(
+                model=cap.model,
+                chip=cap.chip,
+                memory=cap.memory,
+                flops=node_service_pb2.DeviceFlops(fp32=cap.flops.fp32, fp16=cap.flops.fp16, int8=cap.flops.int8),
+            )
+        for node_id, cap in topology.nodes.items()
     }
-    peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
+    peer_graph = {}
+    for node_id, neighbors in topology.peer_graph.items():
+        connections = [
+            node_service_pb2.PeerConnection(peer_id=peer_id, latency=latency)
+            for peer_id, latency in neighbors.items()
+        ]
+        peer_graph[node_id] = node_service_pb2.Peers(connections=connections)
     if DEBUG >= 5: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
     return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 

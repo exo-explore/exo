@@ -59,8 +59,13 @@ message Topology {
   map<string, Peers> peer_graph = 2;
 }
 
+message PeerConnection {
+  string peer_id = 1;
+  double latency = 2;
+}
+
 message Peers {
-    repeated string peer_ids = 1;
+    repeated PeerConnection connections = 1;
 }
 
 message DeviceFlops {
