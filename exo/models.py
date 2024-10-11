@@ -96,6 +96,7 @@ model_base_shards = {
     "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Qwen2.5-Math-72B-Instruct", start_layer=0, end_layer=0, n_layers=80),
   },
   "qwen2-0.5b-instruct": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2-0.5B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=24),
     "TorchDynamicShardInferenceEngine": Shard(model_id="Qwen/Qwen2-0.5B-Instruct", start_layer=0, end_layer=0, n_layers=24),  
   },
 }
