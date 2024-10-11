@@ -125,7 +125,7 @@ def build_prompt(tokenizer, _messages: List[Message]):
       continue
 
     for content in message.content:
-      # note: wae only support one image at  time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
+      # note: we only support one image at a time right now. Multiple is possible. See: https://github.com/huggingface/transformers/blob/e68ec18ce224af879f22d904c7505a765fb77de3/docs/source/en/model_doc/llava.md?plain=1#L41
       # follows the convention in https://platform.openai.com/docs/guides/vision
       if isinstance(content, dict) and content.get("type", None) == "image":
         image_str = content.get("image", None)
