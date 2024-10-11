@@ -27,5 +27,8 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  elif inference_engine_name == "dummy" :
+    from exo.inference.DummyInferenceEngine import DummyInferenceEngine
+    return DummyInferenceEngine(output_type="static", output_value=[1, 2, 3], latency_mean=0.1, latency_stddev=0.1)
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")
