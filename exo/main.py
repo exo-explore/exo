@@ -12,6 +12,7 @@ from exo.networking.udp.udp_discovery import UDPDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
+from exo.topology.partition_strategy_registry import partition_strategy_registry
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -47,6 +48,7 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--partitioning-strategy", type=str, choices=partition_strategy_registry.keys(), default="ring-memory-weighted", help="Partitioning strategy to use")
 args = parser.parse_args()
 
 print_yellow_exo()
@@ -57,6 +59,7 @@ print(f"Detected system: {system_info}")
 shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check, max_parallel_downloads=args.max_parallel_downloads)
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
+partitioning_strategy = partition_strategy_registry[args.partitioning_strategy]()
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
 if args.node_port is None:
@@ -84,7 +87,7 @@ node = StandardNode(
   None,
   inference_engine,
   discovery,
-  partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
+  partitioning_strategy=partitioning_strategy,
   max_generate_tokens=args.max_generate_tokens,
   topology_viz=topology_viz
 )
