@@ -15,20 +15,17 @@ class InferenceEngine(ABC):
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
     pass
 
-
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
-  if inference_engine_name == "mlx":
-    from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
-
-    return MLXDynamicShardInferenceEngine(shard_downloader)
-  elif inference_engine_name == "tinygrad":
-    from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
-    import tinygrad.helpers
-    tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
-
-    return TinygradDynamicShardInferenceEngine(shard_downloader)
-  elif inference_engine_name == "dummy" :
-    from exo.inference.DummyInferenceEngine import DummyInferenceEngine
-    return DummyInferenceEngine(output_type="static", output_value=[1, 2, 3], latency_mean=0.1, latency_stddev=0.1)
-  else:
-    raise ValueError(f"Inference engine {inference_engine_name} not supported")
+    if inference_engine_name == "mlx":
+        from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+        return MLXDynamicShardInferenceEngine(shard_downloader)
+    elif inference_engine_name == "tinygrad":
+        from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
+        import tinygrad.helpers
+        tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
+        return TinygradDynamicShardInferenceEngine(shard_downloader)
+    elif inference_engine_name == "dummy":
+        from exo.inference.DummyInferenceEngine import DummyInferenceEngine
+        return DummyInferenceEngine(output_type="random", output_shape=(1, 32), latency_mean=0.1, latency_stddev=0.1)
+    else:
+        raise ValueError(f"Inference engine {inference_engine_name} not supported")

@@ -41,7 +41,7 @@ parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of pee
 parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
 parser.add_argument("--chatgpt-api-response-timeout", type=int, default=90, help="ChatGPT API response timeout in seconds")
 parser.add_argument("--max-generate-tokens", type=int, default=10000, help="Max tokens to generate in each request")
-parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use e.g. 'mlx', 'tinygrad', 'dummy')")
+parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use (e.g. 'mlx', 'tinygrad', 'dummy')")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
@@ -53,6 +53,7 @@ print_yellow_exo()
 
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
+
 
 shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check, max_parallel_downloads=args.max_parallel_downloads)
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
@@ -186,11 +187,16 @@ async def main():
   await node.start(wait_for_peers=args.wait_for_peers)
 
   if args.command == "run" or args.run_model:
-    model_name = args.model_name or args.run_model
-    if not model_name:
-      print("Error: Model name is required when using 'run' command or --run-model")
-      return
-    await run_model_cli(node, inference_engine, model_name, args.prompt)
+    if inference_engine_name == "dummy" :
+      # Perform dummy inference on prompt
+      shard = Shard(model_id="dummy", start_layer=0, end_layer=1, n_layers=2)
+      await inference_engine.infer_prompt("test_id", shard, args.prompt)
+    else :
+      model_name = args.model_name or args.run_model
+      if not model_name:
+        print("Error: Model name is required when using 'run' command or --run-model")
+        return
+      await run_model_cli(node, inference_engine, model_name, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
