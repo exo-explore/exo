@@ -1,12 +1,12 @@
+"""
+Test inference engine and model sharding
+"""
 
 import asyncio
 from exo.inference.shard import Shard
 from exo.inference.torch.inference import TorchDynamicShardInferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.shard import Shard
-from exo.helpers import DEBUG
-import os
 import numpy as np
 import time
 
@@ -15,8 +15,7 @@ async def test_inference_engine(
     inference_engine_2: InferenceEngine,
     model_id: str,
     n_layers: int):
-
-  # prompt = "Why is the sky blue?"
+  
   prompt = "In a single word only, what is the last name of the current president of the USA?"
 
   shard = Shard(
@@ -129,11 +128,11 @@ if __name__ == '__main__':
   #   print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
 
   try:
-    print("\n-------- Test meta-llama/Llama-3.2-1B-Instruct ----------\n")
+    print("\n-------- Test unsloth/Llama-3.2-1B-Instruct ----------\n")
     asyncio.run(test_inference_engine(
       TorchDynamicShardInferenceEngine(HFShardDownloader()),
       TorchDynamicShardInferenceEngine(HFShardDownloader()),
-      "meta-llama/Llama-3.2-1B-Instruct",
+      "unsloth/Llama-3.2-1B-Instruct",
       24
     ))
   except Exception as err:

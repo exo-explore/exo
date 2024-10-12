@@ -4,7 +4,7 @@ model_base_shards = {
   ### llama
   "llama-3.2-1b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.2-1B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=16),
-    "TorchDynamicShardInferenceEngine": Shard(model_id="meta-llama/Llama-3.2-1B-Instruct", start_layer=0, end_layer=0, n_layers=16),
+    "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Llama-3.2-1B-Instruct", start_layer=0, end_layer=0, n_layers=16),
   },
   "llama-3.2-3b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.2-3B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
@@ -12,7 +12,7 @@ model_base_shards = {
   "llama-3.1-8b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=32),
     "TinygradDynamicShardInferenceEngine": Shard(model_id="mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated", start_layer=0, end_layer=0, n_layers=32),
-    "TorchDynamicShardInferenceEngine": Shard(model_id="meta-llama/Meta-Llama-3.1-8B-Instruct", start_layer=0, end_layer=0, n_layers=32),
+    "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Meta-Llama-3.1-8B-Instruct", start_layer=0, end_layer=0, n_layers=32),
   },
   "llama-3.1-70b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3.1-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
