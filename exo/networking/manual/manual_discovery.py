@@ -42,12 +42,14 @@ class ManualDiscovery(Discovery):
             self.chip = f"{value}"
           if f"{capability}" == "memory":
             self.memory = (int(f"{value}"))
-          if f"{capability}" == "fp32":
-            self.fp32 = (int(f"{value}"))
-          if f"{capability}" == "fp16":
-            self.fp16 = (int(f"{value}"))
-          if f"{capability}" == "int8":
-            self.int8 = (int(f"{value}"))
+          if f"{capability}" == "flops":
+            for flopstr, flopvalue in device['device_capabilities']['flops'].items():
+                if f"{flopstr}" == "fp32":
+                  self.fp32 = (int(f"{flopvalue}"))
+                if f"{flopstr}" == "fp16":
+                  self.fp16 = (int(f"{flopvalue}"))
+                if f"{flopstr}" == "int8":
+                  self.int8 = (int(f"{flopvalue}"))
     
     self.create_peer_handle = create_peer_handle
     self.discovery_interval = discovery_interval
@@ -80,12 +82,14 @@ class ManualDiscovery(Discovery):
             getchip = f"{value}"
           if f"{capability}" == "memory":
             getmemory = (int(f"{value}"))
-          if f"{capability}" == "fp32":
-            getfp32 = (int(f"{value}"))
-          if f"{capability}" == "fp16":
-            getfp16 = (int(f"{value}"))
-          if f"{capability}" == "int8":
-            getint8 = (int(f"{value}"))
+          if f"{capability}" == "flops":
+            for flopstr, flopvalue in device['device_capabilities']['flops'].items():
+                if f"{flopstr}" == "fp32":
+                  getfp32 = (int(f"{flopvalue}"))
+                if f"{flopstr}" == "fp16":
+                  getfp16 = (int(f"{flopvalue}"))
+                if f"{flopstr}" == "int8":
+                  getint8 = (int(f"{flopvalue}"))
 
         return DeviceCapabilities(
           model=getmodel,

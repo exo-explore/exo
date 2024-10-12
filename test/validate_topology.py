@@ -9,4 +9,7 @@ for node in edgenodes:
     print(f"  Capabilities:")
     for capability, value in node['device_capabilities'].items():
         print(f"    {capability}: {value}")
+        if f"{capability}" == "flops":
+            for flopstr, flopvalue in node['device_capabilities']['flops'].items():
+                print(f"    {flopstr}: {flopvalue}")
 
