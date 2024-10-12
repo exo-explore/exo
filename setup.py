@@ -8,6 +8,7 @@ install_requires = [
   "aiohttp_cors==0.7.0",
   "aiofiles==24.1.0",
   "ggml-python==0.0.37",
+  "gguf @ git+https://github.com/99991/pygguf@f304361f69ce795ad06103b697fe6eaf44262259",
   "grpcio==1.64.1",
   "grpcio-tools==1.64.1",
   "Jinja2==3.1.4",
