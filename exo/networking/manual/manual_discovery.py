@@ -20,8 +20,8 @@ class ManualDiscovery(Discovery):
     update_interval: int = 15,
   ):
     self.discovery_config = discovery_config
-    self.current_device = ReadManualConfig(discovery_config=self.discovery_config)
-    self.current_device.device_capabilities(self.current_device.whoami)
+    self.list_device = ReadManualConfig(discovery_config=self.discovery_config)
+    device_capabilities = self.list_device.device_capabilities(self.list_device.whoami)
     self.create_peer_handle = create_peer_handle
     self.discovery_interval = discovery_interval
     self.discovery_timeout = discovery_timeout
@@ -43,20 +43,15 @@ class ManualDiscovery(Discovery):
         print("task_discover_peers")
         current_time = time.time()
 
-        with open(self.discovery_config, 'r') as f:
-          config_devices = yaml.safe_load(f)
-          f.close()
-
-        for device in config_devices:
-          if f"{self.current_device.whoami}" == f"{device['server']}": continue
+        for device in self.list_device.config_devices:
+          if f"{self.list_device.whoami}" == f"{device['server']}": continue
           print(f"Adresse: {device['address']} {device['port']}")
           peer_id = f"{device['id']}"
           peer_host = f"{device['address']}"
           peer_port = f"{device['port']}"
 
           if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
-            discovered_device = ReadManualConfig(discovery_config=self.discovery_config)
-            new_peer_handle = self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", discovered_device.device_capabilities((str((f"{device['server']}")))))
+            new_peer_handle = self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", self.list_device.device_capabilities((str((f"{device['server']}")))))
             if not await new_peer_handle.health_check():
               if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Skipping.")
               continue

@@ -8,6 +8,7 @@ class ReadManualConfig():
     discovery_config: str = "topology.yml",
   ):
     self._discovery_config = discovery_config
+    self._config_devices = None
     self._whoami = f"{socket.gethostname()}"
     self._node_id = "NONE"
     self. _node_address = "NONE"
@@ -21,10 +22,10 @@ class ReadManualConfig():
 
   def device_capabilities(self, gethostname) -> DeviceCapabilities:
     with open(self._discovery_config, 'r') as f:
-      config_devices = yaml.safe_load(f)
+      self._config_devices = yaml.safe_load(f)
       f.close()
 
-    for device in config_devices:
+    for device in self._config_devices:
       print(f"{device['server']} {device['id']}:")
       print(f"Search for {gethostname} !")
       if (str(f"{gethostname}")) == (str(f"{device['server']}")):
@@ -65,8 +66,12 @@ class ReadManualConfig():
     )
   
   @property
-  def discovery_config(self) -> str:
+  def discovery_config(self):
     return self._discovery_config
+  
+  @property
+  def config_devices(self):
+    return self._config_devices
 
   @property
   def whoami(self):
