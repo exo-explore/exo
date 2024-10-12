@@ -164,8 +164,9 @@ main {
   border-right: 2px solid var(--secondary-color);
   box-shadow: 10px 10px 20px 2px var(--secondary-color-transparent);
 }
-.download-progress{
-  margin-bottom: 20em;
+.download-progress {
+  margin-bottom: 12em;
+  overflow-y: auto;
 }
 .message > pre {
   white-space: pre-wrap;
