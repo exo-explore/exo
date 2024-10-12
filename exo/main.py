@@ -9,6 +9,7 @@ import sys
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
+from exo.networking.manual.read_config import ReadManualConfig
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
@@ -79,7 +80,8 @@ if DEBUG >= 0:
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout)
 elif args.discovery_module == "manual":
-  discovery = ManualDiscovery(lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_config=args.discovery_config, discovery_timeout=args.discovery_timeout)
+  current_device = ReadManualConfig(discovery_config=args.discovery_config)
+  discovery = ManualDiscovery(lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, current_device.device_capabilities(current_device.whoami)), discovery_config=args.discovery_config, discovery_timeout=args.discovery_timeout)
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(args.node_id, args.node_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout, tailscale_api_key=args.tailscale_api_key, tailnet=args.tailnet_name)
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
