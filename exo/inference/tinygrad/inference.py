@@ -27,7 +27,7 @@ MODEL_PARAMS = {
 }
 
 
-def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
+def build_llama(model_path: Path, shard: Shard, model_size="8B", device=None):
   # build model
   linear = nn.Linear
   with Context(THREEFRY=0):
@@ -94,7 +94,9 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     model_path = await self.shard_downloader.ensure_shard(shard)
 
     if self.shard != shard:
-      self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B")
+      if 'llama' in shard.model_id.lower():
+        self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_llama, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B")
+      else: raise ValueError(f"Model {shard.model_id} not supported in tinygrad")
 
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
