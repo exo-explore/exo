@@ -7,9 +7,9 @@
     chip: 'NVIDIA'
     memory: 20
     flops:
-      fp32: 0
-      fp16: 0
-      int8: 0
+      fp32: 26.7
+      fp16: 26.7
+      int8: 258.0
 - server: 'edgenode3'
   id: 'bbf0d2fe-a37c-46ce-be23-4a14f6c52c74'
   address: 192.168.45.32
@@ -19,6 +19,6 @@
     chip: 'NVIDIA'
     memory: 20
     flops:
-      fp32: 0
-      fp16: 0
-      int8: 0
+      fp32: 26.7
+      fp16: 26.7
+      int8: 258.0
