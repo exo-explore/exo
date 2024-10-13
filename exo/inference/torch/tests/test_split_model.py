@@ -8,10 +8,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from exo.download.hf.hf_helpers import (
-  get_weight_map,
-  download_repo_files
-)
+from exo.download.hf.hf_helpers import get_weight_map
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
 
@@ -33,7 +30,7 @@ async def load_model(
 
   if weight_map:
     layer_weight_map = {}
-    skip_layers = []
+    non_layer_weights = []
 
     for wname, wtensor in weight_map.items():
       # get layer number
@@ -47,28 +44,20 @@ async def load_model(
         layer_idx = int(layer_found[0])
         if shard.start_layer <= layer_idx <= shard.end_layer:
           layer_weight_map[wname] = wtensor
-        else:
-          skip_layers.append(wname)
-          print(f"SKIPPING LAYER {layer_idx}")
+      else:
+        non_layer_weights.append((wname, wtensor))
 
-      if wname not in skip_layers:
-        print(f"adding non-layer: {wname}")
-        layer_weight_map[wname] = wtensor
-
-    # will manipulate current model.safetensors.index.json
-    # but set back at end of inference
-    print(layer_weight_map)
+    if shard.is_first_layer():
+      # this assumes at max only one first weight non-layer for model
+      first_weight = non_layer_weights[0]
+      layer_weight_map[first_weight[0]] = first_weight[1]
+    elif shard.is_last_layer():
+      last_weights = non_layer_weights[1:]
+      for last_weight in last_weights:
+        layer_weight_map[last_weight[0]] = last_weight[1]
 
     # rewrite model.safetensors.index.json
     try:
-      # call download repo files again to reload original safetensors json
-      #os.remove(model_st_snapshot)
-
-      #await download_repo_files(
-      #  repo_id=shard.model_id,
-      #  revision="main",
-      #  allow_patterns="model.safetensors.index.json")
-
       mst_json = {}
       with open(model_st_snapshot, "r") as mst_file:
         mst_json = json.load(mst_file)
@@ -81,7 +70,6 @@ async def load_model(
 
         with open(model_st_snapshot, "w") as mst_file:
           json.dump(mst_json, mst_file, indent=4)
-          print(f"{model_st_snapshot} rewritten with {shard.n_layers} weights")
     except Exception as err:
       print(f"err: {err}")
       raise
@@ -109,7 +97,7 @@ async def test_split_model(
   end_layer: int,
   n_layers: int
 ):
-  """
+  """ 
   Test to load split models
   """
 
@@ -142,7 +130,7 @@ if __name__ == "__main__":
     asyncio.run(test_split_model(
       "Qwen/Qwen2.5-3B-Instruct",
       0,
-      18,
+      3,
       36
     ))
   except Exception as err:
