@@ -29,6 +29,8 @@ async def load_model(
   if no weight map, return and load the whole model
   """
   print("load_model called")
+  model_st_snapshot = model_path/"model.safetensors.index.json"
+
   if weight_map:
     layer_weight_map = {}
     skip_layers = []
@@ -59,14 +61,13 @@ async def load_model(
 
     # rewrite model.safetensors.index.json
     try:
-      model_st_snapshot = model_path/"model.safetensors.index.json"
       # call download repo files again to reload original safetensors json
-      os.remove(model_st_snapshot)
+      #os.remove(model_st_snapshot)
 
-      await download_repo_files(
-        repo_id=shard.model_id,
-        revision="main",
-        allow_patterns="model.safetensors.index.json")
+      #await download_repo_files(
+      #  repo_id=shard.model_id,
+      #  revision="main",
+      #  allow_patterns="model.safetensors.index.json")
 
       mst_json = {}
       with open(model_st_snapshot, "r") as mst_file:
@@ -76,9 +77,11 @@ async def load_model(
 
         print(f"mst_json: {json.dumps(mst_json, indent=4)}")
 
-      with open(model_st_snapshot, "w") as mst_file:
-        json.dump(mst_json, mst_file, indent=4)
-        print(f"{model_st_snapshot} rewritten with {shard.n_layers} weights")
+        os.remove(model_st_snapshot)
+
+        with open(model_st_snapshot, "w") as mst_file:
+          json.dump(mst_json, mst_file, indent=4)
+          print(f"{model_st_snapshot} rewritten with {shard.n_layers} weights")
     except Exception as err:
       print(f"err: {err}")
       raise
@@ -93,6 +96,9 @@ async def load_model(
     device_map="auto",
     offload_buffers=True
   )
+
+  # have to clear out edited model safetensors mst_json
+  os.remove(model_st_snapshot)
 
   return shard_model
 
@@ -114,6 +120,9 @@ async def test_split_model(
     n_layers=n_layers
   )
 
+  # remove old weight json if present
+
+
   print(f"loading shard: {shard}")
   shard_downloader = HFShardDownloader()
   model_path = await shard_downloader.ensure_shard(shard)
@@ -129,11 +138,11 @@ async def test_split_model(
 if __name__ == "__main__":
   #Qwen/Qwen2.5-3B
   try:
-    print("\n-------- Test Qwen/Qwen2.5-3B ----------\n")
+    print("\n-------- Test Qwen/Qwen2.5-3B-Instruct ----------\n")
     asyncio.run(test_split_model(
-      "Qwen/Qwen2.5-3B",
+      "Qwen/Qwen2.5-3B-Instruct",
       0,
-      1,
+      18,
       36
     ))
   except Exception as err:
