@@ -62,6 +62,8 @@ class TopologyViz:
       self.requests[request_id] = [self.requests[request_id][0], output]
     else:
       self.requests[request_id] = ["", output]
+    breakpoint()
+
     self.refresh()
 
   def refresh(self):

@@ -133,6 +133,12 @@ class StandardNode(Node):
 
     result, inference_state, is_finished = await self.inference_engine.infer_prompt(request_id, shard, prompt, image_str, inference_state=inference_state)
     is_finished = is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+    
+    print("process prompt")
+    print(result) 
+    print(is_finished)
+    
+    breakpoint()
     if is_finished:
       self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
     asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))  # TODO: this is n^2 communication complexity

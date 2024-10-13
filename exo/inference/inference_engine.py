@@ -16,16 +16,33 @@ class InferenceEngine(ABC):
     pass
 
 
+
+
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
-  if inference_engine_name == "mlx":
-    from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+  """
+  handles infernece engine selection: 
 
-    return MLXDynamicShardInferenceEngine(shard_downloader)
-  elif inference_engine_name == "tinygrad":
-    from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
-    import tinygrad.helpers
-    tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
+  choose:
+  - mlx (apple silicon)
+  - tinygrad (other)
+  - dummy (fake inference, testing purposes only)
 
-    return TinygradDynamicShardInferenceEngine(shard_downloader)
-  else:
-    raise ValueError(f"Inference engine {inference_engine_name} not supported")
+  """
+  match inference_engine_name:
+
+    case "mlx":
+      from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
+      return MLXDynamicShardInferenceEngine(shard_downloader)
+
+    case "tinygrad":
+      from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine
+      import tinygrad.helpers
+      tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
+      return TinygradDynamicShardInferenceEngine(shard_downloader)
+
+    case "dummy":
+      from exo.inference.dummy.inference import DummyInferenceEngine
+      return DummyInferenceEngine(shard_downloader)
+    
+    case _  : 
+      raise ValueError(f"Inference engine {inference_engine_name} not supported")
