@@ -6,27 +6,6 @@ import mlx.core as mx
 from mlx_lm.models.base import BaseModelArgs, KVCache, RotatingKVCache
 from mlx_lm.models.llama import initialize_rope
 
-def _prepare_cross_attention_mask(
-    cross_attention_mask: mx.array,
-    num_vision_tokens: int
-) -> Tuple[mx.array, mx.array]:
-    # reshape so it can be used by attn module
-    batch_size, text_total_length, *_ = cross_attention_mask.shape
-    cross_attention_mask = mx.repeat(cross_attention_mask, num_vision_tokens, axis=3)
-    cross_attention_mask = cross_attention_mask.view(batch_size, text_total_length, -1)
-    cross_attention_mask = mx.expand_dims(cross_attention_mask, 1)
-    cross_attention_mask = mx.where(cross_attention_mask == 1.0, -1e9, cross_attention_mask)
-    
-
-    # apply full-row bias, which return 4D tensor of shape [B, H, S1, 1] where value is 0 if the a full row in cross attn mask's
-    # last dimension contains negative infinity values, otherwise it's 1
-    full_text_row_masked_out_mask = (
-        (cross_attention_mask != -1e9).any(dim=-1)[..., None]
-    )
-    cross_attention_mask *= full_text_row_masked_out_mask
-
-    return cross_attention_mask, full_text_row_masked_out_mask
-
 
 def _prepare_aspect_ratio_attention_mask(
     aspect_ratio_mask: mx.array,
@@ -252,8 +231,7 @@ class MllamaTextCrossAttention:
         self,
         hidden_states: mx.array,
         cross_attention_states: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None,
-        attention_mask: Optional[mx.array] = None
+        cache: Optional[KVCache] = None
     ) -> mx.array:
         bsz, q_len, _ = hidden_states.shape
         query_states = self.q_proj(hidden_states)
@@ -274,12 +252,7 @@ class MllamaTextCrossAttention:
             key_states, value_states = cache.state()
 
         key_states = self.k_norm(key_states)
-        attn_output = mx.fast.scaled_dot_product_attention(
-            query_states,
-            key_states,
-            value_states,
-            mask=attention_mask
-        )
+        attn_output = mx.fast.scaled_dot_product_attention(query_states, key_states, value_states)
 
         attn_output = attn_output.transpose(0, 2, 1, 3).reshape(bsz, q_len, -1)
         return self.o_proj(attn_output)
@@ -401,8 +374,6 @@ class MllamaCrossAttentionDecoderLayer:
         self,
         hidden_states: mx.array,
         cross_attention_states: mx.array,
-        cross_attention_mask: mx.array,
-        full_text_row_masked_out_mask: Tuple[mx.array, mx.array],
         cache: Optional[KVCache] = None,
         **_
     ) -> Tuple[mx.array]:
@@ -411,7 +382,6 @@ class MllamaCrossAttentionDecoderLayer:
 
         hidden_states = self.cross_attn(
             hidden_states=hidden_states,
-            attention_mask=cross_attention_mask,
             cross_attention_states=cross_attention_states,
             cache=cache
         )
@@ -420,8 +390,6 @@ class MllamaCrossAttentionDecoderLayer:
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
-        if full_text_row_masked_out_mask is not None:
-            hidden_states = full_text_row_masked_out_mask[:, 0] * hidden_states
         hidden_states = residual + mx.tanh(self.cross_attn_mlp_gate) * hidden_states
         return hidden_states
     
@@ -595,8 +563,6 @@ class MllamaTextModel:
         self,
         input_ids: Optional[mx.array] = None,
         cross_attention_states: Optional[mx.array] = None,
-        cross_attention_mask: Optional[mx.array] = None,
-        full_text_row_masked_out_mask: Optional[Tuple[mx.array, mx.array]] = None,
         cache: Optional[List[KVCache]] = None,
         inputs_embeds: Optional[mx.array] = None
     ) -> mx.array:
@@ -616,9 +582,7 @@ class MllamaTextModel:
             hidden_states = decoder_layer(
                 hidden_states,
                 cross_attention_states=cross_attention_states,
-                cross_attention_mask=cross_attention_mask,
                 attention_mask=mask,
-                full_text_row_masked_out_mask=full_text_row_masked_out_mask,
                 cache=c
             )
         return self.norm(hidden_states)
@@ -646,9 +610,6 @@ class MllamaModel:
         pixel_values: Optional[mx.array] = None,
         aspect_ratio_mask: Optional[mx.array] = None,
         aspect_ratio_ids: Optional[mx.array] = None,
-        attention_mask: Optional[mx.array] = None,
-        cross_attention_mask: Optional[mx.array] = None,
-        cross_attention_states: Optional[mx.array] = None,
         cache: Optional[KVCache] = None,
         inputs_embeds: Optional[mx.array] = None,
     ) -> mx.array:
@@ -676,20 +637,9 @@ class MllamaModel:
                 -1, cross_attention_states.shape[-2], self.hidden_size
             )
 
-        if cross_attention_mask is not None:
-            cross_attention_mask, full_text_row_masked_out_mask = _prepare_cross_attention_mask(
-                cross_attention_mask,
-                num_vision_tokens=self.vision_model.num_patches
-            )
-        else:
-            full_text_row_masked_out_mask = None
-
         outputs = self.language_model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
             cross_attention_states=cross_attention_states,
-            cross_attention_mask=cross_attention_mask,
-            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
-            cache=cache,
+            cache=cache
         )
         return outputs
