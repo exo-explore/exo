@@ -27,10 +27,21 @@ class ShardedHuggingFaceModel:
     dtype,
     top_k: int = 25,
     temp: float = 0.7,
-    top_p: float = 0.9,
-    max_length: int = 50,
-    max_time: float = 10.0
+    top_p: float = 0.9
   ):
+    """
+    Initializes the ShardedHuggingFaceModel with a specified shard, model path, and device.
+
+    Args:
+        shard (Shard): The model shard containing the start and end layers.
+        local_model_path (str): The local path to the model.
+        device (str): The device on which to run the model, e.g., "cuda" or "cpu".
+        dtype (torch.dtype): The data type (precision) to be used for model computations.
+        top_k (int, optional): The number of top tokens to consider for sampling. Defaults to 25.
+        temp (float, optional): The temperature for softmax sampling. Defaults to 0.7.
+        top_p (float, optional): The cumulative probability threshold for nucleus sampling. Defaults to 0.9.
+    """
+
     # class vars
     self.shard = shard
     self.hidden_states = None
@@ -52,14 +63,14 @@ class ShardedHuggingFaceModel:
     ])
 
     self.device = device
-    self.torch_dtype = dtype
+    self.dtype = dtype
 
     # setup pytorch and transformer llm
     try:
       self.llm_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
-        torch_dtype=self.torch_dtype,
-        device_map={"": self.device},
+        torch_dtype=self.dtype,
+        device_map="auto",
         offload_buffers=True
       )
 
@@ -77,25 +88,20 @@ class ShardedHuggingFaceModel:
     use_legacy_cache: bool = False
   ) -> Tuple[Optional[torch.Tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.Tensor]]:
     """
-    Generate hidden states or logits via passing through set amount of layers of a model
-    To be passed only input_ids OR hidden_state and not both. This is for connecting the model
-    layer to generate a complete output
+    Performs a forward pass through the model shard, computing hidden states, past key values, and logits.
 
     Args:
-      model: base llm model tramsformers class
-      llm_model: llm chat model class
-      input_ids: tensor optional
-      attention_mask: tensor optional
-      past_key_values: Cache or list[tensor] optional
-      use_legacy_cache: bool optional
-      infer_tensor: bool optional, lets forward know to handle tensors
+        input_ids (torch.Tensor, optional): The input token IDs for the model. Either input_ids or hidden_states must be provided.
+        hidden_states (torch.Tensor, optional): The hidden states of the model at the current layer.
+        attention_mask (torch.Tensor, optional): The attention mask to prevent attending to padding tokens.
+        past_key_values (Union[Cache, List[torch.FloatTensor]], optional): Cached past key values for fast autoregressive generation.
+        use_legacy_cache (bool, optional): Whether to use the legacy cache format for past key values. Defaults to False.
 
     Returns:
-      Tuple of
-        - hidden_states: tensor optional
-        - past_key_values: Cache or list[tensor] optional
-        - logits: tensor Optional
-
+        Tuple:
+            - hidden_states (torch.Tensor, optional): The hidden states after the forward pass.
+            - past_key_values (Union[Cache, List[torch.FloatTensor]], optional): The updated past key values.
+            - logits (torch.Tensor, optional): The logits produced by the model if the last layer is processed.
     """
     model_inputs = None
     self.hidden_states = hidden_states
@@ -246,14 +252,14 @@ class ShardedHuggingFaceModel:
     use_max: Optional[bool] = False
   ) -> torch.Tensor:
     """
-    Get a sample of the logits from end of model run for next token
+    Samples the next token from the model's output logits, either by using argmax or probabilistic sampling.
 
     Args:
-      logits: tensor
-      use_max: bool, if function should sample with argmax
+        logits (torch.Tensor): The logits output from the model's final layer.
+        use_max (bool, optional): If True, uses torch.argmax to select the next token from logits. Defaults to False.
 
     Returns:
-      next_token: tensor
+        torch.Tensor: The next predicted token.
     """
 
     # get a single cloned logit

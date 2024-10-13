@@ -1,7 +1,6 @@
 # experimental, based off of tinygrad/inference.py
 import asyncio
 import os
-import re
 import json
 import functools
 from concurrent.futures import ThreadPoolExecutor
@@ -17,18 +16,14 @@ from exo.inference.torch.model.hf import ShardedHuggingFaceModel
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
+from exo.download.hf.hf_helpers import get_weight_map
 
-from transformers import AutoTokenizer, Cache
-
-# llama
-from transformers.models.llama.modeling_llama import LlamaModel
+from transformers import Cache
 
 # model value options
 TOP_K = 20
 TEMP = 0.6
 TOP_P = 0.9
-MAX_LENGTH = 125
-MAX_TIME = 60.0
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
@@ -63,7 +58,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     torch.set_default_device(self.device)
 
     # setup cude dtype
-    self.torch_dtype = torch.float32 if self.device != torch.device('cpu') else torch.float16
+    self.dtype = torch.get_default_dtype()
 
     # setup threadding
     torch.set_num_threads(torch.get_num_threads())
@@ -103,18 +98,30 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     hidden_states: Optional[torch.Tensor] = None,
     attention_mask: Optional[torch.Tensor] = None
   ) -> Tuple[Optional[torch.Tensor], Optional[Union[Cache, List[torch.FloatTensor]]], Optional[torch.Tensor]]:
+    """
+    Asynchronously performs the forward pass using a stateful sharded model.
 
+    Args:
+        input_ids (torch.Tensor, optional): Input token IDs for the model. If not provided, `hidden_states` must be used.
+        hidden_states (torch.Tensor, optional): Precomputed hidden states to be used instead of `input_ids`.
+        attention_mask (torch.Tensor, optional): Mask to prevent attention on padding token indices.
+
+    Returns:
+        A tuple containing:
+
+        - shard_hidden_states (torch.Tensor, optional): Hidden states resulting from the forward pass.
+        - shard_past_kvs (list(torch.FloatTensor), optional): List of past key-value tensors (cache) used in the model.
+        - shard_logits (torch.Tensor, optional): The logits computed during the forward pass.
+    """
     loop = asyncio.get_running_loop()
 
-    forward_partial = functools.partial(
-      self.stateful_sharded_model.forward,
-      input_ids=input_ids,
-      hidden_states=hidden_states,
-      attention_mask=attention_mask
-    )
-
     with ThreadPoolExecutor() as pool:
-      result = await loop.run_in_executor(pool, forward_partial)
+      result = await loop.run_in_executor(pool, functools.partial(
+        self.stateful_sharded_model.forward,
+        input_ids=input_ids,
+        hidden_states=hidden_states,
+        attention_mask=attention_mask
+      ))
 
     return result
 
@@ -122,16 +129,22 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self,
     logits: torch.Tensor
   ) -> torch.Tensor:
+    """
+    Asynchronously samples logits using the model's logit sampling method.
 
+    Args:
+        logits (torch.Tensor): The logits produced by the model for sampling.
+
+    Returns:
+        next_logit (torch.Tensor): The next logit samples from given logis
+    """
     loop = asyncio.get_running_loop()
 
-    sample_partial = functools.partial(
-      self.stateful_sharded_model.logits_sample,
-      logits=logits
-    )
-
     with ThreadPoolExecutor() as pool:
-      result = await loop.run_in_executor(pool, sample_partial)
+      result = await loop.run_in_executor(pool, functools.partial(
+        self.stateful_sharded_model.logits_sample,
+        logits=logits
+      ))
 
     return result
 
@@ -143,6 +156,23 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     image_str: Optional[str] = None,
     inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
+    """
+    Asynchronously processes a prompt using the specified shard and returns the inference result.
+
+    Args:
+        request_id (str): The unique identifier for the request.
+        shard (Shard): The model shard used for inference.
+        prompt (str): The text prompt to be processed by the model.
+        image_str (str, optional): A base64 encoded image string to be optionally used in the inference. Defaults to None.
+        inference_state (str, optional): The cached inference state for resuming or continuing inference. Defaults to None.
+
+    Returns:
+        A tuple containing:
+
+        - input_ids (np.ndarray): The processed token IDs as a NumPy array if logits were generated. Otherwise, it returns hidden states.
+        - cache_json (str): A JSON string containing the cached input IDs for further inference steps.
+        - is_finished (bool): A boolean indicating whether the model has reached the end-of-sequence (EOS) token.
+    """
     if DEBUG >= 4:
       print("infer_prompt called")
       print(f"prompt: {prompt}")
@@ -182,18 +212,15 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       self.past_input_ids = torch.cat([input_ids, next_token[:, None].squeeze(-1)], dim=-1)
       input_ids = next_token
 
+      if DEBUG >= 4:
+        print(f"\nnext_token: {next_token}")
+
     if self.past_input_ids is not None:
       cached_iids = {"input_ids": self.past_input_ids.tolist()}
 
     is_finished = False
     if next_token is not None:
       is_finished = next_token.item() == self.tokenizer.eos_token_id
-
-    if DEBUG >= 4:
-      print(f"\ninput_ids: {input_ids}")
-      print(f"\nshard_hidden_states: {shard_hidden_states}\n")
-      print(f"\nshard_past_kvs {shard_past_kvs}\n")
-      print(f"\nshard_logits: {shard_logits}")
 
     return_values = (
       input_ids.numpy(force=True) if shard_logits is not None else shard_hidden_states.numpy(force=True),
@@ -213,6 +240,22 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
    input_data: np.ndarray,
    inference_state: Optional[str] = None
   ) -> Tuple[np.ndarray, str, bool]:
+    """
+    Asynchronously processes input tensor data using the specified shard and returns the inference result.
+
+    Args:
+        request_id (str): The unique identifier for the request.
+        shard (Shard): The model shard used for inference.
+        input_data (np.ndarray): The input data in NumPy array format to be processed by the model.
+        inference_state (str, optional): The cached inference state for resuming or continuing inference. Defaults to None.
+
+    Returns:
+        A tuple containing:
+
+        - input_ids (np.ndarray): The processed token IDs as a NumPy array if logits were generated. Otherwise, it returns hidden states.
+        - cache_json (str): A JSON string containing the cached input IDs for further inference steps.
+        - is_finished (bool): A boolean indicating whether the model has reached the end-of-sequence (EOS) token.
+    """
     if DEBUG >= 4:
       print("infer_tensor called")
       print(f"input_data: {input_data}")
@@ -239,9 +282,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         self.past_input_ids = input_ids
 
     if DEBUG >= 4:
-      print(f"past_input_ids: {self.past_input_ids}")
-      print(f"hidden_state: {hidden_states}")
-      print(f"inference_state: {inference_state}")
+      print(f"\npast_input_ids: {self.past_input_ids}")
+      print(f"\nhidden_state: {hidden_states}")
+      print(f"\ninference_state: {inference_state}")
 
     shard_hidden_states, shard_past_kvs, shard_logits = await self.async_forward(
       input_ids=self.past_input_ids,
@@ -305,30 +348,23 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     model_path = await self.shard_downloader.ensure_shard(shard)
 
+    # get model weight map
+    model_wm = await get_weight_map(repo_id=shard.model_id)
+
+    print(f"model_wm: {model_wm}")
+
     self.stateful_sharded_model = ShardedHuggingFaceModel(
       shard=shard,
       local_model_path=model_path,
       device=self.device,
-      dtype=self.torch_dtype,
+      dtype=self.dtype,
       top_k=TOP_K,
       temp=TEMP,
-      top_p=TOP_P,
-      max_length=MAX_LENGTH,
-      max_time=MAX_TIME
+      top_p=TOP_P
     )
     self.shard = shard
 
-    if isinstance(self.stateful_sharded_model.model, LlamaModel):
-      self.tokenizer = AutoTokenizer.from_pretrained(
-        model_path if model_path is not None else shard.model_id,
-        trust_remote_code=True
-      )
-
-      if len(re.findall(r"3\.1", shard.model_id)) > 0:
-        self.tokenizer.add_special_tokens({"pad_token":"<pad>"})
-
-    else:
-      self.tokenizer = await resolve_tokenizer(shard.model_id)
+    self.tokenizer = await resolve_tokenizer(shard.model_id)
 
     if DEBUG >= 4:
       print(f"Shard loaded successfully: {shard}")
