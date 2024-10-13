@@ -313,11 +313,17 @@ document.addEventListener("alpine:init", () => {
           if (progressArray.length > 0) {
             this.downloadProgress = progressArray.map(progress => {
               // Check if download is complete
-              if (progress.status === "complete" || progress.status === "failed") {
+              if (progress.status === "complete") {
                 return {
                   ...progress,
                   isComplete: true,
                   percentage: 100
+                };
+              } else if (progress.status === "failed") {
+                return {
+                  ...progress,
+                  isComplete: false,
+                  errorMessage: "Download failed"
                 };
               } else {
                 return {

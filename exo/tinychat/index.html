@@ -160,10 +160,20 @@
         <br>
         <h3 x-text="`Download ${index + 1}`"></h3>
         <p><strong>Model:</strong> <span x-text="progress.repo_id + '@' + progress.repo_revision"></span></p>
-        <p><strong>Progress:</strong> <span x-text="`${progress.downloaded_bytes_display} / ${progress.total_bytes_display} (${progress.percentage}%)`"></span></p>
-        <p><strong>Speed:</strong> <span x-text="progress.overall_speed_display || 'N/A'"></span></p>
-        <p><strong>ETA:</strong> <span x-text="progress.overall_eta_display || 'N/A'"></span></p>
         <p><strong>Status:</strong> <span x-text="progress.status"></span></p>
+        <div class="progress-bar-container">
+          <div class="progress-bar" 
+               :class="progress.isComplete ? 'complete' : 'in-progress'"
+               :style="`width: ${progress.percentage}%;`">
+          </div>
+        </div>
+        <template x-if="!progress.isComplete">
+          <div>
+            <p><strong>Progress:</strong> <span x-text="`${progress.downloaded_bytes_display} / ${progress.total_bytes_display} (${progress.percentage}%)`"></span></p>
+            <p><strong>Speed:</strong> <span x-text="progress.overall_speed_display || 'N/A'"></span></p>
+            <p><strong>ETA:</strong> <span x-text="progress.overall_eta_display || 'N/A'"></span></p>
+          </div>
+        </template>
       </div>
     </template>
   </div>

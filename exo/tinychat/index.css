@@ -172,6 +172,24 @@ main {
   white-space: pre-wrap;
 }
 
+.progress-bar-container {
+  width: 100%;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  margin: 10px 0;
+}
+.progress-bar {
+  height: 20px;
+  border-radius: 4px;
+  transition: width 0.5s ease-in-out;
+}
+.progress-bar.complete {
+  background-color: #4CAF50;
+}
+.progress-bar.in-progress {
+  background-color: #2196F3;
+}
+
 .toast {
     width: 100%; /* Take up the full width of the page */
     background-color: #fc2a2a; /* Dark background color */
