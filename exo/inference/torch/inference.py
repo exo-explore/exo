@@ -348,6 +348,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     model_path = await self.shard_downloader.ensure_shard(shard)
 
+    # get model weight map
+    model_wm = await get_weight_map(repo_id=shard.model_id)
+
+    print(f"model_wm: {model_wm}")
+
     self.stateful_sharded_model = ShardedHuggingFaceModel(
       shard=shard,
       local_model_path=model_path,

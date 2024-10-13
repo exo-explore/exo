@@ -127,14 +127,26 @@ if __name__ == '__main__':
   # except Exception as err:
   #   print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
 
+  #try:
+  #  print("\n-------- Test unsloth/Llama-3.2-1B-Instruct ----------\n")
+  #  asyncio.run(test_inference_engine(
+  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #    "unsloth/Llama-3.2-1B-Instruct",
+  #    24
+  #  ))
+  #except Exception as err:
+  #  print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+
   try:
-    print("\n-------- Test unsloth/Llama-3.2-1B-Instruct ----------\n")
+    print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
     asyncio.run(test_inference_engine(
       TorchDynamicShardInferenceEngine(HFShardDownloader()),
       TorchDynamicShardInferenceEngine(HFShardDownloader()),
-      "unsloth/Llama-3.2-1B-Instruct",
-      24
+      "unsloth/Meta-Llama-3.1-8B-Instruct",
+      32
     ))
   except Exception as err:
     print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+
 
