@@ -9,13 +9,12 @@ from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
 from .node import Node
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import device_capabilities
+from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import RepoProgressEvent
-from exo.topology.device_capabilities import DeviceCapabilities
 
 
 class StandardNode(Node):
@@ -25,19 +24,19 @@ class StandardNode(Node):
     server: Server,
     inference_engine: InferenceEngine,
     discovery: Discovery,
-    device_capabilities: DeviceCapabilities,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
     topology_viz: Optional[TopologyViz] = None,
+    device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
   ):
     self.id = _id
     self.inference_engine = inference_engine
     self.server = server
     self.discovery = discovery
     self.partitioning_strategy = partitioning_strategy
-    self.device_capabilities = device_capabilities
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
+    self.device_capabilities = device_capabilities
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
@@ -47,6 +46,7 @@ class StandardNode(Node):
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
 
   async def start(self, wait_for_peers: int = 0) -> None:
+    self.device_capabilities = await device_capabilities(self.inference_engine)
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)

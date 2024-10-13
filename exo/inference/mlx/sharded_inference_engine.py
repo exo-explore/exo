@@ -1,4 +1,4 @@
-from exo.inference.mlx.benchmark import benchmark_tflops
+from exo.inference.mlx.benchmark import mlx_benchmark_tflops
 import numpy as np
 import mlx.core as mx
 from ..inference_engine import InferenceEngine
@@ -50,5 +50,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
       self.shard = shard
   
-  def benchmark_tflops(self):
-    return benchmark_tflops()
+  async def benchmark_tflops(self):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(self.executor, mlx_benchmark_tflops)

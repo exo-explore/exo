@@ -7,6 +7,7 @@ from typing import List, Dict, Callable, Tuple, Coroutine
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
+from exo.inference.inference_engine import InferenceEngine
 from exo.helpers import DEBUG, DEBUG_DISCOVERY, get_all_ip_addresses
 
 class ListenProtocol(asyncio.DatagramProtocol):
@@ -40,6 +41,7 @@ class UDPDiscovery(Discovery):
     node_port: int,
     listen_port: int,
     broadcast_port: int,
+    inference_engine: InferenceEngine,
     create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle],
     broadcast_interval: int = 1,
     discovery_timeout: int = 30,
@@ -49,6 +51,7 @@ class UDPDiscovery(Discovery):
     self.node_port = node_port
     self.listen_port = listen_port
     self.broadcast_port = broadcast_port
+    self.inference_engine = inference_engine
     self.create_peer_handle = create_peer_handle
     self.broadcast_interval = broadcast_interval
     self.discovery_timeout = discovery_timeout
@@ -59,6 +62,7 @@ class UDPDiscovery(Discovery):
     self.cleanup_task = None
 
   async def start(self):
+    self.device_capabilities = await device_capabilities(self.inference_engine)
     self.broadcast_task = asyncio.create_task(self.task_broadcast_presence())
     self.listen_task = asyncio.create_task(self.task_listen_for_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())

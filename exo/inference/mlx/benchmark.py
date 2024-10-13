@@ -26,10 +26,10 @@ def time_matmul(n=1024, dtype=mx.float32, device=mx.gpu):
     tflops = (2 * (n ** 3) / sec) / 1e12
     return tflops
 
-def benchmark_tflops():
+def mlx_benchmark_tflops():
     f32 = round(time_matmul(n=1024), 2)
     f16 = round(time_matmul(n=1024, dtype=mx.float16), 2)
     return (f32, f16, 0.0)
 
 if __name__ == "__main__":
-    print(*benchmark_tflops())
+    print(*mlx_benchmark_tflops())

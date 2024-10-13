@@ -135,9 +135,9 @@ CHIP_FLOPS.update({f"{key} LAPTOP GPU": value for key, value in CHIP_FLOPS.items
 CHIP_FLOPS.update({f"{key} Laptop GPU": value for key, value in CHIP_FLOPS.items()})
 
 
-def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
+async def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   if psutil.MACOS:
-    return mac_device_capabilities(inference_engine)
+    return await mac_device_capabilities(inference_engine)
   elif psutil.LINUX:
     return linux_device_capabilities()
   else:
@@ -149,7 +149,7 @@ def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities
     )
 
 
-def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
+async def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   # Fetch the model of the Mac using system_profiler
   model = subprocess.check_output(["system_profiler", "SPHardwareDataType"]).decode("utf-8")
   model_line = next((line for line in model.split("\n") if "Model Name" in line), None)
@@ -165,7 +165,7 @@ def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabili
   else:
     memory = memory_value
 
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=DeviceFlops(*inference_engine.benchmark_tflops()))
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=DeviceFlops(*await inference_engine.benchmark_tflops()))
 
 
 def linux_device_capabilities() -> DeviceCapabilities:

@@ -16,7 +16,7 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
-  def benchmark_tflops(self):
+  async def benchmark_tflops(self):
     pass
 
 
