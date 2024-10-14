@@ -60,7 +60,7 @@ Exo supports different [partitioning strategies](exo/topology/partitioning_strat
 
 <p>
     <picture>
-        <img alt="A screenshot of exo running 5 nodes" src="docs/exo-screenshot.png" width="50%" height="50%">
+        <img alt="A screenshot of exo running 5 nodes" src="docs/exo-screenshot.png" width="80%" height="80%">
     </picture>
 </p>
 
