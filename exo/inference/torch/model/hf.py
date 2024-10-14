@@ -152,6 +152,8 @@ class ShardedHuggingFaceModel:
     # load model
     try:
       shard_num_hidden_layers = shard.end_layer - shard.start_layer
+      if DEBUG >= 4:
+        print(f"config with {shard_num_hidden_layers} layers")
       return AutoConfig.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
         device_map=self.device_map,
