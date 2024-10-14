@@ -50,13 +50,15 @@ def extract_layers(
 
   return layer_weight_map
 
-def print_ram_stats():
-  if torch.cuda.is_available():
-    allocated_memory = torch.cuda.memory_allocated()
-    max_memory = torch.cuda.max_memory_allocated()
-    cached_memory = torch.cuda.memory_reserved()
+def print_cuda_vram_stats():
+  """
+  Prints CUDA VRAM stats being used by pytorch
+  """
+  allocated_memory = torch.cuda.memory_allocated()
+  max_memory = torch.cuda.max_memory_allocated()
+  cached_memory = torch.cuda.memory_reserved()
 
-    print("Cuda stats")
-    print(f'Allocated memory: {allocated_memory / 1024**2} MB')
-    print(f'Max allocated memory: {max_memory / 1024**2} MB')
-    print(f'Cached memory: {cached_memory / 1024**2} MB')
+  print("CUDA stats")
+  print(f'Allocated memory: {allocated_memory / 1024**2} MB')
+  print(f'Max allocated memory: {max_memory / 1024**2} MB')
+  print(f'Cached memory: {cached_memory / 1024**2} MB')

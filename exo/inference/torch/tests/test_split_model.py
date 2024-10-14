@@ -15,19 +15,9 @@ from transformers.modeling_utils import offload_weight
 from exo.download.hf.hf_helpers import get_weight_map
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
+from exo.inference.torch.utils import print_cuda_vram_stats
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
-def print_ram_stats():
-  if torch.cuda.is_available():
-    allocated_memory = torch.cuda.memory_allocated()
-    max_memory = torch.cuda.max_memory_allocated()
-    cached_memory = torch.cuda.memory_reserved()
-
-    print("Cuda stats")
-    print(f'Allocated memory: {allocated_memory / 1024**2} MB')
-    print(f'Max allocated memory: {max_memory / 1024**2} MB')
-    print(f'Cached memory: {cached_memory / 1024**2} MB') 
 
 def load_model(
   repo_id: str,
@@ -118,7 +108,8 @@ def load_model(
     local_files_only=True,
   )
 
-  print_ram_stats()
+  if torch.cuda.is_available() and device == "cuda":
+    print_cuda_vram_stats()
 
   prompt = "In a single word only, what color is a red apple?"
 
