@@ -52,19 +52,21 @@ async def test_inference_engine(
 #
 #  time.sleep(5)
 
+  half_layer = int(n_layers/2)
+
   resp_shard = Shard(
     model_id=model_id,
     start_layer=0,
-    end_layer=1,
+    end_layer=half_layer,
     n_layers=n_layers
   )
 
-  #resp_shard2 = Shard(
-  #  model_id=model_id,
-  #  start_layer=3,
-  #  end_layer=5,
-  #  n_layers=n_layers
-  #)
+  resp_shard2 = Shard(
+    model_id=model_id,
+    start_layer=half_layer+1,
+    end_layer=n_layers-1,
+    n_layers=n_layers
+  )
 
   print_ram_stats()
   resp1, inference_state_1, _ = await inference_engine_1.infer_prompt(
@@ -80,16 +82,16 @@ async def test_inference_engine(
   print_ram_stats()
   time.sleep(5)
 
-  #resp2, inference_state_2, _ = await inference_engine_2.infer_tensor(
-  #  "B",
-  #  shard=resp_shard2,
-  #  input_data=resp1,
-  #  inference_state=inference_state_1,
-  #)
+  resp2, inference_state_2, _ = await inference_engine_2.infer_tensor(
+    "B",
+    shard=resp_shard2,
+    input_data=resp1,
+    inference_state=inference_state_1,
+  )
 
-  #print("\n------------resp2---------------\n")
-  #print(resp2)
-  #print("\n------------resp2---------------\n")
+  print("\n------------resp2---------------\n")
+  print(resp2)
+  print("\n------------resp2---------------\n")
 
   #resp3, inference_state_3, _ = await inference_engine_1.infer_tensor(
   #  "B",
@@ -117,16 +119,16 @@ async def test_inference_engine(
   #assert np.array_equal(next_resp_full, resp4)
 
 if __name__ == '__main__':
-  # try:
-  #   print("\n\n -------- TEST QWEN2 -------- \n\n")
-  #   asyncio.run(test_inference_engine(
-  #     TorchDynamicShardInferenceEngine(HFShardDownloader()),
-  #     TorchDynamicShardInferenceEngine(HFShardDownloader()),
-  #     "Qwen/Qwen2-0.5B-Instruct",
-  #     24
-  #   ))
-  # except Exception as err:
-  #   print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
+  try:
+    print("\n\n -------- TEST Qwen/Qwen2.5-3B-Instruct -------- \n\n")
+    asyncio.run(test_inference_engine(
+      TorchDynamicShardInferenceEngine(HFShardDownloader()),
+      TorchDynamicShardInferenceEngine(HFShardDownloader()),
+      "Qwen/Qwen2.5-3B-Instruct",
+      36
+    ))
+  except Exception as err:
+    print(f"\n\n !!!!!!!!!!! QWEN2 TEST FAILED \n{err}\n")
 
   #try:
   #  print("\n-------- Test unsloth/Llama-3.2-1B-Instruct ----------\n")
@@ -139,15 +141,15 @@ if __name__ == '__main__':
   #except Exception as err:
   #  print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
 
-  try:
-    print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
-    asyncio.run(test_inference_engine(
-      TorchDynamicShardInferenceEngine(HFShardDownloader()),
-      TorchDynamicShardInferenceEngine(HFShardDownloader()),
-      "unsloth/Meta-Llama-3.1-8B-Instruct",
-      32
-    ))
-  except Exception as err:
-    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+  #try:
+  #  print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
+  #  asyncio.run(test_inference_engine(
+  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #    "unsloth/Meta-Llama-3.1-8B-Instruct",
+  #    32
+  #  ))
+  #except Exception as err:
+  #  print(f"\n\n !!!!!!!!!!! unsloth/Llama-3.1-8B-Instruct TEST FAILED \n{err}\n")
 
 
