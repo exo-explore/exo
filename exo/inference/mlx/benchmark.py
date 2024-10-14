@@ -6,7 +6,7 @@ import mlx.core as mx
 def measure_runtime(fn, *args, **kwargs):
     # warmup
     for _ in range(5):
-        mx.eval(fn(*args, **kwargs))
+        x = mx.eval(fn(*args, **kwargs))
 
     num_iters = 100
     tic = time.perf_counter()
@@ -22,7 +22,7 @@ def time_matmul(n=1024, dtype=mx.float32, device=mx.gpu):
     a = mx.random.uniform(shape=(n, n), dtype=dtype, stream=device)
     b = mx.random.uniform(shape=(n, n), dtype=dtype, stream=device)
     mx.eval(a, b)
-    sec = measure_runtime(mx.matmul, a, b)
+    sec = measure_runtime(mx.matmul, a, b, stream=device)
     tflops = (2 * (n ** 3) / sec) / 1e12
     return tflops
 
