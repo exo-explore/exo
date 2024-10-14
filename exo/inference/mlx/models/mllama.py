@@ -1,17 +1,18 @@
 import math
 from typing import List, Optional, Tuple, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from exo.inference.shard import Shard
 
 import mlx.nn as nn
 import mlx.core as mx
 
-from mlx_lm.models.base import BaseModelArgs, KVCache, RotatingKVCache
+from mlx_lm.models.base import BaseModelArgs
 from mlx_lm.models.llama import initialize_rope
 
 @dataclass
 class MllamaVisionConfig:
     hidden_size: int = 1280
-    hidden_act: str = "gelu"
     num_hidden_layers: int = 32
     num_global_layers: int = 8
     num_attention_heads: int = 16
@@ -42,23 +43,21 @@ class MllamaVisionConfig:
 class MllamaTextConfig:
     vocab_size: int = 128256
     hidden_size: int = 4096
-    hidden_act: str = "silu"
     num_hidden_layers: int = 40
     num_attention_heads: int = 32
     num_key_value_heads: int = 8
     intermediate_size: int = 14_336
-    rope_theta: float = 500_000
+    rope_theta: float = 500000
     rope_scaling: Optional[Dict] = None
     rms_norm_eps: float = 1e-5
     max_position_embeddings: int = 131072
     initializer_range: float = 0.02
-    use_cache: bool = True
     tie_word_embeddings: bool = False
     cross_attention_layers: Optional[List[int]] = None
-    dropout: float = 0
     bos_token_id: int = 128000
     eos_token_id: int = 128001
     pad_token_id: Optional[int] = 128004
+    shard: Optional[Shard] = None
     
     def __post_init__(self):
         if self.cross_attention_layers is None:
@@ -84,6 +83,22 @@ class MllamaConfig(BaseModelArgs):
             self.text_config = MllamaTextConfig(**self.text_config)
         elif isinstance(self.text_config, MllamaTextConfig):
             self.text_config = self.text_config
+            
+@dataclass
+class ModelArgs(MllamaConfig):
+  shard: Shard = field(default_factory=lambda: Shard("", 0, 0, 0))
+
+  def __post_init__(self):
+    if isinstance(self.shard, dict):
+      self.shard = Shard(**self.shard)
+
+    if not isinstance(self.shard, Shard):
+      raise TypeError(f"Expected shard to be a Shard instance or a dict, got {type(self.shard)} instead")
+
+    if not self.shard.is_first_layer():
+      self.vision_config = None
+      
+    self.text_config.shard = self.shard
 
 
 def _prepare_aspect_ratio_attention_mask(
@@ -310,7 +325,7 @@ class MllamaTextCrossAttention(nn.Module):
         self,
         hidden_states: mx.array,
         cross_attention_states: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None
+        cache = None
     ) -> mx.array:
         bsz, q_len, _ = hidden_states.shape
         query_states = self.q_proj(hidden_states)
@@ -356,7 +371,7 @@ class MllamaTextSelfAttention(nn.Module):
     def __call__(
         self,
         hidden_states: mx.array,
-        cache: Optional[KVCache] = None
+        cache = None
     ):
         bsz, q_len, _ = hidden_states.shape
 
@@ -409,7 +424,7 @@ class MllamaSelfAttentionDecoderLayer(nn.Module):
     def __call__(
         self,
         hidden_states: mx.array,
-        cache: Optional[KVCache] = None,
+        cache = None,
         **_
     ) -> mx.array:
         residual = hidden_states
@@ -440,7 +455,7 @@ class MllamaCrossAttentionDecoderLayer(nn.Module):
         self,
         hidden_states: mx.array,
         cross_attention_states: mx.array,
-        cache: Optional[KVCache] = None,
+        cache = None,
         **_
     ) -> Tuple[mx.array]:
         residual = hidden_states
@@ -583,14 +598,26 @@ class MllamaVisionModel(nn.Module):
         # Concatenate final hidden state and intermediate hidden states
         hidden_state = mx.concatenate([hidden_state, intermediate_hidden_states], axis=-1)
         return hidden_state
+    
+    def sanitize(self, weights):
+        sanitized_weights = {}
+
+        for key, value in weights.items():
+            if "patch_embedding" in key:
+                sanitized_weights[key] = value.transpose(0, 2, 3, 1)
+            else:
+                sanitized_weights[key] = value
+        return sanitized_weights
 
 
 class MllamaTextModel(nn.Module):
     def __init__(self, config: MllamaTextConfig):
-        self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
         self.embed_tokens = nn.Embedding(config.vocab_size + 8, config.hidden_size)
         self.cross_attention_layers = config.cross_attention_layers
+        self.num_attention_heads = config.num_attention_heads
+        self.hidden_size = config.hidden_size
+        self.num_key_value_heads = config.num_key_value_heads
 
         self.layers = []
         for layer_idx in range(config.num_hidden_layers):
@@ -600,18 +627,19 @@ class MllamaTextModel(nn.Module):
                 self.layers.append(MllamaSelfAttentionDecoderLayer(config, layer_idx))
 
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.lm_head = nn.Linear(self.config.hidden_size, self.vocab_size, bias=False)
+        self.shard = config.shard
 
     def __call__(
         self,
-        input_ids: Optional[mx.array] = None,
+        inputs: Optional[mx.array] = None,
         cross_attention_states: Optional[mx.array] = None,
-        cache: Optional[List[KVCache]] = None,
-        inputs_embeds: Optional[mx.array] = None
+        cache = None
     ) -> mx.array:
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
-        hidden_states = inputs_embeds
-        
+        if self.shard.is_first_layer():
+            hidden_states = self.embed_tokens(inputs)
+        else:
+            hidden_states = inputs
         for idx, decoder_layer, c in enumerate(zip(self.layers, cache)):
             # For text-only path we should skip cross attention layers.
             # Let's check if the layer is cross attention layer and if we have cross attention states
@@ -624,24 +652,47 @@ class MllamaTextModel(nn.Module):
                 cross_attention_states=cross_attention_states,
                 cache=c
             )
-        return self.norm(hidden_states)
+        if self.shard.is_last_layer():
+            return self.lm_head(self.norm(hidden_states))
+        else:
+            return hidden_states
+    
+    def sanitize(self, weights):
+        shard_state_dict = {}
+        for key, value in weights.items():
+            key = key.replace("language_model.model.", "language_model.")
+            if key.startswith('language_model.layers.'):
+                layer_num = int(key.split('.')[2])
+                if layer_num < self.shard.start_layer or layer_num > self.shard.end_layer:
+                    continue
+            if not self.shard.is_first_layer() and key.startswith('language_model.embed_tokens'):
+                continue
+            elif not self.shard.is_last_layer() and (key.startswith('language_model.norm') or key.startswith('language_model.lm_head')):
+                continue
+
+            shard_state_dict[key] = value
+
+        return shard_state_dict
+
     
     
-class MllamaModel(nn.Module):
-    def __init__(self, config: MllamaConfig):
+class Model(nn.Module):
+    def __init__(self, config: ModelArgs):
         self.vocab_size = config.text_config.vocab_size
         self.hidden_size = config.text_config.hidden_size
         self.max_num_tiles = config.vision_config.max_num_tiles
         self.vision_output_dim = config.vision_config.vision_output_dim
         self.pad_token_id = self.config.pad_token_id if self.config.pad_token_id is not None else -1
 
-        self.vision_model = MllamaVisionModel(config.vision_config)
         self.language_model = MllamaTextModel(config.text_config)
-        self.multi_modal_projector = nn.Linear(
-            config.vision_config.vision_output_dim,
-            config.text_config.hidden_size,
-            bias=True,
-        )
+        if config.vision_config:
+            self.vision_model = MllamaVisionModel(config.vision_config)
+            self.multi_modal_projector = nn.Linear(
+                config.vision_config.vision_output_dim,
+                config.text_config.hidden_size,
+                bias=True,
+            )
+        self.model_type = "mllama"
 
     def __call__(
         self,
@@ -649,20 +700,8 @@ class MllamaModel(nn.Module):
         pixel_values: Optional[mx.array] = None,
         aspect_ratio_mask: Optional[mx.array] = None,
         aspect_ratio_ids: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None,
-        inputs_embeds: Optional[mx.array] = None,
+        cache = None
     ) -> mx.array:
-        if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-        if pixel_values is not None and inputs_embeds is not None:
-            raise ValueError(
-                "You cannot specify both pixel_values and inputs_embeds at the same time, and must specify either one"
-            )
-
-        if pixel_values is not None and cross_attention_states is not None:
-            raise ValueError("`pixel_values` and `cross_attention_states` cannot be provided simultaneously")
-
         if pixel_values is not None:
             if aspect_ratio_ids is None:
                 raise ValueError("`aspect_ratio_ids` must be provided if `pixel_values` is provided")
@@ -677,8 +716,28 @@ class MllamaModel(nn.Module):
             )
 
         outputs = self.language_model(
-            input_ids=input_ids,
+            input_ids,
             cross_attention_states=cross_attention_states,
             cache=cache
         )
         return outputs
+    
+    def sanitize(self, weights):
+        if self.config.vision_config:
+            weights = self.vision_model.sanitize(weights)
+        else:
+            weights = {k: v for k, v in weights.items() if not k.startswith(('vision_model', 'multi_modal_projector'))}
+            weights = self.language_model.sanitize(weights)
+        return weights
+
+    @property
+    def layers(self):
+        return self.language_model.layers
+
+    @property
+    def head_dim(self):
+        return (self.language_model.head_dim or self.language_model.hidden_size // self.language_model.num_attention_heads)
+
+    @property
+    def n_kv_heads(self):
+        return self.language_model.num_key_value_heads
