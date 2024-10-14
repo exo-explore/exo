@@ -45,7 +45,7 @@ async def main():
   summary = {}
 
   for engine, name, model_id in engines:
-    shard = Shard(model_id=model_id, start_layer=0, end_layer=15, n_layers=16)
+    shard = Shard(model_id=model_id, start_layer=0, end_layer=31, n_layers=32)
     await run_bench(engine, shard, 10)
     tokens, times = await run_bench(engine, shard)
 
