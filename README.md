@@ -251,3 +251,7 @@ exo supports the following inference engines:
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+## Screenshot
+
+![image](https://github.com/user-attachments/assets/3b6e22d0-ca6a-466c-b1b8-221556fa4163)
