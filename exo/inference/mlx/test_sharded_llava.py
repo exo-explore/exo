@@ -16,8 +16,8 @@ class LlavaShardTest(unittest.TestCase):
                             n_layers=32)
         self.shard2 = Shard(model_id=model_id, start_layer=13, end_layer=31,
                             n_layers=32)
-        self.prompt = "USER: <image>\nWhat are these?\nASSISTANT:"
-        self.img = "http://images.cocodataset.org/val2017/000000039769.jpg"
+        self.prompt = "USER: <image>\nWho is this in the image?\nASSISTANT:"
+        self.img = "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"
         self.max_tokens = 30
 
     async def _test_full_shard(self):

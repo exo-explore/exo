@@ -296,7 +296,7 @@ class LanguageModel(nn.Module):
 @dataclass
 class PixtralConfig(BaseModelArgs):
   text_config: LlamaModelArgs
-  vision_config: PixtralVisionConfig = None
+  vision_config: Optional[PixtralVisionConfig] = None
   model_type: str = "pixtral"
   ignore_index: int = -100
   image_token_index: int = 32000
