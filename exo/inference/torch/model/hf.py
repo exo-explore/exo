@@ -259,7 +259,7 @@ class ShardedHuggingFaceModel:
         print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
-    layer_amt = range(self.shard.start_layer, self.shard.end_layer)
+    layer_amt = range(self.shard.end_layer - self.shard.start_layer)
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
