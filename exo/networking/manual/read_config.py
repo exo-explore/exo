@@ -1,4 +1,5 @@
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
+from exo.helpers import DEBUG
 import socket
 import yaml
 
@@ -27,13 +28,13 @@ class ReadManualConfig():
 
     for device in self._config_devices:
       if (str(f"{gethostname}")) == (str(f"{device['server']}")):
-        print(f"Read Id {device['id']} == Adresse: {device['address']} {device['port']}")
+        if DEBUG >= 2: print(f"Read Id {device['id']} == Adresse: {device['address']} {device['port']}")
         self._node_id = (str(f"{device['id']}"))
         self._node_host = (str(f"{device['address']}"))
         self._node_port = (int(f"{device['port']}"))
-        print(f"Capabilities:")
+        if DEBUG >= 2: print(f"Capabilities:")
         for capability, value in device['device_capabilities'].items():
-          print(f"{capability}: {value}")
+          if DEBUG >= 2: print(f"{capability}: {value}")
           if f"{capability}" == "model":
             self._model = (str(f"{value}"))
           if f"{capability}" == "chip":

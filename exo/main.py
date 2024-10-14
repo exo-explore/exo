@@ -62,21 +62,28 @@ inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
-if args.discovery_module == "manual":
-  if args.discovery_config is None:
-    args.discovery_module == "udp"
+try:
+  if args.discovery_module == "manual":
+    if args.discovery_config is None:
+      raise ValueError("--discovery-config is necessary when using --discovery-module manual")
+    else:
+      # Read for the current instance
+      list_device = ReadManualConfig(discovery_config=args.discovery_config)
+      list_device.device_capabilities((str((list_device.whoami))))
+      # Initialisation of the current instance with the first ReadManualConfig, and directly into main.py
+      args.node_id = list_device.node_id
+      args.node_host = list_device.node_host
+      args.node_port = list_device.node_port
+      args.wait_for_peers = 1
   else:
-    list_device = ReadManualConfig(discovery_config=args.discovery_config)
-    list_device.device_capabilities((str((list_device.whoami))))
-    args.node_id = list_device.node_id
-    args.node_host = list_device.node_host
-    args.node_port = list_device.node_port
-    args.wait_for_peers = 1
-
-if args.discovery_module != "manual":
-  if args.node_port is None:
-    args.node_port = find_available_port(args.node_host)
-    if DEBUG >= 1: print(f"Using available port: {args.node_port}")
+    if args.node_port is None:
+      args.node_port = find_available_port(args.node_host)
+      if DEBUG >= 1: print(f"Using available port: {args.node_port}")
+except ValueError as e:
+  if DEBUG >= 2:
+    print(f"Error: {e}")
+    traceback.print_exc()
+  exit()
 
 args.node_id = args.node_id or get_or_create_node_id()
 chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip in get_all_ip_addresses()]
