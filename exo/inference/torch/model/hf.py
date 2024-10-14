@@ -1,12 +1,18 @@
+import os
+import json
+from typing import Tuple, Optional, Union, List
+from pathlib import Path
+
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional, Union, List
 
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
+from exo.inference.torch.utils import extract_layers
 
 from transformers import (
- AutoModelForCausalLM,
+  AutoConfig,
+  AutoModelForCausalLM,
   DynamicCache,
   Cache,
   LogitsProcessorList,
@@ -22,12 +28,15 @@ class ShardedHuggingFaceModel:
   def __init__(
     self,
     shard: Shard,
-    local_model_path,
-    device,
-    dtype,
+    local_model_path: Path,
+    weight_map: Optional[dict],
+    device: torch.device,
+    dtype: torch.dtype,
+    device_map: str,
     top_k: int = 25,
     temp: float = 0.7,
-    top_p: float = 0.9
+    top_p: float = 0.9,
+    offload_buffers: bool = True
   ):
     """
     Initializes the ShardedHuggingFaceModel with a specified shard, model path, and device.
@@ -64,19 +73,96 @@ class ShardedHuggingFaceModel:
 
     self.device = device
     self.dtype = dtype
+    self.device_map = device_map
+
+    self.offload_buffers = offload_buffers
+
+    self.model_safetensors_path = self.local_model_path/"model.safetensors.index.json"
 
     # setup pytorch and transformer llm
     try:
-      self.llm_model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_name_or_path=self.local_model_path,
-        torch_dtype=self.dtype,
-        device_map="auto",
-        offload_buffers=True
-      )
+      if weight_map:
+        self.llm_model_config = self.load_sharded_model(
+          shard,
+          weight_map,
+          offload_buffers=self.offload_buffers
+        )
 
-      self.model = self.llm_model.model
+        # clear out edited safetensor json
+        # this is needed because shard downloader just
+        # appends and not redownloads the file
+        os.remove(self.model_safetensors_path)
+      else:
+        self.llm_model_config = AutoConfig.from_pretrained(
+          pretrained_model_name_or_path=self.local_model_path,
+          torch_dtype=self.dtype,
+          device_map=self.device_map,
+          offload_buffers=self.offload_buffers
+        )
+
+      self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
+
+      self.model = self.llm_model.model.to(self.device)
     except Exception as err:
       print(f"error loading and splitting model: {err}")
+      raise
+
+  def load_sharded_model(
+    self,
+    shard: Shard,
+    weight_map: dict,
+    offload_buffers: bool
+  ) -> AutoConfig:
+    """
+    Loads sharded version of model where only needed
+    weights are loaded for necessary layers
+
+    Args:
+
+    Returns:
+    """
+    if DEBUG >= 4:
+      print("load_sharded_model called")
+      print(f"shard: {shard}")
+
+    # break out layers per shard range
+    layer_weight_map = extract_layers(
+      weight_map,
+      shard
+    )
+
+    # rewrite model.safetensors.index.json for only needed layers
+    try:
+      mst_json = {}
+      with open(self.model_safetensors_path, "r") as mst_file:
+        mst_json = json.load(mst_file)
+        mst_json["weight_map"] = layer_weight_map
+
+      if DEBUG >= 4:
+        print(f"rewritten safetensor index \n{json.dumps(mst_json, indent=4)}")
+
+      os.remove(self.model_safetensors_path)
+
+      with open(self.model_safetensors_path, "w") as mst_file:
+        json.dump(mst_json, mst_file, indent=4)
+    except Exception as err:
+      print(f"err: {err}")
+      raise
+
+    # load model
+    try:
+      shard_num_hidden_layers = shard.end_layer - shard.start_layer
+      if DEBUG >= 4:
+        print(f"config with {shard_num_hidden_layers} layers")
+      return AutoConfig.from_pretrained(
+        pretrained_model_name_or_path=self.local_model_path,
+        device_map=self.device_map,
+        offload_buffers=offload_buffers,
+        local_files_only=True,
+        num_hidden_layers=shard_num_hidden_layers
+      )
+    except Exception as err:
+      print(f"err: {err}")
       raise
 
   def forward(
@@ -173,15 +259,17 @@ class ShardedHuggingFaceModel:
         print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
-    layer_amt = range(self.shard.start_layer, self.shard.end_layer + 1)
+    layer_amt = range(self.shard.end_layer - self.shard.start_layer)
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
+      print(f"model layer amt: {len(self.model.layers)}")
       print(f"layer_amt: {layer_amt}")
 
     for i in layer_amt:
       decoder_layer = self.model.layers[i]
       if DEBUG >= 5:
+        print(f"layer #{i}")
         print("decoder_layer before")
         print(f"decoder_layer: {decoder_layer}")
         print(f"hidden_states: {self.hidden_states}")
