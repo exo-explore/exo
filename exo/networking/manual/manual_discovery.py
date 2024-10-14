@@ -62,9 +62,9 @@ class ManualDiscovery(Discovery):
         for device in self.list_device.config_devices:
           if f"{self.list_device.whoami}" != f"{device['server']}":
             if DEBUG >= 2: print(f"Getting Id {device['id']} == Adresse: {device['address']} {device['port']}")
-            peer_id = {device['id']}
-            peer_host = {device['address']}
-            peer_port = {device['port']}
+            peer_id = device['id']
+            peer_host = device['address']
+            peer_port = device['port']
             if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
               new_peer_handle = self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", self.list_device.device_capabilities((str((f"{device['server']}")))))
               try:
