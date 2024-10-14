@@ -71,6 +71,12 @@ class StandardNode(Node):
         if DEBUG >= 8: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
         download_progress = RepoProgressEvent.from_dict(status_data.get('progress'))
         self.node_download_progress[status_data.get('node_id')] = download_progress
+      if status_data.get("type") == "performance_update":
+        node_id = status_data["node_id"]
+        processing_time = status_data["processing_time"]
+        shard = Shard.from_dict(status_data["shard"])
+        if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+          self.partitioning_strategy.update_node_performance(node_id, processing_time, shard)
       if self.topology_viz:
         self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), self.id, self.node_download_progress)
     except Exception as e:
@@ -103,6 +109,7 @@ class StandardNode(Node):
     elapsed_time_ns = end_time - start_time
     if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
       self.partitioning_strategy.update_node_performance(self.id, elapsed_time_ns/1e9, shard) 
+      await self.broadcast_performance_update(node_id, processing_time, shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -183,6 +190,7 @@ class StandardNode(Node):
     elapsed_time_ns = end_time - start_time
     if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
       self.partitioning_strategy.update_node_performance(self.id, elapsed_time_ns/1e9, shard) 
+      await self.broadcast_performance_update(node_id, processing_time, shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -444,3 +452,12 @@ class StandardNode(Node):
     new_partitions = self.partitioning_strategy.partition(self.topology)
     if self.topology_viz:
       self.topology_viz.update_visualization(self.current_topology, new_partitions, self.id)
+      
+  async def broadcast_performance_update(self, node_id: str, processing_time: float, shard: Shard):
+    performance_data = {
+        "type": "performance_update",
+        "node_id": node_id,
+        "processing_time": processing_time,
+        "shard": shard.to_dict()
+    }
+    await self.broadcast_opaque_status("", json.dumps(performance_data))
