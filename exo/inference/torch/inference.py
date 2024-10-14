@@ -60,8 +60,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     # setup cude dtype
     self.dtype = torch.get_default_dtype()
 
-    # setup threadding
-    torch.set_num_threads(torch.get_num_threads())
+    # setup device_map
+    if os.environ.get("TORCH_DEVICE_MAP"):
+      self.device_map = os.environ["TORCH_DEVICE_MAP"]
+    else:
+      self.device_map = str(self.device)
 
   def infer_caching(
     self,
@@ -351,13 +354,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     # get model weight map
     model_wm = await get_weight_map(repo_id=shard.model_id)
 
-    print(f"model_wm: {model_wm}")
-
     self.stateful_sharded_model = ShardedHuggingFaceModel(
       shard=shard,
       local_model_path=model_path,
+      weight_map=model_wm,
       device=self.device,
       dtype=self.dtype,
+      device_map=self.device_map,
       top_k=TOP_K,
       temp=TEMP,
       top_p=TOP_P

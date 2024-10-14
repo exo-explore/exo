@@ -29,9 +29,7 @@ def print_ram_stats():
     print(f'Max allocated memory: {max_memory / 1024**2} MB')
     print(f'Cached memory: {cached_memory / 1024**2} MB') 
 
-
-
-async def load_model(
+def load_model(
   repo_id: str,
   shard: Shard,
   model_path: Path,
@@ -64,6 +62,10 @@ async def load_model(
           layer_weight_map[wname] = wtensor
       else:
         non_layer_weights.append((wname, wtensor))
+
+    non_layer_weights = sorted(non_layer_weights, key=lambda x: x[1])
+
+    print(f"sorted non_layer_weights: {non_layer_weights}")
 
     if shard.is_first_layer():
       # this assumes at max only one first weight non-layer for model
@@ -173,7 +175,7 @@ async def test_split_model(
   model_path = await shard_downloader.ensure_shard(shard)
   weight_map = await get_weight_map(model_id)
 
-  await load_model(
+  load_model(
     model_id,
     shard,
     model_path,
@@ -182,25 +184,25 @@ async def test_split_model(
 
 if __name__ == "__main__":
   #Qwen/Qwen2.5-3B
-  try:
-    print("\n-------- Test Qwen/Qwen2.5-3B-Instruct ----------\n")
-    asyncio.run(test_split_model(
-      "Qwen/Qwen2.5-3B-Instruct",
-      0,
-      6,
-      36
-    ))
-  except Exception as err:
-    print(f"\n\n !!!!!!!!!!! Qwen/Qwen2.5-3B-Instruct TEST FAILED \n{err}\n")
+  #try:
+  #  print("\n-------- Test Qwen/Qwen2.5-3B-Instruct ----------\n")
+  #  asyncio.run(test_split_model(
+  #    "Qwen/Qwen2.5-3B-Instruct",
+  #    0,
+  #    6,
+  #    36
+  #  ))
+  #except Exception as err:
+  #  print(f"\n\n !!!!!!!!!!! Qwen/Qwen2.5-3B-Instruct TEST FAILED \n{err}\n")
 
   # unsloth/Meta-Llama-3.1-8B-Instruct
-    #try:
-    #  print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
-    #  asyncio.run(test_split_model(
-    #    "unsloth/Meta-Llama-3.1-8B-Instruct",
-    #    0,
-    #    1,
-    #    32
-    #  ))
-    #except Exception as err:
-    #  print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+  try:
+    print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
+    asyncio.run(test_split_model(
+      "unsloth/Meta-Llama-3.1-8B-Instruct",
+      0,
+      6,
+      32
+    ))
+  except Exception as err:
+    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
