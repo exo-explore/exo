@@ -261,11 +261,13 @@ class ShardedHuggingFaceModel:
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
+      print(f"model layer amt: {len(self.model.layers)}")
       print(f"layer_amt: {layer_amt}")
 
     for i in layer_amt:
       decoder_layer = self.model.layers[i]
       if DEBUG >= 5:
+        print(f"layer #{i}")
         print("decoder_layer before")
         print(f"decoder_layer: {decoder_layer}")
         print(f"hidden_states: {self.hidden_states}")
