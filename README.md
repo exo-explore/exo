@@ -60,10 +60,9 @@ Exo supports different [partitioning strategies](exo/topology/partitioning_strat
 
 <p>
     <picture>
-        <img alt="ring topology" src="docs/ring-topology.png" width="30%" height="30%">
+        <img alt="A screenshot of exo running 5 nodes" src="docs/exo-screenshot.png" width="50%" height="50%">
     </picture>
 </p>
-
 
 ## Installation
 
@@ -251,7 +250,3 @@ exo supports the following inference engines:
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
-
-## Screenshot
-
-![image](https://github.com/user-attachments/assets/3b6e22d0-ca6a-466c-b1b8-221556fa4163)
