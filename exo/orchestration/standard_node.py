@@ -7,6 +7,7 @@ import traceback
 from typing import List, Dict, Optional, Tuple, Union
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
+from exo.topology.adaptive_flops_partitioning_strategy import AdaptiveFlopsPartitioningStrategy
 from .node import Node
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities
@@ -77,6 +78,8 @@ class StandardNode(Node):
       if DEBUG >= 1: traceback.print_exc()
 
   async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
+    if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+      await self.recalculate_partitioning() 
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
@@ -98,6 +101,8 @@ class StandardNode(Node):
     resp = await self._process_prompt(base_shard, prompt, image_str, request_id, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
+    if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+      self.partitioning_strategy.update_node_performance(self.id, elapsed_time_ns/1e9, shard) 
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -176,6 +181,8 @@ class StandardNode(Node):
     resp = await self._process_tensor(shard, tensor, request_id, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
+    if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+      self.partitioning_strategy.update_node_performance(self.id, elapsed_time_ns/1e9, shard) 
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -432,3 +439,8 @@ class StandardNode(Node):
   @property
   def current_topology(self) -> Topology:
     return self.topology
+
+  async def recalculate_partitioning(self):
+    new_partitions = self.partitioning_strategy.partition(self.topology)
+    if self.topology_viz:
+      self.topology_viz.update_visualization(self.current_topology, new_partitions, self.id)
