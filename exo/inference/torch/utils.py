@@ -6,6 +6,8 @@ import re
 
 from exo.inference.shard import Shard
 
+import torch
+
 def extract_layers(
   weight_map: dict,
   shard: Shard
@@ -47,3 +49,14 @@ def extract_layers(
       layer_weight_map[last_weight[0]] = last_weight[1]
 
   return layer_weight_map
+
+def print_ram_stats():
+  if torch.cuda.is_available():
+    allocated_memory = torch.cuda.memory_allocated()
+    max_memory = torch.cuda.max_memory_allocated()
+    cached_memory = torch.cuda.memory_reserved()
+
+    print("Cuda stats")
+    print(f'Allocated memory: {allocated_memory / 1024**2} MB')
+    print(f'Max allocated memory: {max_memory / 1024**2} MB')
+    print(f'Cached memory: {cached_memory / 1024**2} MB')

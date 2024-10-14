@@ -1,14 +1,16 @@
 """
 Test inference engine and model sharding
 """
-
+import time
 import asyncio
+
 from exo.inference.shard import Shard
 from exo.inference.torch.inference import TorchDynamicShardInferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
+from exo.inference.torch.utils import print_ram_stats
+
 import numpy as np
-import time
 
 async def test_inference_engine(
     inference_engine_1: InferenceEngine,
@@ -64,6 +66,7 @@ async def test_inference_engine(
   #  n_layers=n_layers
   #)
 
+  print_ram_stats()
   resp1, inference_state_1, _ = await inference_engine_1.infer_prompt(
     "B",
     shard=resp_shard,
@@ -74,6 +77,7 @@ async def test_inference_engine(
   print(resp1)
   print("\n------------resp1---------------\n")
 
+  print_ram_stats()
   time.sleep(5)
 
   #resp2, inference_state_2, _ = await inference_engine_2.infer_tensor(
