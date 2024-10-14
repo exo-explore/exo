@@ -8,17 +8,35 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import torch
+
+from transformers.modeling_utils import offload_weight
+
 from exo.download.hf.hf_helpers import get_weight_map
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
 
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+def print_ram_stats():
+  if torch.cuda.is_available():
+    allocated_memory = torch.cuda.memory_allocated()
+    max_memory = torch.cuda.max_memory_allocated()
+    cached_memory = torch.cuda.memory_reserved()
+
+    print("Cuda stats")
+    print(f'Allocated memory: {allocated_memory / 1024**2} MB')
+    print(f'Max allocated memory: {max_memory / 1024**2} MB')
+    print(f'Cached memory: {cached_memory / 1024**2} MB') 
+
+
 
 async def load_model(
   repo_id: str,
   shard: Shard,
   model_path: Path,
-  weight_map: Optional[dict]
+  weight_map: Optional[dict],
+  device: Optional[str] = "cuda"
 ) -> Optional[AutoModelForCausalLM]:
   """
   load model by layer and safetensors
@@ -61,7 +79,6 @@ async def load_model(
       mst_json = {}
       with open(model_st_snapshot, "r") as mst_file:
         mst_json = json.load(mst_file)
-
         mst_json["weight_map"] = layer_weight_map
 
         print(f"mst_json: {json.dumps(mst_json, indent=4)}")
@@ -77,19 +94,62 @@ async def load_model(
   else:
     print("weight_map not found, loading whole model")
 
+  # setup the weight range for init_weights
+  shard_num_hidden_layers = shard.end_layer - shard.start_layer
+  print(f"Setting up LLM config with {shard_num_hidden_layers} hidden layers")
+  llm_config = AutoConfig.from_pretrained(
+    pretrained_model_name_or_path=model_path,
+    device_map="cuda",
+    offload_buffers=True,
+    local_files_only=True,
+    num_hidden_layers=shard_num_hidden_layers
+  )
+
   # load model with layer edits
   # or whole model if no weight_map
-  shard_model = AutoModelForCausalLM.from_pretrained(
-    model_path,
-    device_map="auto",
-    offload_buffers=True
+  print(f"Loading sharded AutoModelForCausalLM from {model_path}")
+  shard_model = AutoModelForCausalLM.from_config(llm_config).to(device)
+
+  print("Loading tokenizer")
+  tokenizer = AutoTokenizer.from_pretrained(
+    pretrained_model_name_or_path=model_path,
+    local_files_only=True,
   )
+
+  print_ram_stats()
+
+  prompt = "In a single word only, what color is a red apple?"
+
+  model_inputs = tokenizer(
+    [prompt],
+    return_tensors="pt"
+  )
+
+  generated_ids = shard_model.generate(
+    model_inputs.input_ids.to(device),
+    attention_mask=model_inputs.attention_mask.to(device),
+    max_new_tokens=512,
+    do_sample=True
+  )
+
+  generated_ids = [
+    output_ids[len(input_ids):] for input_ids, output_ids in zip(
+      model_inputs.input_ids,
+      generated_ids
+    )
+  ]
+
+  response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+  print(f"Prompt: {prompt}\n")
+  print(f"Response: {response}\n")
+
+  print_ram_stats()
 
   # have to clear out edited model safetensors mst_json
   os.remove(model_st_snapshot)
 
   return shard_model
-
 
 async def test_split_model(
   model_id: str,
@@ -97,7 +157,7 @@ async def test_split_model(
   end_layer: int,
   n_layers: int
 ):
-  """ 
+  """
   Test to load split models
   """
 
@@ -107,9 +167,6 @@ async def test_split_model(
     end_layer=end_layer-1,
     n_layers=n_layers
   )
-
-  # remove old weight json if present
-
 
   print(f"loading shard: {shard}")
   shard_downloader = HFShardDownloader()
@@ -130,11 +187,11 @@ if __name__ == "__main__":
     asyncio.run(test_split_model(
       "Qwen/Qwen2.5-3B-Instruct",
       0,
-      3,
+      6,
       36
     ))
   except Exception as err:
-    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+    print(f"\n\n !!!!!!!!!!! Qwen/Qwen2.5-3B-Instruct TEST FAILED \n{err}\n")
 
   # unsloth/Meta-Llama-3.1-8B-Instruct
     #try:
