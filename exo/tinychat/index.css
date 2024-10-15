@@ -164,11 +164,30 @@ main {
   border-right: 2px solid var(--secondary-color);
   box-shadow: 10px 10px 20px 2px var(--secondary-color-transparent);
 }
-.download-progress{
-  margin-bottom: 20em;
+.download-progress {
+  margin-bottom: 12em;
+  overflow-y: auto;
 }
 .message > pre {
   white-space: pre-wrap;
+}
+
+.progress-bar-container {
+  width: 100%;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  margin: 10px 0;
+}
+.progress-bar {
+  height: 20px;
+  border-radius: 4px;
+  transition: width 0.5s ease-in-out;
+}
+.progress-bar.complete {
+  background-color: #4CAF50;
+}
+.progress-bar.in-progress {
+  background-color: #2196F3;
 }
 
 .toast {

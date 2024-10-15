@@ -85,7 +85,8 @@ async def linux_device_capabilities(inference_engine: InferenceEngine) -> Device
 
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    gpu_name = pynvml.nvmlDeviceGetName(handle).upper()
+    gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
+    gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
     gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
     flops = DeviceFlops(*await inference_engine.benchmark_tflops())
 
