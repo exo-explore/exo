@@ -17,13 +17,13 @@ async def run_bench(inference_engine: InferenceEngine, shard: Shard, num_tokens:
   times = []
 
   resp, inference_state, is_finished = await inference_engine.infer_prompt(req_id, shard, "who are you?")
-  total_tokens += len(resp)
+  total_tokens += 1
   tokens_over_time.append(total_tokens)
   times.append(time.time() - start_time)
 
   while not is_finished and total_tokens < num_tokens:
     resp, inference_state, is_finished = await inference_engine.infer_tensor(req_id, shard, resp, inference_state)
-    total_tokens += len(resp)
+    total_tokens += 1
     tokens_over_time.append(total_tokens)
     times.append(time.time() - start_time)
 
