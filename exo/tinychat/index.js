@@ -350,6 +350,7 @@ document.addEventListener("alpine:init", () => {
                 }
               }
               this.lastErrorMessage = null;
+              this.downloadProgress = null;
             }
           } else {
             // No ongoing download
