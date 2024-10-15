@@ -23,7 +23,6 @@ def time_matmul(n=1024, dtype=dtypes.float32):
     a.realize()
     b.realize()
     sec = measure_runtime(Tensor.matmul, a, b)
-    print(sec)
     tflops = (2 * (n ** 3) / sec) / 1e12
     return tflops
 
