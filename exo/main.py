@@ -147,6 +147,26 @@ async def shutdown(signal, loop):
 
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
+  if model_name.startswith("hf.co/"):  # running example: "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0"
+    if ":" not in model_name:
+      print("Error: Couldnt infer quantisation.")
+      return
+    model_link, q = model_name.split(":")  # "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF", "Q8_0"
+
+    # download required files from link
+    stripped_model_name = model_link.split("/")[-1][:-5]  # Llama-3.2-1B-Instruct
+    repo_id = model_link[6:]  # bartowski/Llama-3.2-1B-Instruct-GGUF
+
+    gguf_file = f"{stripped_model_name}-{q}.gguf"
+    save_path = get_hf_home() / ".gguf"
+
+    print("Downloading files!", gguf_file)
+    async with aiohttp.ClientSession() as session:
+      await download_file(session, repo_id=repo_id, revision="main", file_path=gguf_file, save_directory=str(save_path))
+
+    # TODO: load the gguf file into llama.cpp
+    return
+
   shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
   if not shard:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
@@ -207,6 +227,7 @@ def run():
   finally:
     loop.run_until_complete(shutdown(signal.SIGTERM, loop))
     loop.close()
+
 
 if __name__ == "__main__":
   run()
