@@ -89,18 +89,17 @@ def load_model(
   # setup the weight range for init_weights
   shard_num_hidden_layers = shard.end_layer - shard.start_layer
   print(f"Setting up LLM config with {shard_num_hidden_layers} hidden layers")
-  llm_config = AutoConfig.from_pretrained(
+
+  # load model with layer edits
+  # or whole model if no weight_map
+  print(f"Loading sharded AutoModelForCausalLM from {model_path}")
+  shard_model = AutoModelForCausalLM.from_pretrained(
     pretrained_model_name_or_path=model_path,
     device_map="cuda",
     offload_buffers=True,
     local_files_only=True,
     num_hidden_layers=shard_num_hidden_layers
-  )
-
-  # load model with layer edits
-  # or whole model if no weight_map
-  print(f"Loading sharded AutoModelForCausalLM from {model_path}")
-  shard_model = AutoModelForCausalLM.from_config(llm_config).to(device)
+  ).to(device)
 
   print("Loading tokenizer")
   tokenizer = AutoTokenizer.from_pretrained(
