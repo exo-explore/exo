@@ -311,34 +311,46 @@ document.addEventListener("alpine:init", () => {
           const data = await response.json();
           const progressArray = Object.values(data);
           if (progressArray.length > 0) {
-            const progress = progressArray[0];
-            // Check if download is complete
-            if (progress.status === "complete" || progress.status === "failed") {
-              this.downloadProgress = null; // Hide the progress section
-
+            this.downloadProgress = progressArray.map(progress => {
+              // Check if download is complete
               if (progress.status === "complete") {
-                // Download is complete
-                // Check for pendingMessage
-                const savedMessage = localStorage.getItem("pendingMessage");
-                if (savedMessage) {
-                  // Clear pendingMessage
-                  localStorage.removeItem("pendingMessage");
-                  // Call processMessage() with savedMessage
-                  if (this.lastErrorMessage) {
-                    await this.processMessage(savedMessage);
-                  }
-                }
-                this.lastErrorMessage = null;
+                return {
+                  ...progress,
+                  isComplete: true,
+                  percentage: 100
+                };
+              } else if (progress.status === "failed") {
+                return {
+                  ...progress,
+                  isComplete: false,
+                  errorMessage: "Download failed"
+                };
+              } else {
+                return {
+                  ...progress,
+                  isComplete: false,
+                  downloaded_bytes_display: this.formatBytes(progress.downloaded_bytes),
+                  total_bytes_display: this.formatBytes(progress.total_bytes),
+                  overall_speed_display: progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '',
+                  overall_eta_display: progress.overall_eta ? this.formatDuration(progress.overall_eta) : '',
+                  percentage: ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2)
+                };
               }
-            } else {
-              // Compute human-readable strings
-              progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
-              progress.total_bytes_display = this.formatBytes(progress.total_bytes);
-              progress.overall_speed_display = progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '';
-              progress.overall_eta_display = progress.overall_eta ? this.formatDuration(progress.overall_eta) : '';
-              progress.percentage = ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2);
-
-              this.downloadProgress = progress;
+            });
+            const allComplete = this.downloadProgress.every(progress => progress.isComplete);
+            if (allComplete) {
+              // Check for pendingMessage
+              const savedMessage = localStorage.getItem("pendingMessage");
+              if (savedMessage) {
+                // Clear pendingMessage
+                localStorage.removeItem("pendingMessage");
+                // Call processMessage() with savedMessage
+                if (this.lastErrorMessage) {
+                  await this.processMessage(savedMessage);
+                }
+              }
+              this.lastErrorMessage = null;
+              this.downloadProgress = null;
             }
           } else {
             // No ongoing download
