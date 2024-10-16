@@ -34,6 +34,28 @@ def load_model(
   print("load_model called")
   model_st_snapshot = model_path/"model.safetensors.index.json"
 
+  if device:
+    device = device
+  elif os.environ.get("TORCH_DEVICE"):
+    device = torch.device(os.environ["TORCH_DEVICE"])
+  elif torch.cuda.is_available():
+    device = torch.device("cuda")
+  elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    device = torch.device("mps")
+  else:
+    device = torch.device("cpu")
+
+  torch.set_default_device(device)
+
+  # setup cude dtype
+  dtype = torch.get_default_dtype()
+
+  # setup device_map
+  if os.environ.get("TORCH_DEVICE_MAP"):
+    device_map = os.environ["TORCH_DEVICE_MAP"]
+  else:
+    device_map = str(device)
+
   if weight_map:
     layer_weight_map = {}
     non_layer_weights = []
@@ -95,7 +117,8 @@ def load_model(
   print(f"Loading sharded AutoModelForCausalLM from {model_path}")
   shard_model = AutoModelForCausalLM.from_pretrained(
     pretrained_model_name_or_path=model_path,
-    device_map="cuda",
+    device_map=device_map,
+    dtype=dtype,
     offload_buffers=True,
     local_files_only=True,
     num_hidden_layers=shard_num_hidden_layers
