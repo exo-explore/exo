@@ -1,0 +1,108 @@
+name: Build Standalone Executables
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl libgmp-dev libmpfr-dev libmpc-dev libssl-dev libxml2-dev libxslt1-dev zlib1g-dev wine64
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip setuptools wheel pyinstaller tensorflow flax
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install .
+
+      - name: Build Linux executable
+        run: |
+          source venv/bin/activate
+          EXO_NAME=exo-linux pyinstaller exo.spec
+
+      - name: Zip output (Linux)
+        run: zip -r dist-linux.zip dist/
+
+      - name: Upload artifact (Linux)
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-executable
+          path: dist-linux.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip setuptools wheel pyinstaller torch torchvision torchaudio tensorflow flax
+          pip install .
+
+      - name: Build macOS executable
+        run: |
+          source venv/bin/activate
+          EXO_NAME=exo-macos pyinstaller exo.spec
+
+      - name: Zip output (macOS)
+        run: zip -r dist-macos.zip dist/
+
+      - name: Upload artifact (macOS)
+        uses: actions/upload-artifact@v3
+        with:
+          name: macos-executable
+          path: dist-macos.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip setuptools wheel pyinstaller torch torchvision torchaudio tensorflow flax
+          pip install .
+        shell: cmd
+
+      - name: Build Windows executable
+        run: |
+          set EXO_NAME=exo-windows
+          pyinstaller exo.spec
+        shell: cmd
+
+      - name: Zip output (Windows)
+        run: Compress-Archive -Path dist -DestinationPath dist-windows.zip
+        shell: pwsh
+
+      - name: Upload artifact (Windows)
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-executable
+          path: dist-windows.zip
