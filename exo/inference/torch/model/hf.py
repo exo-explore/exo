@@ -83,7 +83,7 @@ class ShardedHuggingFaceModel:
     try:
       if weight_map:
         print("loading shard model")
-        self.llm_model_config = self.load_sharded_model(
+        self.llm_model = self.load_sharded_model(
           shard,
           weight_map,
           offload_buffers=self.offload_buffers
@@ -93,8 +93,6 @@ class ShardedHuggingFaceModel:
         # this is needed because shard downloader just
         # appends and not redownloads the file
         os.remove(self.model_safetensors_path)
-
-        self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
       else:
         print("loading full model")
         self.llm_model = AutoModelForCausalLM.from_pretrained(
@@ -103,8 +101,6 @@ class ShardedHuggingFaceModel:
           device_map=self.device_map,
           offload_buffers=True
         ).to(self.device)
-
-      
 
       self.model = self.llm_model.model.to(self.device)
     except Exception as err:
@@ -161,10 +157,11 @@ class ShardedHuggingFaceModel:
       return AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
         device_map=self.device_map,
+        torch_dtype=self.dtype,
         offload_buffers=offload_buffers,
         local_files_only=True,
         num_hidden_layers=shard_num_hidden_layers
-      )
+      ).to(self.device)
     except Exception as err:
       print(f"err: {err}")
       raise
