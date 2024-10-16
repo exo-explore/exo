@@ -118,7 +118,7 @@ def load_model(
   shard_model = AutoModelForCausalLM.from_pretrained(
     pretrained_model_name_or_path=model_path,
     device_map=device_map,
-    dtype=dtype,
+    torch_dtype=dtype,
     offload_buffers=True,
     local_files_only=True,
     num_hidden_layers=shard_num_hidden_layers
