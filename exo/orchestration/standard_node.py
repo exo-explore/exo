@@ -356,38 +356,52 @@ class StandardNode(Node):
     return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
 
   async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
-    next_topology = Topology()
-    next_topology.update_node(self.id, self.device_capabilities)
+        next_topology = Topology()
+        next_topology.update_node(self.id, self.device_capabilities)
 
-    if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
+        if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
-    prev_visited = visited.copy()
-    visited.add(self.id)
-    visited.update(p.id() for p in self.peers)
+        prev_visited = visited.copy()
+        visited.add(self.id)
+        visited.update(p.id() for p in self.peers)
 
-    for peer in self.peers:
-      next_topology.update_node(peer.id(), peer.device_capabilities())
-      next_topology.add_edge(self.id, peer.id())
+        for peer in self.peers:
+            start_time = time.perf_counter()
+            try:
+                await asyncio.wait_for(peer.health_check(), timeout=5.0)
+                latency = time.perf_counter() - start_time
+            except Exception as e:
+                latency = float('inf')  # Assign a high value if ping fails
+                if DEBUG >= 1: print(f"Failed to ping {peer.id()}: {e}")
 
-      if peer.id() in prev_visited:
-        continue
+            next_topology.update_node(peer.id(), peer.device_capabilities())
+            next_topology.add_edge(self.id, peer.id(), latency)
 
-      if max_depth <= 0:
-        if DEBUG >= 2: print("Max depth reached. Skipping...")
-        continue
+            if peer.id() in prev_visited:
+                continue
 
-      try:
-        other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0)
-        if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
-        self.topology.merge(other_topology)
-      except Exception as e:
-        print(f"Error collecting topology from {peer.id()}: {e}")
+            if max_depth <= 0:
+                if DEBUG >= 2: print("Max depth reached. Skipping...")
+                continue
 
-    next_topology.active_node_id = self.topology.active_node_id  # this is not so clean.
-    self.topology = next_topology
-    if self.topology_viz:
-      self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), self.id)
-    return next_topology
+            try:
+                other_topology = await asyncio.wait_for(
+                    peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0
+                )
+                if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
+                next_topology.merge(other_topology)
+            except Exception as e:
+                print(f"Error collecting topology from {peer.id()}: {e}")
+
+        next_topology.active_node_id = self.topology.active_node_id
+        self.topology = next_topology
+        if self.topology_viz:
+            self.topology_viz.update_visualization(
+                self.current_topology,
+                self.partitioning_strategy.partition(self.current_topology),
+                self.id
+            )
+        return next_topology
 
   @property
   def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:

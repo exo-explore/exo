@@ -1,7 +1,8 @@
 from exo import DEBUG
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import subprocess
 import psutil
+from typing import Optional
 
 TFLOPS = 1.00
 
@@ -26,16 +27,20 @@ class DeviceCapabilities:
   chip: str
   memory: int
   flops: DeviceFlops
+  latency: Optional[float] = field(default=None)  # Latency in milliseconds
 
   def __str__(self):
-    return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}"
+    return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}. Latency: {self.latency}ms"
 
   def __post_init__(self):
     if isinstance(self.flops, dict):
       self.flops = DeviceFlops(**self.flops)
 
   def to_dict(self):
-    return {"model": self.model, "chip": self.chip, "memory": self.memory, "flops": self.flops.to_dict()}
+    data = {"model": self.model, "chip": self.chip, "memory": self.memory, "flops": self.flops.to_dict()}
+    if self.latency is not None:
+      data["latency"] = self.latency
+    return data
 
 
 UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
