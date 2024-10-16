@@ -8,6 +8,8 @@ from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
 import traceback
+import os
+import sys
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict
@@ -152,6 +154,10 @@ class PromptSession:
     self.timestamp = timestamp
     self.prompt = prompt
 
+def is_frozen():
+  return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
+    or ('Contents/MacOS' in os.path.dirname)
+
 
 class ChatGPTAPI:
   def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
@@ -178,7 +184,13 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
 
-    self.static_dir = Path(__file__).parent.parent / "tinychat"
+    if is_frozen():
+      base_path = os.path.dirname(sys.executable)  
+      tinychat_path = os.path.join(base_path, "tinychat")
+      self.static_dir = Path(tinychat_path).resolve()
+    else:
+      self.static_dir = Path(__file__).parent.parent / "tinychat"
+
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 
