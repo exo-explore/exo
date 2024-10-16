@@ -1,7 +1,9 @@
 import subprocess
 import sys
-
+import os 
 def run():
+
+    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
 
     command = [
         "python3", "-m", "nuitka", "exo/main.py",
@@ -19,15 +21,15 @@ def run():
             "--macos-app-version=0.0.1",
             "--product-name=exo",
             "--macos-create-app-bundle",
-            "--macos-app-icon=../docs/exo-logo.icns"
+            "--macos-app-icon=docs/exo-logo.icns"
         ])
     elif sys.platform == "win32":  
         command.extend([
-            "--windows-icon-from-ico=../docs/exo-logo.ico"  
+            "--windows-icon-from-ico=docs/exo-logo.ico"  
         ])
     elif sys.platform.startswith("linux"):  
         command.extend([
-            "--linux-icon=../docs/exo-logo.png"
+            "--linux-icon=docs/exo-logo.png"
         ])
 
     command.extend([
@@ -35,7 +37,7 @@ def run():
         "--include-distribution-meta=mlx",
         "--include-module=mlx._reprlib_fix",
         "--include-module=mlx._os_warning",
-        "--include-data-files=./.venv/lib/python3.11/site-packages/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
+        f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
         "--include-data-dir=exo/tinychat=tinychat",
         "--include-module=exo.inference.mlx.models.llama",
         "--include-module=exo.inference.mlx.models.deepseek_v2",
