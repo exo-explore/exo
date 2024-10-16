@@ -82,6 +82,7 @@ class ShardedHuggingFaceModel:
     # setup pytorch and transformer llm
     try:
       if weight_map:
+        print("loading shard model")
         self.llm_model_config = self.load_sharded_model(
           shard,
           weight_map,
@@ -92,15 +93,18 @@ class ShardedHuggingFaceModel:
         # this is needed because shard downloader just
         # appends and not redownloads the file
         os.remove(self.model_safetensors_path)
+
+        self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
       else:
-        self.llm_model_config = AutoConfig.from_pretrained(
+        print("loading full model")
+        self.llm_model = AutoModelForCausalLM.from_pretrained(
           pretrained_model_name_or_path=self.local_model_path,
           torch_dtype=self.dtype,
           device_map=self.device_map,
-          offload_buffers=self.offload_buffers
-        )
+          offload_buffers=True
+        ).to(self.device)
 
-      self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
+      
 
       self.model = self.llm_model.model.to(self.device)
     except Exception as err:
@@ -112,7 +116,7 @@ class ShardedHuggingFaceModel:
     shard: Shard,
     weight_map: dict,
     offload_buffers: bool
-  ) -> AutoConfig:
+  ) -> AutoModelForCausalLM:
     """
     Loads sharded version of model where only needed
     weights are loaded for necessary layers
@@ -154,7 +158,7 @@ class ShardedHuggingFaceModel:
       shard_num_hidden_layers = shard.end_layer - shard.start_layer
       if DEBUG >= 4:
         print(f"config with {shard_num_hidden_layers} layers")
-      return AutoConfig.from_pretrained(
+      return AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
         device_map=self.device_map,
         offload_buffers=offload_buffers,
