@@ -173,6 +173,8 @@ async def download_file(
           if progress_callback:
             await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
           return
+        if DEBUG >= 2: print(f"Range not satisfiable {file_path=} {total_size=} {downloaded_size=}")
+        return await download_file(session, repo_id, revision, file_path, save_directory, progress_callback, use_range_request=False)
       except ValueError:
         if DEBUG >= 1: print(f"Failed to parse Content-Range header: {content_range}. Starting download from scratch...")
         return await download_file(session, repo_id, revision, file_path, save_directory, progress_callback, use_range_request=False)
