@@ -17,14 +17,13 @@ from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
 from exo.inference.torch.utils import print_cuda_vram_stats
 
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 def load_model(
-  repo_id: str,
   shard: Shard,
   model_path: Path,
   weight_map: Optional[dict],
-  device: Optional[str] = "cuda"
+  device: Optional[torch.device] = torch.device("cpu")
 ) -> Optional[AutoModelForCausalLM]:
   """
   load model by layer and safetensors
@@ -34,16 +33,12 @@ def load_model(
   print("load_model called")
   model_st_snapshot = model_path/"model.safetensors.index.json"
 
-  if device:
-    device = device
-  elif os.environ.get("TORCH_DEVICE"):
+  if os.environ.get("TORCH_DEVICE"):
     device = torch.device(os.environ["TORCH_DEVICE"])
   elif torch.cuda.is_available():
     device = torch.device("cuda")
   elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
     device = torch.device("mps")
-  else:
-    device = torch.device("cpu")
 
   torch.set_default_device(device)
 
@@ -122,7 +117,7 @@ def load_model(
     offload_buffers=True,
     local_files_only=True,
     num_hidden_layers=shard_num_hidden_layers
-  )
+  ).to(device)
 
   print("Loading tokenizer")
   tokenizer = AutoTokenizer.from_pretrained(
@@ -159,8 +154,6 @@ def load_model(
   print(f"Prompt: {prompt}\n")
   print(f"Response: {response}\n")
 
-  print_ram_stats()
-
   # have to clear out edited model safetensors mst_json
   os.remove(model_st_snapshot)
 
@@ -189,13 +182,15 @@ async def test_split_model(
   weight_map = await get_weight_map(model_id)
 
   load_model(
-    model_id,
     shard,
     model_path,
     weight_map
   )
 
 if __name__ == "__main__":
+  n_layers = int(os.environ["N_LAYERS"]) if os.environ.get("N_LAYERS") else 32
+  start_layer = int(os.environ["START_LAYER"]) if os.environ.get("START_LAYER") else 0
+  end_layer = int(os.environ["END_LAYER"]) if os.environ.get("END_LAYER") else int(n_layers/2)
   #Qwen/Qwen2.5-3B
   #try:
   #  print("\n-------- Test Qwen/Qwen2.5-3B-Instruct ----------\n")
@@ -213,9 +208,9 @@ if __name__ == "__main__":
     print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
     asyncio.run(test_split_model(
       "unsloth/Meta-Llama-3.1-8B-Instruct",
-      0,
-      6,
-      32
+      start_layer,
+      end_layer,
+      n_layers
     ))
   except Exception as err:
     print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.1-8B-Instruct TEST FAILED \n{err}\n")

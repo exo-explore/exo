@@ -11,7 +11,6 @@ from exo.helpers import DEBUG
 from exo.inference.torch.utils import extract_layers
 
 from transformers import (
-  AutoConfig,
   AutoModelForCausalLM,
   DynamicCache,
   Cache,
@@ -154,14 +153,21 @@ class ShardedHuggingFaceModel:
       shard_num_hidden_layers = shard.end_layer - shard.start_layer
       if DEBUG >= 4:
         print(f"config with {shard_num_hidden_layers} layers")
-      return AutoModelForCausalLM.from_pretrained(
+
+      llm_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
         device_map=self.device_map,
         torch_dtype=self.dtype,
         offload_buffers=offload_buffers,
         local_files_only=True,
         num_hidden_layers=shard_num_hidden_layers
-      ).to(self.device)
+      )
+
+      if self.device_map == "auto":
+        return llm_model
+      else:
+        return llm_model.to(self.device)
+
     except Exception as err:
       print(f"err: {err}")
       raise
