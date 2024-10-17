@@ -10,6 +10,9 @@ commands:
         type: string
       model_id:
         type: string
+      vllm:
+        type: boolean
+        default: false
     steps:
       - run:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
@@ -44,14 +47,24 @@ commands:
             # Check processes before proceeding
             check_processes
 
-            echo "Sending request to first instance..."
-            response_1=$(curl -s http://localhost:8000/v1/chat/completions \
-              -H "Content-Type: application/json" \
-              -d '{
+            if [ <<parameters.vllm>> = true ]; then
+              json_payload='{
+                "model": "<<parameters.model_id>>",
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "Who is this in the image?"}, {"type": "image_url", "image_url": { "url": "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"}}]}],
+                "temperature": 0.0
+              }'
+            else
+              json_payload='{
                 "model": "<<parameters.model_id>>",
                 "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
                 "temperature": 0.7
-              }')
+              }'
+            fi
+
+            echo "Sending request to first instance..."
+            response_1=$(curl -s http://localhost:8000/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -d "$json_payload")
             echo "Response 1: $response_1"
 
             # Check processes after first response
@@ -60,11 +73,7 @@ commands:
             echo "Sending request to second instance..."
             response_2=$(curl -s http://localhost:8001/v1/chat/completions \
               -H "Content-Type: application/json" \
-              -d '{
-                "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
-                "temperature": 0.7
-              }')
+              -d "$json_payload")
             echo "Response 2: $response_2"
 
             # Check processes after second response
@@ -177,6 +186,10 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
+      - run_chatgpt_api_test:
+          inference_engine: mlx
+          model_id: llama-3.2-1b
+          vllm: true
 
   test_macos_m1:
     macos:
