@@ -86,7 +86,7 @@ class ShardedHuggingFaceModel:
           shard,
           weight_map,
           offload_buffers=self.offload_buffers
-        )
+        ).to(self.device)
 
         # clear out edited safetensor json
         # this is needed because shard downloader just
@@ -311,7 +311,7 @@ class ShardedHuggingFaceModel:
     # shard is last layer says true at the start and not detecting last layer correctly
     if self.shard.is_last_layer():
       self.hidden_states = self.model.norm(self.hidden_states)
-      if use_legacy_cache:
+      if use_legacy_cache and self.next_decoder_cache is not None:
         self.past_key_values = self.next_decoder_cache.to_legacy_cache()
       else:
         self.past_key_values = self.next_decoder_cache
