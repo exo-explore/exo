@@ -16,7 +16,7 @@ def run():
         "--static-libpython=yes"
     ]
 
-    if sys.platform == "darwin":  
+    if sys.platform == "darwin": 
         command.extend([
             "--macos-app-name=exo",
             "--macos-app-mode=gui",
@@ -31,6 +31,7 @@ def run():
             "--include-distribution-meta=mlx",
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",
+            f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
             f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=MacOS/mlx.metallib",
             "--include-distribution-meta=pygments"
         ])
