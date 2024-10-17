@@ -91,6 +91,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
             cached_iids = {"input_ids": past_iids.tolist()}
 
       if DEBUG >= 4:
+        print(f"cached_iids len: {len(cached_iids)}")
         print(f"cached_iids: {cached_iids}")
 
     return (past_iids, cached_iids)
