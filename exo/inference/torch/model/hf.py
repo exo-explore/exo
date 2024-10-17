@@ -226,41 +226,41 @@ class ShardedHuggingFaceModel:
       print(f"position_ids: {self.position_ids}")
       print(f"past_key_values: {past_key_values}")
 
-    if self.hidden_states is None:
-      # casual mask and attention_mask
-      self.attention_mask = attention_mask
-      self.causal_mask = self.model._update_causal_mask(
-        None,
+      #if self.hidden_states is None:
+    # casual mask and attention_mask
+    self.attention_mask = attention_mask
+    self.causal_mask = self.model._update_causal_mask(
+      None,
+      self.inputs_embeds,
+      cache_position,
+      past_key_values,
+      False # dont out attentions
+    )
+
+    # embed positions, some models require and some dont
+    if isinstance(self.model, LlamaModel):
+      self.position_embeddings = self.model.rotary_emb(
         self.inputs_embeds,
-        cache_position,
-        past_key_values,
-        False # dont out attentions
+        self.position_ids
       )
 
-      # embed positions, some models require and some dont
-      if isinstance(self.model, LlamaModel):
-        self.position_embeddings = self.model.rotary_emb(
-          self.inputs_embeds,
-          self.position_ids
-        )
+    # prepare inputs for decoder layers
+    model_inputs = self.llm_model.prepare_inputs_for_generation(
+      self.input_ids,
+      past_key_values=past_key_values,
+      attention_mask=self.attention_mask,
+      inputs_embeds=self.inputs_embeds,
+      position_ids=self.position_ids,
+      cache_position=cache_position
+    )
 
-      # prepare inputs for decoder layers
-      model_inputs = self.llm_model.prepare_inputs_for_generation(
-        self.input_ids,
-        past_key_values=past_key_values,
-        attention_mask=self.attention_mask,
-        inputs_embeds=self.inputs_embeds,
-        position_ids=self.position_ids,
-        cache_position=cache_position
-      )
+    self.hidden_states = self.inputs_embeds
+    self.position_ids = model_inputs["position_ids"]
+    self.cache_position = model_inputs["cache_position"]
+    self.past_key_values = model_inputs["past_key_values"]
 
-      self.hidden_states = self.inputs_embeds
-      self.position_ids = model_inputs["position_ids"]
-      self.cache_position = model_inputs["cache_position"]
-      self.past_key_values = model_inputs["past_key_values"]
-
-      if DEBUG >= 4:
-        print(f"model_inputs: {model_inputs}")
+    if DEBUG >= 4:
+      print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
     layer_amt = range(self.shard.end_layer - self.shard.start_layer)
