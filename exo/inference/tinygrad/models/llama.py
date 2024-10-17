@@ -2,6 +2,8 @@ from typing import Tuple, Union, Optional, Dict, Any
 from tinygrad import Tensor, Variable, TinyJit, dtypes, nn, Device
 from tinygrad.helpers import getenv
 
+from .base import IdentityBlock
+
 
 # https://github.com/facebookresearch/llama/blob/1076b9c51c77ad06e9d7ba8a4c6df775741732bd/llama/model.py#L47
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, dtype=dtypes.half) -> Tensor:
@@ -172,16 +174,24 @@ class Transformer:
     vocab_size,
     shard: Shard = None,
     linear=nn.Linear,
+    tok_embeddings=nn.Embedding,
     n_kv_heads=None,
     rope_theta=10000,
     max_context=1024,
     jit=True,
     feed_forward=FeedForward
   ):
-    self.layers = [TransformerBlock(dim, hidden_dim, n_heads, n_kv_heads, norm_eps, max_context, linear, feed_forward=feed_forward) for _ in range(n_layers)]
-    self.norm = nn.RMSNorm(dim, norm_eps)
-    self.tok_embeddings = nn.Embedding(vocab_size, dim)
-    self.output = nn.Linear(dim, vocab_size, bias=False)
+    self.layers = []
+    for i in range(n_layers):
+      if shard.start_layer <= i <= shard.end_layer:
+        self.layers.append(TransformerBlock(dim, hidden_dim, n_heads, n_kv_heads, norm_eps, max_context, linear, feed_forward=feed_forward))
+      else:
+        self.layers.append(IdentityBlock())
+    if shard.is_first_layer():
+      self.tok_embeddings = tok_embeddings(vocab_size, dim)
+    if shard.is_last_layer():
+      self.norm = nn.RMSNorm(dim, norm_eps)
+      self.output = linear(dim, vocab_size, bias=False)
     self.max_context = max_context
     self.freqs_cis = precompute_freqs_cis(dim // n_heads, self.max_context*2, rope_theta).contiguous()
     self.forward_jit = TinyJit(self.forward) if jit else None
@@ -197,8 +207,7 @@ class Transformer:
     else:
       h = x
 
-    for i in range(self.shard.start_layer, self.shard.end_layer + 1):
-      layer = self.layers[i]
+    for layer in self.layers:
       h = layer(h, start_pos, freqs_cis, mask)
 
     if self.shard.is_last_layer():
@@ -222,19 +231,23 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
     return v.reshape(n_heads, 2, v.shape[0] // n_heads // 2, v.shape[1]).transpose(1, 2).reshape(*v.shape[:2])
 
   keymap = {
-    "model.embed_tokens.weight": "tok_embeddings.weight",
-    **{f"model.layers.{l}.input_layernorm.weight": f"layers.{l}.attention_norm.weight"
+    **{f"model.embed_tokens.{_type}": f"tok_embeddings.{_type}" for _type in ["weight", "scales", "biases"]},
+    **{f"model.layers.{l}.input_layernorm.{_type}": f"layers.{l}.attention_norm.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.self_attn.{x}_proj.weight": f"layers.{l}.attention.w{x}.weight"
+    **{f"model.layers.{l}.self_attn.{x}_proj.{_type}": f"layers.{l}.attention.w{x}.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for x in ["q", "k", "v", "o"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.post_attention_layernorm.weight": f"layers.{l}.ffn_norm.weight"
+    **{f"model.layers.{l}.post_attention_layernorm.{_type}": f"layers.{l}.ffn_norm.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.mlp.{x}_proj.weight": f"layers.{l}.feed_forward.w{y}.weight"
+    **{f"model.layers.{l}.mlp.{x}_proj.{_type}": f"layers.{l}.feed_forward.w{y}.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for x, y in {"gate": "1", "down": "2", "up": "3"}.items()
        for l in range(len(model.layers))},
-    "model.norm.weight": "norm.weight",
-    "lm_head.weight": "output.weight",
+    **{f"model.norm.{_type}": f"norm.{_type}" for _type in ["weight", "scales", "biases"]},
+    **{f"lm_head.{_type}": f"output.{_type}" for _type in ["weight", "scales", "biases"]},
   }
   sd = {}
   for k, v in weights.items():

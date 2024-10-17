@@ -5,7 +5,7 @@ from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggin
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import load_state_dict
-from tinygrad import Tensor, nn, Context
+from tinygrad import Tensor, nn, Context, dtypes
 from exo.inference.inference_engine import InferenceEngine
 from typing import Optional, Tuple
 import numpy as np
@@ -13,6 +13,7 @@ from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+from functools import partial
 
 Tensor.no_grad = True
 # default settings
@@ -27,11 +28,60 @@ MODEL_PARAMS = {
 }
 
 
+def select_bits(w, bits, start):
+    shift_left = 32 - (start + bits)
+    shift_right = shift_left + start
+    return (w * (2**shift_left)) // (2**shift_right)  
+
+
+class MLXQuantizedLinear:
+  def __init__(self, in_features, out_features, bits=4, group_size=64, bias=False):
+    assert in_features % group_size == 0
+    assert 32 % bits == 0
+    assert (in_features * bits) % 32 == 0
+    self.weight = Tensor.kaiming_uniform(out_features, (in_features * bits) // 32, dtype=dtypes.uint32)
+    self.scales = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
+    self.biases = Tensor.kaiming_uniform(out_features, in_features // group_size, dtype=dtypes.half)
+    self.bias = Tensor.uniform(out_features, low=0, high=1.0) if bias else None
+    self.bits = bits
+    self.group_size = group_size
+
+  def __call__(self, x):
+    w_full = Tensor.cat(
+        *[select_bits(self.weight, self.bits, i)[..., None] for i in range(0, 32, self.bits)], dim=-1
+    ).reshape(len(self.weight), self.scales.shape[-1], -1)
+    w_full = self.scales[..., None] * w_full + self.biases[..., None]
+    return x.linear(w_full.reshape(len(self.weight), -1).T, self.bias)
+  
+  
+class MLXQuantizedEmbedding:
+  def __init__(self, vocab_size, embed_size, bits = 4, group_size= 64):
+    self.vocab_sz, self.embed_sz = vocab_size, embed_size
+    self.bits = bits
+    self.group_size = group_size
+    self.weight = Tensor.glorot_uniform(vocab_size, (embed_size * bits) // 32)
+    self.scales = Tensor.glorot_uniform(vocab_size, embed_size // group_size)
+    self.biases = Tensor.glorot_uniform(vocab_size, embed_size // group_size)
+    
+  def __call__(self, x):
+      s = x.shape
+      x = x.flatten()
+      w = self.weight[x]
+      scales = self.scales[x]
+      biases = self.biases[x]
+      w_full = Tensor.cat(
+        *[select_bits(w, self.bits, i)[..., None] for i in range(0, 32, self.bits)], dim=-1
+      ).reshape(len(w), scales.shape[-1], -1)
+      w_full = scales[..., None] * w_full + biases[..., None]
+      return w_full.reshape(*s, -1)
+    
+
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
-  # build model
-  linear = nn.Linear
-  with Context(THREEFRY=0):
-    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
+  try:
+    with open(model_path/"config.json", "r") as f:
+      config = json.load(f)
+  except FileNotFoundError:
+    raise Exception(f"Config file not found in {model_path}")
 
   # load weights
   if model_path.is_dir():
@@ -40,6 +90,19 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
     else: weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
   else:
     weights = load(str(model_path), shard)
+    
+  # build model
+  if (quantization := config.get("quantization", None)) is not None:
+    linear = partial(MLXQuantizedLinear, **quantization)
+  else:
+    linear = nn.Linear
+  if "model.embed_tokens.scales" in weights.keys():
+    tok_embeddings = partial(MLXQuantizedEmbedding, **quantization)
+  else:
+    tok_embeddings = nn.Embedding
+  
+  with Context(THREEFRY=0):
+    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, tok_embeddings=tok_embeddings, max_context=8192, jit=True, shard=shard)
   weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
   weights = fix_bf16(weights)
 
