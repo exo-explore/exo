@@ -247,7 +247,7 @@ jobs:
       - run:
           name: Install dependencies
           command: |
-            source env/bin/activate
+            source env/bin/python
             pip install --upgrade pip
             pip install .
       - run:
