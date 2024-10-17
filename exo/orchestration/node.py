@@ -31,6 +31,10 @@ class Node(ABC):
   async def collect_topology(self, visited: set[str] = set(), max_depth: int = 2) -> Topology:
     pass
 
+  @abstractmethod
+  async def preload_models(self, shards: List[Shard]) -> None:
+    pass
+
   @property
   @abstractmethod
   def current_topology(self) -> Topology:
@@ -45,3 +49,4 @@ class Node(ABC):
   @abstractmethod
   def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
     pass
+

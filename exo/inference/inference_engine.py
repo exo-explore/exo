@@ -8,6 +8,9 @@ from .shard import Shard
 
 class InferenceEngine(ABC):
   @abstractmethod
+  async def preload_model(self, shard: Shard) -> None:
+    pass
+  @abstractmethod
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
     pass
 

@@ -47,6 +47,7 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--preload-models", type=str, help="Comma-separated list of models to preload")
 args = parser.parse_args()
 
 print_yellow_exo()
@@ -194,6 +195,11 @@ async def main():
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
+
+  if args.preload_models:
+    models_to_preload = [Shard.from_dict(model_base_shards[model_name][inference_engine.__class__.__name__]) 
+                         for model_name in args.preload_models.split(',')]
+    await node.preload_models(models_to_preload)
 
 
 def run():

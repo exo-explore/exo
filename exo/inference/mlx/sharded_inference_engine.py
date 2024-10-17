@@ -9,6 +9,7 @@ from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import pathlib as Path
 
 class MLXDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
@@ -43,8 +44,15 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     model_path = await self.shard_downloader.ensure_shard(shard)
 
     if self.shard != shard:
-      loop = asyncio.get_running_loop()
-      def load_shard_wrapper(): return asyncio.run(load_shard(model_path, shard))
-      model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
-      self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
-      self.shard = shard
+      await self.load_model(model_path, shard)
+
+  async def load_model(self, model_path: Path, shard: Shard):
+    loop = asyncio.get_running_loop()
+    def load_shard_wrapper(): return asyncio.run(load_shard(model_path, shard))
+    model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
+    self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
+    self.shard = shard
+
+    # already loaded into memory by ensure_shard,
+  async def preload_model(self, shard: Shard) -> None:
+    await self.ensure_shard(shard)
