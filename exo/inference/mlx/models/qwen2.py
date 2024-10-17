@@ -81,6 +81,8 @@ class Model(nn.Module):
     self,
     inputs: mx.array,
     cache=None,
+    *_,
+    **__
   ):
     out = self.model(inputs, cache)
     if self.args.shard.is_last_layer():
@@ -88,7 +90,7 @@ class Model(nn.Module):
         out = self.model.embed_tokens.as_linear(out)
       else:
         out = self.lm_head(out)
-    return out
+    return out, None
 
   def sanitize(self, weights):
     shard_state_dict = {}
