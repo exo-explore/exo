@@ -34,5 +34,5 @@ class DummyInferenceEngine(InferenceEngine):
     async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
         await self.simulate_latency()
         output = self.generate_output()
-        is_finished = np.random.random() < 0.5  # 50% chance of finishing
+        is_finished = np.random.random() < 0.5 # 50% chance of finishing
         return output, "", is_finished

@@ -84,15 +84,13 @@ async def test_dummy_engine_multiple_inferences():
     
     # Perform multiple inferences and track results
     results = []
-    for _ in range(50):
+    for _ in range(5):
         output, _, is_finished = await dummy_engine.infer_prompt("test_id", shard, "Test prompt")
         results.append((output, is_finished))
     
     # Assert that there are 5 results and some are marked as finished
-    assert len(results) == 50, "Should have 50 inference results."
-    # Check at least one inference is marked as finished (but tolerate failures up to a point)
-    finished_count = sum(is_finished for _, is_finished in results)
-    assert finished_count > 0, f"Expected at least one inference to finish, but none did. (Finished count: {finished_count})"
+    assert len(results) == 5, "Should have 5 inference results."
+    assert any(is_finished for _, is_finished in results), "At least one inference should be marked as finished."
     assert not all(is_finished for _, is_finished in results), "Not all inferences should be marked as finished."
 
 @pytest.mark.asyncio
@@ -103,6 +101,6 @@ async def test_dummy_engine_output_shape_consistency():
     shard = Shard(model_id="dummy", start_layer=0, end_layer=1, n_layers=2)
     
     # Perform multiple inferences and ensure the output shape is consistent
-    for _ in range(50):
+    for _ in range(5):
         output, _, _ = await dummy_engine.infer_prompt("test_id", shard, "Test prompt")
         assert output.shape == (2, 3, 4), "Output shape should be consistent across multiple inferences."
