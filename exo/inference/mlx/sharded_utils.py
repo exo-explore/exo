@@ -150,7 +150,6 @@ def load_model_shard(
     )
 
   model.load_weights(list(weights.items()), strict=True)
-  nn.Module.load_weights
 
   if not lazy:
     mx.eval(model.parameters())
