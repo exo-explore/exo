@@ -177,6 +177,7 @@ async def load_shard(
     processor = AutoProcessor.from_pretrained(model_path)
     processor.eos_token_id = processor.tokenizer.eos_token_id
     processor.encode = processor.tokenizer.encode
+    processor._tokenizer = processor
     return model, processor
   else:
     tokenizer = load_tokenizer(model_path, tokenizer_config)

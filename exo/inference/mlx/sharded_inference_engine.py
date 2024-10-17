@@ -16,16 +16,17 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
 
-  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[np.ndarray] = None) -> (np.ndarray, str, bool):
     await self.ensure_shard(shard)
-    step = partial(self.stateful_sharded_model.step, request_id, **await self.get_inputs(prompt, image_str))
-    output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, step))
-    return output_data, "", output_data.size == 1 and output_data.item() == self.tokenizer.eos_token_id
+    step = partial(self.stateful_sharded_model.step, request_id, inference_state=None if inference_state is None else mx.array(inference_state), **await self.get_inputs(prompt, image_str))
+    output_data, inference_state = await asyncio.get_running_loop().run_in_executor(self.executor, step)
+    return np.array(output_data), None if inference_state is None else np.array(inference_state), output_data.size == 1 and output_data.item() == self.tokenizer.eos_token_id
 
-  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[np.ndarray] = None) -> (np.ndarray, str, bool):
     await self.ensure_shard(shard)
-    output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, self.stateful_sharded_model.step, request_id, mx.array(input_data)))
-    return output_data, "", output_data.size == 1 and output_data.item() == self.tokenizer.eos_token_id
+    step = partial(self.stateful_sharded_model.step, request_id, mx.array(input_data), inference_state=None if inference_state is None else mx.array(inference_state))
+    output_data, inference_state = await asyncio.get_running_loop().run_in_executor(self.executor, step)
+    return np.array(output_data), None if inference_state is None else np.array(inference_state), output_data.size == 1 and output_data.item() == self.tokenizer.eos_token_id
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
@@ -45,7 +46,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       image = await get_image_from_str(image_str)
       tokenize = partial(self.tokenizer, text=prompt, images=image, return_tensors="np")
     else:
-      tokenize = partial(self.tokenizer, text=prompt, return_tensors="np")
+      tokenize = partial(self.tokenizer._tokenizer, text=prompt, return_tensors="np")
       
     inputs = await asyncio.get_running_loop().run_in_executor(self.executor, tokenize)
     resp = {}

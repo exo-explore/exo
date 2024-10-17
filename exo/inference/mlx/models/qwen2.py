@@ -90,7 +90,7 @@ class Model(nn.Module):
         out = self.model.embed_tokens.as_linear(out)
       else:
         out = self.lm_head(out)
-    return out
+    return out, None
 
   def sanitize(self, weights):
     shard_state_dict = {}

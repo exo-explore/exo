@@ -539,13 +539,13 @@ class MllamaVisionModel(nn.Module):
     ) -> mx.array:
         batch_size, num_concurrent_media, num_tiles, num_channels, height, width = pixel_values.shape
 
-        pixel_values = pixel_values.reshape(batch_size * num_concurrent_media * num_tiles, height, width, num_channels)
+        pixel_values = pixel_values.reshape(batch_size * num_concurrent_media * num_tiles, num_channels, height, width).transpose(0, 2, 3, 1)
         aspect_ratio_ids = aspect_ratio_ids.reshape(batch_size * num_concurrent_media, -1)
 
         # Patch embedding
         patch_embeds = self.patch_embedding(pixel_values)
         hidden_state = patch_embeds.flatten(1, 2)
-
+        
         # Tile embeddings
         _, num_patches, dim = hidden_state.shape
         hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, num_tiles, -1, dim)
@@ -708,6 +708,7 @@ class Model(nn.Module):
         self.vocab_size = config.text_config.vocab_size
         self.hidden_size = config.text_config.hidden_size
         self.language_model = MllamaTextModel(config.text_config)
+        self.shard = config.shard
         self.vision_model = None
         if config.vision_config:
             self.vision_model = MllamaVisionModel(config.vision_config)
@@ -724,9 +725,10 @@ class Model(nn.Module):
         pixel_values: Optional[mx.array] = None,
         aspect_ratio_mask: Optional[mx.array] = None,
         aspect_ratio_ids: Optional[mx.array] = None,
-        cache = None
+        cache = None,
+        inference_state: Optional[mx.array] = None
     ) -> mx.array:
-        cross_attention_states = None
+        cross_attention_states = inference_state
         if pixel_values is not None:
             if aspect_ratio_ids is None:
                 raise ValueError("`aspect_ratio_ids` must be provided if `pixel_values` is provided")
@@ -739,13 +741,14 @@ class Model(nn.Module):
             cross_attention_states = self.multi_modal_projector(cross_attention_states).reshape(
                 -1, cross_attention_states.shape[-2], self.hidden_size
             )
-
         outputs = self.language_model(
             input_ids,
             cross_attention_states=cross_attention_states,
             cache=cache
         )
-        return outputs
+        if self.shard.is_last_layer():
+            cross_attention_states = None
+        return outputs, cross_attention_states
     
     def sanitize(self, weights):
         if self.vision_model:

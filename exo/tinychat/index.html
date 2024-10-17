@@ -44,6 +44,8 @@
 <option value="deepseek-coder-v2.5">Deepseek Coder V2.5</option>
 <option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
 <option value="pixtral-12b">Pixtral 12B (Vision Model)</option>
+<option value="llama-3.2-11B-vision">Llama-3.2-11B-Vision (Vision Model)</option>
+<option value="llama-3.2-90B-vision">Llama-3.2-90B-Vision (Vision Model)</option>
 <option value="qwen-2.5-coder-1.5b">Qwen 2.5 Coder 1.5B</option>
 <option value="qwen-2.5-coder-7b">Qwen 2.5 Coder 7B</option>
 <option value="qwen-2.5-7b">Qwen 2.5 7B</option>
@@ -181,7 +183,7 @@
 </span>
 </div>
 <div class="input">
-<button @click="$refs.imageUpload.click()" class="image-input-button" x-show="cstate.selectedModel === 'llava-1.5-7b-hf' || cstate.selectedModel === 'pixtral-12b'">
+<button @click="$refs.imageUpload.click()" class="image-input-button" x-show="cstate.selectedModel === 'llava-1.5-7b-hf' || cstate.selectedModel === 'pixtral-12b' || cstate.selectedModel === 'llama-3.2-11B-vision' || cstate.selectedModel === 'llama-3.2-90B-vision'">
 <i class="fas fa-image"></i>
 </button>
 <input @change="$data.handleImageUpload($event)" accept="image/*" id="image-upload" style="display: none;" type="file" x-ref="imageUpload"/>

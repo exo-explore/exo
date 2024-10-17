@@ -560,7 +560,7 @@ class Model(nn.Module):
     if pixel_values is not None:
       input_embddings = self.get_input_embeddings(input_ids, pixel_values)
     logits = self.language_model(input_ids, cache=cache, inputs_embeds=input_embddings)
-    return logits
+    return logits, None
 
   def sanitize(self, weights):
     if self.config.vision_config:

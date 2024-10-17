@@ -11,9 +11,9 @@ class MLlamaShardTest(unittest.TestCase):
         self.inference_engine = MLXDynamicShardInferenceEngine(HFShardDownloader())
         self.inference_engine1 = MLXDynamicShardInferenceEngine(HFShardDownloader())
         model_id = "unsloth/Llama-3.2-11B-Vision-Instruct"
-        self.prompt = """<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n<|image|>What does the image show?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
+        self.prompt = """<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n<|image|>How many flowers are there? what are their colours?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
 
-        self.img = "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"
+        self.img = "https://t4.ftcdn.net/jpg/01/89/81/53/360_F_189815309_AIuYLElRzXQBg8a2ARgDPCVk1Y4wYGOY.jpg"
         self.full_shard = Shard(model_id=model_id, start_layer=0, end_layer=39, n_layers=40)
         self.shard1 = Shard(model_id=model_id, start_layer=0, end_layer=12, n_layers=40)
         self.shard2 = Shard(model_id=model_id, start_layer=13, end_layer=39, n_layers=40)

@@ -29,6 +29,12 @@ model_base_shards = {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Meta-Llama-3-70B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=80),
     "TinygradDynamicShardInferenceEngine": Shard(model_id="TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", start_layer=0, end_layer=0, n_layers=80),
   },
+  "llama-3.2-11B-vision": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="unsloth/Llama-3.2-11B-Vision-Instruct", start_layer=0, end_layer=0, n_layers=40)
+  },
+  "llama-3.2-90B-vision": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="unsloth/Llama-3.2-90B-Vision-Instruct", start_layer=0, end_layer=0, n_layers=40)
+  },
   ### mistral
   "mistral-nemo": {"MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Nemo-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=40),},
   "mistral-large": {"MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Mistral-Large-Instruct-2407-4bit", start_layer=0, end_layer=0, n_layers=88),},
