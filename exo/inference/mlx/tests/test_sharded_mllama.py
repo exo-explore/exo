@@ -11,12 +11,12 @@ class MLlamaShardTest(unittest.TestCase):
         self.inference_engine = MLXDynamicShardInferenceEngine(HFShardDownloader())
         self.inference_engine1 = MLXDynamicShardInferenceEngine(HFShardDownloader())
         model_id = "unsloth/Llama-3.2-11B-Vision-Instruct"
-        self.prompt = """<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n<|image|>Who is this in the image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
+        self.prompt = """<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n<|image|>What does the image show?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
 
         self.img = "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"
         self.full_shard = Shard(model_id=model_id, start_layer=0, end_layer=39, n_layers=40)
         self.shard1 = Shard(model_id=model_id, start_layer=0, end_layer=12, n_layers=40)
-        self.shard2 = Shard(model_id=model_id, start_layer=13, end_layer=31, n_layers=40)
+        self.shard2 = Shard(model_id=model_id, start_layer=13, end_layer=39, n_layers=40)
         self.max_tokens = 30
 
     async def _test_full_shard(self):
@@ -55,8 +55,8 @@ class MLlamaShardTest(unittest.TestCase):
 
     def test_inference_engine(self):
         full_generated_tokens = asyncio.run(self._test_full_shard())
-        # sharded_generated_tokens = asyncio.run(self._test_partial_shard())
-        # assert full_generated_tokens == sharded_generated_tokens
+        sharded_generated_tokens = asyncio.run(self._test_partial_shard())
+        assert full_generated_tokens == sharded_generated_tokens
 
 
 if __name__ == "__main__":

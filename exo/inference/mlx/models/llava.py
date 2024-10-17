@@ -555,7 +555,7 @@ class Model(nn.Module):
     # (1, num_image_patches*num_images + sequence_len, embed_dim)
     return mx.concatenate(final_embeddings, axis=1)
 
-  def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None):
+  def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None, *_, **__):
     input_embddings = None
     if pixel_values is not None:
       input_embddings = self.get_input_embeddings(input_ids, pixel_values)

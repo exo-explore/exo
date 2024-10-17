@@ -1,6 +1,7 @@
 import inspect
 from dataclasses import dataclass, field
 from typing import Optional, List
+import numpy as np
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -296,7 +297,7 @@ class LanguageModel(nn.Module):
 @dataclass
 class PixtralConfig(BaseModelArgs):
   text_config: LlamaModelArgs
-  vision_config: Optional[PixtralVisionConfig] = None
+  vision_config: PixtralVisionConfig = None
   model_type: str = "pixtral"
   ignore_index: int = -100
   image_token_index: int = 32000
@@ -349,7 +350,7 @@ class Model(nn.Module):
   def get_input_embeddings(
     self,
     input_ids: Optional[mx.array] = None,
-    pixel_values: Optional[mx.array] = None,
+    pixel_values: Optional[mx.array] = None
   ):
     if pixel_values is None:
       return self.language_model(input_ids)
@@ -378,7 +379,7 @@ class Model(nn.Module):
     flat_mask = special_image_mask.reshape(-1)
     flat_source = image_features.reshape(-1)
     
-    indices = mx.arange(flat_mask.size)[flat_mask != 0]
+    indices = mx.array(np.flatnonzero(flat_mask))
     num_masked = indices.size
     if flat_source.size < num_masked:
         raise Exception("Number of elements of source < number of ones in mask")
@@ -387,7 +388,7 @@ class Model(nn.Module):
     return flat_result.reshape(inputs_embeds.shape)
 
 
-  def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None):
+  def __call__(self, input_ids: mx.array, pixel_values: mx.array = None, cache=None, *_, **__):
     input_embddings = None
     if pixel_values is not None:
       input_embddings = self.get_input_embeddings(input_ids, pixel_values)

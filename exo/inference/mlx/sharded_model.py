@@ -20,8 +20,10 @@ class StatefulShardedModel:
   def step(
     self,
     request_id: str,
-    x,
+    input_ids,
     pixel_values=None,
+    aspect_ratio_ids=None,
+    aspect_ratio_mask=None,
     temp: float = 0.0,
     top_p: float = 1.0,
     logit_bias: Optional[Dict[int, float]] = None,
@@ -42,7 +44,7 @@ class StatefulShardedModel:
 
       return token
 
-    y = x
+    y = input_ids
 
     if request_id not in self.caches:
       self.init_cache(request_id)
@@ -54,7 +56,7 @@ class StatefulShardedModel:
     if pixel_values is None:
       output = self.model(y[None] if self.shard.is_first_layer() else y, cache=cache)
     else:
-      output = self.model(y, pixel_values=pixel_values, cache=cache)
+      output = self.model(y, pixel_values=pixel_values, aspect_ratio_ids=aspect_ratio_ids, aspect_ratio_mask=aspect_ratio_mask, cache=cache)
 
     if self.shard.is_last_layer():
       logits = output[:, -1, :]
@@ -66,12 +68,15 @@ class StatefulShardedModel:
   def __call__(
     self,
     request_id: str,
-    x,
+    input_ids,
+    pixel_values=None,
+    aspect_ratio_ids=None,
+    aspect_ratio_mask=None,
     temp: float = 0.0,
     top_p: float = 1.0,
     logit_bias: Optional[Dict[int, float]] = None,
   ) -> Generator[Tuple[mx.array, mx.array], None, None]:
-    return self.step(request_id, x, temp=temp, top_p=top_p, logit_bias=logit_bias)
+    return self.step(request_id, input_ids, pixel_values, aspect_ratio_ids, aspect_ratio_mask, temp=temp, top_p=top_p, logit_bias=logit_bias)
 
   def init_cache(self, request_id: str):
     kv_heads = ([self.model.n_kv_heads]*len(self.model.layers) if isinstance(self.model.n_kv_heads, int) else self.model.n_kv_heads)

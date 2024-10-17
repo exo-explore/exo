@@ -16,8 +16,8 @@ class PixtralShardTest(unittest.TestCase):
                             n_layers=40)
         self.shard2 = Shard(model_id=model_id, start_layer=13, end_layer=39,
                             n_layers=40)
-        self.prompt = "<s>[INST]Describe the image in one sentence.\n[IMG][/INST]"
-        self.img = "https://picsum.photos/id/237/400/300"
+        self.prompt = "<s>[INST]Who is this in the image? guess the name\n[IMG][/INST]"
+        self.img = "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"
         self.max_tokens = 30
 
     async def _test_full_shard(self):

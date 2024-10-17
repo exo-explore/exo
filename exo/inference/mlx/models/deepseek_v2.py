@@ -82,6 +82,8 @@ class Model(nn.Module):
     self,
     inputs: mx.array,
     cache: Optional[KVCache] = None,
+    *_,
+    **__
   ):
     out = self.model(inputs, cache)
     if self.args.shard.is_last_layer():

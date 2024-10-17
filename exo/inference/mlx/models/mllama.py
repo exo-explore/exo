@@ -1,8 +1,10 @@
 import math
+import inspect
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass, field
 
-from exo.inference.shard import Shard
+from ...shard import Shard
+from .base import IdentityBlock
 
 import mlx.nn as nn
 import mlx.core as mx
@@ -36,37 +38,55 @@ class MllamaVisionConfig:
         if self.intermediate_layers_indices is None:
             self.intermediate_layers_indices = [3, 7, 15, 23, 30]
             
-        self.max_aspect_ratio_id = self.supported_aspect_ratios
+        self.max_aspect_ratio_id = len(self.supported_aspect_ratios)
+        
+    @classmethod
+    def from_dict(cls, params):
+        updated_params = {}
+        class_params = inspect.signature(cls).parameters
+        for k, v in params.items():
+            if k in class_params:
+                updated_params.update({k: v})
+        return cls(**updated_params)
 
 
 @dataclass
 class MllamaTextConfig:
     vocab_size: int = 128256
     hidden_size: int = 4096
+    head_dim: int = None
     num_hidden_layers: int = 40
     num_attention_heads: int = 32
     num_key_value_heads: int = 8
     intermediate_size: int = 14_336
     rope_theta: float = 500000
     rope_scaling: Optional[Dict] = None
+    rope_traditional: bool = False
     rms_norm_eps: float = 1e-5
     max_position_embeddings: int = 131072
     initializer_range: float = 0.02
     tie_word_embeddings: bool = False
     cross_attention_layers: Optional[List[int]] = None
-    bos_token_id: int = 128000
-    eos_token_id: int = 128001
-    pad_token_id: Optional[int] = 128004
     shard: Optional[Shard] = None
     
     def __post_init__(self):
         if self.cross_attention_layers is None:
             self.cross_attention_layers = [3, 8, 13, 18, 23, 28, 33, 38]
+        self.head_dim = self.hidden_size // self.num_attention_heads
+            
+    @classmethod
+    def from_dict(cls, params):
+        updated_params = {}
+        class_params = inspect.signature(cls).parameters
+        for k, v in params.items():
+            if k in class_params:
+                updated_params.update({k: v})
+        return cls(**updated_params)
 
 @dataclass
 class MllamaConfig(BaseModelArgs):
-    vision_config: MllamaVisionConfig = None
     text_config: MllamaTextConfig
+    vision_config: MllamaVisionConfig = None
     image_token_index: int = 128256
 
     def __post_init__(self):
@@ -84,11 +104,23 @@ class MllamaConfig(BaseModelArgs):
         elif isinstance(self.text_config, MllamaTextConfig):
             self.text_config = self.text_config
             
+    @classmethod
+    def from_dict(cls, params):
+        updated_params = {}
+        class_params = inspect.signature(cls).parameters
+        for k, v in params.items():
+            if k in class_params:
+                if k in ["text_config", "vision_config"]:
+                    v = class_params[k].annotation.from_dict(v)
+                updated_params.update({k: v})
+        return cls(**updated_params)
+            
 @dataclass
 class ModelArgs(MllamaConfig):
   shard: Shard = field(default_factory=lambda: Shard("", 0, 0, 0))
 
   def __post_init__(self):
+    super().__post_init__()
     if isinstance(self.shard, dict):
       self.shard = Shard(**self.shard)
 
@@ -108,8 +140,8 @@ def _prepare_aspect_ratio_attention_mask(
 ) -> mx.array:
     # Expand aspect ratio mask to target_length
     batch_size, max_num_tiles = aspect_ratio_mask.shape
-    attention_mask = aspect_ratio_mask.view(batch_size, max_num_tiles, 1, 1)
-    attention_mask = attention_mask.tile(1, 1, target_length, 1)
+    attention_mask = aspect_ratio_mask.reshape(batch_size, max_num_tiles, 1, 1)
+    attention_mask = mx.tile(attention_mask, (1, 1, target_length, 1))
 
     # Mask padding patches
     pad_patches = target_length - num_patches
@@ -121,7 +153,7 @@ def _prepare_aspect_ratio_attention_mask(
     # Reshape to 2D and create 4D attention mask
     # (batch_size, 1, max_num_tiles * target_length, max_num_tiles * target_length)
     attention_mask = attention_mask.reshape(batch_size, max_num_tiles * target_length, 1)
-    attention_mask = attention_mask @ attention_mask.transpose(0, 1, 3, 2) * -1e9
+    attention_mask = attention_mask @ attention_mask.transpose(0, -1, -2) * -3.3895313892515355e+38
     attention_mask = mx.expand_dims(attention_mask, axis=1)
 
     return attention_mask
@@ -156,13 +188,12 @@ class MllamaPrecomputedPositionEmbedding(nn.Module):
         self.max_aspect_ratio_id = config.max_aspect_ratio_id
         self.num_patches = (config.image_size // config.patch_size) ** 2 + 1
         self.hidden_size = config.hidden_size
-        self.scale = config.hidden_size**-0.5
 
         self.gate = mx.zeros(1)
 
         # position embedding
         position_embedding = mx.random.uniform(0, 1, shape=(self.num_patches, self.hidden_size))
-        self.embedding = self.scale * position_embedding
+        self.embedding =  self.hidden_size**-0.5 * position_embedding
 
         # tile position embedding
         self.tile_embedding = nn.Embedding(
@@ -172,7 +203,7 @@ class MllamaPrecomputedPositionEmbedding(nn.Module):
     def __call__(self, hidden_state: mx.array, aspect_ratio_ids: mx.array) -> mx.array:
         # position embeddings
         gated_position_embedding = (1 - mx.tanh(self.gate)) * self.embedding
-        hidden_state = hidden_state + gated_position_embedding.view(1, 1, self.num_patches, self.hidden_size)
+        hidden_state = hidden_state + gated_position_embedding.reshape(1, 1, self.num_patches, self.hidden_size)
 
         # precomputed tile position embeddings
         tile_position_embedding = self.tile_embedding(aspect_ratio_ids)
@@ -202,8 +233,9 @@ class MllamaVisionAttention(nn.Module):
         super().__init__()
 
         self.embed_dim = config.hidden_size
-        self.num_heads = config.attention_heads
-        self.head_dim = config.hidden_size // config.attention_heads
+        self.num_heads = config.num_attention_heads
+        self.head_dim = config.hidden_size // config.num_attention_heads
+        self.scale = self.head_dim**-0.5
 
         self.q_proj = nn.Linear(self.embed_dim, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.embed_dim, self.num_heads * self.head_dim, bias=False)
@@ -222,15 +254,11 @@ class MllamaVisionAttention(nn.Module):
         batch_size, q_seq_len, _ = query.shape
         _, kv_seq_len, _ = key.shape
 
-        query = query.view(batch_size, q_seq_len, self.num_heads, self.head_dim)
-        key = key.view(batch_size, kv_seq_len, self.num_heads, self.head_dim)
-        value = value.view(batch_size, kv_seq_len, self.num_heads, self.head_dim)
+        query = query.reshape(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        key = key.reshape(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        value = value.reshape(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 
-        query = query.transpose(0, 2, 1, 3)
-        key = key.transpose(0, 2, 1, 3)
-        value = value.transpose(0, 2, 1, 3)
-
-        attn_output = query.scaled_dot_product_attention(key, value, mask=attention_mask)
+        attn_output = mx.fast.scaled_dot_product_attention(query, key, value, scale=self.scale, mask=attention_mask)
 
         attn_output = attn_output.transpose(0, 2, 1, 3)
         attn_output = attn_output.reshape(batch_size, q_seq_len, -1)
@@ -245,7 +273,7 @@ class MllamaVisionEncoderLayer(nn.Module):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.num_attention_heads = config.attention_heads
+        self.num_attention_heads = config.num_attention_heads
         self.is_gated = is_gated
         self.intermediate_size = config.intermediate_size
 
@@ -266,7 +294,7 @@ class MllamaVisionEncoderLayer(nn.Module):
     ):
         residual = hidden_state
         hidden_state = self.input_layernorm(hidden_state)
-        hidden_state, attn_weights = self.self_attn(hidden_state, attention_mask=attention_mask)
+        hidden_state = self.self_attn(hidden_state, attention_mask=attention_mask)
         if self.is_gated:
             hidden_state = mx.tanh(self.gate_attn) * hidden_state
         hidden_state = residual + hidden_state
@@ -306,12 +334,11 @@ class MllamaTextCrossAttention(nn.Module):
         self,
         config: Optional[MllamaTextConfig] = None
     ):
-        self.config = config
-        self.num_heads = self.config.num_attention_heads
-        self.num_key_value_heads = self.config.num_key_value_heads
+        self.num_heads = config.num_attention_heads
+        self.num_key_value_heads = config.num_key_value_heads
         self.hidden_size = config.hidden_size
         self.head_dim = config.hidden_size // self.num_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.scale = self.head_dim**-0.5
 
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
@@ -329,24 +356,24 @@ class MllamaTextCrossAttention(nn.Module):
     ) -> mx.array:
         bsz, q_len, _ = hidden_states.shape
         query_states = self.q_proj(hidden_states)
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        query_states = query_states.reshape(bsz, q_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         query_states = self.q_norm(query_states)
 
         if cross_attention_states is not None:
             key_states = self.k_proj(cross_attention_states)
             value_states = self.v_proj(cross_attention_states)
-            key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-            value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+            key_states = key_states.reshape(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
+            value_states = value_states.reshape(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
 
             if cache is not None:
                 # if we have a new image + new tokens, we only computed key_states on that new image
                 # we still update the cross key states, past_image, new_image. And use it!
-                keys, values = cache.update_and_fetch(keys, values)
+                key_states, value_states = cache.update_and_fetch(key_states, value_states)
         else:
-            key_states, value_states = cache.state()
+            key_states, value_states = cache.state
 
         key_states = self.k_norm(key_states)
-        attn_output = mx.fast.scaled_dot_product_attention(query_states, key_states, value_states)
+        attn_output = mx.fast.scaled_dot_product_attention(query_states, key_states, value_states, scale=self.scale)
 
         attn_output = attn_output.transpose(0, 2, 1, 3).reshape(bsz, q_len, -1)
         return self.o_proj(attn_output)
@@ -359,7 +386,7 @@ class MllamaTextSelfAttention(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
         self.head_dim = config.hidden_size // self.num_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.scale = self.head_dim**-0.5
 
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
@@ -379,9 +406,9 @@ class MllamaTextSelfAttention(nn.Module):
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
+        query_states = query_states.reshape(bsz, q_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        key_states = key_states.reshape(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
+        value_states = value_states.reshape(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
 
         if cache is not None:
             query_states = self.rope(query_states, offset=cache.offset)
@@ -391,7 +418,7 @@ class MllamaTextSelfAttention(nn.Module):
             query_states = self.rope(query_states)
             key_states = self.rope(key_states)
 
-        attn_output = mx.fast.scaled_dot_product_attention(query_states, key_states, value_states).transpose(0, 2, 1, 3).reshape(bsz, q_len, -1)
+        attn_output = mx.fast.scaled_dot_product_attention(query_states, key_states, value_states, scale=self.scale).transpose(0, 2, 1, 3).reshape(bsz, q_len, -1)
         return self.o_proj(attn_output)
     
 
@@ -483,10 +510,7 @@ class MllamaVisionModel(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_channels = config.num_channels
         self.intermediate_layers_indices = config.intermediate_layers_indices
-
         self.num_patches = (self.image_size // self.patch_size) ** 2 + 1
-        self.scale = config.hidden_size**-0.5
-
         self.patch_embedding = nn.Conv2d(
             in_channels=config.num_channels,
             out_channels=self.hidden_size,
@@ -495,7 +519,7 @@ class MllamaVisionModel(nn.Module):
             bias=False,
         )
 
-        self.class_embedding = self.scale * mx.random.uniform(shape=(self.hidden_size,))
+        self.class_embedding = self.hidden_size**-0.5 * mx.random.uniform(shape=(self.hidden_size,))
         self.gated_positional_embedding = MllamaPrecomputedPositionEmbedding(config)
 
         self.pre_tile_positional_embedding = MllamaPrecomputedAspectRatioEmbedding(config, is_gated=True)
@@ -515,12 +539,12 @@ class MllamaVisionModel(nn.Module):
     ) -> mx.array:
         batch_size, num_concurrent_media, num_tiles, num_channels, height, width = pixel_values.shape
 
-        pixel_values = pixel_values.reshape(batch_size * num_concurrent_media * num_tiles, num_channels, height, width)
+        pixel_values = pixel_values.reshape(batch_size * num_concurrent_media * num_tiles, height, width, num_channels)
         aspect_ratio_ids = aspect_ratio_ids.reshape(batch_size * num_concurrent_media, -1)
 
         # Patch embedding
         patch_embeds = self.patch_embedding(pixel_values)
-        hidden_state = patch_embeds.flatten(2).transpose(0, 2, 1, 3)
+        hidden_state = patch_embeds.flatten(1, 2)
 
         # Tile embeddings
         _, num_patches, dim = hidden_state.shape
@@ -529,8 +553,8 @@ class MllamaVisionModel(nn.Module):
 
         # Add cls token
         hidden_state = hidden_state.reshape(batch_size * num_concurrent_media * num_tiles, num_patches, dim)
-        batch_size, _, hidden_size = hidden_state.shape
-        class_embedding = self.class_embedding.expand(batch_size, 1, hidden_size)
+        _batch_size, _, _ = hidden_state.shape
+        class_embedding = mx.repeat(mx.expand_dims(self.class_embedding, axis=(0,1)), _batch_size, axis=0)
         hidden_state = mx.concatenate([class_embedding, hidden_state], axis=1)
         num_patches += 1
 
@@ -542,13 +566,13 @@ class MllamaVisionModel(nn.Module):
         # Compute the number of tokens to pad
         num_padding_patches = (8 - (hidden_state.shape[-2] % 8)) % 8
         # Compute padding tuple for pad function
-        padding = (0, 0, 0, num_padding_patches)  # (pad_left, pad_right, pad_left for dim -2, pad_right for dim -2)
+        padding = [(0, 0) ,(0, 0), (0, num_padding_patches), (0, 0)]  # (pad_left, pad_right, pad_left for dim -2, pad_right for dim -2)
         # Pad the tensor
-        hidden_state = mx.pad(hidden_state, padding, mode="constant", constant_values=0)
+        hidden_state = mx.pad(hidden_state, pad_width=padding)
         slice_index = -num_padding_patches if num_padding_patches > 0 else None
 
         # Prepare attention mask
-        attention_mask = aspect_ratio_mask.reshape(batch_size * num_concurrent_media, -1)
+        attention_mask = aspect_ratio_mask.reshape(batch_size * num_concurrent_media, -1).astype(mx.bfloat16)
         attention_mask = _prepare_aspect_ratio_attention_mask(
             aspect_ratio_mask=attention_mask,
             num_patches=self.num_patches,
@@ -556,7 +580,7 @@ class MllamaVisionModel(nn.Module):
         )
 
         # Apply encoder
-        hidden_state = hidden_state.view(batch_size * num_concurrent_media, -1, dim)
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, -1, dim)
         hidden_state, int_hidden_states = self.transformer(
             hidden_state,
             attention_mask=attention_mask
@@ -613,22 +637,25 @@ class MllamaVisionModel(nn.Module):
 class MllamaTextModel(nn.Module):
     def __init__(self, config: MllamaTextConfig):
         self.vocab_size = config.vocab_size
-        self.embed_tokens = nn.Embedding(config.vocab_size + 8, config.hidden_size)
         self.cross_attention_layers = config.cross_attention_layers
         self.num_attention_heads = config.num_attention_heads
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
-
+        self.head_dim = config.head_dim
+        self.shard = config.shard
+        if self.shard.is_first_layer():
+            self.embed_tokens = nn.Embedding(config.vocab_size + 8, config.hidden_size)
         self.layers = []
         for layer_idx in range(config.num_hidden_layers):
-            if layer_idx in self.cross_attention_layers:
-                self.layers.append(MllamaCrossAttentionDecoderLayer(config, layer_idx))
+            if self.shard.start_layer > layer_idx or layer_idx > self.shard.end_layer:
+                self.layers.append(IdentityBlock())
+            elif layer_idx in self.cross_attention_layers:
+                self.layers.append(MllamaCrossAttentionDecoderLayer(config))
             else:
-                self.layers.append(MllamaSelfAttentionDecoderLayer(config, layer_idx))
-
-        self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.lm_head = nn.Linear(self.config.hidden_size, self.vocab_size, bias=False)
-        self.shard = config.shard
+                self.layers.append(MllamaSelfAttentionDecoderLayer(config))
+        if self.shard.is_last_layer():
+            self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            self.lm_head = nn.Linear(config.hidden_size, self.vocab_size, bias=False)
 
     def __call__(
         self,
@@ -640,11 +667,11 @@ class MllamaTextModel(nn.Module):
             hidden_states = self.embed_tokens(inputs)
         else:
             hidden_states = inputs
-        for idx, decoder_layer, c in enumerate(zip(self.layers, cache)):
+        for idx, (decoder_layer, c) in enumerate(zip(self.layers, cache)):
             # For text-only path we should skip cross attention layers.
             # Let's check if the layer is cross attention layer and if we have cross attention states
             # or cached cross attention states.
-            if (idx in self.cross_attention_layers) and cross_attention_states is None and not any(c.state()):
+            if (idx in self.cross_attention_layers) and cross_attention_states is None and c.keys is None:
                 continue
             
             hidden_states = decoder_layer(
@@ -680,11 +707,8 @@ class Model(nn.Module):
     def __init__(self, config: ModelArgs):
         self.vocab_size = config.text_config.vocab_size
         self.hidden_size = config.text_config.hidden_size
-        self.max_num_tiles = config.vision_config.max_num_tiles
-        self.vision_output_dim = config.vision_config.vision_output_dim
-        self.pad_token_id = self.config.pad_token_id if self.config.pad_token_id is not None else -1
-
         self.language_model = MllamaTextModel(config.text_config)
+        self.vision_model = None
         if config.vision_config:
             self.vision_model = MllamaVisionModel(config.vision_config)
             self.multi_modal_projector = nn.Linear(
@@ -702,6 +726,7 @@ class Model(nn.Module):
         aspect_ratio_ids: Optional[mx.array] = None,
         cache = None
     ) -> mx.array:
+        cross_attention_states = None
         if pixel_values is not None:
             if aspect_ratio_ids is None:
                 raise ValueError("`aspect_ratio_ids` must be provided if `pixel_values` is provided")
@@ -723,11 +748,11 @@ class Model(nn.Module):
         return outputs
     
     def sanitize(self, weights):
-        if self.config.vision_config:
+        if self.vision_model:
             weights = self.vision_model.sanitize(weights)
         else:
             weights = {k: v for k, v in weights.items() if not k.startswith(('vision_model', 'multi_modal_projector'))}
-            weights = self.language_model.sanitize(weights)
+        weights = self.language_model.sanitize(weights)
         return weights
 
     @property
