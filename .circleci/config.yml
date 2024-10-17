@@ -243,6 +243,7 @@ jobs:
           command: |
             sudo apt-get update
             sudo apt-get install -y python3 python3-venv
+            sudo apt-get install patchelf
             python3 -m venv env
       - run:
           name: Install dependencies
