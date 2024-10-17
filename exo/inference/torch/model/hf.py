@@ -86,7 +86,7 @@ class ShardedHuggingFaceModel:
           shard,
           weight_map,
           offload_buffers=self.offload_buffers
-        ).to(self.device)
+        )
 
         # clear out edited safetensor json
         # this is needed because shard downloader just
@@ -163,10 +163,7 @@ class ShardedHuggingFaceModel:
         num_hidden_layers=shard_num_hidden_layers
       )
 
-      if self.device_map == "auto":
-        return llm_model
-      else:
-        return llm_model.to(self.device)
+      return llm_model.to(self.device)
 
     except Exception as err:
       print(f"err: {err}")

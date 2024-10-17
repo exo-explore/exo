@@ -127,6 +127,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         attention_mask=attention_mask
       ))
 
+    if DEBUG >=4 :
+      print("async_forward")
+      print(f"result: {result}")
+
     return result
 
   async def async_logit_sample(
