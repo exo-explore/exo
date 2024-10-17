@@ -103,4 +103,11 @@ model_base_shards = {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Qwen2-0.5B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=24),
     "TorchDynamicShardInferenceEngine": Shard(model_id="Qwen/Qwen2-0.5B-Instruct", start_layer=0, end_layer=0, n_layers=24),  
   },
+  ### nemotron
+  "nemotron-70b": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/nvidia_Llama-3.1-Nemotron-70B-Instruct-HF_4bit", start_layer=0, end_layer=0, n_layers=80),
+  },
+  "nemotron-70b-bf16": {
+    "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.1-Nemotron-70B-Instruct-HF-bf16", start_layer=0, end_layer=0, n_layers=80),
+  },
 }

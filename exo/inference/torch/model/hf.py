@@ -95,6 +95,9 @@ class ShardedHuggingFaceModel:
         # this is needed because shard downloader just
         # appends and not redownloads the file
         os.remove(self.model_safetensors_path)
+
+        self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
+        self.model = self.llm_model.model.to(self.device)
       else:
         print("loading full model")
         self.llm_model = AutoModelForCausalLM.from_pretrained(
