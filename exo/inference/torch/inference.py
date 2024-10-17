@@ -91,6 +91,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
             cached_iids = {"input_ids": past_iids.tolist()}
 
       if DEBUG >= 4:
+        print(f"cached_iids len: {len(cached_iids)}")
         print(f"cached_iids: {cached_iids}")
 
     return (past_iids, cached_iids)
@@ -126,7 +127,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         attention_mask=attention_mask
       ))
 
-    return result
+    if DEBUG >=4:
+      print("async_forward")
+      print(f"result: {result}")
+
+    return result[0], result[1], result[2]
 
   async def async_logit_sample(
     self,

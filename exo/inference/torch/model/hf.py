@@ -11,7 +11,6 @@ from exo.helpers import DEBUG
 from exo.inference.torch.utils import extract_layers
 
 from transformers import (
-  AutoConfig,
   AutoModelForCausalLM,
   DynamicCache,
   Cache,
@@ -63,6 +62,7 @@ class ShardedHuggingFaceModel:
     self.position_ids = None
     self.causal_mask = None
     self.local_model_path = local_model_path
+    self.is_sharded_model = False
 
     # setup logit processors
     self.logits_processor = LogitsProcessorList([
@@ -82,11 +82,14 @@ class ShardedHuggingFaceModel:
     # setup pytorch and transformer llm
     try:
       if weight_map:
-        self.llm_model_config = self.load_sharded_model(
+        print("loading shard model")
+        self.llm_model = self.load_sharded_model(
           shard,
           weight_map,
           offload_buffers=self.offload_buffers
         )
+
+        self.is_sharded_model = True
 
         # clear out edited safetensor json
         # this is needed because shard downloader just
@@ -96,14 +99,15 @@ class ShardedHuggingFaceModel:
         self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
         self.model = self.llm_model.model.to(self.device)
       else:
+        print("loading full model")
         self.llm_model = AutoModelForCausalLM.from_pretrained(
           pretrained_model_name_or_path=self.local_model_path,
           torch_dtype=self.dtype,
           device_map=self.device_map,
-          offload_buffers=self.offload_buffers
-        )
-        self.model = self.llm_model.model
-      
+          offload_buffers=offload_buffers
+        ).to(self.device)
+
+      self.model = self.llm_model.model.to(self.device)
     except Exception as err:
       print(f"error loading and splitting model: {err}")
       raise
@@ -113,7 +117,7 @@ class ShardedHuggingFaceModel:
     shard: Shard,
     weight_map: dict,
     offload_buffers: bool
-  ) -> AutoConfig:
+  ) -> AutoModelForCausalLM:
     """
     Loads sharded version of model where only needed
     weights are loaded for necessary layers
@@ -155,13 +159,18 @@ class ShardedHuggingFaceModel:
       shard_num_hidden_layers = shard.end_layer - shard.start_layer
       if DEBUG >= 4:
         print(f"config with {shard_num_hidden_layers} layers")
-      return AutoConfig.from_pretrained(
+
+      llm_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=self.local_model_path,
         device_map=self.device_map,
+        torch_dtype=self.dtype,
         offload_buffers=offload_buffers,
         local_files_only=True,
         num_hidden_layers=shard_num_hidden_layers
       )
+
+      return llm_model.to(self.device)
+
     except Exception as err:
       print(f"err: {err}")
       raise
@@ -256,11 +265,14 @@ class ShardedHuggingFaceModel:
       self.cache_position = model_inputs["cache_position"]
       self.past_key_values = model_inputs["past_key_values"]
 
-      if DEBUG >= 4:
-        print(f"model_inputs: {model_inputs}")
+    if DEBUG >= 4:
+      print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
-    layer_amt = range(self.shard.end_layer - self.shard.start_layer)
+    if self.is_sharded_model:
+      layer_amt = range(self.shard.end_layer - self.shard.start_layer)
+    else:
+      layer_amt = range(self.shard.start_layer, self.shard.end_layer)
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
@@ -305,7 +317,7 @@ class ShardedHuggingFaceModel:
     # shard is last layer says true at the start and not detecting last layer correctly
     if self.shard.is_last_layer():
       self.hidden_states = self.model.norm(self.hidden_states)
-      if use_legacy_cache:
+      if use_legacy_cache and self.next_decoder_cache is not None:
         self.past_key_values = self.next_decoder_cache.to_legacy_cache()
       else:
         self.past_key_values = self.next_decoder_cache

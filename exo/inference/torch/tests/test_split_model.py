@@ -17,14 +17,13 @@ from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
 from exo.inference.torch.utils import print_cuda_vram_stats
 
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 def load_model(
-  repo_id: str,
   shard: Shard,
   model_path: Path,
   weight_map: Optional[dict],
-  device: Optional[str] = "cuda"
+  device: Optional[torch.device] = torch.device("cpu")
 ) -> Optional[AutoModelForCausalLM]:
   """
   load model by layer and safetensors
@@ -33,6 +32,24 @@ def load_model(
   """
   print("load_model called")
   model_st_snapshot = model_path/"model.safetensors.index.json"
+
+  if os.environ.get("TORCH_DEVICE"):
+    device = torch.device(os.environ["TORCH_DEVICE"])
+  elif torch.cuda.is_available():
+    device = torch.device("cuda")
+  elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    device = torch.device("mps")
+
+  torch.set_default_device(device)
+
+  # setup cude dtype
+  dtype = torch.get_default_dtype()
+
+  # setup device_map
+  if os.environ.get("TORCH_DEVICE_MAP"):
+    device_map = os.environ["TORCH_DEVICE_MAP"]
+  else:
+    device_map = str(device)
 
   if weight_map:
     layer_weight_map = {}
@@ -89,18 +106,18 @@ def load_model(
   # setup the weight range for init_weights
   shard_num_hidden_layers = shard.end_layer - shard.start_layer
   print(f"Setting up LLM config with {shard_num_hidden_layers} hidden layers")
-  llm_config = AutoConfig.from_pretrained(
-    pretrained_model_name_or_path=model_path,
-    device_map="cuda",
-    offload_buffers=True,
-    local_files_only=True,
-    num_hidden_layers=shard_num_hidden_layers
-  )
 
   # load model with layer edits
   # or whole model if no weight_map
   print(f"Loading sharded AutoModelForCausalLM from {model_path}")
-  shard_model = AutoModelForCausalLM.from_config(llm_config).to(device)
+  shard_model = AutoModelForCausalLM.from_pretrained(
+    pretrained_model_name_or_path=model_path,
+    device_map=device_map,
+    torch_dtype=dtype,
+    offload_buffers=True,
+    local_files_only=True,
+    num_hidden_layers=shard_num_hidden_layers
+  ).to(device)
 
   print("Loading tokenizer")
   tokenizer = AutoTokenizer.from_pretrained(
@@ -137,8 +154,6 @@ def load_model(
   print(f"Prompt: {prompt}\n")
   print(f"Response: {response}\n")
 
-  print_ram_stats()
-
   # have to clear out edited model safetensors mst_json
   os.remove(model_st_snapshot)
 
@@ -167,13 +182,15 @@ async def test_split_model(
   weight_map = await get_weight_map(model_id)
 
   load_model(
-    model_id,
     shard,
     model_path,
     weight_map
   )
 
 if __name__ == "__main__":
+  n_layers = int(os.environ["N_LAYERS"]) if os.environ.get("N_LAYERS") else 32
+  start_layer = int(os.environ["START_LAYER"]) if os.environ.get("START_LAYER") else 0
+  end_layer = int(os.environ["END_LAYER"]) if os.environ.get("END_LAYER") else int(n_layers/2)
   #Qwen/Qwen2.5-3B
   #try:
   #  print("\n-------- Test Qwen/Qwen2.5-3B-Instruct ----------\n")
@@ -191,9 +208,9 @@ if __name__ == "__main__":
     print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
     asyncio.run(test_split_model(
       "unsloth/Meta-Llama-3.1-8B-Instruct",
-      0,
-      6,
-      32
+      start_layer,
+      end_layer,
+      n_layers
     ))
   except Exception as err:
-    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.1-8B-Instruct TEST FAILED \n{err}\n")

@@ -35,10 +35,6 @@ def extract_layers(
 
   non_layer_weights = sorted(non_layer_weights, key=lambda x: x[1])
 
-  print(non_layer_weights)
-  print(f"first: {shard.is_first_layer()}")
-  print(f"last: {shard.is_last_layer()}")
-
   if shard.is_first_layer():
     # this assumes at max only one first weight non-layer for model
     first_weight = non_layer_weights[0]
