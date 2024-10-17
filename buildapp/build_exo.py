@@ -44,7 +44,7 @@ def run():
         command.extend([
             "--onefile",
             "--lto=no",
-            "include-distribution-metadata=pygments",
+            "--include-distribution-metadata=pygments",
             "--linux-icon=docs/exo-logo-linux.xpm"
         ])
 
