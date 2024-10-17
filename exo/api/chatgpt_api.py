@@ -156,7 +156,7 @@ class PromptSession:
 
 def is_frozen():
   return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
-    or ('Contents/MacOS' in os.path.dirname)
+    or ('Contents/MacOS' in os.path.dirname(sys.executable))
 
 
 class ChatGPTAPI:
