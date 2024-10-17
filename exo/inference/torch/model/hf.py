@@ -62,6 +62,7 @@ class ShardedHuggingFaceModel:
     self.position_ids = None
     self.causal_mask = None
     self.local_model_path = local_model_path
+    self.is_sharded_model = False
 
     # setup logit processors
     self.logits_processor = LogitsProcessorList([
@@ -87,6 +88,8 @@ class ShardedHuggingFaceModel:
           weight_map,
           offload_buffers=self.offload_buffers
         )
+
+        self.is_sharded_model = True
 
         # clear out edited safetensor json
         # this is needed because shard downloader just
@@ -263,7 +266,10 @@ class ShardedHuggingFaceModel:
       print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
-    layer_amt = range(self.shard.end_layer - self.shard.start_layer)
+    if self.is_sharded_model:
+      layer_amt = range(self.shard.end_layer - self.shard.start_layer)
+    else:
+      layer_amt = range(self.shard.start_layer, self.shard.end_layer)
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
