@@ -38,6 +38,8 @@
 <option value="llama-3.1-405b">Llama 3.1 405B</option>
 <option value="llama-3-8b">Llama 3 8B</option>
 <option value="llama-3-70b">Llama 3 70B</option>
+<option value="nemotron-70b">Nemotron 70B</option>
+<option value="nemotron-70b-bf16">Nemotron 70B (BF16)</option>
 <option value="mistral-nemo">Mistral Nemo</option>
 <option value="mistral-large">Mistral Large</option>
 <option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
@@ -154,16 +156,32 @@
 </div>
 
 <!-- Download Progress Section -->
-<template x-if="downloadProgress">
-<div class="download-progress message message-role-assistant">
-  <h2>Download Progress</h2>
-  <div class="download-progress-node">
-    <p><strong>Model:</strong> <span x-text="downloadProgress.repo_id + '@' + downloadProgress.repo_revision"></span></p>
-    <p><strong>Progress:</strong> <span x-text="`${downloadProgress.downloaded_bytes_display} / ${downloadProgress.total_bytes_display} (${downloadProgress.percentage}%)`"></span></p>
-    <p><strong>Speed:</strong> <span x-text="downloadProgress.overall_speed_display || 'N/A'"></span></p>
-    <p><strong>ETA:</strong> <span x-text="downloadProgress.overall_eta_display || 'N/A'"></span></p>
+<template x-if="downloadProgress && downloadProgress.length > 0">
+  <div class="download-progress message message-role-assistant">
+    <h2>Download Progress</h2>
+    <br>
+    <template x-for="(progress, index) in downloadProgress" :key="index">
+      <div class="download-progress-node">
+        <br>
+        <h3 x-text="`Download ${index + 1}`"></h3>
+        <p><strong>Model:</strong> <span x-text="progress.repo_id + '@' + progress.repo_revision"></span></p>
+        <p><strong>Status:</strong> <span x-text="progress.status"></span></p>
+        <div class="progress-bar-container">
+          <div class="progress-bar" 
+               :class="progress.isComplete ? 'complete' : 'in-progress'"
+               :style="`width: ${progress.percentage}%;`">
+          </div>
+        </div>
+        <template x-if="!progress.isComplete">
+          <div>
+            <p><strong>Progress:</strong> <span x-text="`${progress.downloaded_bytes_display} / ${progress.total_bytes_display} (${progress.percentage}%)`"></span></p>
+            <p><strong>Speed:</strong> <span x-text="progress.overall_speed_display || 'N/A'"></span></p>
+            <p><strong>ETA:</strong> <span x-text="progress.overall_eta_display || 'N/A'"></span></p>
+          </div>
+        </template>
+      </div>
+    </template>
   </div>
-</div>
 </template>
 
 
