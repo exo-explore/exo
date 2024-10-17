@@ -32,7 +32,7 @@ def run():
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",
             f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
-            f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=MacOS/mlx.metallib",
+            f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=mlx.metallib",
             "--include-distribution-meta=pygments"
         ])
     elif sys.platform == "win32":  
