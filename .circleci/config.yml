@@ -266,6 +266,7 @@ jobs:
           name: Set up Python
           command: |
             choco install python --version=3.12
+            choco install rust
             python -m venv env
             .\env\Scripts\activate
       - run:
