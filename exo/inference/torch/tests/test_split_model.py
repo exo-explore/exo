@@ -119,10 +119,10 @@ def load_model(
     pretrained_model_name_or_path=model_path,
     device_map=device_map,
     torch_dtype=dtype,
-    offload_buffers=False,
+    offload_buffers=True,
     local_files_only=True,
     num_hidden_layers=shard_num_hidden_layers
-  ).to(device)
+  )
 
   print("Loading tokenizer")
   tokenizer = AutoTokenizer.from_pretrained(
@@ -218,4 +218,4 @@ if __name__ == "__main__":
       32
     ))
   except Exception as err:
-    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.2-1B-Instruct TEST FAILED \n{err}\n")
+    print(f"\n\n !!!!!!!!!!! meta-llama/Llama-3.1-8B-Instruct TEST FAILED \n{err}\n")
