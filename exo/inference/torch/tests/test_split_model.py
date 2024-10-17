@@ -119,7 +119,7 @@ def load_model(
     pretrained_model_name_or_path=model_path,
     device_map=device_map,
     torch_dtype=dtype,
-    offload_buffers=True,
+    offload_buffers=False,
     local_files_only=True,
     num_hidden_layers=shard_num_hidden_layers
   ).to(device)
