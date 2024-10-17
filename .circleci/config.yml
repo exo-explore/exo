@@ -188,7 +188,7 @@ jobs:
           model_id: llama-3.2-1b
       - run_chatgpt_api_test:
           inference_engine: mlx
-          model_id: llama-3.2-1b
+          model_id: llava-1.5-7b-hf
           vllm: true
 
   test_macos_m1:
