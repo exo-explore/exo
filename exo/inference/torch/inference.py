@@ -204,10 +204,14 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     if DEBUG >= 4:
       print(f"past_input_ids: {self.past_input_ids}\n")
 
-    shard_hidden_states, shard_past_kvs, shard_logits = await self.async_forward(
+    shard_hidden_states, shard_past_kvs, shard_logits = self.stateful_sharded_model.forward(
       input_ids=self.past_input_ids,
       attention_mask=input_attention_mask
     )
+    #shard_hidden_states, shard_past_kvs, shard_logits = await self.async_forward(
+    #  input_ids=self.past_input_ids,
+    #  attention_mask=input_attention_mask
+    #)
 
     if DEBUG >= 4:
       print(f"\nshard_hidden_states: {shard_hidden_states}\n")
