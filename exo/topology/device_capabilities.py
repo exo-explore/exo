@@ -175,6 +175,7 @@ def mac_device_capabilities() -> DeviceCapabilities:
 
 
 def linux_device_capabilities() -> DeviceCapabilities:
+  import re
   import psutil
   from tinygrad import Device
 
@@ -190,11 +191,44 @@ def linux_device_capabilities() -> DeviceCapabilities:
 
     if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
+    flops = CHIP_FLOPS.get(gpu_name)
+    if not flops:    
+      def extract_number(model_name):
+        match = re.search(r'\d+', model_name)
+        return int(match.group()) if match else None
+      
+      adjacent_models = {key: extract_number(key) for key in CHIP_FLOPS.keys() if gpu_name.rsplit(" ", 1)[0] in key}
+
+      if adjacent_models:
+        lower_model = None
+        higher_model = None
+        gpu_number = extract_number(gpu_name)
+
+        # Find the closest lower and higher models
+        for model, number in adjacent_models.items():
+          if number is not None:
+            if number < gpu_number and (lower_model is None or number > extract_number(lower_model)):
+              lower_model = model
+            elif number > gpu_number and (higher_model is None or number < extract_number(higher_model)):
+              higher_model = model
+
+        print(f"Estimated GPU Power is the average of {lower_model if lower_model else ""} and {higher_model}")
+        if lower_model and higher_model:
+          flops = DeviceFlops(
+          fp32=(CHIP_FLOPS[lower_model].fp32 + CHIP_FLOPS[higher_model].fp32) // 2,
+          fp16=(CHIP_FLOPS[lower_model].fp16 + CHIP_FLOPS[higher_model].fp16) // 2,
+          int8=(CHIP_FLOPS[lower_model].int8 + CHIP_FLOPS[higher_model].int8) // 2
+          )
+        else:
+          flops = CHIP_FLOPS.get(higher_model) or CHIP_FLOPS.get(lower_model) or DeviceFlops(fp32=0, fp16=0, int8=0)
+      else:
+        flops = (DeviceFlops(fp32=0, fp16=0, int8=0))
+
     return DeviceCapabilities(
       model=f"Linux Box ({gpu_name})",
       chip=gpu_name,
       memory=gpu_memory_info.total // 2**20,
-      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+      flops=flops,
     )
   elif Device.DEFAULT == "AMD":
     # TODO AMD support
