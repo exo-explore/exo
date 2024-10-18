@@ -89,15 +89,12 @@ class ShardedHuggingFaceModel:
           offload_buffers=self.offload_buffers
         )
 
-        self.is_sharded_model = True
+        # self.is_sharded_model = True
 
         # clear out edited safetensor json
         # this is needed because shard downloader just
         # appends and not redownloads the file
         os.remove(self.model_safetensors_path)
-
-        self.llm_model = AutoModelForCausalLM.from_config(self.llm_model_config).to(self.device)
-        self.model = self.llm_model.model.to(self.device)
       else:
         shard_num_hidden_layers = shard.end_layer - shard.start_layer
         print(f"loading safetensor in {shard_num_hidden_layers} layer model")
@@ -271,10 +268,10 @@ class ShardedHuggingFaceModel:
       print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
-    if self.is_sharded_model:
-      layer_amt = range(self.shard.end_layer - self.shard.start_layer)
-    else:
-      layer_amt = range(self.shard.start_layer, self.shard.end_layer)
+    # if self.is_sharded_model:
+    layer_amt = range(self.shard.end_layer - self.shard.start_layer)
+    # else:
+    #   layer_amt = range(self.shard.start_layer, self.shard.end_layer)
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
