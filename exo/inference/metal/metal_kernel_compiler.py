@@ -27,3 +27,16 @@ class MetalKernelCompiler:
             return "gid.x + grid_size.x * gid.y"
         else:
             return "gid.x + grid_size.x * (gid.y + grid_size.y * gid.z)"
+
+    def _convert_dtype_to_metal(self, dtype: Any) -> str:
+        dtype_map = {
+            dtypes.float32: "float",
+            dtypes.float16: "half",
+            dtypes.int32: "int",
+            dtypes.int16: "short",
+            dtypes.int8: "char",
+            dtypes.uint32: "uint",
+            dtypes.uint16: "ushort",
+            dtypes.uint8: "uchar",
+        }
+        return dtype_map.get(dtype, "float")
