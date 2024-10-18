@@ -143,13 +143,16 @@ class MLXMetalEngine {{
 }}
 """
         def _generate_kernel_metadata_initialization(self, kernel_metadata: Dict[str, MetalKernelMetadata]) -> str:
-        initializations = []
-        for name, metadata in kernel_metadata.items():
-            init = f'"{name}": KernelMetadata('
-            init += f'inputShapes: {metadata.input_shapes}, '
-            init += f'outputShape: {metadata.output_shape}, '
-            init += f'workGroupSize: {metadata.work_group_size}, '
-            init += f'globalSize: {metadata.global_size}, '
-            init += f'bufferSizes: {metadata.buffer_sizes})'
-            initializations.append(init)
-        return ",\n            ".join(initializations)
+            initializations = []
+            for name, metadata in kernel_metadata.items():
+                init = f'"{name}": KernelMetadata('
+                init += f'inputShapes: {metadata.input_shapes}, '
+                init += f'outputShape: {metadata.output_shape}, '
+                init += f'workGroupSize: {metadata.work_group_size}, '
+                init += f'globalSize: {metadata.global_size}, '
+                init += f'bufferSizes: {metadata.buffer_sizes})'
+                initializations.append(init)
+            return ",\n            ".join(initializations)
+
+        def _generate_metal_kernel_source(self, kernel_metadata: Dict[str, MetalKernelMetadata]) -> str:
+            return "\n\n".join(metadata.metal_code for metadata in kernel_metadata.values())
