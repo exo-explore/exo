@@ -44,6 +44,7 @@ def run():
         command.extend([
             "--onefile",
             "--lto=no",
+            "--include-package=tinygrad.runtime",
             "--include-distribution-metadata=pygments",
             "--linux-icon=docs/exo-logo-linux.xpm"
         ])
