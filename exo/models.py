@@ -4,6 +4,8 @@ model_base_shards = {
   ### llama
   "llama-3.2-1b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.2-1B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=16),
+    "MetalDynamicShardInferenceEngine": Shard(model_id="metal-tinygrad-llama-3.2-1b", start_layer=0, end_layer=0, n_layers=16), #unsure of the model_id yet , current string is placeholder 
+
   },
   "llama-3.2-3b": {
     "MLXDynamicShardInferenceEngine": Shard(model_id="mlx-community/Llama-3.2-3B-Instruct-4bit", start_layer=0, end_layer=0, n_layers=28),
