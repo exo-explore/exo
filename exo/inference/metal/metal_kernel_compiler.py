@@ -80,3 +80,46 @@ class MetalKernelCompiler:
             return op_converters[op_type](op)
         else:
             return KernelOperation("unknown", [], f"unknown_{op_type}")
+
+    def _generate_metal_op_code(self, op: KernelOperation) -> str:
+        """Generate Metal code for a single operation"""
+        metal_op_templates = {
+            "add": "{output} = {inputs[0]} + {inputs[1]};",
+            "sub": "{output} = {inputs[0]} - {inputs[1]};",
+            "mul": "{output} = {inputs[0]} * {inputs[1]};",
+            "div": "{output} = {inputs[0]} / {inputs[1]};",
+            "relu": "{output} = max({inputs[0]}, 0.0f);",
+            "tanh": "{output} = tanh({inputs[0]});",
+            "sigmoid": "{output} = 1.0f / (1.0f + exp(-{inputs[0]}));",
+            "load": "{output} = input_buffer[{attributes[offset]} + idx];",
+            "store": "output_buffer[{attributes[offset]} + idx] = {inputs[0]};",
+            "matmul": """
+                float sum = 0.0f;
+                for (int k = 0; k < {attributes[K]}; k++) {{
+                    sum += {inputs[0]}[i * {attributes[K]} + k] * {inputs[1]}[k * {attributes[N]} + j];
+                }}
+                {output} = sum;
+            """,
+            "reduce_sum": """
+                float sum = 0.0f;
+                for (int i = 0; i < {attributes[axis]}; i++) {{
+                    sum += {inputs[0]}[i];
+                }}
+                {output} = sum;
+            """,
+            "reduce_max": """
+                float max_val = -INFINITY;
+                for (int i = 0; i < {attributes[axis]}; i++) {{
+                    max_val = max(max_val, {inputs[0]}[i]);
+                }}
+                {output} = max_val;
+            """
+        }
+
+        template = metal_op_templates.get(op.op_type, "// Unknown operation: {op_type}")
+        return template.format(
+            output=op.output,
+            inputs=op.inputs,
+            attributes=op.attributes or {},
+            op_type=op.op_type
+        )
