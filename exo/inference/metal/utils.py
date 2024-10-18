@@ -54,3 +54,9 @@ class Linearizer:
             return args[0] / args[1]
         else:
             raise ValueError(f"Unsupported operation for constant folding: {op}")
+
+    def linearize(self) -> Kernel:
+        modified_ast = self.get_optimized_ast()
+        self.uops = self.ast_to_uop(modified_ast)
+        self.uops = self.optimize_uops(self.uops)
+        return Kernel(self.name, self.uops)
