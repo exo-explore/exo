@@ -14,3 +14,9 @@ class MetalKernelMetadata:
     global_size: Tuple[int, int, int]
     buffer_sizes: List[int]
     op_sequence: List[KernelOperation]
+
+@dataclass
+class MetalModelShard:
+    kernel_metadata: Dict[str, MetalKernelMetadata]
+    weights: Dict[str, np.ndarray]
+    config: Dict[str, Any]
