@@ -28,3 +28,15 @@ class Linearizer:
         self.ast = ast
         self.opts = opts
         self.uops: List[UOp] = []
+
+    def get_optimized_ast(self) -> List[ASTNode]:
+        # Simple constant folding optimization
+        optimized_ast = []
+        for node in self.ast:
+            if node.op in ['add', 'mul', 'sub', 'div'] and all(isinstance(arg, (int, float)) for arg in node.args):
+                # Constant folding
+                result = self.evaluate_constant_expression(node)
+                optimized_ast.append(ASTNode('const', node.dtype, [result]))
+            else:
+                optimized_ast.append(node)
+        return optimized_ast
