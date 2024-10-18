@@ -40,3 +40,43 @@ class MetalKernelCompiler:
             dtypes.uint8: "uchar",
         }
         return dtype_map.get(dtype, "float")
+
+    def _convert_op_to_metal(self, op: Any) -> KernelOperation:
+        """Convert TinyGrad operations to Metal operations"""
+        if hasattr(op, "op"):
+            op_type = op.op
+        else:
+            op_type = type(op).__name__
+
+        op_converters = {
+            # Basic arithmetic
+            "add": lambda x: KernelOperation("add", [x.arg1, x.arg2], x.out),
+            "sub": lambda x: KernelOperation("sub", [x.arg1, x.arg2], x.out),
+            "mul": lambda x: KernelOperation("mul", [x.arg1, x.arg2], x.out),
+            "div": lambda x: KernelOperation("div", [x.arg1, x.arg2], x.out),
+            
+            # Activation functions
+            "relu": lambda x: KernelOperation("relu", [x.arg1], x.out),
+            "tanh": lambda x: KernelOperation("tanh", [x.arg1], x.out),
+            "sigmoid": lambda x: KernelOperation("sigmoid", [x.arg1], x.out),
+            
+            # Memory operations
+            "load": lambda x: KernelOperation("load", [x.arg1], x.out, {"offset": x.offset if hasattr(x, "offset") else 0}),
+            "store": lambda x: KernelOperation("store", [x.arg1], x.out, {"offset": x.offset if hasattr(x, "offset") else 0}),
+            
+            # Matrix operations
+            "matmul": lambda x: KernelOperation("matmul", [x.arg1, x.arg2], x.out, {
+                "M": x.M if hasattr(x, "M") else None,
+                "N": x.N if hasattr(x, "N") else None,
+                "K": x.K if hasattr(x, "K") else None
+            }),
+            
+            # Reduction operations
+            "sum": lambda x: KernelOperation("reduce_sum", [x.arg1], x.out, {"axis": x.axis if hasattr(x, "axis") else None}),
+            "max": lambda x: KernelOperation("reduce_max", [x.arg1], x.out, {"axis": x.axis if hasattr(x, "axis") else None}),
+        }
+
+        if op_type in op_converters:
+            return op_converters[op_type](op)
+        else:
+            return KernelOperation("unknown", [], f"unknown_{op_type}")
