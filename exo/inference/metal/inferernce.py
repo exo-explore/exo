@@ -21,3 +21,19 @@ class MetalDynamicShardInferenceEngine:
         self.swift_generator = SwiftCodeGenerator()
         self.metal_engine = None
         self.tokenizer = None
+
+    async def initialize_metal_engine(self, model_shard: MetalModelShard):
+        """Initialize the Metal engine with compiled kernels"""
+        # Compile all kernels in the model
+        compiled_kernels = {}
+        for kernel_name, kernel in model_shard.kernels.items():
+            metal_code, metadata = self.metal_compiler.compile_kernel_to_metal(kernel)
+            compiled_kernels[kernel_name] = (metal_code, metadata)
+            
+        # Generate Swift wrapper code
+        swift_code = self.swift_generator.generate_swift_wrapper(
+            {name: meta for name, (_, meta) in compiled_kernels.items()}
+        )
+        
+        # Initialize Metal engine through Swift bridge
+        self.metal_engine = await self._initialize_swift_metal_engine(swift_code)
