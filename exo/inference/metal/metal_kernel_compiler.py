@@ -19,3 +19,11 @@ class MetalKernelCompiler:
 
     def _convert_shape_to_metal(self, shape: List[int]) -> str:
         return f"uint3({', '.join(str(x) for x in shape)})"
+
+    def _generate_index_calculation(self, dims: int) -> str:
+        if dims == 1:
+            return "gid.x"
+        elif dims == 2:
+            return "gid.x + grid_size.x * gid.y"
+        else:
+            return "gid.x + grid_size.x * (gid.y + grid_size.y * gid.z)"
