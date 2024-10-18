@@ -12,6 +12,9 @@ from metal_kernel_compiler import MetalKernelCompiler
 from swift_code_generator import SwiftCodeGenerator
 from .sharded_utils import load_shard, get_image_from_str
 
+
+
+
 class MetalDynamicShardInferenceEngine:
     def __init__(self, shard_downloader):
         self.shard = None
@@ -21,7 +24,7 @@ class MetalDynamicShardInferenceEngine:
         self.swift_generator = SwiftCodeGenerator()
         self.metal_engine = None
         self.tokenizer = None
-
+        
     async def initialize_metal_engine(self, model_shard: MetalModelShard):
         """Initialize the Metal engine with compiled kernels"""
         # Compile all kernels in the model
@@ -37,7 +40,7 @@ class MetalDynamicShardInferenceEngine:
         
         # Initialize Metal engine through Swift bridge
         self.metal_engine = await self._initialize_swift_metal_engine(swift_code)
-
+        
     async def infer_prompt(self, request_id: str, shard: MetalModelShard, 
                           prompt: str, image_str: Optional[str] = None,
                           inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
@@ -115,7 +118,7 @@ class MetalDynamicShardInferenceEngine:
             # Initialize Metal engine with new shard
             await self.initialize_metal_engine(model_shard)
             self.shard = shard
-
+            
     async def _load_metal_shard(self, path: str, shard: MetalModelShard):
         """Load model weights and convert to Metal format"""
         # Load weights and config
@@ -131,7 +134,7 @@ class MetalDynamicShardInferenceEngine:
             weights=metal_weights,
             config=config
         )
-
+        
     async def _run_inference_kernels(self, request_id: str, input_buffer: Any):
         """Execute the inference kernels on Metal"""
         # Get kernel sequence for inference
@@ -148,3 +151,5 @@ class MetalDynamicShardInferenceEngine:
                 kernel_name,
                 kernel_inputs
             )
+            
+        return await self._metal_buffer_to_numpy(current_output)
