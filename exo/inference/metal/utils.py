@@ -21,3 +21,10 @@ class ASTNode:
         self.op = op
         self.dtype = dtype
         self.args = args
+
+class Linearizer:
+    def __init__(self, name: str, ast: List[ASTNode], opts: Dict[str, Any]):
+        self.name = name
+        self.ast = ast
+        self.opts = opts
+        self.uops: List[UOp] = []
