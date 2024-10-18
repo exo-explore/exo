@@ -97,3 +97,14 @@ class Linearizer:
                     used_vars.remove(uop.args[0])
         
         return optimized_uops
+
+@dataclass
+class KernelOperation:
+    op_type: str
+    inputs: List[str]
+    output: str
+    attributes: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.attributes is None:
+            self.attributes = {}
