@@ -76,3 +76,24 @@ class Linearizer:
             else:
                 uops.append(UOp(op=node.op, dtype=node.dtype, args=node.args))
         return uops
+
+    def optimize_uops(self, uops: List[UOp]) -> List[UOp]:
+        # Simple dead code elimination
+        used_vars = set()
+        optimized_uops = []
+        
+        # Backward pass to mark used variables
+        for uop in reversed(uops):
+            if uop.op == 'store':
+                used_vars.add(uop.args[0])
+            elif uop.op != 'load_const':
+                used_vars.update(arg for arg in uop.args if isinstance(arg, str))
+        
+        # Forward pass to keep only necessary operations
+        for uop in uops:
+            if uop.op == 'store' or uop.op == 'load_const' or any(arg in used_vars for arg in uop.args if isinstance(arg, str)):
+                optimized_uops.append(uop)
+                if uop.op == 'store':
+                    used_vars.remove(uop.args[0])
+        
+        return optimized_uops
