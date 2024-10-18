@@ -131,3 +131,20 @@ class MetalDynamicShardInferenceEngine:
             weights=metal_weights,
             config=config
         )
+
+    async def _run_inference_kernels(self, request_id: str, input_buffer: Any):
+        """Execute the inference kernels on Metal"""
+        # Get kernel sequence for inference
+        kernel_sequence = self.shard.config["inference_sequence"]
+        
+        # Execute kernels in sequence
+        current_output = input_buffer
+        for kernel_name in kernel_sequence:
+            kernel_inputs = [current_output]
+            if kernel_name in self.shard.weights:
+                kernel_inputs.append(self.shard.weights[kernel_name])
+                
+            current_output = await self.metal_engine.execute(
+                kernel_name,
+                kernel_inputs
+            )
