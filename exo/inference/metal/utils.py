@@ -15,3 +15,9 @@ class UOp:
 class Kernel:
     name: str
     uops: List[UOp]
+
+class ASTNode:
+    def __init__(self, op: str, dtype: Any, args: List[Any]):
+        self.op = op
+        self.dtype = dtype
+        self.args = args
