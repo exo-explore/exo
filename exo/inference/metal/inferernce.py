@@ -92,3 +92,26 @@ class MetalDynamicShardInferenceEngine:
         is_finished = (output_data.size == 1 and 
                       output_data.item() == self.tokenizer.eos_token_id)
         return output_data, "", is_finished
+
+    async def ensure_shard(self, shard: MetalModelShard):
+        """Load model shard if needed"""
+        if self.shard == shard:
+            return
+
+        model_path = await self.shard_downloader.ensure_shard(shard)
+
+        if self.shard != shard:
+            loop = asyncio.get_running_loop()
+            
+            # Load shard weights and config
+            def load_shard_wrapper():
+                return asyncio.run(self._load_metal_shard(model_path, shard))
+            
+            model_shard, self.tokenizer = await loop.run_in_executor(
+                self.executor,
+                load_shard_wrapper
+            )
+            
+            # Initialize Metal engine with new shard
+            await self.initialize_metal_engine(model_shard)
+            self.shard = shard
