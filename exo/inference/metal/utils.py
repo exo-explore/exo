@@ -40,3 +40,17 @@ class Linearizer:
             else:
                 optimized_ast.append(node)
         return optimized_ast
+
+    def evaluate_constant_expression(self, node: ASTNode) -> Union[int, float]:
+        op = node.op
+        args = node.args
+        if op == 'add':
+            return args[0] + args[1]
+        elif op == 'mul':
+            return args[0] * args[1]
+        elif op == 'sub':
+            return args[0] - args[1]
+        elif op == 'div':
+            return args[0] / args[1]
+        else:
+            raise ValueError(f"Unsupported operation for constant folding: {op}")
