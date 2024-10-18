@@ -60,3 +60,19 @@ class Linearizer:
         self.uops = self.ast_to_uop(modified_ast)
         self.uops = self.optimize_uops(self.uops)
         return Kernel(self.name, self.uops)
+
+    def ast_to_uop(self, ast: List[ASTNode]) -> List[UOp]:
+        uops = []
+        for node in ast:
+            if node.op == 'const':
+                uops.append(UOp(op='load_const', dtype=node.dtype, args=node.args))
+            elif node.op in ['add', 'mul', 'sub', 'div']:
+                for arg in node.args:
+                    if not isinstance(arg, (int, float)):
+                        uops.append(UOp(op='load', dtype=node.dtype, args=[arg]))
+                uops.append(UOp(op=node.op, dtype=node.dtype, args=node.args))
+            elif node.op == 'assign':
+                uops.append(UOp(op='store', dtype=node.dtype, args=node.args))
+            else:
+                uops.append(UOp(op=node.op, dtype=node.dtype, args=node.args))
+        return uops
