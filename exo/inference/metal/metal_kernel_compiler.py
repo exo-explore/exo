@@ -169,3 +169,12 @@ class MetalKernelCompiler:
         """
         
         return metal_code, metadata
+
+    def _generate_temp_declarations(self, ops: List[KernelOperation]) -> str:
+        """Generate declarations for temporary variables"""
+        temp_vars = set()
+        for op in ops:
+            temp_vars.add(op.output)
+            temp_vars.update(op.inputs)
+        
+        return "\n            ".join(f"float {var};" for var in temp_vars if not var.startswith("input") and not var.startswith("output"))
