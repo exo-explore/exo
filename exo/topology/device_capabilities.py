@@ -2,6 +2,7 @@ from exo import DEBUG
 from dataclasses import dataclass, asdict
 import subprocess
 import psutil
+import re
 
 TFLOPS = 1.00
 
@@ -140,6 +141,17 @@ CHIP_FLOPS.update({f"{key} LAPTOP GPU": value for key, value in CHIP_FLOPS.items
 CHIP_FLOPS.update({f"{key} Laptop GPU": value for key, value in CHIP_FLOPS.items()})
 
 
+def extract_number(model_name):
+  match = re.search(r'\d+', model_name)
+  return int(match.group()) if match else None
+
+def split_until_no_digits(name):
+  parts = name.split()
+  for i in range(len(parts)):
+    if any(char.isdigit() for char in parts[i]):
+      return " ".join(parts[:i])
+  return name
+
 def device_capabilities() -> DeviceCapabilities:
   if psutil.MACOS:
     return mac_device_capabilities()
@@ -175,7 +187,6 @@ def mac_device_capabilities() -> DeviceCapabilities:
 
 
 def linux_device_capabilities() -> DeviceCapabilities:
-  import re
   import psutil
   from tinygrad import Device
 
@@ -193,11 +204,8 @@ def linux_device_capabilities() -> DeviceCapabilities:
 
     flops = CHIP_FLOPS.get(gpu_name)
     if not flops:    
-      def extract_number(model_name):
-        match = re.search(r'\d+', model_name)
-        return int(match.group()) if match else None
-      
-      adjacent_models = {key: extract_number(key) for key in CHIP_FLOPS.keys() if gpu_name.rsplit(" ", 1)[0] in key}
+      base_name = split_until_no_digits(gpu_name)
+      adjacent_models = {key: extract_number(key) for key in CHIP_FLOPS.keys() if base_name in key}
 
       if adjacent_models:
         lower_model = None
@@ -212,16 +220,18 @@ def linux_device_capabilities() -> DeviceCapabilities:
             elif number > gpu_number and (higher_model is None or number < extract_number(higher_model)):
               higher_model = model
 
-        print(f"Estimated GPU Power is the average of {lower_model if lower_model else ""} and {higher_model}")
         if lower_model and higher_model:
+          print(f"The estimated GPU Power is the average of {lower_model} and {higher_model}")
           flops = DeviceFlops(
           fp32=(CHIP_FLOPS[lower_model].fp32 + CHIP_FLOPS[higher_model].fp32) // 2,
           fp16=(CHIP_FLOPS[lower_model].fp16 + CHIP_FLOPS[higher_model].fp16) // 2,
           int8=(CHIP_FLOPS[lower_model].int8 + CHIP_FLOPS[higher_model].int8) // 2
           )
         else:
+          print(f"The estimated GPU Power is the average of {lower_model if lower_model else ""} and {higher_model if higher_model else ""}")
           flops = CHIP_FLOPS.get(higher_model) or CHIP_FLOPS.get(lower_model) or DeviceFlops(fp32=0, fp16=0, int8=0)
       else:
+        print(f"Could not find a similar model to {gpu_name}")
         flops = (DeviceFlops(fp32=0, fp16=0, int8=0))
 
     return DeviceCapabilities(
