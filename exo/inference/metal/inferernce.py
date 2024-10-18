@@ -115,3 +115,19 @@ class MetalDynamicShardInferenceEngine:
             # Initialize Metal engine with new shard
             await self.initialize_metal_engine(model_shard)
             self.shard = shard
+
+    async def _load_metal_shard(self, path: str, shard: MetalModelShard):
+        """Load model weights and convert to Metal format"""
+        # Load weights and config
+        weights, config = await load_shard(path, shard)
+        
+        # Convert weights to Metal buffers
+        metal_weights = {}
+        for name, weight in weights.items():
+            metal_weights[name] = await self._numpy_to_metal_buffer(weight)
+            
+        return MetalModelShard(
+            kernel_metadata=shard.kernel_metadata,
+            weights=metal_weights,
+            config=config
+        )
