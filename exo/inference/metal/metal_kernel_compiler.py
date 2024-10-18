@@ -16,3 +16,6 @@ class MetalKernelCompiler:
             bindings.append(f"device const float* input{i} [[buffer({i})]]")
         bindings.append(f"device float* output [[buffer({num_inputs})]]")
         return ",\n            ".join(bindings)
+
+    def _convert_shape_to_metal(self, shape: List[int]) -> str:
+        return f"uint3({', '.join(str(x) for x in shape)})"
