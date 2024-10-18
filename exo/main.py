@@ -2,10 +2,11 @@ import argparse
 import asyncio
 import signal
 import json
+import platform
 import time
 import traceback
 import uuid
-import sys
+import webbrowser
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
@@ -172,6 +173,9 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   finally:
     node.on_token.deregister(callback_id)
 
+def open_web_chat():
+  if web_chat_urls:
+    webbrowser.open(web_chat_urls[0])
 
 async def main():
   loop = asyncio.get_running_loop()
@@ -179,9 +183,11 @@ async def main():
   # Use a more direct approach to handle signals
   def handle_exit():
     asyncio.ensure_future(shutdown(signal.SIGTERM, loop))
+  
 
-  for s in [signal.SIGINT, signal.SIGTERM]:
-    loop.add_signal_handler(s, handle_exit)
+  if platform.system() != "Windows":
+    for s in [signal.SIGINT, signal.SIGTERM]:
+      loop.add_signal_handler(s, handle_exit)
 
   await node.start(wait_for_peers=args.wait_for_peers)
 
@@ -193,6 +199,7 @@ async def main():
     await run_model_cli(node, inference_engine, model_name, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
+    open_web_chat()
     await asyncio.Event().wait()
 
 
