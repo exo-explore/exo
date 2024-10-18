@@ -76,3 +76,19 @@ class MetalDynamicShardInferenceEngine:
         is_finished = (output_data.size == 1 and 
                       output_data.item() == self.tokenizer.eos_token_id)
         return output_data, "", is_finished
+
+    async def infer_tensor(self, request_id: str, shard: MetalModelShard,
+                          input_data: np.ndarray,
+                          inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
+        """Run inference on raw tensor input"""
+        await self.ensure_shard(shard)
+        
+        # Convert numpy array to Metal buffer
+        input_buffer = await self._numpy_to_metal_buffer(input_data)
+        
+        # Run inference kernels
+        output_data = await self._run_inference_kernels(request_id, input_buffer)
+        
+        is_finished = (output_data.size == 1 and 
+                      output_data.item() == self.tokenizer.eos_token_id)
+        return output_data, "", is_finished
