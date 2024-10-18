@@ -123,3 +123,49 @@ class MetalKernelCompiler:
             attributes=op.attributes or {},
             op_type=op.op_type
         )
+
+    def compile_kernel_to_metal(self, kernel: Kernel) -> Tuple[str, MetalKernelMetadata]:
+        """Compile a TinyGrad kernel to Metal shader code"""
+        
+        # Analyze kernel operations
+        lin = Linearizer(kernel.name, kernel.uops, {})
+        ops = []
+        for buf in lin.bufs:
+            for op in buf.ops:
+                metal_op = self._convert_op_to_metal(op)
+                ops.append(metal_op)
+
+        # Create metadata
+        metadata = MetalKernelMetadata(
+            name=kernel.name,
+            input_shapes=kernel.input_shapes,
+            output_shape=kernel.output_shape,
+            work_group_size=kernel.work_group_size,
+            global_size=kernel.global_size,
+            buffer_sizes=[np.prod(shape) for shape in kernel.input_shapes],
+            op_sequence=ops
+        )
+
+        # Generate Metal code
+        metal_code = f"""
+        #include <metal_stdlib>
+        using namespace metal;
+        
+        kernel void {kernel.name}(
+            {self._generate_buffer_bindings(len(metadata.input_shapes))},
+            uint3 gid [[thread_position_in_grid]],
+            uint3 grid_size [[threads_per_grid]])
+        {{
+            // Calculate global index
+            const uint idx = {self._generate_index_calculation(len(kernel.output_shape))};
+            if (idx >= {np.prod(kernel.output_shape)}) return;
+            
+            // Declare temporary variables
+            {self._generate_temp_declarations(ops)}
+            
+            // Kernel computation
+            {self._generate_computation_code(ops)}
+        }}
+        """
+        
+        return metal_code, metadata
