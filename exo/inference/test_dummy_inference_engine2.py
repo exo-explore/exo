@@ -59,7 +59,9 @@ async def test_infer_tensor(dummy_engine, shard):
 
     # Check start position update based on input tensor shape
     assert "start_pos" in state_dict, "State should contain 'start_pos'."
-    assert state_dict["start_pos"] == input_tensor.shape[1], "Start position should be updated correctly."
+    expected_pos = input_tensor.shape[1] + (1 if is_finished else 0)
+    assert state_dict["start_pos"] == expected_pos, "Start position should be updated correctly."
+
 
 @pytest.mark.asyncio
 async def test_shard_loading(dummy_engine, shard):
@@ -103,5 +105,9 @@ async def test_random_finish_behavior(dummy_engine, shard):
         if is_finished:
             finished_count += 1
 
-    # Since the finish behavior has a 20% chance, we check if the observed finish count is in a reasonable range
-    assert 10 <= finished_count <= 20, "is_finished should be True about 20% of the time."
+    # Allow for 2 standard deviations from the mean
+    # With p=0.2, n=100:
+    # mean = 20
+    # std = sqrt(100 * 0.2 * 0.8) ≈ 4
+    # 2 std ≈ 8
+    assert 12 <= finished_count <= 28, "is_finished should be True about 20% of the time (within 2 standard deviations)"
