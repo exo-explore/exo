@@ -104,7 +104,8 @@ class ShardedHuggingFaceModel:
           pretrained_model_name_or_path=self.local_model_path,
           torch_dtype=self.dtype,
           device_map=self.device_map,
-          offload_buffers=offload_buffers
+          offload_buffers=offload_buffers,
+          num_hidden_layers=int(shard.end_layer - shard.start_layer)
         ).to(self.device)
 
       self.model = self.llm_model.model.to(self.device)
