@@ -10,3 +10,8 @@ class UOp:
     op: str
     dtype: Any
     args: List[Any]
+
+@dataclass
+class Kernel:
+    name: str
+    uops: List[UOp]
