@@ -9,17 +9,17 @@ class MetalKernelCompiler:
         self.kernels: Dict[str, str] = {}
         self.kernel_order: List[str] = []
         self.kernel_metadata: Dict[str, MetalKernelMetadata] = {}
-
+        
     def _generate_buffer_bindings(self, num_inputs: int) -> str:
         bindings = []
         for i in range(num_inputs):
             bindings.append(f"device const float* input{i} [[buffer({i})]]")
         bindings.append(f"device float* output [[buffer({num_inputs})]]")
         return ",\n            ".join(bindings)
-
+    
     def _convert_shape_to_metal(self, shape: List[int]) -> str:
         return f"uint3({', '.join(str(x) for x in shape)})"
-
+    
     def _generate_index_calculation(self, dims: int) -> str:
         if dims == 1:
             return "gid.x"
@@ -40,7 +40,7 @@ class MetalKernelCompiler:
             dtypes.uint8: "uchar",
         }
         return dtype_map.get(dtype, "float")
-
+    
     def _convert_op_to_metal(self, op: Any) -> KernelOperation:
         """Convert TinyGrad operations to Metal operations"""
         if hasattr(op, "op"):
@@ -123,7 +123,7 @@ class MetalKernelCompiler:
             attributes=op.attributes or {},
             op_type=op.op_type
         )
-
+    
     def compile_kernel_to_metal(self, kernel: Kernel) -> Tuple[str, MetalKernelMetadata]:
         """Compile a TinyGrad kernel to Metal shader code"""
         
@@ -178,3 +178,7 @@ class MetalKernelCompiler:
             temp_vars.update(op.inputs)
         
         return "\n            ".join(f"float {var};" for var in temp_vars if not var.startswith("input") and not var.startswith("output"))
+
+    def _generate_computation_code(self, ops: List[KernelOperation]) -> str:
+        """Generate the main computation code for the kernel"""
+        return "\n            ".join(self._generate_metal_op_code(op) for op in ops)
