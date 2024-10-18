@@ -4,3 +4,9 @@ import numpy as np
 from tinygrad import dtypes
 from tinygrad.codegen.kernel import Kernel
 # from tinygrad import Linearizer
+
+@dataclass
+class UOp:
+    op: str
+    dtype: Any
+    args: List[Any]
