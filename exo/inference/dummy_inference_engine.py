@@ -2,9 +2,6 @@ from typing import Optional, Tuple, TYPE_CHECKING
 import numpy as np
 import asyncio
 import json
-from typing import Optional, Tuple
-if TYPE_CHECKING:
-    from exo.inference.inference_engine import InferenceEngine
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
 
