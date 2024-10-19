@@ -27,9 +27,10 @@ class DeviceCapabilities:
   chip: str
   memory: int
   flops: DeviceFlops
+  flops_estimated: list = None
 
   def __str__(self):
-    return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}"
+    return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}. Estimated Flops: {self.flops_estimated}"
 
   def __post_init__(self):
     if isinstance(self.flops, dict):
@@ -200,6 +201,8 @@ def linux_device_capabilities() -> DeviceCapabilities:
     gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
     gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
+    flops_estimated = None  # If we estimate the flops based on the models
+
     if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
     flops = CHIP_FLOPS.get(gpu_name)
@@ -212,7 +215,7 @@ def linux_device_capabilities() -> DeviceCapabilities:
         higher_model = None
         gpu_number = extract_number(gpu_name)
 
-        # Find the closest lower and higher models
+        # Find the closest models
         for model, number in adjacent_models.items():
           if number is not None:
             if number < gpu_number and (lower_model is None or number > extract_number(lower_model)):
@@ -221,15 +224,19 @@ def linux_device_capabilities() -> DeviceCapabilities:
               higher_model = model
 
         if lower_model and higher_model:
-          print(f"The estimated GPU Power is the average of {lower_model} and {higher_model}")
           flops = DeviceFlops(
           fp32=(CHIP_FLOPS[lower_model].fp32 + CHIP_FLOPS[higher_model].fp32) // 2,
           fp16=(CHIP_FLOPS[lower_model].fp16 + CHIP_FLOPS[higher_model].fp16) // 2,
           int8=(CHIP_FLOPS[lower_model].int8 + CHIP_FLOPS[higher_model].int8) // 2
           )
+
+          flops_estimated = [lower_model, higher_model]
+
         else:
-          print(f"The estimated GPU Power is the average of {lower_model if lower_model else ""} and {higher_model if higher_model else ""}")
           flops = CHIP_FLOPS.get(higher_model) or CHIP_FLOPS.get(lower_model) or DeviceFlops(fp32=0, fp16=0, int8=0)
+          
+          flops_estimated = [lower_model if lower_model else higher_model]
+
       else:
         print(f"Could not find a similar model to {gpu_name}")
         flops = (DeviceFlops(fp32=0, fp16=0, int8=0))
@@ -239,6 +246,7 @@ def linux_device_capabilities() -> DeviceCapabilities:
       chip=gpu_name,
       memory=gpu_memory_info.total // 2**20,
       flops=flops,
+      flops_estimated=flops_estimated,
     )
   elif Device.DEFAULT == "AMD":
     # TODO AMD support
