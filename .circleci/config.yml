@@ -255,7 +255,36 @@ jobs:
           name: Build exo for Linux
           command: |
             source env/bin/activate
-            python3 install/build_exo.py
+            python3 build-exo/build_exo.py
+      - run:
+          name: Create an AppImage
+          command: |
+            wget -O appimage-builder-x86_64.AppImage https://github.com/AppImageCrafters/appimage-builder/releases/download/v1.1.0/appimage-builder-1.1.0-x86_64.AppImage
+            chmod +x appimage-builder-x86_64.AppImage
+            mkdir -p exo.AppDir/usr/bin
+            cp -r env/lib/python3.12/site-packages/tinygrad exo.AppDir/usr/bin
+            cp -r dist/main.dist/* exo.AppDir/usr/bin
+            # copying icons from docs to exo.AppDir
+            cp docs/exo-rounded.png exo.AppDir
+            cat <<EOF > exo.AppDir/exo.desktop
+            [Desktop Entry]
+            Name=exo
+            Icon=exo-rounded
+            Terminal=false
+            Type=Application
+            Categories=Utility;
+            EOF
+            cat <<EOF > exo.AppDir/AppRun
+            #!/bin/bash
+            export APPDIR="$(dirname "$(readlink -f "$0")")"
+            export PATH="$APPDIR/usr/bin/:$PATH"
+            export LD_LIBRARY_PATH="$APPDIR/usr/lib:$PATH"
+            export XDG_DATA_DIRS="$APPDIR/usr/share/:/usr/share/:$XDG_DATA_DIRS"
+            "$APPDIR"/usr/bin/exo $@
+            EOF
+            ./appimage-builder-x86_64.AppImage ./exo.AppDir
+            mv *.AppImage ./output/
+                        
 
   build_exo_windows:
     executor:
