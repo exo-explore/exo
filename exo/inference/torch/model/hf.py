@@ -62,7 +62,6 @@ class ShardedHuggingFaceModel:
     self.position_ids = None
     self.causal_mask = None
     self.local_model_path = local_model_path
-    self.is_sharded_model = False
 
     # setup logit processors
     self.logits_processor = LogitsProcessorList([
@@ -89,21 +88,17 @@ class ShardedHuggingFaceModel:
           offload_buffers=self.offload_buffers
         )
 
-        # self.is_sharded_model = True
-
         # clear out edited safetensor json
         # this is needed because shard downloader just
         # appends and not redownloads the file
         os.remove(self.model_safetensors_path)
       else:
-        shard_num_hidden_layers = shard.end_layer - shard.start_layer
-        print(f"loading safetensor in {shard_num_hidden_layers} layer model")
+        print("loading full model")
         self.llm_model = AutoModelForCausalLM.from_pretrained(
           pretrained_model_name_or_path=self.local_model_path,
           torch_dtype=self.dtype,
           device_map=self.device_map,
-          offload_buffers=offload_buffers,
-          num_hidden_layers=shard_num_hidden_layers
+          offload_buffers=True
         ).to(self.device)
 
       self.model = self.llm_model.model.to(self.device)
@@ -168,7 +163,10 @@ class ShardedHuggingFaceModel:
         num_hidden_layers=shard_num_hidden_layers
       )
 
-      return llm_model.to(self.device)
+      if self.device_map == "auto":
+        return llm_model
+      else:
+        return llm_model.to(self.device)
 
     except Exception as err:
       print(f"err: {err}")
@@ -264,14 +262,11 @@ class ShardedHuggingFaceModel:
       self.cache_position = model_inputs["cache_position"]
       self.past_key_values = model_inputs["past_key_values"]
 
-    if DEBUG >= 4:
-      print(f"model_inputs: {model_inputs}")
+      if DEBUG >= 4:
+        print(f"model_inputs: {model_inputs}")
 
     # run through decoder layers
-    # if self.is_sharded_model:
     layer_amt = range(self.shard.end_layer - self.shard.start_layer)
-    # else:
-    #   layer_amt = range(self.shard.start_layer, self.shard.end_layer)
 
     if DEBUG >= 4:
       print(f"hidden_states: {self.hidden_states}")
@@ -316,7 +311,7 @@ class ShardedHuggingFaceModel:
     # shard is last layer says true at the start and not detecting last layer correctly
     if self.shard.is_last_layer():
       self.hidden_states = self.model.norm(self.hidden_states)
-      if use_legacy_cache and self.next_decoder_cache is not None:
+      if use_legacy_cache:
         self.past_key_values = self.next_decoder_cache.to_legacy_cache()
       else:
         self.past_key_values = self.next_decoder_cache
