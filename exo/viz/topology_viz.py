@@ -219,7 +219,7 @@ class TopologyViz:
       if device_capabilities.flops_estimated:
         node_info.append("\n\n")
         node_info.append(f"This FLOPS is estimated by:")
-        node_info.append(f"{', '.join(device_capabilities.flops_estimated) if isinstance(device_capabilities.flops_estimated, list) else device_capabilities.flops_estimated}")
+        node_info.append(f"{', '.join(device_capabilities.flops_estimated)}")
 
       # Calculate info position based on angle
       info_distance_x = radius_x + 6
