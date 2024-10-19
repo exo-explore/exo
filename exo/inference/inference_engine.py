@@ -8,7 +8,7 @@ from .shard import Shard
 
 class InferenceEngine(ABC):
   @abstractmethod
-  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> (np.ndarray, str, bool):
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, image_str: Optional[str] = None, inference_state: Optional[str] = None) -> Tuple[np.ndarray, str, bool]:
     pass
 
   @abstractmethod
@@ -17,6 +17,7 @@ class InferenceEngine(ABC):
 
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
+  print(f"get_inference_engine called with: {inference_engine_name}")  # Debug print
   if inference_engine_name == "mlx":
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 
@@ -27,5 +28,8 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  elif inference_engine_name == "dummy":
+    from exo.inference.dummy_inference_engine import DummyInferenceEngine
+    return DummyInferenceEngine(shard_downloader)
   else:
-    raise ValueError(f"Inference engine {inference_engine_name} not supported")
+      raise ValueError(f"Inference engine {inference_engine_name} not supported. Supported engines are 'mlx', 'tinygrad', and 'dummy'.")
