@@ -51,9 +51,9 @@ class HFSafeTensorShard:
         backup_path = safetensor_path+".backup"
         if not os.path.exists(backup_path):
           shutil.copy(safetensor_path, backup_path)
-          print(f"Backup created at {backup_path}")
-        else:
-          print("Backup already exists. Skipping backup.")
+
+          if DEBUG >= 4:
+            print(f"Backup created at {backup_path}")
     except Exception as err:
       print(f"Error in backup_safetensor: {err}")
       raise
@@ -80,19 +80,22 @@ class HFSafeTensorShard:
                 print(f"modify_safetensor [{layer_number}] extracting {key}")
               new_tensors[key] = f.get_tensor(key)
               safetensor_is_used = True
-          
+
           # Save the modified safetensor
           if safetensor_is_used:
             save_file(new_tensors, safetensor_path, metadata)
             modified_size = os.path.getsize(safetensor_path)
 
-            print(f"Safetensor modified and saved to {safetensor_path}")
-            print(f"Initial size: {initial_size / (1024**3):.2f} GB")
-            print(f"Modified size: {modified_size / (1024**3):.2f} GB")
+            if DEBUG >= 4:
+              print(f"Safetensor modified and saved to {safetensor_path}")
+              print(f"Initial size: {initial_size / (1024**3):.2f} GB")
+              print(f"Modified size: {modified_size / (1024**3):.2f} GB")
           else:
             # remove unused safetensors
             os.remove(safetensor_path)
-            print(f"Removed safetensor: {safetensor_path}")
+
+            if DEBUG >= 4:
+              print(f"Removed safetensor: {safetensor_path}")
     except Exception as err:
       print(f"Error modifying safetensor: {err}")
       raise
@@ -126,7 +129,9 @@ class HFSafeTensorShard:
       backup_index_path = f"{self.model_path}/model.safetensors.index.json.backup"
       if not os.path.exists(backup_index_path):
         shutil.copy(self.safetensor_index_path, backup_index_path)
-        print(f"backed up index json {self.safetensor_index_path}")
+
+        if DEBUG >= 4:
+          print(f"backed up index json {self.safetensor_index_path}")
 
     if self.safetensors_path:
       # initialize the metadata and weight_map 
@@ -168,7 +173,8 @@ class HFSafeTensorShard:
       with open(self.safetensor_index_path, "w") as f:
         json.dump(self.metadata, f, indent=4)
 
-      print("model.safetensors.index.json created")
+      if DEBUG >= 4:
+        print(f"created new {self.safetensor_index_path}")
     else:
       print("No safetensor files provided.")
 
@@ -176,7 +182,6 @@ class HFSafeTensorShard:
     if weight_map is None:
       weight_map = self.metadata["weight_map"]
 
-    print(f"shard\n{weight_map}")
     layer_weight_map = extract_layers(
       weight_map,
       self.shard
@@ -211,14 +216,18 @@ class HFSafeTensorShard:
           os.remove(safetensor_path)
           shutil.copy(backup_path, safetensor_path)
           os.remove(backup_path)
-          print(f"Safetensor restored from backup at {backup_path}")
+
+          if DEBUG >= 4:
+            print(f"Safetensor restored from backup at {backup_path}")
 
       backup_index_path = self.safetensor_index_path+".backup"
       if os.path.exists(backup_index_path):
         os.remove(self.safetensor_index_path)
         shutil.copy(backup_index_path, self.safetensor_index_path)
         os.remove(backup_index_path)
-        print(f"Safetensor index JSON restored from backup at {backup_index_path}")
+
+        if DEBUG >= 4:
+          print(f"Safetensor index JSON restored from backup at {backup_index_path}")
     except Exception as err:
       print(f"Error in restore_backup: {err}")
       raise
