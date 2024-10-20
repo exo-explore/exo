@@ -298,13 +298,13 @@ jobs:
       - run:
           name: Install Conda
           command: |
-            choco install anaconda3
+            choco install anaconda3 --yes
       - run:
           name: Set up Conda environment
           command: |
             conda create -n exo-env python=3.12 --yes
             conda activate exo-env
-            conda install -c conda-forge python=3.12
+            conda install -c conda-forge python=3.12 
             conda install -c conda-forge libstatic
             conda install -c conda-forge rust
       - run:
