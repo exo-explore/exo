@@ -293,7 +293,7 @@ jobs:
                       
   build_exo_windows:
     executor: 
-      name: windows/default
+      name: win/default
     steps:
       - checkout
       - run:
