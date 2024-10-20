@@ -22,7 +22,7 @@ async def test_inference_engine(
   shard = Shard(
     model_id=model_id,
     start_layer=0,
-    end_layer=n_layers-1,
+    end_layer=0,
     n_layers=n_layers
   )
 

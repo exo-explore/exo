@@ -19,9 +19,10 @@ from exo.inference.torch.utils import extract_layers
 
 class HFSafeTensorShard:
   def __init__(self, model_path: Path, shard: Shard):
-    self.model_path = model_path 
+    self.model_path = model_path
     self.shard = shard
     self.safetensors_path = self.get_safetensors()
+    self.safetensor_index_path = f"{self.model_path}/model.safetensors.index.json"
 
   def get_safetensors(self) -> list:
     safetensors_path = []
@@ -41,7 +42,7 @@ class HFSafeTensorShard:
         backup_path = safetensor_path+".backup"
         if not os.path.exists(backup_path):
           shutil.copy(safetensor_path, backup_path)
-          print(f"Backup created at {backup_path}")
+          print(f"Backup created at {backup_path}") 
         else:
           print("Backup already exists. Skipping backup.")
     except Exception as err:
@@ -49,27 +50,40 @@ class HFSafeTensorShard:
       raise
 
   def modify_safetensor(self):
-    # Ensure the safetensor is backed up before modifying
+    """
+    Extract needed weights for layers from safetensor files
+    and create a new safetensor with same names
+    """
     try:
       self.backup_safetensor()
-
+      safetensor_is_used = False
       for safetensor_path in self.safetensors_path:
+        initial_size = os.path.getsize(safetensor_path)
         with safe_open(safetensor_path, framework="pt") as f:
           metadata = f.metadata()
           new_tensors = {}
 
           # Iterate over tensors, including only those within the specified layer range
-          print(f"\n{f.keys()}\n")
           for key in f.keys():
             layer_number = self.extract_layer_number(key)
             if self.shard.start_layer <= layer_number <= self.shard.end_layer:
               if DEBUG >= 4:
                 print(f"modify_safetensor [{layer_number}] extracting {key}")
               new_tensors[key] = f.get_tensor(key)
-
+              safetensor_is_used = True
+          
           # Save the modified safetensor
-          save_file(new_tensors, safetensor_path, metadata)
-          print(f"Safetensor modified and saved to {safetensor_path}")
+          if safetensor_is_used:
+            save_file(new_tensors, safetensor_path, metadata)
+            modified_size = os.path.getsize(safetensor_path)
+
+            print(f"Safetensor modified and saved to {safetensor_path}")
+            print(f"Initial size: {initial_size / (1024**3):.2f} GB")
+            print(f"Modified size: {modified_size / (1024**3):.2f} GB")
+          else:
+            # remove unused safetensors
+            os.remove(safetensor_path)
+            print(f"Removed safetensor: {safetensor_path}")
     except Exception as err:
       print(f"Error modifying safetensor: {err}")
       raise
@@ -91,23 +105,6 @@ class HFSafeTensorShard:
       print(f"Error extracting layer number from key '{key}': {err}")
       return -1
 
-  def restore_backup(self):
-    """
-    Restore the original safetensor from the backup file.
-    This is useful when you want to reset to the original before making new modifications.
-    """
-    try:
-      for safetensor_path in self.safetensors_path:
-        backup_path = safetensor_path+".backup"
-        if os.path.exists(backup_path):
-          shutil.copy(backup_path, safetensor_path)
-          print(f"Safetensor restored from backup at {backup_path}")
-        else:
-          print("No backup found. Cannot restore.")
-    except Exception as err:
-      print(f"Error in restore_backup: {err}")
-      raise
-
   def create_safetensor_index(self):
     """
     Creates a model.safetensors.index.json file from a list of safetensor files.
@@ -116,6 +113,12 @@ class HFSafeTensorShard:
 
     Raises:
     """
+    if os.path.exists(self.safetensor_index_path):
+      backup_index_path = f"{self.model_path}/model.safetensors.index.json.backup"
+      if not os.path.exists(backup_index_path):
+        shutil.copy(self.safetensor_index_path, backup_index_path)
+        print(f"backed up index json {self.safetensor_index_path}")
+
     if self.safetensors_path:
       # initialize the metadata and weight_map
       metadata = {
@@ -130,18 +133,15 @@ class HFSafeTensorShard:
         shard_name = os.path.basename(safetensor_file)
 
         # open the safetensor file to read the metadata
-        with safe_open(safetensor_file, framework="pt") as f:
+        with safe_open(safetensor_file, framework="pt", device="cpu") as f:
           # get tensor names
           tensor_names = f.keys()
 
           # collect metadata for each tensor
           for name in tensor_names:
             tensor_data = f.get_tensor(name)
-            print(f"tensor_data: {tensor_data}")
             shape = tensor_data.shape
             dtype = tensor_data.dtype
-            print(f"shape: {shape}")
-            print(f"dtype: {str(dtype) == "torch.bfloat16"}")
 
             # calculate the tensor size in bytes based on dtype
             total_elements = 1
@@ -163,7 +163,7 @@ class HFSafeTensorShard:
             metadata["weight_map"][name] = shard_name
 
       # write the metadata and weight map to the index file
-      with open(f"{self.model_path}/model.safetensors.index.json", "w") as f:
+      with open(self.safetensor_index_path, "w") as f:
         json.dump(metadata, f, indent=4)
 
       print("model.safetensors.index.json created")
@@ -179,19 +179,41 @@ class HFSafeTensorShard:
     # rewrite model.safetensors.index.json for only needed layers
     try:
       mst_json = {}
-      for safetensor_path in self.safetensors_path:
-        with open(safetensor_path, "r") as mst_file:
-          mst_json = json.load(mst_file)
-          mst_json["weight_map"] = layer_weight_map
+      with open(self.safetensor_index_path, "r") as mst_file:
+        mst_json = json.load(mst_file)
+        mst_json["weight_map"] = layer_weight_map
 
-        if DEBUG >= 4:
-          print(f"rewritten safetensor index \n{json.dumps(mst_json, indent=4)}")
+      if DEBUG >= 4:
+        print(f"new safetensor index\n{json.dumps(mst_json, indent=4)}\n")
 
-          os.remove(safetensor_path)
+      os.remove(self.safetensor_index_path)
 
-          with open(safetensor_path, "w") as mst_file:
-            json.dump(mst_json, mst_file, indent=4)
+      with open(self.safetensor_index_path, "w") as mst_file:
+        json.dump(mst_json, mst_file, indent=4)
     except Exception as err:
       print(f"err: {err}")
       raise
- 
+
+  def restore_backups(self):
+    """
+    Restore the original safetensor and index json, if any, from the backup file.
+    """
+    try:
+      for safetensor_path in self.safetensors_path:
+        backup_path = safetensor_path+".backup"
+        if os.path.exists(backup_path):
+          shutil.copy(backup_path, safetensor_path)
+          print(f"Safetensor restored from backup at {backup_path}")
+        else:
+          print("No backup found. Cannot restore.")
+
+      backup_index_path = self.safetensor_index_path+".backup"
+      if os.path.exists(backup_index_path):
+        shutil.copy(backup_index_path, self.safetensor_index_path)
+        print(f"Safetensor index JSON restored from backup at {backup_index_path}")
+      else:
+        print("No backup found. Cannot restore")
+    except Exception as err:
+      print(f"Error in restore_backup: {err}")
+      raise
+
