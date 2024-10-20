@@ -270,7 +270,7 @@ jobs:
             cp -r dist/main.dist/* exo.AppDir/usr/bin
             # copying icons from docs to exo.AppDir
             cp docs/exo-rounded.png exo.AppDir
-            cat > exo.AppDir/exo.desktop << 'EOF'
+            cat > exo.AppDir/exo.desktop \<< 'EOF'
             [Desktop Entry]
             Name=exo
             Icon=exo-rounded
@@ -278,7 +278,7 @@ jobs:
             Type=Application
             Categories=Utility;
             EOF
-            cat > exo.AppDir/AppRun << 'EOF'
+            cat > exo.AppDir/AppRun \<< 'EOF'
             #!/bin/bash
             export APPDIR="$(dirname "$(readlink -f "$0")")"
             export PATH="$APPDIR/usr/bin/:$PATH"
