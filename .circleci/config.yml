@@ -2,7 +2,7 @@ version: 2.1
 
 orbs:
   python: circleci/python@2
-  windows: circleci/windows@4
+  win: circleci/windows@4
 commands:
   run_chatgpt_api_test:
     parameters:
