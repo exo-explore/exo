@@ -221,7 +221,7 @@ jobs:
             source env/bin/activate
             pip install --upgrade pip
             pip install .
-            python3 install/build_exo.py
+            python3 buildexo/build_exo.py
       - run:
           name: Install dependencies
           command: |
@@ -262,7 +262,7 @@ jobs:
           command: |
             source env/bin/activate
             pwd
-            python3 exo/build-exo/build_exo.py
+            python3 buildexo/build_exo.py
       - run:
           name: Create an AppImage
           command: |
@@ -315,7 +315,7 @@ jobs:
           name: Build Exo for Windows
           command: |
             .\env\Scripts\activate
-            python install/build_exo.py
+            python buildexo/build_exo.py
 
 workflows:
   version: 2
