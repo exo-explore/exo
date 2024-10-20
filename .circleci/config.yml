@@ -233,7 +233,11 @@ jobs:
           command: |
             source env/bin/activate
             python3 build/build_exo.py
-
+      - run:
+          name: Create a macOS app
+          command: |
+            mv dist/main.app dist/exo.app
+        
   build_exo_linux:
     machine: ubuntu-2024:current
     steps:
