@@ -38,7 +38,7 @@ def run():
     elif sys.platform == "win32":  
         command.extend([
             "--onefile",
-            "--windows-icon-from-ico=docs/exo-rounded.png"  
+            "--windows-icon-from-ico=docs/exo-logo-win.ico"  
         ])
     elif sys.platform.startswith("linux"):  
         command.extend([
