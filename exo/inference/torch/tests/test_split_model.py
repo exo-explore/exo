@@ -10,8 +10,6 @@ from typing import Optional
 
 import torch
 
-from transformers.modeling_utils import offload_weight
-
 from exo.download.hf.hf_helpers import get_weight_map
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
