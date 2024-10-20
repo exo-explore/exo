@@ -301,21 +301,17 @@ jobs:
           command: |
             choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64" --yes
       - run:
-          name: Install Git
+          name: Install git
           command: |
             choco install git
       - run:
-          name: Clone and Build Python from Source
+          name: Clone and build python from source
           command: |
             refreshenv
             git clone https://github.com/python/cpython.git
             cd cpython
-            git checkout v3.12
-            .\PCbuild\build.bat -p x64 -c Release
-      - run:
-          name: Build Static Python Library
-          command: |
-            cd cpython\PCbuild
+            git checkout v3.12.0
+            cd PCbuild
             .\build.bat -p x64 -c Release -e -t Build --pgo
             .\build.bat -p x64 -c Release -e -t Build python.exe pyshellext pythonw.exe python3dll python312.dll venvlauncher.exe venvwlauncher.exe
       - run:
@@ -325,10 +321,6 @@ jobs:
             python -m ensurepip
             python -m pip install --upgrade pip
             pip install .
-      - run:
-          name: Install Nuitka
-          command: |
-            pip install nuitka
       - run:
           name: Build Exo for Windows
           command: |
