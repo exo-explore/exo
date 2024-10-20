@@ -316,7 +316,7 @@ jobs:
           name: Build static libpython
           command: |
             cd cpython\PCbuild
-            .\build.bat -p x64 -c Release --static
+            .\build.bat -p x64 -c Release 
       - run:
           name: Set up Python environment
           command: |
