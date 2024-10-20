@@ -170,3 +170,9 @@ cython_debug/
 #.idea/
 
 **/*.xcodeproj/*
+
+# PyTorch interface
+.offload
+
+# neovim/vim settings 
+.vimrc

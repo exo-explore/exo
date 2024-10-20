@@ -79,6 +79,7 @@ if args.discovery_module == "udp":
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(args.node_id, args.node_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout, tailscale_api_key=args.tailscale_api_key, tailnet=args.tailnet_name)
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
+
 node = StandardNode(
   args.node_id,
   None,
@@ -146,6 +147,26 @@ async def shutdown(signal, loop):
 
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
+  if model_name.startswith("hf.co/"):  # running example: "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0"
+    if ":" not in model_name:
+      print("Error: Couldnt infer quantisation.")
+      return
+    model_link, q = model_name.split(":")  # "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF", "Q8_0"
+
+    # download required files from link
+    stripped_model_name = model_link.split("/")[-1][:-5]  # Llama-3.2-1B-Instruct
+    repo_id = model_link[6:]  # bartowski/Llama-3.2-1B-Instruct-GGUF
+
+    gguf_file = f"{stripped_model_name}-{q}.gguf"
+    save_path = get_hf_home() / ".gguf"
+
+    print("Downloading files!", gguf_file)
+    async with aiohttp.ClientSession() as session:
+      await download_file(session, repo_id=repo_id, revision="main", file_path=gguf_file, save_directory=str(save_path))
+
+    # TODO: load the gguf file into llama.cpp
+    return
+
   shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
   if not shard:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
@@ -206,6 +227,7 @@ def run():
   finally:
     loop.run_until_complete(shutdown(signal.SIGTERM, loop))
     loop.close()
+
 
 if __name__ == "__main__":
   run()
