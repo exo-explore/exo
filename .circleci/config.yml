@@ -310,9 +310,14 @@ jobs:
             refreshenv
             git clone https://github.com/python/cpython.git
             cd cpython
-            git checkout v3.12.0
+            git checkout v3.12
             .\PCbuild\build.bat -p x64 -c Release
-            .\PCbuild\build.bat -p x64 -c Release --static
+      - run:
+          name: Build Static Python Library
+          command: |
+            cd cpython\PCbuild
+            .\build.bat -p x64 -c Release -e -t Build --pgo
+            .\build.bat -p x64 -c Release -e -t Build python.exe pyshellext pythonw.exe python3dll python312.dll venvlauncher.exe venvwlauncher.exe
       - run:
           name: Set up Python environment
           command: |
@@ -321,8 +326,14 @@ jobs:
             python -m pip install --upgrade pip
             pip install .
       - run:
+          name: Install Nuitka
+          command: |
+            pip install nuitka
+      - run:
           name: Build Exo for Windows
           command: |
+            $env:PYTHONPATH = "C:\Users\circleci\project\cpython\Lib;C:\Users\circleci\project\cpython\PCbuild\amd64"
+            $env:PYTHON_LIBRARY = "C:\Users\circleci\project\cpython\PCbuild\amd64\python312.lib"
             python buildexo/build_exo.py
 
 workflows:
