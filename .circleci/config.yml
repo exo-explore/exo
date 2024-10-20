@@ -241,7 +241,7 @@ jobs:
   build_exo_linux:
     machine:
       image: ubuntu-2024:current
-    resource_class: large
+    resource_class: medium
     steps:
       - checkout
       - run:
