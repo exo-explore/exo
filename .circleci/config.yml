@@ -2,7 +2,7 @@ version: 2.1
 
 orbs:
   python: circleci/python@2
-  win: circleci/windows@4
+  win: circleci/windows@5.0
 commands:
   run_chatgpt_api_test:
     parameters:
@@ -239,7 +239,10 @@ jobs:
             mv dist/main.app dist/exo.app
         
   build_exo_linux:
-    machine: ubuntu-2024:current
+    type: machine
+    machine:
+      image: ubuntu-2024:current
+    resource_class: large
     steps:
       - checkout
       - run:
@@ -291,9 +294,7 @@ jobs:
                         
 
   build_exo_windows:
-    executor:
-      name: win/default
-      size: medium
+    executor: win/default
     steps:
       - checkout
       - run:
