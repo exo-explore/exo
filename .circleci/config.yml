@@ -292,40 +292,31 @@ jobs:
             mv *.AppImage ./output/
                       
   build_exo_windows:
-    executor: 
-      name: win/default
+    executor: win/default
     steps:
       - checkout
       - run:
-          name: Install Visual Studio Build Tools
+          name: Install Conda
           command: |
-            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64" --yes
+            choco install anaconda3 --yes
       - run:
-          name: Install git
+          name: Set up Conda environment
           command: |
-            choco install git
+            conda create -n exo-env python=3.12 --yes
+            conda activate exo-env
+            conda install -c conda-forge python=3.12
+            conda install -c conda-forge libstatic
+            conda install -c conda-forge rust
       - run:
-          name: Clone and build python from source
+          name: Install dependencies
           command: |
-            refreshenv
-            git clone https://github.com/python/cpython.git
-            cd cpython
-            git checkout v3.12.0
-            cd PCbuild
-            .\build.bat -p x64 -c Release -e -t Build --pgo
-            .\build.bat -p x64 -c Release -e -t Build python.exe pyshellext pythonw.exe python3dll python312.dll venvlauncher.exe venvwlauncher.exe
-      - run:
-          name: Set up Python environment
-          command: |
-            $env:PATH = "C:\Users\circleci\project\cpython\PCbuild\amd64;$env:PATH"
-            python -m ensurepip
-            python -m pip install --upgrade pip
+            conda activate exo-env
+            pip install --upgrade pip
             pip install .
       - run:
           name: Build Exo for Windows
           command: |
-            $env:PYTHONPATH = "C:\Users\circleci\project\cpython\Lib;C:\Users\circleci\project\cpython\PCbuild\amd64"
-            $env:PYTHON_LIBRARY = "C:\Users\circleci\project\cpython\PCbuild\amd64\python312.lib"
+            conda activate exo-env
             python buildexo/build_exo.py
 
 workflows:
