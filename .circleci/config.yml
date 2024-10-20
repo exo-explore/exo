@@ -295,40 +295,40 @@ jobs:
                         
 
   build_exo_windows:
-  executor: win/default
-  steps:
-    - checkout
-    - run:
-        name: Install Build Tools
-        command: |
-          choco install visualstudio2019buildtools
-          choco install python --version=3.12
-          choco install rust
-    - run:
-        name: Compile Python from Source
-        command: |
-          git clone https://github.com/python/cpython.git
-          cd cpython
-          git checkout v3.12.0  
-          ./configure --enable-static
-          nmake
-          nmake install
-    - run:
-        name: Set up Python virtual environment
-        command: |
-          python -m venv env
-          .\env\Scripts\activate
-    - run:
-        name: Install dependencies
-        command: |
-          .\env\Scripts\activate
-          pip install --upgrade pip
-          pip install .
-    - run:
-        name: Build Exo for Windows
-        command: |
-          .\env\Scripts\activate
-          python buildexo/build_exo.py
+    executor: win/default
+    steps:
+      - checkout
+      - run:
+          name: Install Build Tools
+          command: |
+            choco install visualstudio2019buildtools
+            choco install python --version=3.12
+            choco install rust
+      - run:
+          name: Compile Python from Source
+          command: |
+            git clone https://github.com/python/cpython.git
+            cd cpython
+            git checkout v3.12.0  
+            ./configure --enable-static
+            nmake
+            nmake install
+      - run:
+          name: Set up Python virtual environment
+          command: |
+            python -m venv env
+            .\env\Scripts\activate
+      - run:
+          name: Install dependencies
+          command: |
+            .\env\Scripts\activate
+            pip install --upgrade pip
+            pip install .
+      - run:
+          name: Build Exo for Windows
+          command: |
+            .\env\Scripts\activate
+            python buildexo/build_exo.py
 
 workflows:
   version: 2
