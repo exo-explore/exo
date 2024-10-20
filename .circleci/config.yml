@@ -239,7 +239,6 @@ jobs:
             mv dist/main.app dist/exo.app
         
   build_exo_linux:
-    type: machine
     machine:
       image: ubuntu-2024:current
     resource_class: large
@@ -255,7 +254,7 @@ jobs:
       - run:
           name: Install dependencies
           command: |
-            source env/bin/python
+            source env/bin/activate
             pip install --upgrade pip
             pip install .
       - run:
@@ -273,7 +272,7 @@ jobs:
             cp -r dist/main.dist/* exo.AppDir/usr/bin
             # copying icons from docs to exo.AppDir
             cp docs/exo-rounded.png exo.AppDir
-            cat > exo.AppDir/exo.desktop \<< 'EOF'
+            cat > exo.AppDir/exo.desktop << 'EOF'
             [Desktop Entry]
             Name=exo
             Icon=exo-rounded
@@ -281,14 +280,15 @@ jobs:
             Type=Application
             Categories=Utility;
             EOF
-            cat > exo.AppDir/AppRun \<< 'EOF'
+            cat > exo.AppDir/AppRun << 'EOF'
             #!/bin/bash
             export APPDIR="$(dirname "$(readlink -f "$0")")"
             export PATH="$APPDIR/usr/bin/:$PATH"
-            export LD_LIBRARY_PATH="$APPDIR/usr/lib:$PATH"
+            export LD_LIBRARY_PATH="$APPDIR/usr/lib:$LD_LIBRARY_PATH"
             export XDG_DATA_DIRS="$APPDIR/usr/share/:/usr/share/:$XDG_DATA_DIRS"
-            "$APPDIR"/usr/bin/exo $@
+            "$APPDIR"/usr/bin/exo "$@"
             EOF
+            chmod +x exo.AppDir/AppRun
             ./appimage-builder-x86_64.AppImage ./exo.AppDir
             mv *.AppImage ./output/
                         
@@ -315,6 +315,7 @@ jobs:
           command: |
             .\env\Scripts\activate
             python install/build_exo.py
+            
 workflows:
   version: 2
   build_and_test:
