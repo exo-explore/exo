@@ -232,7 +232,7 @@ jobs:
           name: Build exo for macOS
           command: |
             source env/bin/activate
-            python3 buildexo/build_exo.py
+            python3 build/build_exo.py
       - run:
           name: Create a macOS app
           command: |
@@ -293,6 +293,7 @@ jobs:
             ./appimage-builder-x86_64.AppImage ./exo.AppDir
             mv *.AppImage ./output/
                         
+
   build_exo_windows:
     executor: win/default
     steps:
@@ -300,9 +301,13 @@ jobs:
       - run:
           name: Install Build Tools
           command: |
-            choco install visualstudio2019buildtools -y
+            choco install visualstudio2019buildtools --version=latest
             choco install python --version=3.12
             choco install rust
+      - run:
+          name: Set Up Visual Studio Environment
+          command: |
+            "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64
       - run:
           name: Compile Python from Source
           command: |
@@ -328,6 +333,7 @@ jobs:
           command: |
             .\env\Scripts\activate
             python buildexo/build_exo.py
+
 
 workflows:
   version: 2
