@@ -293,7 +293,6 @@ jobs:
             ./appimage-builder-x86_64.AppImage ./exo.AppDir
             mv *.AppImage ./output/
                         
-
   build_exo_windows:
     executor: win/default
     steps:
@@ -301,7 +300,7 @@ jobs:
       - run:
           name: Install Build Tools
           command: |
-            choco install visualstudio2019buildtools
+            choco install visualstudio2019buildtools -y
             choco install python --version=3.12
             choco install rust
       - run:
