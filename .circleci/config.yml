@@ -290,35 +290,34 @@ jobs:
             chmod +x exo.AppDir/AppRun
             ./appimage-builder-x86_64.AppImage ./exo.AppDir
             mv *.AppImage ./output/
-                        
-
-build_exo_windows:
-  executor: win/default
-  steps:
-    - checkout
-    - run:
-        name: Install Conda
-        command: |
-          choco install anaconda3 --version=latest
-    - run:
-        name: Set up Conda environment
-        command: |
-          conda create -n exo-env python=3.12 --yes
-          conda activate exo-env
-          conda install -c conda-forge python=3.12
-          conda install -c conda-forge libstatic
-          conda install -c conda-forge rust
-    - run:
-        name: Install dependencies
-        command: |
-          conda activate exo-env
-          pip install --upgrade pip
-          pip install .
-    - run:
-        name: Build Exo for Windows
-        command: |
-          conda activate exo-env
-          python buildexo/build_exo.py
+                      
+  build_exo_windows:
+    executor: win/default
+    steps:
+      - checkout
+      - run:
+          name: Install Conda
+          command: |
+            choco install anaconda3 --version=latest
+      - run:
+          name: Set up Conda environment
+          command: |
+            conda create -n exo-env python=3.12 --yes
+            conda activate exo-env
+            conda install -c conda-forge python=3.12
+            conda install -c conda-forge libstatic
+            conda install -c conda-forge rust
+      - run:
+          name: Install dependencies
+          command: |
+            conda activate exo-env
+            pip install --upgrade pip
+            pip install .
+      - run:
+          name: Build Exo for Windows
+          command: |
+            conda activate exo-env
+            python buildexo/build_exo.py
 
 
 
