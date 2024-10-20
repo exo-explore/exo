@@ -7,6 +7,7 @@ import traceback
 from typing import List, Dict, Optional, Tuple, Union
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
+from exo.topology.adaptive_flops_partitioning_strategy import AdaptiveFlopsPartitioningStrategy
 from .node import Node
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities
@@ -70,6 +71,12 @@ class StandardNode(Node):
         if DEBUG >= 8: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
         download_progress = RepoProgressEvent.from_dict(status_data.get('progress'))
         self.node_download_progress[status_data.get('node_id')] = download_progress
+      if status_data.get("type") == "performance_update":
+        node_id = status_data["node_id"]
+        processing_time = status_data["processing_time"]
+        shard = Shard.from_dict(status_data["shard"])
+        if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+          self.partitioning_strategy.update_node_performance(node_id, processing_time, shard)
       if self.topology_viz:
         self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), self.id, self.node_download_progress)
     except Exception as e:
@@ -77,6 +84,8 @@ class StandardNode(Node):
       if DEBUG >= 1: traceback.print_exc()
 
   async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
+    if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+      await self.recalculate_partitioning() 
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
@@ -98,6 +107,9 @@ class StandardNode(Node):
     resp = await self._process_prompt(base_shard, prompt, image_str, request_id, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
+    if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+      self.partitioning_strategy.update_node_performance(self.id, elapsed_time_ns/1e9, shard) 
+      await self.broadcast_performance_update(node_id, processing_time, shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -176,6 +188,9 @@ class StandardNode(Node):
     resp = await self._process_tensor(shard, tensor, request_id, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
+    if isinstance(self.partitioning_strategy, AdaptiveFlopsPartitioningStrategy):
+      self.partitioning_strategy.update_node_performance(self.id, elapsed_time_ns/1e9, shard) 
+      await self.broadcast_performance_update(node_id, processing_time, shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -432,3 +447,17 @@ class StandardNode(Node):
   @property
   def current_topology(self) -> Topology:
     return self.topology
+
+  async def recalculate_partitioning(self):
+    new_partitions = self.partitioning_strategy.partition(self.topology)
+    if self.topology_viz:
+      self.topology_viz.update_visualization(self.current_topology, new_partitions, self.id)
+      
+  async def broadcast_performance_update(self, node_id: str, processing_time: float, shard: Shard):
+    performance_data = {
+        "type": "performance_update",
+        "node_id": node_id,
+        "processing_time": processing_time,
+        "shard": shard.to_dict()
+    }
+    await self.broadcast_opaque_status("", json.dumps(performance_data))
