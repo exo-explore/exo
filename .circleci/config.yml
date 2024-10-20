@@ -298,7 +298,7 @@ jobs:
       - run:
           name: Install Conda
           command: |
-            choco install anaconda3 --version=latest
+            choco install anaconda3
       - run:
           name: Set up Conda environment
           command: |
