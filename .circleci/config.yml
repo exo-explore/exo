@@ -240,7 +240,7 @@ jobs:
         
   build_exo_linux:
     machine:
-      image: ubuntu-2024:current
+      image: ubuntu-2004:current
     resource_class: medium
     steps:
       - checkout
