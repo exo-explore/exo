@@ -218,10 +218,6 @@ jobs:
           command: |
             brew install python@3.12
             python3.12 -m venv env
-            source env/bin/activate
-            pip install --upgrade pip
-            pip install .
-            python3 buildexo/build_exo.py
       - run:
           name: Install dependencies
           command: |
@@ -232,10 +228,11 @@ jobs:
           name: Build exo for macOS
           command: |
             source env/bin/activate
-            python3 build/build_exo.py
+            python3 buildexo/build_exo.py
       - run:
           name: Create a macOS app
           command: |
+            which python3
             mv dist/main.app dist/exo.app
         
   build_exo_linux:
@@ -257,6 +254,7 @@ jobs:
             source env/bin/activate
             pip install --upgrade pip
             pip install .
+            which python
       - run:
           name: Build exo for Linux
           command: |
