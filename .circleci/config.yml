@@ -299,19 +299,24 @@ jobs:
       - run:
           name: Install Visual Studio Build Tools
           command: |
-            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64" --yes
+            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
       - run:
           name: Install Git
           command: |
-            choco install git --yes
-      - run: 
+            choco install git
+      - run:
           name: Clone and Build Python from Source
           command: |
             refreshenv
             git clone https://github.com/python/cpython.git
             cd cpython
             git checkout v3.12.0
-            .\PCbuild\build.bat -p x64 -c Release --static-library
+            .\PCbuild\build.bat -p x64 -c Release
+      - run:
+          name: Build static libpython
+          command: |
+            cd cpython\PCbuild
+            .\build.bat -p x64 -c Release --static
       - run:
           name: Set up Python environment
           command: |
