@@ -299,12 +299,12 @@ jobs:
       - run:
           name: Install Visual Studio Build Tools
           command: |
-            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64" --yes
       - run:
           name: Install Git
           command: |
-            choco install git
-      - run:
+            choco install git --yes
+      - run: 
           name: Clone and Build Python from Source
           command: |
             refreshenv
