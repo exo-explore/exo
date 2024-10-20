@@ -204,6 +204,7 @@ class HFSafeTensorShard:
         if os.path.exists(backup_path):
           os.remove(safetensor_path)
           shutil.copy(backup_path, safetensor_path)
+          os.remove(backup_path)
           print(f"Safetensor restored from backup at {backup_path}")
         else:
           print("No backup found. Cannot restore.")
@@ -212,6 +213,7 @@ class HFSafeTensorShard:
       if os.path.exists(backup_index_path):
         os.remove(self.safetensor_index_path)
         shutil.copy(backup_index_path, self.safetensor_index_path)
+        os.remove(backup_index_path)
         print(f"Safetensor index JSON restored from backup at {backup_index_path}")
       else:
         print("No backup found. Cannot restore")
