@@ -292,22 +292,32 @@ jobs:
             mv *.AppImage ./output/
                       
   build_exo_windows:
-    executor: win/default
+    executor: 
+      name: windows/default
     steps:
       - checkout
       - run:
-          name: Compile Python from Source
+          name: Install Visual Studio Build Tools
           command: |
+            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+      - run:
+          name: Install Git
+          command: |
+            choco install git
+      - run:
+          name: Clone and Build Python from Source
+          command: |
+            refreshenv
             git clone https://github.com/python/cpython.git
             cd cpython
-            git checkout v3.12.0  
-            ./configure --enable-static
-            make
-            make install
+            git checkout v3.12.0
+            .\PCbuild\build.bat -p x64 -c Release --static-library
       - run:
-          name: Install dependencies
+          name: Set up Python environment
           command: |
-            pip install --upgrade pip
+            $env:PATH = "C:\Users\circleci\project\cpython\PCbuild\amd64;$env:PATH"
+            python -m ensurepip
+            python -m pip install --upgrade pip
             pip install .
       - run:
           name: Build Exo for Windows
