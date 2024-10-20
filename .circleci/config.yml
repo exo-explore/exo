@@ -296,43 +296,23 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install Visual Studio Build Tools
-          command: |
-            choco install visualstudio2019buildtools --version=latest --params "'/Install /IncludeRecommended /IncludeOptional'"
-            choco install python --version=3.12
-            choco install rust
-      - run:
-          name: Set Up Visual Studio Environment
-          command: |
-            cmd /c "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" 
-      - run:
           name: Compile Python from Source
           command: |
             git clone https://github.com/python/cpython.git
             cd cpython
-            git checkout v3.12.0
+            git checkout v3.12.0  
             ./configure --enable-static
             make
             make install
       - run:
-          name: Set up Python virtual environment
-          command: |
-            python -m venv env
-            .\env\Scripts\activate
-      - run:
           name: Install dependencies
           command: |
-            .\env\Scripts\activate
             pip install --upgrade pip
             pip install .
       - run:
           name: Build Exo for Windows
           command: |
-            .\env\Scripts\activate
             python buildexo/build_exo.py
-
-
-
 
 workflows:
   version: 2
