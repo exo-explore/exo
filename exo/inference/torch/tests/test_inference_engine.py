@@ -116,26 +116,26 @@ async def test_inference_engine(
   assert np.array_equal(next_resp_full, resp4)
 
 if __name__ == '__main__':
-  #try:
-  #  print("\n\n -------- TEST Qwen/Qwen2.5-3B-Instruct -------- \n\n")
-  #  asyncio.run(test_inference_engine(
-  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
-  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
-  #    "Qwen/Qwen2.5-3B-Instruct",
-  #    36
-  #  ))
-  #except Exception as err:
-  #  print(f"\n!!!! QWEN2 TEST FAILED \n{err}\n")
-
   try:
-    print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
+    print("\n\n -------- TEST Qwen/Qwen2-0.5B-Instruct -------- \n\n")
     asyncio.run(test_inference_engine(
       TorchDynamicShardInferenceEngine(HFShardDownloader()),
       TorchDynamicShardInferenceEngine(HFShardDownloader()),
-      "unsloth/Meta-Llama-3.1-8B-Instruct",
-      32
+      "Qwen/Qwen2-0.5B-Instruct",
+      36
     ))
   except Exception as err:
-    print(f"\n!!!! unsloth/Meta-Llama-3.1-8B-Instruct TEST FAILED \n{err}\n")
+    print(f"\n!!!! QWEN2 TEST FAILED \n{err}\n")
+
+  #try:
+  #  print("\n-------- Test unsloth/Meta-Llama-3.1-8B-Instruct ----------\n")
+  #  asyncio.run(test_inference_engine(
+  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #    TorchDynamicShardInferenceEngine(HFShardDownloader()),
+  #    "unsloth/Meta-Llama-3.1-8B-Instruct",
+  #    32
+  #  ))
+  #except Exception as err:
+  #  print(f"\n!!!! unsloth/Meta-Llama-3.1-8B-Instruct TEST FAILED \n{err}\n")
 
 

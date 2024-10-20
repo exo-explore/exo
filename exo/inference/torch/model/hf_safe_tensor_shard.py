@@ -6,6 +6,7 @@ import os
 import shutil
 import json
 
+from typing import Optional
 from pathlib import Path
 
 from safetensors import safe_open
@@ -23,13 +24,21 @@ class HFSafeTensorShard:
     self.shard = shard
     self.safetensors_path = self.get_safetensors()
     self.safetensor_index_path = f"{self.model_path}/model.safetensors.index.json"
+    self.metadata = {
+      "metadata": {
+        "total_size": 0
+      },
+      "weight_map": {}
+    }
 
   def get_safetensors(self) -> list:
     safetensors_path = []
     try:
       for file_name in os.listdir(self.model_path):
         if file_name.endswith(".safetensors"):
-          safetensors_path.append(os.path.join(self.model_path, file_name))
+          safetensor_path = os.path.join(self.model_path, file_name)
+          if safetensor_path not in safetensors_path:
+            safetensors_path.append(safetensor_path)
     except Exception as err:
       print(f"Error in get_safetensor_path: {err}")
       raise
@@ -42,7 +51,7 @@ class HFSafeTensorShard:
         backup_path = safetensor_path+".backup"
         if not os.path.exists(backup_path):
           shutil.copy(safetensor_path, backup_path)
-          print(f"Backup created at {backup_path}") 
+          print(f"Backup created at {backup_path}")
         else:
           print("Backup already exists. Skipping backup.")
     except Exception as err:
@@ -120,14 +129,7 @@ class HFSafeTensorShard:
         print(f"backed up index json {self.safetensor_index_path}")
 
     if self.safetensors_path:
-      # initialize the metadata and weight_map
-      metadata = {
-        "metadata": {
-          "total_size": 0
-        },
-        "weight_map": {}
-      }
-
+      # initialize the metadata and weight_map 
       for safetensor_file in self.safetensors_path:
         # use the safetensor file name as the shard_name
         shard_name = os.path.basename(safetensor_file)
@@ -157,20 +159,24 @@ class HFSafeTensorShard:
               raise ValueError(f"unsupported dtype: {dtype}")
 
             tensor_size = total_elements * element_size
-            metadata["metadata"]["total_size"] += tensor_size
+            self.metadata["metadata"]["total_size"] += tensor_size
 
             # add to weight_map, mapping the tensor to the shard (file) name
-            metadata["weight_map"][name] = shard_name
+            self.metadata["weight_map"][name] = shard_name
 
       # write the metadata and weight map to the index file
       with open(self.safetensor_index_path, "w") as f:
-        json.dump(metadata, f, indent=4)
+        json.dump(self.metadata, f, indent=4)
 
       print("model.safetensors.index.json created")
     else:
       print("No safetensor files provided.")
 
-  def shard_safetensor_index(self, weight_map):
+  def shard_safetensor_index(self, weight_map: Optional[dict] = None):
+    if weight_map is None:
+      weight_map = self.metadata["weight_map"]
+
+    print(f"shard\n{weight_map}")
     layer_weight_map = extract_layers(
       weight_map,
       self.shard
@@ -206,8 +212,6 @@ class HFSafeTensorShard:
           shutil.copy(backup_path, safetensor_path)
           os.remove(backup_path)
           print(f"Safetensor restored from backup at {backup_path}")
-        else:
-          print("No backup found. Cannot restore.")
 
       backup_index_path = self.safetensor_index_path+".backup"
       if os.path.exists(backup_index_path):
@@ -215,8 +219,6 @@ class HFSafeTensorShard:
         shutil.copy(backup_index_path, self.safetensor_index_path)
         os.remove(backup_index_path)
         print(f"Safetensor index JSON restored from backup at {backup_index_path}")
-      else:
-        print("No backup found. Cannot restore")
     except Exception as err:
       print(f"Error in restore_backup: {err}")
       raise
