@@ -32,6 +32,12 @@ class HFSafeTensorShard:
     }
 
   def get_safetensors(self) -> list:
+    """
+    Gets a list of all files that have the extension .safetensors
+
+    Return:
+      list: A list of all the safetensors file paths
+    """
     safetensors_path = []
     try:
       for file_name in os.listdir(self.model_path):
@@ -120,10 +126,6 @@ class HFSafeTensorShard:
   def create_safetensor_index(self):
     """
     Creates a model.safetensors.index.json file from a list of safetensor files.
-
-    Args:
-
-    Raises:
     """
     if os.path.exists(self.safetensor_index_path):
       backup_index_path = f"{self.model_path}/model.safetensors.index.json.backup"
@@ -179,6 +181,13 @@ class HFSafeTensorShard:
       print("No safetensor files provided.")
 
   def shard_safetensor_index(self, weight_map: Optional[dict] = None):
+    """
+    Modify the weight_map of the safetensors index json to only
+    get weights for the working layers
+
+    Args:
+      weight_map(dict, Optional): holds which weight maps to which layer
+    """
     if weight_map is None:
       weight_map = self.metadata["weight_map"]
 
