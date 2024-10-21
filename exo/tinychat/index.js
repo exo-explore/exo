@@ -73,11 +73,6 @@ document.addEventListener("alpine:init", () => {
         reader.onload = (e) => {
           this.imagePreview = e.target.result;
           this.imageUrl = e.target.result; // Store the image URL
-          // Add image preview to the chat
-          this.cstate.messages.push({
-            role: "user",
-            content: `![Uploaded Image](${this.imagePreview})`,
-          });
         };
         reader.readAsDataURL(file);
       }
@@ -88,6 +83,11 @@ document.addEventListener("alpine:init", () => {
       try {
         const el = document.getElementById("input-form");
         const value = el.value.trim();
+        const imageInput = document.getElementById("image-upload");
+
+        // Check if there's an image file selected
+        const hasImage = imageInput && imageInput.files && imageInput.files.length > 0;
+
         if (!value && !this.imagePreview) return;
 
         if (this.generating) return;
@@ -98,7 +98,13 @@ document.addEventListener("alpine:init", () => {
         window.history.pushState({}, "", "/");
 
         // add message to list
-        if (value) {
+        if (hasImage || this.imagePreview) {
+          this.cstate.messages.push({
+            role: "user",
+            content: `![Uploaded Image](${this.imagePreview})`,
+          });
+        }
+        else if (value) {
           this.cstate.messages.push({ role: "user", content: value });
         }
 
@@ -147,19 +153,9 @@ document.addEventListener("alpine:init", () => {
               ]
             };
           } else {
-            return {
-              role: msg.role,
-              content: msg.content
-            };
-          }
-        });
-        const containsImage = apiMessages.some(msg => Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url'));
-        if (containsImage) {
-          // Map all messages with string content to object with type text
-          apiMessages = apiMessages.map(msg => {
-            if (typeof msg.content === 'string') {
+            if (this.cstate.selectedModel === 'llava-1.5-7b-hf') {
               return {
-                ...msg,
+                role: msg.role,
                 content: [
                   {
                     type: "text",
@@ -167,12 +163,15 @@ document.addEventListener("alpine:init", () => {
                   }
                 ]
               };
+            } else {
+              return {
+                role: msg.role,
+                content: msg.content
+              };
             }
-            return msg;
-          });
-        }
-
-
+          }
+        });
+        
         // start receiving server sent events
         let gottenFirstChunk = false;
         for await (

@@ -82,11 +82,13 @@ class Model(nn.Module):
     self,
     inputs: mx.array,
     cache: Optional[KVCache] = None,
+    *_,
+    **__
   ):
     out = self.model(inputs, cache)
     if self.args.shard.is_last_layer():
       return self.lm_head(out)
-    return out
+    return out, None
 
   def sanitize(self, weights):
     shard_state_dict = {}
