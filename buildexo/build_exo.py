@@ -44,9 +44,8 @@ def run():
         ])
     elif sys.platform.startswith("linux"):  
         command.extend([
-            "--lto=no",
             "--include-distribution-metadata=pygments",
-            "--linux-icon=docs/exo-logo-linux.xpm"
+            "--linux-icon=docs/exo-rounded.png"
         ])
 
     command.extend([

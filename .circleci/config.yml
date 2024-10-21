@@ -211,6 +211,7 @@ jobs:
   build_exo_macos:
     macos:
       xcode: "16.0.0"
+    resource_class: m2pro.large
     steps:
       - checkout
       - run:
@@ -232,7 +233,6 @@ jobs:
       - run:
           name: Create a macOS app
           command: |
-            which python3
             mv dist/main.app dist/exo.app
         
   build_exo_linux:
@@ -302,7 +302,7 @@ jobs:
           command: |
             conda create -n exo-env python=3.12 --yes
             conda activate exo-env
-            conda install -c conda-forge python=3.12
+            conda install -c conda-forge python=3.12 
             conda install -c conda-forge libstatic
             conda install -c conda-forge rust
       - run:
