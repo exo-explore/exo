@@ -264,14 +264,14 @@ jobs:
       - run:
           name: Create an AppImage
           command: |
-            wget -O appimage-builder-x86_64.AppImage https://github.com/AppImageCrafters/appimage-builder/releases/download/v1.1.0/appimage-builder-1.1.0-x86_64.AppImage
-            chmod +x appimage-builder-x86_64.AppImage
+            sudo wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
+            sudo chmod +x /usr/local/bin/appimagetool
             mkdir -p exo.AppDir/usr/bin
             cp -r env/lib/python3.12/site-packages/tinygrad exo.AppDir/usr/bin
             cp -r dist/main.dist/* exo.AppDir/usr/bin
             # copying icons from docs to exo.AppDir
             cp docs/exo-rounded.png exo.AppDir
-            cat > exo.AppDir/exo.desktop \<< 'EOF'
+            cat > exo.AppDir/exo.desktop << 'EOF'
             [Desktop Entry]
             Name=exo
             Icon=exo-rounded
@@ -279,7 +279,8 @@ jobs:
             Type=Application
             Categories=Utility;
             EOF
-            cat > exo.AppDir/AppRun \<< 'EOF'
+
+            cat > exo.AppDir/AppRun << 'EOF'
             #!/bin/bash
             export APPDIR="$(dirname "$(readlink -f "$0")")"
             export PATH="$APPDIR/usr/bin/:$PATH"
@@ -287,8 +288,9 @@ jobs:
             export XDG_DATA_DIRS="$APPDIR/usr/share/:/usr/share/:$XDG_DATA_DIRS"
             "$APPDIR"/usr/bin/exo "$@"
             EOF
+            
             chmod +x exo.AppDir/AppRun
-            ./appimage-builder-x86_64.AppImage ./exo.AppDir
+            appimagetool exo.AppDir/
             mv *.AppImage ./output/
                       
   build_exo_windows:
