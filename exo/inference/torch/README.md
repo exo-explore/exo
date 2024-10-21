@@ -1,4 +1,21 @@
-# PyTorch & HuggingFace inference engine
+# PyTorch inference engine
+
+## Devs
+- [Vincent Castro](https://github.com/risingsunomi)
+
+## Notes/Issues
+### 10/10/2024
+- To select a pytorch device via environment variables, set the variable TORCH_DEVICE
+  - XLA is currently not installed and will need to be added to inference.py, looking into doing this on a TPU VM
+  - With pytorch, CUDA and ROCm are the same so specifying CUDA also enables ROCm support. See this [post](https://github.com/pytorch/pytorch/issues/55223#issuecomment-812587373)
+  - Looking into adding mobile device support properly
+- If device is not CPU the data type defaults to float32 else float16.
+
+### 10/13/2024
+Still working on split model development (see test_split_model.py). Right now, it seems to do it but still transformers is loading more in the RAM and GPU as it loads up a larger models (causing an OOM). Will research and add to next update. Right now, tests are added and are in development.
+
+### 10/21/2024
+Working on removing transformers due to inference and VRAM usage [issues](https://github.com/exo-explore/exo/pull/139#issuecomment-2424953962). Creating a pure pytorch implementation of llama3 as using transformers wont work for exo. Using some code from meta but also implementing the use of torchtune.
 
 ## Tech
 
@@ -31,14 +48,3 @@ GPU 4: NVIDIA Quadro P400 2GB
 GPU 5: NVIDIA Quadro P400 2GB 
 ```
 
-
-## Notes/Issues
-### 10/10/2024
-- To select a pytorch device via environment variables, set the variable TORCH_DEVICE
-  - XLA is currently not installed and will need to be added to inference.py, looking into doing this on a TPU VM
-  - With pytorch, CUDA and ROCm are the same so specifying CUDA also enables ROCm support. See this [post](https://github.com/pytorch/pytorch/issues/55223#issuecomment-812587373)
-  - Looking into adding mobile device support properly
-- If device is not CPU the data type defaults to float32 else float16.
-
-### 10/13/2024
-Still working on split model development (see test_split_model.py). Right now, it seems to do it but still transformers is loading more in the RAM and GPU as it loads up a larger models (causing an OOM). Will research and add to next update. Right now, tests are added and are in development.
