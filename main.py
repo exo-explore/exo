@@ -39,6 +39,8 @@ parser.add_argument("--inference-engine", type=str, default=None, help="Inferenc
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
+# Add the Allora mode argument
+parser.add_argument("--allora-mode", action='store_true', help="Enable Allora mode")
 args = parser.parse_args()
 
 print_yellow_exo()
@@ -46,8 +48,16 @@ print_yellow_exo()
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
-shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check, max_parallel_downloads=args.max_parallel_downloads)
-inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
+# Adjust the shard downloader based on Allora mode
+
+shard_downloader = HFShardDownloader(quick_check=args.download_quick_check, max_parallel_downloads=args.max_parallel_downloads)
+
+# Adjust the inference engine name
+if args.allora_mode:
+  inference_engine_name = 'allora'
+else:
+  inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
+
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
@@ -114,9 +124,7 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
     last_broadcast_time = current_time
     asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
 
-
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
-
 
 async def shutdown(signal, loop):
   """Gracefully shutdown the server and close the asyncio loop."""
@@ -129,7 +137,6 @@ async def shutdown(signal, loop):
   await asyncio.gather(*server_tasks, return_exceptions=True)
   await server.stop()
   loop.stop()
-
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
@@ -158,7 +165,6 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   finally:
     node.on_token.deregister(callback_id)
 
-
 async def main():
   loop = asyncio.get_running_loop()
 
@@ -175,8 +181,24 @@ async def main():
     await run_model_cli(node, inference_engine, args.run_model, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
-    await asyncio.Event().wait()
 
+    # Add the inference endpoint when in Allora mode
+    if args.allora_mode:
+        @api.app.get("/inference/{token}")
+        async def inference_endpoint(token: str):
+            # Use the inference_engine to process the token
+            request_id = str(uuid.uuid4())
+            shard = Shard(model_id="coin_model", shard_id="shard_1")
+            output_data, inference_state, completed = await inference_engine.infer_prompt(
+                request_id, shard, token
+            )
+            return {
+                "token": token,
+                "prediction": output_data.tolist(),
+                "completed": completed
+            }
+
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
   loop = asyncio.new_event_loop()

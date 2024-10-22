@@ -27,5 +27,8 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  elif inference_engine_name == 'allora':
+    from exo.inference.allora.inference import CoinPredictionInferenceEngine
+    return CoinPredictionInferenceEngine(shard_downloader)
   else:
     raise ValueError(f"Inference engine {inference_engine_name} not supported")

@@ -1,5 +1,4 @@
 import sys
-
 from setuptools import find_packages, setup
 
 # Base requirements for all platforms
@@ -30,6 +29,10 @@ install_requires = [
   "transformers==4.43.3",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@639af3f823cf242a1945dc24183e52a9df0af2b7",
+  "fastapi==0.100.0",
+  "uvicorn==0.23.0",
+  "pandas==1.5.3",
+  "scikit-learn==1.3.0",
 ]
 
 # Add macOS-specific packages if on Darwin (macOS)
