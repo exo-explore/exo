@@ -27,19 +27,16 @@ install_requires = [
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
 ]
 
-# Add macOS-specific packages if on Darwin (macOS)
-if sys.platform.startswith("darwin"):
-  install_requires.extend([
-    "mlx==0.18.0",
-    "mlx-lm==0.18.2",
-  ])
-
 extras_require = {
   "linting": [
     "pylint==3.2.6",
     "ruff==0.5.5",
     "mypy==1.11.0",
     "yapf==0.40.2",
+  ],
+  "apple_silicon": [
+    "mlx==0.18.0",
+    "mlx-lm==0.18.2",
   ],
 }
 
