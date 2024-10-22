@@ -51,24 +51,31 @@ class ManualDiscovery(Discovery):
         await asyncio.sleep(0.1)
     return list(self.known_peers.values())
 
+
   async def task_find_peers_from_config(self):
     if DEBUG_DISCOVERY >= 2: print("Starting task to find peers from config...")
     while True:
       for peer_id, peer_config in self.peers_in_network.items():
-        if DEBUG_DISCOVERY >= 2: print(f"Checking peer {peer_id=} at {peer_config.address}:{peer_config.port}")
-        peer = self.known_peers.get(peer_id)
-        if not peer:
-          if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} not found in known peers. Adding.")
-          new_peer_handle = self.create_peer_handle(peer_id, f"{peer_config.address}:{peer_config.port}", peer_config.device_capabilities)
-          self.known_peers[peer_id] = new_peer_handle
-          peer = new_peer_handle
+        try:
+          if DEBUG_DISCOVERY >= 2: print(f"Checking peer {peer_id=} at {peer_config.address}:{peer_config.port}")
+          peer = self.known_peers.get(peer_id)
+          if not peer:
+            if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} not found in known peers. Adding.")
+            peer = self.create_peer_handle(peer_id, f"{peer_config.address}:{peer_config.port}", peer_config.device_capabilities)  
+          is_healthy = await peer.health_check()
+          if is_healthy:
+            if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is healthy.")
+            self.known_peers[peer_id] = peer
+          else:
+            if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is not healthy.")
+            try:
+              del self.known_peers[peer_id]
+            except KeyError:
+              pass  # peer was never added, so nothing to delete
+        except Exception as e:
+            if DEBUG_DISCOVERY >=2: print(f"Exception occured when attempting to add {peer_id=}: {e}")
+        finally:
+          await asyncio.sleep(self.discovery_timeout)
 
-        is_healthy = await peer.health_check()
-        if not is_healthy:
-          if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is not healthy. Removing.")
-          del self.known_peers[peer_id]
-        elif DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is healthy.")
+      if DEBUG_DISCOVERY >= 2: print(f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}")
 
-        if DEBUG_DISCOVERY >= 2: print(f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}")
-
-      await asyncio.sleep(self.discovery_timeout)

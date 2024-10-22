@@ -1,7 +1,5 @@
 import unittest
-import json
 
-from pydantic import ValidationError
 from exo.networking.manual.network_topology_config import NetworkTopology
 
 root_path = "./exo/networking/manual/test_data/"
