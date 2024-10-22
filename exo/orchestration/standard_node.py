@@ -84,8 +84,7 @@ class StandardNode(Node):
       supported_engines.append('tinygrad')
     return supported_engines
 
-  async def broadcast_supported_engines(self):
-    supported_engines = self.get_supported_inference_engines()
+  async def broadcast_supported_engines(self, supported_engines: List):
     await self.broadcast_opaque_status("", json.dumps({
       "type": "supported_inference_engines",
       "node_id": self.id, 
