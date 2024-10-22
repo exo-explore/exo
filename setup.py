@@ -1,4 +1,5 @@
 import sys
+import platform
 
 from setuptools import find_packages, setup
 
@@ -39,6 +40,10 @@ extras_require = {
     "mlx-lm==0.18.2",
   ],
 }
+
+# Check if running on macOS with Apple Silicon
+if sys.platform.startswith("darwin") and platform.machine() == "arm64":
+  install_requires.extend(extras_require["apple_silicon"])
 
 setup(
   name="exo",
