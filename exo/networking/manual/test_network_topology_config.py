@@ -1,5 +1,7 @@
 import unittest
 import json
+
+from pydantic import ValidationError
 from exo.networking.manual.network_topology_config import NetworkTopology
 
 root_path = "./exo/networking/manual/test_data/"
@@ -9,17 +11,19 @@ class TestNetworkTopologyConfig(unittest.TestCase):
   def test_from_path_invalid_path(self):
     with self.assertRaises(FileNotFoundError) as e:
       NetworkTopology.from_path("invalid_path")
-    self.assertEqual(e.exception.args[0], "Config file not found at invalid_path")
+    self.assertEqual(str(e.exception), "Config file not found at invalid_path")
 
   def test_from_path_invalid_json(self):
-    with self.assertRaises(json.JSONDecodeError) as e:
+    with self.assertRaises(ValueError) as e:
       NetworkTopology.from_path(root_path + "invalid_json.json")
-    self.assertEqual(e.exception.args[0], "Error decoding JSON data from ./exo/networking/manual/test_data/invalid_json.json: Expecting value: line 1 column 1 (char 0): line 1 column 1 (char 0)")
+    self.assertIn("Error validating network topology config from", str(e.exception))
+    self.assertIn("1 validation error for NetworkTopology\n  Invalid JSON: EOF while parsing a value at line 1 column 0", str(e.exception))
 
   def test_from_path_invalid_config(self):
-    with self.assertRaises(KeyError) as e:
+    with self.assertRaises(ValueError) as e:
       NetworkTopology.from_path(root_path + "invalid_config.json")
-    self.assertEqual(e.exception.args[0], "Missing required key in config file: 'port'")
+    self.assertIn("Error validating network topology config from", str(e.exception))
+    self.assertIn("port\n  Field required", str(e.exception))
 
   def test_from_path_valid(self):
     config = NetworkTopology.from_path(root_path + "test_config.json")

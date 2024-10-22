@@ -1,20 +1,17 @@
-from typing import Dict
-from dataclasses import dataclass
-
 import json
+from typing import Dict
+from pydantic import BaseModel, ValidationError
 
 from exo.topology.device_capabilities import DeviceCapabilities
 
 
-@dataclass
-class PeerConfig:
+class PeerConfig(BaseModel):
   address: str
   port: int
   device_capabilities: DeviceCapabilities
 
 
-@dataclass
-class NetworkTopology:
+class NetworkTopology(BaseModel):
   """Configuration of the network. A collection outlining all nodes in the network, including the node this is running from."""
 
   peers: Dict[str, PeerConfig]
@@ -26,23 +23,11 @@ class NetworkTopology:
   def from_path(cls, path: str) -> "NetworkTopology":
     try:
       with open(path, "r") as f:
-        config = json.load(f)
-    except FileNotFoundError:
-      raise FileNotFoundError(f"Config file not found at {path}")
-    except json.JSONDecodeError as e:
-      raise json.JSONDecodeError(f"Error decoding JSON data from {path}: {e}", e.doc, e.pos)
+        config_data = f.read()
+    except FileNotFoundError as e:
+      raise FileNotFoundError(f"Config file not found at {path}") from e
 
     try:
-      peers = {}
-      for node_id, peer_data in config["peers"].items():
-        device_capabilities = DeviceCapabilities(**peer_data["device_capabilities"])
-        peer_config = PeerConfig(address=peer_data["address"], port=peer_data["port"], device_capabilities=device_capabilities)
-        peers[node_id] = peer_config
-
-      networking_config = cls(peers=peers)
-    except KeyError as e:
-      raise KeyError(f"Missing required key in config file: {e}")
-    except TypeError as e:
-      raise TypeError(f"Error parsing networking config from {path}: {e}")
-
-    return networking_config
+      return cls.model_validate_json(config_data)
+    except ValidationError as e:
+      raise ValueError(f"Error validating network topology config from {path}: {e}") from e
