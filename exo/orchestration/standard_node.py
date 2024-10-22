@@ -76,6 +76,22 @@ class StandardNode(Node):
       if DEBUG >= 1: print(f"Error updating visualization: {e}")
       if DEBUG >= 1: traceback.print_exc()
 
+  def get_supported_inference_engines(self):
+    supported_engines = []
+    if self.inferenceEngine == 'mlx':
+      supported_engines.extend('mlx', 'tinygrad')
+    else:
+      supported_engines.append('tinygrad')
+    return supported_engines
+
+  async def broadcast_supported_engines(self):
+    supported_engines = self.get_supported_inference_engines()
+    await self.broadcast_opaque_status("", json.dumps({
+      "type": "supported_inference_engines",
+      "node_id": self.id, 
+      "engines": supported_engines
+    }))
+
   async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
