@@ -43,6 +43,7 @@ class StandardNode(Node):
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
+    self.topology_inference_engines_pool: List[str] = []
 
   async def start(self, wait_for_peers: int = 0) -> None:
     await self.server.start()
@@ -77,19 +78,23 @@ class StandardNode(Node):
       if DEBUG >= 1: traceback.print_exc()
 
   def get_supported_inference_engines(self):
-    supported_engines = []
-    if self.inferenceEngine == 'mlx':
-      supported_engines.extend('mlx', 'tinygrad')
+    supported_engine_names = []
+    if self.inference_engine.__class__.__name__ == 'MLXDynamicShardInferenceEngine':
+      supported_engine_names.extend(['mlx', 'tinygrad'])
     else:
-      supported_engines.append('tinygrad')
-    return supported_engines
+      supported_engine_names.append('tinygrad')
+    return supported_engine_names
 
   async def broadcast_supported_engines(self, supported_engines: List):
-    await self.broadcast_opaque_status("", json.dumps({
+    status_message = json.dumps({
       "type": "supported_inference_engines",
-      "node_id": self.id, 
+      "node_id": self.id,
       "engines": supported_engines
-    }))
+    })
+    await self.broadcast_opaque_status("", status_message)
+
+  def get_topology_inference_engines(self) -> List[str]:
+    return self.topology_inference_engines_pool
 
   async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
