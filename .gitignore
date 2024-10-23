@@ -170,3 +170,4 @@ cython_debug/
 #.idea/
 
 **/*.xcodeproj/*
+.aider*
