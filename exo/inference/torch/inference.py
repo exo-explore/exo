@@ -12,7 +12,7 @@ import torch
 from typing import Optional, Tuple, Union, List
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.torch.model.hf import ShardedHuggingFaceModel
+from exo.inference.torch.models.hf import ShardedHuggingFaceModel
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader

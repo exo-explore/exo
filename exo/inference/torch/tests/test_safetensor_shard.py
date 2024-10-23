@@ -5,7 +5,7 @@ Sharding safetensor
 import asyncio
 
 from exo.inference.shard import Shard
-from exo.inference.torch.model.hf_safe_tensor_shard import HFSafeTensorShard
+from exo.inference.torch.models.hf_safe_tensor_shard import HFSafeTensorShard
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.download.hf.hf_helpers import get_weight_map
 
