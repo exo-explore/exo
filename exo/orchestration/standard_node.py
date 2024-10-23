@@ -15,7 +15,9 @@ from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import RepoProgressEvent
+import logging
 
+logger = logging.getLogger(__name__)
 
 class StandardNode(Node):
   def __init__(
@@ -91,7 +93,9 @@ class StandardNode(Node):
       "node_id": self.id,
       "engines": supported_engines
     })
+    logger.error(f'broadcast_supported_engines: {status_message}')
     await self.broadcast_opaque_status("", status_message)
+    logger.error(f'broadcast_supported_engines: done')
 
   def get_topology_inference_engines(self) -> List[str]:
     return self.topology_inference_engines_pool
@@ -438,6 +442,9 @@ class StandardNode(Node):
 
     async def send_status_to_peer(peer):
       try:
+        status_dict = json.loads(status)
+        if status_dict.get("type") == "supported_inference_engines":
+          logger.error(f'broadcasting_inference_engines: {status_dict}')
         await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)
       except asyncio.TimeoutError:
         print(f"Timeout sending opaque status to {peer.id()}")
