@@ -17,7 +17,6 @@ from exo.orchestration import Node
 from exo.models import model_base_shards
 from typing import Callable
 
-
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
     self.role = role
@@ -60,6 +59,9 @@ def generate_completion(
       "finish_reason": finish_reason,
     }],
   }
+  
+  if DEBUG >= 3:
+    print(f"completion: {completion}")
 
   if not stream:
     completion["usage"] = {
