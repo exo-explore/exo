@@ -53,12 +53,6 @@ args = parser.parse_args()
 
 print_yellow_exo()
 
-seqlog.log_to_seq(
-  server_url = 'http://localhost:5341',
-  level = logging.DEBUG
-)
-logger = logging.getLogger('exo_logger')
-logger.setLevel(logging.DEBUG)
 
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
