@@ -17,7 +17,7 @@ async def main():
 
   # Create a Shard object
   shard = Shard(
-    model_id="meta-llama/Llama-3.2-1B-Instruct",
+    model_id="unsloth/Meta-Llama-3.1-8B-Instruct",
     start_layer=start_layer,
     end_layer=end_layer-1,
     n_layers=32
@@ -42,7 +42,9 @@ async def main():
   model = AutoModelForCausalLM.from_pretrained(
     pretrained_model_name_or_path=shard.model_id,
     local_files_only=True,
-    num_hidden_layers=shard.end_layer - shard.start_layer
+    num_hidden_layers=shard.end_layer - shard.start_layer,
+    #device_map="auto",
+    torch_dtype="float16"
   ).to("cuda")
 
   tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
@@ -61,7 +63,7 @@ async def main():
 
   print(f"model_inputs:\n{model_inputs}")
 
-  tensor_shard.restore_backup()
+  tensor_shard.restore_backups()
 
 if __name__ == "__main__":
   asyncio.run(main())
