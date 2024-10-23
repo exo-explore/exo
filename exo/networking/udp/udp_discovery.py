@@ -160,6 +160,7 @@ class UDPDiscovery(Discovery):
           return
         if peer_id in self.known_peers: self.known_peers[peer_id] = (self.known_peers[peer_id][0], self.known_peers[peer_id][1], time.time(), peer_prio)
     elif message["type"] == "supported_inference_engines":
+      logger.error(f'supported_inference_engines: {message}')
       peer_id = message["node_id"]
       engines = message["engines"]
       if peer_id in self.known_peers: self.known_peers[peer_id][0].topology_inference_engines_pool.append(engines)
