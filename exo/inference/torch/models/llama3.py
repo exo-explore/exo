@@ -11,7 +11,7 @@ from torchtune.modules import MultiHeadAttention, RotaryPositionalEmbeddings, KV
 
 class LlamaBlock(nn.Module):
   """
-  Encoder block class for the LLaMA model without residual connections.
+  Encoder block class for the LLaMA model
   """
   def __init__(
     self,
