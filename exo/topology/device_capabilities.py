@@ -1,13 +1,13 @@
+from typing import Any
+from pydantic import BaseModel
 from exo import DEBUG
-from dataclasses import dataclass, asdict
 import subprocess
 import psutil
 
 TFLOPS = 1.00
 
 
-@dataclass
-class DeviceFlops:
+class DeviceFlops(BaseModel):
   # units of TFLOPS
   fp32: float
   fp16: float
@@ -17,11 +17,10 @@ class DeviceFlops:
     return f"fp32: {self.fp32 / TFLOPS:.2f} TFLOPS, fp16: {self.fp16 / TFLOPS:.2f} TFLOPS, int8: {self.int8 / TFLOPS:.2f} TFLOPS"
 
   def to_dict(self):
-    return asdict(self)
+    return self.model_dump()
 
 
-@dataclass
-class DeviceCapabilities:
+class DeviceCapabilities(BaseModel):
   model: str
   chip: str
   memory: int
@@ -30,7 +29,7 @@ class DeviceCapabilities:
   def __str__(self):
     return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}"
 
-  def __post_init__(self):
+  def model_post_init(self, __context: Any) -> None:
     if isinstance(self.flops, dict):
       self.flops = DeviceFlops(**self.flops)
 

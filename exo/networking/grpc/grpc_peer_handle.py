@@ -55,7 +55,7 @@ class GRPCPeerHandle(PeerHandle):
       return response.is_healthy
     except asyncio.TimeoutError:
       return False
-    except:
+    except Exception:
       if DEBUG >= 4:
         print(f"Health check failed for {self._id}@{self.address}.")
         import traceback
