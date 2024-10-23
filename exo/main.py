@@ -95,7 +95,8 @@ node = StandardNode(
   discovery,
   partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
   max_generate_tokens=args.max_generate_tokens,
-  topology_viz=topology_viz
+  topology_viz=topology_viz,
+  shard_downloader=shard_downloader
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
