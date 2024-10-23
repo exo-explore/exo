@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import signal
 import json
+import logging
 import time
 import traceback
 import uuid
@@ -51,6 +52,7 @@ args = parser.parse_args()
 
 print_yellow_exo()
 
+
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
@@ -86,7 +88,8 @@ node = StandardNode(
   discovery,
   partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
   max_generate_tokens=args.max_generate_tokens,
-  topology_viz=topology_viz
+  topology_viz=topology_viz,
+  shard_downloader=shard_downloader
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
@@ -143,7 +146,6 @@ async def shutdown(signal, loop):
   await asyncio.gather(*server_tasks, return_exceptions=True)
   await server.stop()
   loop.stop()
-
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
