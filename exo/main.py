@@ -153,24 +153,6 @@ async def shutdown(signal, loop):
   await server.stop()
   loop.stop()
 
-async def select_best_inference_engine(node: StandardNode):
-  supported_engines = node.get_supported_inference_engines()
-  await node.broadcast_supported_engines(supported_engines)
-  logger.error('ABOVE and ALL')
-  logger.error("Topology inference engines pool: %s", node.get_topology_inference_engines())
-  logger.error(f'result:{node.get_topology_inference_engines()}')
-  if node.get_topology_inference_engines():
-    logger.info("Topology inference engines pool: %s", node.get_topology_inference_engines())
-    topology_inference_engines_pool = node.get_topology_inference_engines()
-    if any("tinygrad" in engines and len(engines) == 1 for engines in topology_inference_engines_pool):
-        return "tinygrad"
-    common_engine_across_peers = set.intersection(*topology_inference_engines_pool)
-    if "mlx" in common_engine_across_peers:
-        return "mlx"
-    else:
-        raise ValueError("No compatible inference engine found across all nodes")
-
-
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
   if not shard:
@@ -210,7 +192,7 @@ async def main():
     loop.add_signal_handler(s, handle_exit)
 
   await node.start(wait_for_peers=args.wait_for_peers)
-  await select_best_inference_engine(node)
+
   if args.command == "run" or args.run_model:
     model_name = args.model_name or args.run_model
     if not model_name:
