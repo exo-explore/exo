@@ -372,10 +372,10 @@ class StandardNode(Node):
     await self.broadcast_supported_engines(supported_engines)
     if len(self.get_topology_inference_engines()):
       if any(len(engines) == 1 and "tinygrad" in engines for engines in self.get_topology_inference_engines()):
-        logger.info("Found node with only tinygrad, using tinygrad on all nodes")
+        if DEBUG >= 1: print("Found node with only tinygrad, using tinygrad on all nodes")
         self.inference_engine = get_inference_engine("tinygrad", self.shard_downloader)
       else:
-        logger.info("all nodes can use mlx, using mlx for inference")
+        if DEBUG >= 1: print("All nodes can use mlx, using mlx for inference")
         self.inference_engine = get_inference_engine("mlx", self.shard_downloader) 
 
   async def periodic_topology_collection(self, interval: int):
