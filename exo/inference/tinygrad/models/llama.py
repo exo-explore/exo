@@ -253,8 +253,11 @@ def fix_bf16(weights: Dict[Any, Tensor]):
     if Device.DEFAULT == "CLANG":
         # TODO: Without casting to float16, 70B llama OOM on tinybox.
         return {
-            k: (v.to(dtypes.float32).to(v.device) if v.dtype == dtypes.bfloat16 else v) for k, v in weights.items()
+            k: (v.to(dtypes.float32) if v.dtype == dtypes.bfloat16 else v)  # Removed the .to(v.device)
+            for k, v in weights.items()
         }
-    return {
-        k: v.cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
-    }
+    else:
+        return {
+            k: v.cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v 
+            for k, v in weights.items()
+        }
