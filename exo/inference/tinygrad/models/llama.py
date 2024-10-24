@@ -1,7 +1,7 @@
 from typing import Tuple, Union, Optional, Dict, Any
 from tinygrad import Tensor, Variable, TinyJit, dtypes, nn, Device
 from tinygrad.helpers import getenv
-
+from exo import DEBUG
 
 # https://github.com/facebookresearch/llama/blob/1076b9c51c77ad06e9d7ba8a4c6df775741732bd/llama/model.py#L47
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, dtype=dtypes.half) -> Tensor:
@@ -250,9 +250,13 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
 
 
 def fix_bf16(weights: Dict[Any, Tensor]):
+    for k, v in weights.items():
+        if DEBUG > 1: print(f"Key: {k}, Device: {v.device}, Dtype: {v.dtype}")
+
     if Device.DEFAULT == "CLANG":
-        # TODO: Without casting to float16, 70B llama OOM on tinybox.
         return {
-          k: v.llvm_bf16_cast(dtypes.half).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
+            k: v.to(dtypes.half).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
         }
-    return {k:v.cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k,v in weights.items()}
+    return {
+        k: v.to(dtypes.float16).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
+    }
