@@ -2,11 +2,12 @@ from exo.orchestration import Node
 from prometheus_client import start_http_server, Counter, Histogram
 import json
 
-# Create metrics to track time spent and requests made.
 PROCESS_PROMPT_COUNTER = Counter("process_prompt_total", "Total number of prompts processed", ["node_id"])
 PROCESS_TENSOR_COUNTER = Counter("process_tensor_total", "Total number of tensors processed", ["node_id"])
 PROCESS_TENSOR_TIME = Histogram("process_tensor_seconds", "Time spent processing tensor", ["node_id"])
 
+# New metric for monitoring node performance
+NODE_PERFORMANCE = Histogram("node_performance", "Node performance (shard size / processing time)", ["node_id"])
 
 def start_metrics_server(node: Node, port: int):
   start_http_server(port)
@@ -25,5 +26,11 @@ def start_metrics_server(node: Node, port: int):
       elapsed_time_ns = status_data.get("elapsed_time_ns", 0)
       PROCESS_TENSOR_COUNTER.labels(node_id=node_id).inc()
       PROCESS_TENSOR_TIME.labels(node_id=node_id).observe(elapsed_time_ns/1e9)  # Convert ns to seconds
+            
+      # Calculate and record node performance
+      shard = status_data.get("shard", {})
+      shard_size = shard.get("end_layer", 0) - shard.get("start_layer", 0) + 1
+      performance = shard_size / (elapsed_time_ns/1e9)
+      NODE_PERFORMANCE.labels(node_id=node_id).observe(performance)
 
   node.on_opaque_status.register("stats").on_next(_on_opaque_status)
