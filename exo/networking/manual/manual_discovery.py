@@ -101,15 +101,17 @@ class ManualDiscovery(Discovery):
                     f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}"
                 )
 
-    def _get_peers(self):
+  def _get_peers(self):
+    try:
         topology = NetworkTopology.from_path(self.network_config_path)
 
         if self.node_id not in topology.peers:
-            raise ValueError(
-                f"Node ID {self.node_id} not found in network config file {self.network_config_path}. Please run with `node_id` set to one of the keys in the config file: {[k for k, _ in topology.peers]}"
-            )
+          raise ValueError(f"Node ID {self.node_id} not found in network config file {self.network_config_path}. Please run with `node_id` set to one of the keys in the config file: {[k for k, _ in topology.peers]}")
 
         peers_in_network: Dict[str, PeerConfig] = topology.peers
         peers_in_network.pop(self.node_id)
+    except Exception as e:
+        if DEBUG_DISCOVERY >= 2: print(f"Error when loading network config file from {self.network_config_path}. Please update the config file in order to successfully discover peers. Exception: {e}")
+        peers_in_network = {}
 
         return peers_in_network
