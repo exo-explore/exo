@@ -10,7 +10,7 @@ commands:
         type: string
       model_id:
         type: string
-      vllm:
+      vlm:
         type: boolean
         default: false
     steps:
@@ -47,7 +47,7 @@ commands:
             # Check processes before proceeding
             check_processes
 
-            if [ <<parameters.vllm>> = true ]; then
+            if [ <<parameters.vlm>> = true ]; then
               json_payload='{
                 "model": "<<parameters.model_id>>",
                 "messages": [{"role": "user", "content": [{"type": "text", "text": "Who is this in the image?"}, {"type": "image_url", "image_url": { "url": "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"}}]}],
@@ -59,6 +59,13 @@ commands:
                 "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
                 "temperature": 0.7
               }'
+            fi
+            
+            # Special handling for dummy engine
+            if [ "<<parameters.inference_engine>>" = "dummy" ]; then
+              expected_content="This is a dummy response"
+            else
+              expected_content="Michael Jackson"
             fi
 
             echo "Sending request to first instance..."
@@ -83,8 +90,8 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
-              echo "Test failed: Response does not contain 'Michael Jackson'"
+            if ! echo "$response_1" | grep -q "$expected_content" || ! echo "$response_2" | grep -q "$expected_content"; then
+              echo "Test failed: Response does not contain '$expected_content'"
               echo "Response 1: $response_1"
               echo ""
               echo "Response 2: $response_2"
@@ -94,7 +101,7 @@ commands:
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains 'Michael Jackson'"
+              echo "Test passed: Response from both nodes contains '$expected_content'"
             fi
 
 jobs:
@@ -189,7 +196,29 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llava-1.5-7b-hf
-          vllm: true
+          vlm: true
+
+  chatgpt_api_integration_test_dummy:
+    macos:
+      xcode: "16.0.0"
+    resource_class: m2pro.large
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: dummy
+          model_id: dummy-model
 
   test_macos_m1:
     macos:
@@ -228,5 +257,6 @@ workflows:
       - unit_test
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
+      - chatgpt_api_integration_test_dummy
       - test_macos_m1
       # - chatgpt_api_integration_test_tinygrad
