@@ -104,7 +104,7 @@ class StandardNode(Node):
   def get_topology_inference_engines(self) -> List[List[str]]:
     return self.topology_inference_engines_pool
 
-  async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
+  async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[np.array] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
@@ -117,7 +117,6 @@ class StandardNode(Node):
           "shard": shard.to_dict(),
           "prompt": prompt,
           "image_str": image_str,
-          "inference_state": inference_state,
           "request_id": request_id,
         }),
       )
@@ -137,7 +136,6 @@ class StandardNode(Node):
           "shard": shard.to_dict(),
           "prompt": prompt,
           "image_str": image_str,
-          "inference_state": inference_state,
           "request_id": request_id,
           "elapsed_time_ns": elapsed_time_ns,
           "result_size": resp.size if resp is not None else 0,
@@ -146,7 +144,7 @@ class StandardNode(Node):
     )
     return resp
 
-  async def _process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
+  async def _process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[np.array] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
     if request_id not in self.buffered_token_output:
@@ -181,7 +179,7 @@ class StandardNode(Node):
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
-    inference_state: Optional[str] = None,
+    inference_state: Optional[np.array] = None,
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
@@ -195,8 +193,7 @@ class StandardNode(Node):
           "shard": shard.to_dict(),
           "tensor_size": tensor.size,
           "tensor_shape": tensor.shape,
-          "request_id": request_id,
-          "inference_state": inference_state,
+          "request_id": request_id
         }),
       )
     )
@@ -226,7 +223,7 @@ class StandardNode(Node):
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
-    inference_state: Optional[str] = None,
+    inference_state: Optional[np.array] = None,
   ) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
@@ -262,7 +259,7 @@ class StandardNode(Node):
     tensor_or_prompt: Union[np.ndarray, str],
     request_id: str,
     image_str: Optional[str] = None,
-    inference_state: Optional[str] = None,
+    inference_state: Optional[np.array] = None,
   ) -> None:
     if not self.partitioning_strategy:
       if DEBUG >= 1: print("No partitioning strategy found. Skipping forward.")

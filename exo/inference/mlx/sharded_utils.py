@@ -172,10 +172,11 @@ async def load_shard(
     model.eval()
 
   # TODO: figure out a generic solution
-  if model.model_type == "llava":
+  if model.model_type in ["llava", "pixtral", "mllama"] :
     processor = AutoProcessor.from_pretrained(model_path)
     processor.eos_token_id = processor.tokenizer.eos_token_id
     processor.encode = processor.tokenizer.encode
+    processor._tokenizer = processor
     return model, processor
   else:
     tokenizer = load_tokenizer(model_path, tokenizer_config)

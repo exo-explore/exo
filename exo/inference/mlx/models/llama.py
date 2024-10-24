@@ -31,6 +31,8 @@ class LlamaModel(nn.Module):
     self.args = args
     self.vocab_size = args.vocab_size
     self.num_hidden_layers = args.num_hidden_layers
+    self.num_key_value_heads = args.num_key_value_heads
+    self.head_dim = args.head_dim
     assert self.vocab_size > 0
     if args.shard.is_first_layer() or (args.shard.is_last_layer() and args.tie_word_embeddings):
       self.embed_tokens = nn.Embedding(args.vocab_size, args.hidden_size)
@@ -47,11 +49,16 @@ class LlamaModel(nn.Module):
     self,
     inputs: mx.array,
     cache=None,
+    inputs_embeds=None,
   ):
-    if self.args.shard.is_first_layer():
-      h = self.embed_tokens(inputs)
+    # for passing merged input embeddings
+    if inputs_embeds is None:
+      if self.args.shard.is_first_layer():
+        h = self.embed_tokens(inputs)
+      else:
+        h = inputs
     else:
-      h = inputs
+      h = inputs_embeds
 
     mask = None
     if h.ndim > 1 and h.shape[1] > 1:
@@ -82,6 +89,8 @@ class Model(nn.Module):
     self,
     inputs: mx.array,
     cache=None,
+    *_,
+    **__
   ):
     out = self.model(inputs, cache)
     if self.args.shard.is_last_layer():
@@ -89,7 +98,7 @@ class Model(nn.Module):
         out = self.model.embed_tokens.as_linear(out)
       else:
         out = self.lm_head(out)
-    return out
+    return out, None
 
   def sanitize(self, weights):
     shard_state_dict = {}
