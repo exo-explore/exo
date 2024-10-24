@@ -256,8 +256,7 @@ def fix_bf16(weights: Dict[Any, Tensor]):
             k: (v.to(dtypes.float32) if v.dtype == dtypes.bfloat16 else v)  # Removed the .to(v.device)
             for k, v in weights.items()
         }
-    else:
-        return {
-            k: v.cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v 
-            for k, v in weights.items()
-        }
+    return {
+        k: v.float16() if v.dtype == dtypes.bfloat16 else v  # Using float16() method directly
+        for k, v in weights.items()
+    }
