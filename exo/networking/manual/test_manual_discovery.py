@@ -145,6 +145,13 @@ class TestManualDiscoveryWithGRPCPeerHandle(unittest.IsolatedAsyncioTestCase):
       with open(root_path, "w") as f:
         json.dump(original_config, f, indent=2)
 
+    # Wait for the config to be reloaded again
+    await asyncio.sleep(1.5)
+
+    updated_peers = await self.discovery1.discover_peers(wait_for_peers=1)
+    self.assertEqual(len(updated_peers), 1)
+
+
 
 if __name__ == "__main__":
   asyncio.run(unittest.main())
