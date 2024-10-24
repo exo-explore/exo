@@ -257,7 +257,7 @@ def fix_bf16(weights: Dict[Any, Tensor]):
 
     if Device.DEFAULT == "CLANG":
         return {
-           k: v.llvm_bf16_cast(dtypes.half).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
+           k: v.llvm_bf16_cast(dtypes.float32).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
         }
     return {
         k: v.to(dtypes.float16).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
