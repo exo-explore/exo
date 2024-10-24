@@ -13,17 +13,20 @@ root_path = "./exo/networking/manual/test_data/test_config.json"
 
 class TestSingleNodeManualDiscovery(unittest.IsolatedAsyncioTestCase):
   async def asyncSetUp(self):
-    self.peer1 = mock.AsyncMock()
+    self.peer1 = mock.AsyncMock(spec=Node)
     self.peer1.connect = mock.AsyncMock()
-    self.discovery1 = ManualDiscovery(root_path, "node1", create_peer_handle=lambda peer_id, address, device_capabilities: self.peer1)
-    _ = self.discovery1.start()
+    self.server1 = GRPCServer(self.peer1, "localhost", 8000)
+    await self.server1.start()
+    self.discovery1 = ManualDiscovery(root_path, "node1", create_peer_handle=lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities))
+    await self.discovery1.start()
 
   async def asyncTearDown(self):
     await self.discovery1.stop()
+    await self.server1.stop()
 
   async def test_discovery(self):
     peers1 = await self.discovery1.discover_peers(wait_for_peers=0)
-    assert len(peers1) == 0
+    self.assertEqual(len(peers1), 0)
 
     self.peer1.connect.assert_not_called()
 
@@ -150,7 +153,6 @@ class TestManualDiscoveryWithGRPCPeerHandle(unittest.IsolatedAsyncioTestCase):
 
     updated_peers = await self.discovery1.discover_peers(wait_for_peers=1)
     self.assertEqual(len(updated_peers), 1)
-
 
 
 if __name__ == "__main__":
