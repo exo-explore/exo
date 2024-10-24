@@ -40,8 +40,7 @@ class ManualDiscovery(Discovery):
   async def task_find_peers_from_config(self):
     if DEBUG_DISCOVERY >= 2: print("Starting task to find peers from config...")
     while True:
-      peers = self._get_peers().items()
-      for peer_id, peer_config in peers:
+      for peer_id, peer_config in self._get_peers().items():
         try:
           if DEBUG_DISCOVERY >= 2: print(f"Checking peer {peer_id=} at {peer_config.address}:{peer_config.port}")
           peer = self.known_peers.get(peer_id)
@@ -63,13 +62,17 @@ class ManualDiscovery(Discovery):
       if DEBUG_DISCOVERY >= 2: print(f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}")
 
   def _get_peers(self):
-    topology = NetworkTopology.from_path(self.network_config_path)
+    try:
+        topology = NetworkTopology.from_path(self.network_config_path)
 
-    if self.node_id not in topology.peers:
-      raise ValueError(f"Node ID {self.node_id} not found in network config file {self.network_config_path}. Please run with `node_id` set to one of the keys in the config file: {[k for k, _ in topology.peers]}")
+        if self.node_id not in topology.peers:
+          raise ValueError(f"Node ID {self.node_id} not found in network config file {self.network_config_path}. Please run with `node_id` set to one of the keys in the config file: {[k for k, _ in topology.peers]}")
 
-    peers_in_network: Dict[str, PeerConfig] = topology.peers
-    peers_in_network.pop(self.node_id)
+        peers_in_network: Dict[str, PeerConfig] = topology.peers
+        peers_in_network.pop(self.node_id)
+    except Exception as e:
+        if DEBUG_DISCOVERY >= 2: print(f"Error when loading network config file from {self.network_config_path}. Please update the config file in order to successfully discover peers. Exception: {e}")
+        peers_in_network = {}
 
     return peers_in_network
 
