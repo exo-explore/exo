@@ -6,7 +6,20 @@ from exo.topology.device_capabilities import DeviceCapabilities
 from exo.networking.manual.network_topology_config import NetworkTopology, PeerConfig
 from exo.helpers import DEBUG_DISCOVERY
 from exo.networking.peer_handle import PeerHandle
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
+class ConfigReloadEvent(FileSystemEventHandler):
+  def __init__(self, discovery: "ManualDiscovery"):
+    self.discovery = discovery
+
+  def on_changed(self, event):
+    if event.src_path == self.discovery.network_config_path:
+      if DEBUG_DISCOVERY >= 1: print(f"configuration file {self.discovery.network_config_path} has changed. updating topology...")
+      next_topology = NetworkTopology.from_path(self.discovery.network_config_path)
+      self.discovery.topology = next_topology
+      self.discovery.peers_in_network = next_topology.peers
+      self.discovery.peers_in_network.pop(self.discovery.node_id)
 
 class ManualDiscovery(Discovery):
   def __init__(
@@ -29,10 +42,21 @@ class ManualDiscovery(Discovery):
 
   async def start(self) -> None:
     self.listen_task = asyncio.create_task(self.task_find_peers_from_config())
+    self.start_watching_config_file()
 
   async def stop(self) -> None:
     if self.listen_task:
       self.listen_task.cancel()
+    self.stop_watching_config_file()
+
+  def start_watching_config_file(self):
+    event_handler = ConfigReloadEvent(self)
+    self.config_observer = Observer()
+    self.config_observer.schedule(event_handler, self.network_config_path, recursive=False)
+  
+  def stop_watching_config_file(self):
+    if hasattr(self, "config_observer"):
+      self.config_observer.stop()
 
   async def discover_peers(self, wait_for_peers: int = 0) -> List[PeerHandle]:
     if wait_for_peers > 0:
