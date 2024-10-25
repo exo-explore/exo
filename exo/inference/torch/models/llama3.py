@@ -267,11 +267,11 @@ class LlamaModel(nn.Module):
     if attention_mask is not None:
       causal_mask = create_4d_causal_attention_mask(
         attention_mask=attention_mask,
-        seq_len=hidden_states.size(1),
-        target_len=self.max_position_embeddings,
+        seq_len=hidden_states.shape[1],
+        target_len=attention_mask.shape[-1],
         dtype=hidden_states.dtype,
         device=hidden_states.device,
-        cache_pos=torch.arange(self.max_position_embeddings, device=hidden_states.device),
+        cache_pos=cache_position,
         batch_size=hidden_states.size(0)
       )
 
