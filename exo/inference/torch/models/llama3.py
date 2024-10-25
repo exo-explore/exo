@@ -3,7 +3,6 @@ llama3 model
 
 Written with pytorch using torchtune and other methods
 """
-import math
 from typing import Optional, Tuple
 
 import torch
@@ -16,6 +15,7 @@ from torchtune.modules import (
 )
 
 from exo.inference.shard import Shard
+from exo.inference.torch.models.llm_utils import MLP, create_4d_causal_attention_mask
 
 class LlamaBlock(nn.Module):
   """
@@ -36,7 +36,6 @@ class LlamaBlock(nn.Module):
     pos_embeddings=None
   ):
     super(LlamaBlock, self).__init__()
-    # Class vars
     self.dim = dim
     self.heads = heads
     self.num_kv_heads = num_kv_heads
@@ -48,45 +47,19 @@ class LlamaBlock(nn.Module):
     self.max_seq_len = max_seq_len
     self.pos_embeddings = pos_embeddings
     self.rotary_pos_emb = rotary_pos_emb
-
-    # Define linear projections for Q, K, V, and Output
     self.q_proj = nn.Linear(dim, heads * head_dim, bias=use_bias)
     self.k_proj = nn.Linear(dim, num_kv_heads * head_dim, bias=use_bias)
     self.v_proj = nn.Linear(dim, num_kv_heads * head_dim, bias=use_bias)
     self.output_proj = nn.Linear(heads * head_dim, dim, bias=use_bias)
-
-    # Define optional query normalization
-    self.q_norm = nn.LayerNorm(head_dim, eps=rms_norm_eps)
-
-    # MultiHeadAttention from torchtune
-    self.attn = MultiHeadAttention(
-      embed_dim=dim,
-      num_heads=heads,
-      num_kv_heads=num_kv_heads,
-      head_dim=head_dim,
-      q_proj=self.q_proj,
-      k_proj=self.k_proj,
-      v_proj=self.v_proj,
-      output_proj=self.output_proj,
-      pos_embeddings=pos_embeddings,
-      q_norm=self.q_norm,
-      k_norm=self.q_norm,
-      kv_cache=None,
-      max_seq_len=max_seq_len,
-      is_causal=True,
-      attn_dropout=attention_dropout
+    self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps)
+    self.mlp = MLP(
+      input_dim=dim,
+      hidden_dims=[ff_dim],  # Single hidden layer with ff_dim as the hidden size
+      output_dim=dim,
+      activation='gelu',
+      dropout=attention_dropout
     )
-
-    # RMSNorm layers before and after attention and feed-forward layers
-    self.norm1 = nn.LayerNorm(dim, eps=rms_norm_eps)
-    self.norm2 = nn.LayerNorm(dim, eps=rms_norm_eps)
-
-    # Feed-forward layer with SwiGLU activation
-    self.feed_forward = nn.Sequential(
-      nn.Linear(dim, ff_dim),
-      nn.GLU(),  # SwiGLU approximation
-      nn.Linear(ff_dim // 2, dim)
-    )
+    self.post_norm = RMSNorm(dim, eps=rms_norm_eps)
 
   def forward(
     self,
@@ -94,62 +67,60 @@ class LlamaBlock(nn.Module):
     kv_cache: Optional[KVCache] = None,
     attention_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.Tensor] = None,
-    position_embeddings: Optional[torch.FloatTensor] = None
-  ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+  ) -> Tuple[torch.Tensor, Optional[KVCache]]:
     """
-    Forward pass with integrated attention and key-value caching.
+    Forward pass with integrated attention, resnet and key-value caching.
 
     Args:
-      x (torch.Tensor): Input tensor of shape (batch_size, seq_len, dim).
+      hidden_states (torch.Tensor): Input tensor of shape (batch_size, seq_len, dim).
       kv_cache (Optional[KVCache]): KVCache object for managing past key-value states.
       attention_mask (Optional[torch.Tensor]): Attention mask of shape (batch_size, 1, 1, seq_len).
       position_ids (Optional[torch.Tensor]): Position IDs tensor of shape (batch_size, seq_len).
 
     Returns:
       Tuple[torch.Tensor, KVCache]:
-        - x (torch.Tensor): Output tensor of shape (batch_size, seq_len, dim).
-        - kv_cache (KVCache): Updated KVCache object.
+        - Output tensor of shape (batch_size, seq_len, dim).
+        - Updated KVCache object.
     """
-    batch_size, seq_len, _ = hidden_states.shape
-    attn_output, attn_weights = None
+    # setting up resnet
+    residual = hidden_states
 
-    # Do kvq projection
-    query_states = self.q_proj(hidden_states)
-    key_states = self.k_proj(hidden_states)
-    value_states = self.v_proj(hidden_states)
+    # Apply RMSNorm to input
+    hidden_states = self.input_norm(hidden_states)
 
-    # Reshape
-    query_states = query_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-    key_states = key_states.view(batch_size, seq_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-    value_states = value_states.view(batch_size, seq_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+    # Apply MultiHeadAttention with KVCache
+    hidden_states = MultiHeadAttention(
+      embed_dim=self.dim,
+      num_heads=self.heads,
+      num_kv_heads=self.num_kv_heads,
+      head_dim=self.head_dim,
+      q_proj=self.q_proj,
+      k_proj=self.k_proj,
+      v_proj=self.v_proj,
+      output_proj=self.output_proj,
+      pos_embeddings=self.rotary_pos_emb,
+      q_norm=self.q_norm,
+      k_norm=self.q_norm,
+      kv_cache=kv_cache,  # Passed during the forward call
+      max_seq_len=self.max_seq_len,
+      is_causal=True,
+      attn_dropout=self.attention_dropout
+    )(
+      x=hidden_states,
+      mask=attention_mask,
+      input_pos=position_ids
+    )
 
-    # Initialize or update KVCache
-    if kv_cache is None:
-      kv_cache = KVCache(
-        batch_size=batch_size,
-        max_seq_len=self.attn.max_seq_len,
-        num_heads=self.heads,
-        head_dim=self.attn.head_dim,
-        dtype=hidden_states.dtype
-      )
+    # Residual connection
+    hidden_states = residual + hidden_states
+    residual = hidden_states
+    # Post attention normalization
+    hidden_states = self.post_norm(hidden_states)
+    # Feed-forward network with MLP and residual connection
+    hidden_states = self.mlp(hidden_states)
+    hidden_states = hidden_states + residual
 
-    # cache
-    value_states = kv_cache.update(key_states, value_states)
-
-    # Attention weights and causal mask
-    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-    
-    if attention_mask is not None:
-      causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-      attn_weights = attn_weights + causal_mask
-
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
-    attn_output = torch.matmul(attn_weights, value_states)
-
-    
-
-    return attn_output, attn_weights, kv_cache
+    return hidden_states, kv_cache
 
 class LlamaModel(nn.Module):
   """
@@ -188,7 +159,8 @@ class LlamaModel(nn.Module):
     self.rms_norm_eps = config['rms_norm_eps']
     self.head_dim = config['head_dim']
     self.attention_dropout = config.get('attention_dropout', 0.0)
-    self.padding_idx = config["pad_token_id"]
+    self.padding_idx = config.get("pad_token_id")
+    self.device_map="any"
 
     # Model layers
     self.embed = nn.Embedding(self.vocab_size, self.hidden_size, self.padding_idx)
@@ -220,7 +192,7 @@ class LlamaModel(nn.Module):
     position_ids: Optional[torch.Tensor] = None,
     cache_position: Optional[torch.LongTensor] = None,
     past_kv_cache: Optional[KVCache] = None,
-  ) -> Tuple[Optional[torch.Tensor], Optional[Tuple[torch.Tensor]], KVCache]:
+  ) -> Tuple[Optional[torch.Tensor], Optional[Tuple[torch.Tensor]], Optional[KVCache]]:
     """
     Forward pass with integrated position ID handling, attention mask, and optional KVCache.
 
@@ -250,7 +222,7 @@ class LlamaModel(nn.Module):
         max_seq_len=self.max_position_embeddings,
         num_heads=self.num_heads,
         head_dim=self.head_dim,
-        dtype=x.dtype
+        dtype=input_embeds.dtype
       )
 
     # Initialize position IDs if not provided
@@ -267,28 +239,60 @@ class LlamaModel(nn.Module):
 
     hidden_states = input_embeds
 
+    # Reshape hidden_states to (batch_size, seq_len, num_heads, head_dim)
+    batch_size, seq_len, _ = hidden_states.shape
+    hidden_states = hidden_states.view(batch_size, seq_len, self.num_heads, self.head_dim)
+
+    # Reshape position_ids to match (batch_size, seq_len)
+    if position_ids.dim() != 2:
+      position_ids = position_ids.squeeze(0)
+
+    print(f"hidden_states: {hidden_states.shape}")
+    print(f"position_ids: {position_ids.shape}")
+
     # Apply rotary positional embeddings
     position_embeddings = self.rotary_pos_emb(
       hidden_states,
       input_pos=position_ids
     )
 
-    # Apply attention mask if provided (convert to appropriate format)
+    print(f"position_embeddings: {position_embeddings.shape}")
+
+    # Reshape back to (batch_size, seq_len, hidden_size)
+    hidden_states = hidden_states.view(batch_size, seq_len, self.hidden_size)
+    print(f"hidden_states: {hidden_states.shape}")
+
+    # create 4d causal mask
+    causal_mask = None
     if attention_mask is not None:
-      attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  # Shape: (batch_size, 1, 1, seq_len)
-      attention_mask = (1.0 - attention_mask) * -1e4  # Convert to large negative values
+      causal_mask = create_4d_causal_attention_mask(
+        attention_mask=attention_mask,
+        seq_len=hidden_states.size(1),
+        target_len=self.max_position_embeddings,
+        dtype=hidden_states.dtype,
+        device=hidden_states.device,
+        cache_pos=torch.arange(self.max_position_embeddings, device=hidden_states.device),
+        batch_size=hidden_states.size(0)
+      )
+
+      print(f"attention_mask: {attention_mask.shape}")
+      print(f"causal_mask: {causal_mask.shape}")
 
     # Forward pass through layers with KVCache
     for layer_idx in range(self.shard.end_layer, self.shard.start_layer):
-      layer_hidden_state, layer_kv_cache = layer(
+      print(f"forward layer #{layer_idx}")
+      encoder_layer = self.layers[layer_idx]
+      print(f"encoder_layer\n{encoder_layer}")
+      layer_hidden_state, layer_kv_cache = self.layers[layer_idx](
         hidden_states=hidden_states,
         kv_cache=past_kv_cache,
-        attention_mask=attention_mask,
+        attention_mask=causal_mask,
         position_ids=position_ids,
         position_embeddings=position_embeddings
       )
 
       hidden_states = layer_hidden_state
+      past_kv_cache = layer_kv_cache
 
     # Apply final layer normalization
     hidden_states = self.norm(hidden_states)
@@ -299,8 +303,7 @@ class LlamaModel(nn.Module):
     else:
       logits = None
 
-    # Prepare the return values
-    if return_hidden_states:
+    if logits is None:
       return logits, hidden_states, past_kv_cache
     else:
       return logits, None, past_kv_cache

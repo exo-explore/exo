@@ -9,8 +9,8 @@ from huggingface_hub import snapshot_download
 from safetensors.torch import load_file as load_safetensors
 from exo.inference.torch.models.llm_utils import load_model_config, select_next_token
 from exo.inference.torch.models.llama3 import LlamaModel, KVCache
+from exo.inference.shard import Shard
 
-# Constants
 MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
 
 # Get the path to the model files from the Hugging Face cache
@@ -20,11 +20,21 @@ print(f"Cache directory: {cache_dir}")
 # Load model configuration
 config = load_model_config(cache_dir / "config.json")
 
+print(f"current config\n{config}")
+
+# Setup shard
+shard = Shard(
+  model_id=MODEL_NAME,
+  start_layer=0,
+  end_layer=int(config["num_hidden_layers"]) - 1,
+  n_layers=int(config["num_hidden_layers"])
+)
+
 # Initialize tokenizer
 tokenizer = AutoTokenizer.from_pretrained(cache_dir)
 
 # Initialize LlamaModel with config and tokenizer
-model = LlamaModel(config, tokenizer)
+model = LlamaModel(config, shard)
 
 # Load weights from safetensors files in the cache directory
 safetensors_files = list(cache_dir.glob("*.safetensors"))
@@ -48,8 +58,11 @@ def test_forward_pass(model, tokenizer, text):
   """
   # Tokenize input text
   inputs = tokenizer(text, return_tensors="pt")
-  input_ids = inputs["input_ids"]
+  input_ids = inputs.get("input_ids")
   attention_mask = inputs.get("attention_mask")
+
+  print(f"input_ids: {input_ids}")
+  print(f"attention_mask: {attention_mask}")
 
   # Initialize KVCache
   past_kv_cache = KVCache(
@@ -62,17 +75,18 @@ def test_forward_pass(model, tokenizer, text):
 
   # Forward pass with KVCache
   with torch.no_grad():
-    logits, hidden_states, _ = model(
+    logits, hidden_states, past_kv_cache = model(
       input_ids,
       attention_mask=attention_mask,
-      pos_ids=None,
-      past_kv_cache=past_kv_cache,
-      return_hidden_states=True
+      position_ids=None,
+      past_kv_cache=past_kv_cache
     )
 
   # Print logits shape and hidden state information
-  print(f"Logits shape: {logits.shape}")
-  if hidden_states:
+  if logits is not None:
+    print(f"Logits shape: {logits.shape}")
+
+  if hidden_states is not None:
     print(f"Number of hidden states: {len(hidden_states)}")
     print(f"Shape of last hidden state: {hidden_states[-1].shape}")
 
