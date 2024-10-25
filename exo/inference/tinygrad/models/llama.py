@@ -252,9 +252,12 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
 
 
 def fix_bf16(weights: Dict[Any, Tensor]):
-
     if Device.DEFAULT == "CLANG":
         return {
-           k: v.llvm_bf16_cast(dtypes.float32) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
+            k: v.llvm_bf16_cast(dtypes.float32) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
         }
-    return {k:v.cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k,v in weights.items()}
+    else:
+        # Explicitly convert bfloat16 to float32 and then to float16
+        return {
+            k: v.cast(dtypes.float32).cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
+        }
