@@ -188,6 +188,7 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
           expected_output: "Michael Jackson"
 
   chatgpt_api_integration_test_dummy:
@@ -211,6 +212,7 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: dummy
           model_id: dummy-model
+          prompt: "Dummy prompt."
           expected_output: "dummy"
 
   test_macos_m1:
@@ -242,6 +244,8 @@ jobs:
   #     - run_chatgpt_api_test:
   #         inference_engine: tinygrad
   #         model_id: llama-3-8b
+  #         prompt: "Keep responses concise. Who was the king of pop?"
+  #         expected_output: "Michael Jackson"
 
 workflows:
   version: 2
