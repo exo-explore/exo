@@ -10,6 +10,10 @@ commands:
         type: string
       model_id:
         type: string
+      expected_output:
+        type: string
+      prompt:
+        type: string
     steps:
       - run:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
@@ -56,7 +60,7 @@ commands:
               -H "Content-Type: application/json" \
               -d '{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }')
             echo "Response 1: $response_1"
@@ -69,7 +73,7 @@ commands:
               -H "Content-Type: application/json" \
               -d '{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }')
             echo "Response 2: $response_2"
@@ -81,8 +85,8 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "$expected_content" || ! echo "$response_2" | grep -q "$expected_content"; then
-              echo "Test failed: Response does not contain '$expected_content'"
+            if ! echo "$response_1" | grep -q "<<parameters.expected_output>>" || ! echo "$response_2" | grep -q "<<parameters.expected_output>>"; then
+              echo "Test failed: Response does not contain '<<parameters.expected_output>>'"
               echo "Response 1: $response_1"
               echo ""
               echo "Response 2: $response_2"
@@ -92,7 +96,7 @@ commands:
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains '$expected_content'"
+              echo "Test passed: Response from both nodes contains '<<parameters.expected_output>>'"
             fi
 
 jobs:
@@ -184,6 +188,7 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
+          expected_output: "Michael Jackson"
 
   chatgpt_api_integration_test_dummy:
     macos:
@@ -206,6 +211,7 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: dummy
           model_id: dummy-model
+          expected_output: "dummy"
 
   test_macos_m1:
     macos:
