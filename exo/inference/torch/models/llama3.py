@@ -160,7 +160,6 @@ class LlamaModel(nn.Module):
     self.head_dim = config['head_dim']
     self.attention_dropout = config.get('attention_dropout', 0.0)
     self.padding_idx = config.get("pad_token_id")
-    self.device_map="any"
 
     # Model layers
     self.embed = nn.Embedding(self.vocab_size, self.hidden_size, self.padding_idx)
@@ -183,7 +182,7 @@ class LlamaModel(nn.Module):
       ) for _ in range(self.num_layers)
     ])
     self.norm = RMSNorm(self.hidden_size, eps=self.rms_norm_eps)
-    self.to_logits = nn.Linear(self.hidden_size, self.vocab_size)
+    self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
 
   def forward(
     self,
@@ -299,7 +298,7 @@ class LlamaModel(nn.Module):
 
     # Compute logits if at end layer
     if self.shard.is_last_layer():
-      logits = self.to_logits(hidden_states)
+      logits = self.lm_head(hidden_states[:, -1:, :])
     else:
       logits = None
 

@@ -14,17 +14,30 @@ from exo.inference.shard import Shard
 
 MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
 TEMP=0.7
-TOP_K=25
+TOP_K=35
+TOP_P=0.9
 
 
-def test_generation(model, tokenizer, text, max_length=50):
+def test_generation(model, tokenizer, text, max_length=10):
   """
   Test the generation capabilities of the LlamaModel with sample text.
   """
   # Tokenize input text
-  inputs = tokenizer(text, return_tensors="pt")
+  prompt = tokenizer.apply_chat_template([
+    {
+      "role": "user",
+      "content": text
+    }
+  ], tokenize=False, add_generation_prompt=True)
+  
+  print(f"prompt: {prompt}")
+
+  inputs = tokenizer(prompt, return_tensors="pt")
   input_ids = inputs.get("input_ids")
   attention_mask = inputs.get("attention_mask")
+
+  print(f"input_ids: {input_ids}")
+  print(f"attention_mask: {attention_mask}")
 
   # Initialize KVCache for caching
   past_kv_cache = KVCache(
@@ -48,12 +61,13 @@ def test_generation(model, tokenizer, text, max_length=50):
       )
 
     # Select next token using logits
-    #next_token = select_next_token(logits, top_k=50, top_p=0.9, temperature=0.7, use_max=False)
+    #next_token = select_next_token(logits, top_k=TOP_K, top_p=TOP_P, temperature=TEMP, use_max=False)
     next_token = ttg.sample(logits[:, -1, :].clone().float(), temperature=TEMP, top_k=TOP_K).squeeze(-1)
     print(f"next_token: {next_token}")
 
     # Update generated_ids
     generated_ids = torch.cat([generated_ids, next_token.unsqueeze(0)], dim=1)
+    print(f"generated_ids: {generated_ids}")
 
     # Check for EOS token
     if next_token.item() == tokenizer.eos_token_id:
