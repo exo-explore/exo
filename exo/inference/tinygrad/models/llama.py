@@ -252,8 +252,6 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
 
 
 def fix_bf16(weights: Dict[Any, Tensor]):
-    for k, v in weights.items():
-        print(f"Key: {k}, Device: {v.device}, Dtype: {v.dtype}")
 
     if Device.DEFAULT == "CLANG":
         return {
@@ -263,3 +261,14 @@ def fix_bf16(weights: Dict[Any, Tensor]):
         k: v.to(dtypes.float16).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
     }
 
+def fix_bf16(weights):
+    converted = {}
+    for k, v in weights.items():
+        if v.dtype == dtypes.bfloat16:
+            curr_device = v.device
+            converted_tensor = v.to(dtypes.float16)
+            device_str = getattr(curr_device, 'name', str(curr_device))
+            converted[k] = converted_tensor.to(device_str)
+        else:
+            converted[k] = v
+    return converted
