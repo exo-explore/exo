@@ -157,7 +157,7 @@ def create_4d_causal_attention_mask(
     target_len: int,
     dtype: torch.dtype,
     device: torch.device,
-    cache_pos: torch.Tensor,
+    cache_pos: torch.LongTensor,
     batch_size: int,
 ) -> torch.Tensor:
     """
