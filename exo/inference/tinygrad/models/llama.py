@@ -2,7 +2,8 @@ from typing import Tuple, Union, Optional, Dict, Any
 from tinygrad import Tensor, Variable, TinyJit, dtypes, nn, Device
 from tinygrad.helpers import getenv
 import logging
-
+import os
+import torch
 logger = logging.getLogger(__name__)
 
 # https://github.com/facebookresearch/llama/blob/1076b9c51c77ad06e9d7ba8a4c6df775741732bd/llama/model.py#L47
@@ -251,13 +252,12 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
   return sd
 
 
-def fix_bf16(weights: Dict[Any, Tensor]):
-    if Device.DEFAULT == "CLANG":
-        return {
-            k: v.llvm_bf16_cast(dtypes.float32) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
-        }
-    else:
-        # Explicitly convert bfloat16 to float32 and then to float16
-        return {
-            k: v.cast(dtypes.float32).cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()
-        }
+def fix_bf16(weights: Dict[Any, torch.Tensor]):
+    if os.getenv("SUPPORT_BF16", "1") == "1":
+        # Cast bfloat16 to float16 explicitly for each tensor
+        return {k: v.to(torch.float16) if v.dtype == torch.bfloat16 else v for k, v in weights.items()}
+    
+    # Handle other dtype cases if needed (PyTorch doesn’t have nv_bfloat16, but you could check for other types)
+    return {
+        k: v.to(torch.float16) if v.dtype == torch.bfloat16 else v for k, v in weights.items()
+    }
