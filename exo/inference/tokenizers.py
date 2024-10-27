@@ -7,7 +7,17 @@ from transformers import AutoTokenizer, AutoProcessor
 from exo.download.hf.hf_helpers import get_local_snapshot_dir
 from exo.helpers import DEBUG
 
+class DummyTokenizer:
+  def __init__(self):
+    self.eos_token_id = 0
+  def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True):
+    return [1,2,3]
+  def decode(self, tokens):
+    return "dummy"
+
 async def resolve_tokenizer(model_id: str):
+  if model_id == "dummy":
+    return DummyTokenizer()
   local_path = await get_local_snapshot_dir(model_id)
   if DEBUG >= 2: print(f"Checking if local path exists to load tokenizer from local {local_path=}")
   try:
