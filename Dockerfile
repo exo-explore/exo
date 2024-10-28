@@ -29,6 +29,10 @@ RUN pip install --no-cache-dir numpy
 # Add library path
 ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
-COPY test.py .
+COPY setup.py .
+COPY exo ./exo
 
-CMD ["python3", "test.py"]
+RUN sed -i '/mlx==/d' setup.py && \
+    pip install --no-cache-dir .
+
+CMD ["exo", "--inference-engine", "mlx"]
