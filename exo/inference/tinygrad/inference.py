@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import os
+from exo.topology.device_flops import DeviceFlops
 from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
@@ -101,6 +102,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
       self.shard = shard
 
-  async def benchmark_tflops(self):
+  async def benchmark_tflops(self) -> DeviceFlops:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(self.executor, tinygrad_benchmark_tflops)

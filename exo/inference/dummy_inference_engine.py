@@ -4,6 +4,7 @@ import asyncio
 import json
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
+from exo.topology.device_flops import DeviceFlops
 
 class DummyInferenceEngine(InferenceEngine):
   def __init__(self):
@@ -62,3 +63,6 @@ class DummyInferenceEngine(InferenceEngine):
     await asyncio.sleep(0.1)  # Simulate a short delay
     self.shard = shard
     print(f"DummyInferenceEngine: Simulated loading of shard {shard.model_id}")
+
+  async def benchmark_tflops(self) -> DeviceFlops:
+    return DeviceFlops(fp32=0.0, fp16=0.0, int8=0.0)

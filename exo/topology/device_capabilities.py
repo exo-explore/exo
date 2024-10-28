@@ -4,22 +4,7 @@ from pydantic import BaseModel
 from exo import DEBUG
 import subprocess
 import psutil
-
-TFLOPS = 1.00
-
-
-class DeviceFlops(BaseModel):
-  # units of TFLOPS
-  fp32: float
-  fp16: float
-  int8: float
-
-  def __str__(self):
-    return f"fp32: {self.fp32 / TFLOPS:.2f} TFLOPS, fp16: {self.fp16 / TFLOPS:.2f} TFLOPS, int8: {self.int8 / TFLOPS:.2f} TFLOPS"
-
-  def to_dict(self):
-    return self.model_dump()
-
+from exo.topology.device_flops import DeviceFlops
 
 class DeviceCapabilities(BaseModel):
   model: str
@@ -70,7 +55,7 @@ async def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCa
   else:
     memory = memory_value
 
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=DeviceFlops(*await inference_engine.benchmark_tflops()))
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=await inference_engine.benchmark_tflops())
 
 
 async def linux_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
@@ -86,7 +71,7 @@ async def linux_device_capabilities(inference_engine: InferenceEngine) -> Device
     gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
     gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
     gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    flops = DeviceFlops(*await inference_engine.benchmark_tflops())
+    flops = await inference_engine.benchmark_tflops()
 
     if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
