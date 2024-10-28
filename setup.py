@@ -1,4 +1,5 @@
 import sys
+import platform
 
 from setuptools import find_packages, setup
 
@@ -17,6 +18,7 @@ install_requires = [
   "prometheus-client==0.20.0",
   "protobuf==5.27.1",
   "psutil==6.0.0",
+  "pydantic==2.9.2",
   "requests==2.32.3",
   "rich==13.7.1",
   "safetensors==0.4.3",
@@ -27,13 +29,6 @@ install_requires = [
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
 ]
 
-# Add macOS-specific packages if on Darwin (macOS)
-if sys.platform.startswith("darwin"):
-  install_requires.extend([
-    "mlx==0.18.0",
-    "mlx-lm==0.18.2",
-  ])
-
 extras_require = {
   "linting": [
     "pylint==3.2.6",
@@ -41,7 +36,15 @@ extras_require = {
     "mypy==1.11.0",
     "yapf==0.40.2",
   ],
+  "apple_silicon": [
+    "mlx==0.18.0",
+    "mlx-lm==0.18.2",
+  ],
 }
+
+# Check if running on macOS with Apple Silicon
+if sys.platform.startswith("darwin") and platform.machine() == "arm64":
+  install_requires.extend(extras_require["apple_silicon"])
 
 setup(
   name="exo",
