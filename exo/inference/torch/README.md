@@ -17,6 +17,9 @@ Still working on split model development (see test_split_model.py). Right now, i
 ### 10/21/2024
 Working on removing transformers due to inference and VRAM usage [issues](https://github.com/exo-explore/exo/pull/139#issuecomment-2424953962). Creating a pure pytorch implementation of llama3 as using transformers wont work for exo. Using some code from meta but also implementing the use of torchtune.
 
+### 10/27/2024
+Still working on llama3 model but wanted to note that a better KVCache needs to be investigated.
+
 ## Tech
 
 Tested on

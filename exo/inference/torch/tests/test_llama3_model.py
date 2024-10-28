@@ -40,13 +40,16 @@ def test_generation(model, tokenizer, text, max_length=10):
   print(f"attention_mask: {attention_mask}")
 
   # Initialize KVCache for caching
-  past_kv_cache = KVCache(
-    batch_size=input_ids.size(0),
-    max_seq_len=model.max_position_embeddings,
-    num_heads=model.num_heads,
-    head_dim=model.head_dim,
-    dtype=input_ids.dtype
-  )
+  past_kv_cache = None
+  #past_kv_cache = KVCache(
+  #  batch_size=input_ids.size(0),
+  #  max_seq_len=model.max_position_embeddings,
+  #  num_heads=model.num_heads,
+  #  head_dim=model.head_dim,
+  #  dtype=input_ids.dtype
+  #)
+
+  #print(f"past_kv_cache: {past_kv_cache}")
 
   # Start with initial input_ids
   generated_ids = input_ids.clone()
