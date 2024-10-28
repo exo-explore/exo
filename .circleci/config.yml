@@ -10,9 +10,13 @@ commands:
         type: string
       model_id:
         type: string
-      vlm:
-        type: boolean
-        default: false
+      prompt:
+        type: string
+      img_url:
+        type: string
+        default: ""
+      expected_output:
+        type: string
     steps:
       - run:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
@@ -47,16 +51,16 @@ commands:
             # Check processes before proceeding
             check_processes
 
-            if [ <<parameters.vlm>> = true ]; then
+            if [ -n "<<parameters.img_url>>" ]; then
               json_payload='{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": [{"type": "text", "text": "Who is this in the image?"}, {"type": "image_url", "image_url": { "url": "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"}}]}],
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "<<parameters.prompt>>"}, {"type": "image_url", "image_url": { "url": "<<parameters.img_url>>"}}]}],
                 "temperature": 0.0
               }'
             else
               json_payload='{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }'
             fi
@@ -90,8 +94,8 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "$expected_content" || ! echo "$response_2" | grep -q "$expected_content"; then
-              echo "Test failed: Response does not contain '$expected_content'"
+            if ! echo "$response_1" | grep -q "<<parameters.expected_output>>" || ! echo "$response_2" | grep -q "<<parameters.expected_output>>"; then
+              echo "Test failed: Response does not contain '<<parameters.expected_output>>'"
               echo "Response 1: $response_1"
               echo ""
               echo "Response 2: $response_2"
@@ -101,7 +105,7 @@ commands:
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains '$expected_content'"
+              echo "Test passed: Response from both nodes contains '<<parameters.expected_output>>'"
             fi
 
 jobs:
@@ -193,10 +197,14 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llava-1.5-7b-hf
-          vlm: true
+          prompt: "Who is this in the image?"
+          img_url: "https://paulcoletravels.com/wp-content/uploads/2024/04/19870831_bad_album_shoot.jpg"
+          expected_output: "Michael Jackson"
 
   chatgpt_api_integration_test_dummy:
     macos:
@@ -219,6 +227,8 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: dummy
           model_id: dummy-model
+          prompt: "Dummy prompt."
+          expected_output: "dummy"
 
   test_macos_m1:
     macos:
@@ -249,6 +259,8 @@ jobs:
   #     - run_chatgpt_api_test:
   #         inference_engine: tinygrad
   #         model_id: llama-3-8b
+  #         prompt: "Keep responses concise. Who was the king of pop?"
+  #         expected_output: "Michael Jackson"
 
 workflows:
   version: 2
