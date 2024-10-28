@@ -22,13 +22,12 @@ RUN git clone https://github.com/ml-explore/mlx.git && cd mlx && mkdir -p build 
     make -j && \
     make install && \
     cd .. && \
-    pip install --no-cache-dir . && \
-    rm -rf build mlx
+    pip install --no-cache-dir .
 
 RUN pip install --no-cache-dir numpy
 
 # Add library path
-# ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
 COPY test.py .
 
