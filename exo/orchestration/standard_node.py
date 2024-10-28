@@ -422,6 +422,7 @@ class StandardNode(Node):
         self.topology.merge(other_topology)
       except Exception as e:
         print(f"Error collecting topology from {peer.id()}: {e}")
+        traceback.print_exc()
 
     next_topology.active_node_id = self.topology.active_node_id  # this is not so clean.
     self.topology = next_topology
