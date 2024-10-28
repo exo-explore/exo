@@ -24,15 +24,12 @@ RUN git clone https://github.com/ml-explore/mlx.git && cd mlx && mkdir -p build 
     cd .. && \
     pip install --no-cache-dir .
 
-RUN pip install --no-cache-dir numpy
-
-# Add library path
-ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
-
 COPY setup.py .
 COPY exo ./exo
 
 RUN sed -i '/mlx==/d' setup.py && \
     pip install --no-cache-dir .
+
+RUN pip install --no-cache-dir --no-deps mlx-lm==0.18.2
 
 CMD ["exo", "--inference-engine", "mlx"]
