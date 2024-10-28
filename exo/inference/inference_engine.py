@@ -33,5 +33,5 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
     return TinygradDynamicShardInferenceEngine(shard_downloader)
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
-    return DummyInferenceEngine(shard_downloader)
+    return DummyInferenceEngine()
   raise ValueError(f"Unsupported inference engine: {inference_engine_name}")
