@@ -29,8 +29,8 @@
     <div x-show="errorMessage" x-transition.opacity x-text="errorMessage" class="toast">
     </div>
 <div class="model-selector">
-<select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
-<option selected="" value="llama-3.2-1b">Llama 3.2 1B</option>
+<select>
+<option value="llama-3.2-1b">Llama 3.2 1B</option>
 <option value="llama-3.2-3b">Llama 3.2 3B</option>
 <option value="llama-3.1-8b">Llama 3.1 8B</option>
 <option value="llama-3.1-70b">Llama 3.1 70B</option>
