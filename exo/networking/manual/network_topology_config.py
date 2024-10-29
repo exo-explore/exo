@@ -17,7 +17,6 @@ class NetworkTopology(BaseModel):
   """
   node_id to PeerConfig. The node_id is used to identify the peer in the discovery process. The node that this is running from should be included in this dict.
   """
-
   @classmethod
   def from_path(cls, path: str) -> "NetworkTopology":
     try:

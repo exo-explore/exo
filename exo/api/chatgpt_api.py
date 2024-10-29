@@ -178,7 +178,7 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
 
-    self.static_dir = Path(__file__).parent.parent / "tinychat"
+    self.static_dir = Path(__file__).parent.parent/"tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 
@@ -191,6 +191,7 @@ class ChatGPTAPI:
         return await asyncio.wait_for(handler(request), timeout=self.response_timeout)
       except asyncio.TimeoutError:
         return web.json_response({"detail": "Request timed out"}, status=408)
+
     return middleware
 
   async def log_request(self, app, handler):
@@ -204,7 +205,7 @@ class ChatGPTAPI:
     return web.FileResponse(self.static_dir/"index.html")
 
   async def handle_get_models(self, request):
-    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True } for model_name, _ in model_base_shards.items()])
+    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_base_shards.items()])
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
@@ -221,7 +222,6 @@ class ChatGPTAPI:
       else:
         print(f"Unknown progress event type: {type(progress_event)}. {progress_event}")
     return web.json_response(progress_data)
-
 
   async def handle_post_chat_completions(self, request):
     data = await request.json()
@@ -270,10 +270,7 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {image_str=}")
 
     try:
-      await asyncio.wait_for(
-        asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))),
-        timeout=self.response_timeout
-      )
+      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))), timeout=self.response_timeout)
 
       if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
 
