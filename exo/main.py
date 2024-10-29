@@ -23,7 +23,7 @@ from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.dummy_inference_engine import DummyInferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
-from exo.models import model_base_shards  # Ensure this is correctly imported
+from exo.models import model_base_shards
 from exo.viz.topology_viz import TopologyViz
 
 # parse args
@@ -68,71 +68,84 @@ inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
 if args.node_port is None:
-    args.node_port = find_available_port(args.node_host)
-    if DEBUG >= 1:
-        print(f"Using available port: {args.node_port}")
+  args.node_port = find_available_port(args.node_host)
+  if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()
 chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip in get_all_ip_addresses()]
 web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip in get_all_ip_addresses()]
 if DEBUG >= 0:
-    print("Chat interface started:")
-    for web_chat_url in web_chat_urls:
-        print(f" - {terminal_link(web_chat_url)}")
-    print("ChatGPT API endpoint served at:")
-    for chatgpt_api_endpoint in chatgpt_api_endpoints:
-        print(f" - {terminal_link(chatgpt_api_endpoint)}")
+  print("Chat interface started:")
+  for web_chat_url in web_chat_urls:
+    print(f" - {terminal_link(web_chat_url)}")
+  print("ChatGPT API endpoint served at:")
+  for chatgpt_api_endpoint in chatgpt_api_endpoints:
+    print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
 if args.discovery_module == "udp":
-    discovery = UDPDiscovery(args.node_id, args.node_port, args.listen_port, args.broadcast_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout)
+  discovery = UDPDiscovery(
+    args.node_id,
+    args.node_port,
+    args.listen_port,
+    args.broadcast_port,
+    lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
+    discovery_timeout=args.discovery_timeout
+  )
 elif args.discovery_module == "tailscale":
-    discovery = TailscaleDiscovery(args.node_id, args.node_port, lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities), discovery_timeout=args.discovery_timeout, tailscale_api_key=args.tailscale_api_key, tailnet=args.tailnet_name)
+  discovery = TailscaleDiscovery(
+    args.node_id,
+    args.node_port,
+    lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
+    discovery_timeout=args.discovery_timeout,
+    tailscale_api_key=args.tailscale_api_key,
+    tailnet=args.tailnet_name
+  )
 elif args.discovery_module == "manual":
-    if not args.discovery_config_path:
-        raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
-    discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities))
-
+  if not args.discovery_config_path:
+    raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
+  discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities))
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
 node = StandardNode(
-    args.node_id,
-    None,
-    inference_engine,
-    discovery,
-    partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
-    max_generate_tokens=args.max_generate_tokens,
-    topology_viz=topology_viz,
-    shard_downloader=shard_downloader
+  args.node_id,
+  None,
+  inference_engine,
+  discovery,
+  partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
+  max_generate_tokens=args.max_generate_tokens,
+  topology_viz=topology_viz,
+  shard_downloader=shard_downloader
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
 api = ChatGPTAPI(
-    node,
-    inference_engine.__class__.__name__,
-    response_timeout=args.chatgpt_api_response_timeout,
-    on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None
+  node,
+  inference_engine.__class__.__name__,
+  response_timeout=args.chatgpt_api_response_timeout,
+  on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None
 )
 node.on_token.register("update_topology_viz").on_next(
-    lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
+  lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
 
+
 def preemptively_start_download(request_id: str, opaque_status: str):
-    try:
-        status = json.loads(opaque_status)
-        if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
-            current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
-            if DEBUG >= 2:
-                print(f"Preemptively starting download for {current_shard}")
-            asyncio.create_task(shard_downloader.ensure_shard(current_shard))
-    except Exception as e:
-        if DEBUG >= 2:
-            print(f"Failed to preemptively start download: {e}")
-            traceback.print_exc()
+  try:
+    status = json.loads(opaque_status)
+    if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
+      current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
+      if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
+      asyncio.create_task(shard_downloader.ensure_shard(current_shard))
+  except Exception as e:
+    if DEBUG >= 2:
+      print(f"Failed to preemptively start download: {e}")
+      traceback.print_exc()
+
 
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
 
 if args.prometheus_client_port:
-    from exo.stats.metrics import start_metrics_server
-    start_metrics_server(node, args.prometheus_client_port)
+  from exo.stats.metrics import start_metrics_server
+  start_metrics_server(node, args.prometheus_client_port)
 
 last_broadcast_time = 0
 
@@ -149,91 +162,80 @@ shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 
 async def shutdown(signal, loop):
-    """Gracefully shutdown the server and close the asyncio loop."""
-    print(f"Received exit signal {signal.name}...")
-    print("Thank you for using exo.")
-    print_yellow_exo()
-    server_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    [task.cancel() for task in server_tasks]
-    print(f"Cancelling {len(server_tasks)} outstanding tasks")
-    await asyncio.gather(*server_tasks, return_exceptions=True)
-    await server.stop()
-    loop.stop()
+  """Gracefully shutdown the server and close the asyncio loop."""
+  print(f"Received exit signal {signal.name}...")
+  print("Thank you for using exo.")
+  print_yellow_exo()
+  server_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+  [task.cancel() for task in server_tasks]
+  print(f"Cancelling {len(server_tasks)} outstanding tasks")
+  await asyncio.gather(*server_tasks, return_exceptions=True)
+  await server.stop()
+  loop.stop()
 
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
-    shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
-    if not shard:
-        print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
-        return
-    tokenizer = await resolve_tokenizer(shard.model_id)
-    request_id = str(uuid.uuid4())
-    callback_id = f"cli-wait-response-{request_id}"
-    callback = node.on_token.register(callback_id)
-    if topology_viz:
-        topology_viz.update_prompt(request_id, prompt)
-    prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+  shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
+  if not shard:
+    print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+    return
+  tokenizer = await resolve_tokenizer(shard.model_id)
+  request_id = str(uuid.uuid4())
+  callback_id = f"cli-wait-response-{request_id}"
+  callback = node.on_token.register(callback_id)
+  if topology_viz:
+    topology_viz.update_prompt(request_id, prompt)
+  prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
 
-    try:
-        print(f"Processing prompt: {prompt}")
-        await node.process_prompt(shard, prompt, None, request_id=request_id)
+  try:
+    print(f"Processing prompt: {prompt}")
+    await node.process_prompt(shard, prompt, None, request_id=request_id)
 
-        _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
+    _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
 
-        print("\nGenerated response:")
-        print(tokenizer.decode(tokens))
-    except Exception as e:
-        print(f"Error processing prompt: {str(e)}")
-        traceback.print_exc()
-    finally:
-        node.on_token.deregister(callback_id)
+    print("\nGenerated response:")
+    print(tokenizer.decode(tokens))
+  except Exception as e:
+    print(f"Error processing prompt: {str(e)}")
+    traceback.print_exc()
+  finally:
+    node.on_token.deregister(callback_id)
+
 
 async def main():
-    loop = asyncio.get_running_loop()
+  loop = asyncio.get_running_loop()
 
-    # Use a more direct approach to handle signals
-    def handle_exit():
-        asyncio.ensure_future(shutdown(signal.SIGTERM, loop))
+  # Use a more direct approach to handle signals
+  def handle_exit():
+    asyncio.ensure_future(shutdown(signal.SIGTERM, loop))
 
-    for s in [signal.SIGINT, signal.SIGTERM]:
-        loop.add_signal_handler(s, handle_exit)
+  for s in [signal.SIGINT, signal.SIGTERM]:
+    loop.add_signal_handler(s, handle_exit)
 
-    await node.start(wait_for_peers=args.wait_for_peers)
+  await node.start(wait_for_peers=args.wait_for_peers)
 
-    if args.command == "run" or args.run_model:
-        # Model selection logic updated here
-        model_name = args.model_name or args.run_model
+  if args.command == "run" or args.run_model:
+    model_name = args.model_name or args.run_model
+    if not model_name:
+      print("Error: Model name is required when using 'run' command or --run-model")
+      return
+    await run_model_cli(node, inference_engine, model_name, args.prompt)
+  else:
+    asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
+    await asyncio.Event().wait()
 
-        if not model_name:
-            if model_base_shards:
-                model_name = next(iter(model_base_shards))
-                print(f"No model specified. Using the first available model: '{model_name}'")
-            else:
-                print("Error: No models are available in 'model_base_shards'.")
-                return
-
-        # Proceed with the selected model
-        shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
-        if not shard:
-            print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
-            return
-
-        await run_model_cli(node, inference_engine, model_name, args.prompt)
-    else:
-        asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
-        await asyncio.Event().wait()
 
 def run():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        print("Received keyboard interrupt. Shutting down...")
-    finally:
-        loop.run_until_complete(shutdown(signal.SIGTERM, loop))
-        loop.close()
+  loop = asyncio.new_event_loop()
+  asyncio.set_event_loop(loop)
+  try:
+    loop.run_until_complete(main())
+  except KeyboardInterrupt:
+    print("Received keyboard interrupt. Shutting down...")
+  finally:
+    loop.run_until_complete(shutdown(signal.SIGTERM, loop))
+    loop.close()
 
 
 if __name__ == "__main__":
-    run()
+  run()
