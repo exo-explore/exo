@@ -59,7 +59,8 @@ print_yellow_exo()
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
-shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check, max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
+shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check,
+                                                      max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
 
@@ -135,16 +136,14 @@ if args.prometheus_client_port:
 
 last_broadcast_time = 0
 
+
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
-    global last_broadcast_time
-    current_time = time.time()
-    if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
-        last_broadcast_time = current_time
-        asyncio.create_task(node.broadcast_opaque_status("", json.dumps({
-            "type": "download_progress",
-            "node_id": node.id,
-            "progress": event.to_dict()
-        })))
+  global last_broadcast_time
+  current_time = time.time()
+  if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
+    last_broadcast_time = current_time
+    asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
+
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
@@ -160,6 +159,7 @@ async def shutdown(signal, loop):
     await asyncio.gather(*server_tasks, return_exceptions=True)
     await server.stop()
     loop.stop()
+
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
     shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
@@ -233,6 +233,7 @@ def run():
     finally:
         loop.run_until_complete(shutdown(signal.SIGTERM, loop))
         loop.close()
+
 
 if __name__ == "__main__":
     run()
