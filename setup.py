@@ -30,10 +30,7 @@ install_requires = [
 ]
 
 extras_require = {
-  "linting": [
-    "pylint==3.2.6",
-    "ruff==0.5.5",
-    "mypy==1.11.0",
+  "formatting": [
     "yapf==0.40.2",
   ],
   "apple_silicon": [

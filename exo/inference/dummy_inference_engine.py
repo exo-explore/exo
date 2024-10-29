@@ -5,6 +5,7 @@ import json
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
 
+
 class DummyInferenceEngine(InferenceEngine):
   def __init__(self):
     self.shard = None
