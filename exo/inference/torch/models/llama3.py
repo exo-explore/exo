@@ -35,7 +35,7 @@ class LlamaBlock(nn.Module):
     super(LlamaBlock, self).__init__()
     self.self_attn = self_attn
     self.mlp = mlp
-    self.input_layer_norm = RMSNorm(dim, eps=rms_norm_eps)
+    self.input_layernorm = RMSNorm(dim, eps=rms_norm_eps)
     self.post_attention_norm = RMSNorm(dim, eps=rms_norm_eps)
 
   def forward(
@@ -64,8 +64,8 @@ class LlamaBlock(nn.Module):
     residual = hidden_states
 
     # Apply RMSNorm to input
-    hidden_states = self.input_layer_norm(hidden_states)
-    print(f"self.input_layer_norm(hidden_states) {hidden_states.shape}")
+    hidden_states = self.input_layernorm(hidden_states)
+    print(f"self.input_layernorm(hidden_states) {hidden_states.shape}")
 
     #batch_size, seq_len, _ = hidden_states.shape
     #hidden_states = hidden_states.view(batch_size, seq_len, self.num_heads, self.head_dim).squeeze()
@@ -158,7 +158,7 @@ class LlamaModel(nn.Module):
       ) for _ in range(self.num_layers)
     ])
     self.norm = RMSNorm(self.hidden_size, eps=self.rms_norm_eps)
-    self.rotary_pos_emb = RotaryEmbedding(
+    self.rotary_emb = RotaryEmbedding(
       self.head_dim
     )
     self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
@@ -233,7 +233,7 @@ class LlamaModel(nn.Module):
     print(f"position_ids: {position_ids.shape}")
 
     # Apply rotary positional embeddings
-    position_embeddings = self.rotary_pos_emb(hidden_states, position_ids)
+    position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
     # Reshape back to (batch_size, seq_len, hidden_size)
     print(f"hidden_size: {self.hidden_size}")

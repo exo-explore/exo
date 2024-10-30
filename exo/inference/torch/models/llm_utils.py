@@ -360,7 +360,7 @@ class MultiHeadAttention(nn.Module):
     if self.kv_cache is not None:
       print(f"self.kv_cache.size {self.kv_cache.size}")
     print(f"key_states.size(0) {key_states.size(2)}")
-    if self.kv_cache is None or self.kv_cache.batch_size != key_states.size(0):
+    if self.kv_cache is None or self.kv_cache.size != key_states.size(2):
       print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
       self.kv_cache = ttm.KVCache(
         batch_size=key_states.size(0),
