@@ -11,6 +11,8 @@ import torch.nn.functional as F
 import torchtune.modules as ttm
 import math
 
+from transformers.models.mamba.modeling_mamba import causal_conv1d_update
+
 from exo.helpers import DEBUG
 
 def load_model_config(model_config_path: Path) -> dict:
@@ -39,7 +41,7 @@ def select_next_token(
   Selects the next token from logits using top-k, top-p, and temperature scaling.
 
   Args:
-    logits (torch.Tensor): Logits tensor of shape (batch_size, vocab_size).
+    logits (torch.Tensor): Logits or prediction scores tensor of shape (batch_size, vocab_size).
     top_k (int): Number of top logits to consider for sampling.
     top_p (float): Cumulative probability threshold for nucleus sampling.
     temperature (float): Scaling factor for temperature.
@@ -58,49 +60,50 @@ def select_next_token(
 
   # Apply top-k filtering
   if top_k > 0:
-    # Get the top-k logits and set the rest to -inf
-    top_k_values, _ = torch.topk(logits, top_k, dim=-1)
-    min_top_k_value = top_k_values[:, -1, None]
-    logits = torch.where(logits < min_top_k_value, torch.tensor(float('-inf'), device=logits.device), logits)
+    top_k = min(top_k, logits.size(-1))
+    min_topk = torch.topk(logits, top_k)[0][..., -1, None]
+    logits = logits.masked_fill(logits < min_topk, float("-inf"))
 
   # Apply top-p (nucleus) filtering
   if top_p > 0.0:
-    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-    # Mask tokens exceeding the top-p threshold
-    sorted_indices_to_remove = cumulative_probs > top_p
-    sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()  # Shift right
-    sorted_indices_to_remove[:, 0] = 0  # Ensure at least one token is selected
+    sorted_logits, sorted_indices = torch.sort(logits, descending=False)
+    cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+    sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
+    sorted_indices_to_remove[..., -1:] = 0
 
     indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
     logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
-  # Calculate probabilities
-  probs = F.softmax(logits, dim=-1)
-
   # Select next token
   if not use_max:
+    probs = F.softmax(logits, dim=-1)
     next_token = torch.multinomial(probs, num_samples=1)
   else:
     next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
+  next_token = next_token[:, None].squeeze(-1)
+
   # Debugging output
   if DEBUG >= 4:
     print(f"Logits: {logits}")
-    print(f"Probabilities: {probs}")
     print(f"Next token: {next_token}")
 
-  return next_token.squeeze(-1)
+  return next_token
 
 class MultiLayerPreceptron(nn.Module):
-  def __init__(self, input_dim, hidden_dims, output_dim, activation='gelu', dropout=0.0, use_batchnorm=False):
+  def __init__(
+    self,
+    input_dim,
+    hidden_dim,
+    activation='gelu',
+    use_bias=False
+  ):
     """
     General MLP (Multi-Layer Perceptron) module.
 
     Args:
       input_dim (int): Dimensionality of the input.
-      hidden_dims (list of int): List of hidden layer dimensions.
+      hidden_dims (int): Hidden layer/intermediate dimensions.
       output_dim (int): Dimensionality of the output.
       activation (str): Activation function ('relu', 'gelu', 'tanh', 'sigmoid', etc.).
       dropout (float): Dropout probability.
@@ -108,39 +111,27 @@ class MultiLayerPreceptron(nn.Module):
     """
     super(MultiLayerPreceptron, self).__init__()
 
-    self.layers = nn.ModuleList()
-    self.use_batchnorm = use_batchnorm
-
     # Activation function mapping
     activations = {
       'relu': nn.ReLU(),
       'gelu': nn.GELU(),
       'tanh': nn.Tanh(),
       'sigmoid': nn.Sigmoid(),
-      'leaky_relu': nn.LeakyReLU(0.2)
+      'leaky_relu': nn.LeakyReLU(0.2),
+      'silu': nn.SiLU()
     }
 
     # Ensure valid activation
     if activation not in activations:
       raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
 
-    self.activation = activations[activation]
-
     # Construct MLP layers
-    prev_dim = input_dim
-    for h_dim in hidden_dims:
-      self.layers.append(nn.Linear(prev_dim, h_dim))
-      if use_batchnorm:
-        self.layers.append(nn.BatchNorm1d(h_dim))
-      self.layers.append(self.activation)
-      if dropout > 0:
-        self.layers.append(nn.Dropout(dropout))
-      prev_dim = h_dim
+    self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
+    self.up_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
+    self.down_proj = nn.Linear(hidden_dim, input_dim, bias=use_bias)
+    self.act_fn = activations[activation]
 
-    # Output layer
-    self.output_layer = nn.Linear(prev_dim, output_dim)
-
-  def forward(self, x):
+  def forward(self, x) -> torch.Tensor:
     """
     Forward pass for the MLP module.
 
@@ -150,9 +141,8 @@ class MultiLayerPreceptron(nn.Module):
     Returns:
       torch.Tensor: Output tensor after the MLP transformations.
     """
-    for layer in self.layers:
-      x = layer(x)
-    return self.output_layer(x)
+    down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+    return down_proj
 
 def create_4d_causal_attention_mask(
   attention_mask: torch.Tensor,
@@ -228,138 +218,27 @@ def rotate_half(x):
   x2 = x[..., x.shape[-1] // 2 :]
   return torch.cat((-x2, x1), dim=-1)
 
-class MultiHeadAttention(nn.Module):
-  """Multi-headed attention mechanism."""
-
-  def __init__(
-    self,
-    hidden_size,
-    num_heads,
-    num_kv_heads,
-    head_dim,
-    rotary_emb,
-    kv_cache: Optional[ttm.KVCache] = None,
-    attention_dropout=0.0,
-    is_causal=True
-  ):
-    super().__init__()
-    self.hidden_size = hidden_size
-    self.num_heads = num_heads
-    self.num_kv_heads = num_kv_heads
-    self.head_dim = head_dim
-    self.attention_dropout = attention_dropout
-    self.is_causal = is_causal
-    self.rotary_emb = rotary_emb
-
-    self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
-    self.k_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
-    self.v_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
-    self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
-
-    self.kv_cache = kv_cache
-
-  def forward(
-    self,
-    hidden_states: torch.Tensor,
-    position_ids: torch.Tensor,
-    attention_mask: Optional[torch.Tensor] = None,
-    position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
-  ) -> torch.Tensor:
-    batch_size, seq_len, _ = hidden_states.size()
-
-    if self.kv_cache is None or self.kv_cache.batch_size != batch_size:
-      self.kv_cache = ttm.KVCache(
-        batch_size=batch_size,
-        max_seq_len=seq_len,
-        num_heads=self.num_kv_heads,
-        head_dim=self.head_dim,
-        dtype=hidden_states.dtype
-      )
-
-    # Project to queries, keys, and values
-    query_states = self.q_proj(hidden_states)
-    key_states = self.k_proj(hidden_states)
-    value_states = self.v_proj(hidden_states)
-
-    # Reshape to [batch_size, num_heads, seq_len, head_dim]
-    query_states = query_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-    key_states = key_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-    value_states = value_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-    print(f"query_states: {query_states.shape}")
-    print(f"key_states: {key_states.shape}")
-    print(f"value_states: {value_states.shape}")
-
-    # Apply rotary positional embeddings if position_ids are provided
-    # or use position_embeddings
-    if position_embeddings is not None:
-      cos, sin = position_embeddings
-    else:
-      cos, sin = self.rotary_emb(query_states, position_ids)
-
-    # Expand cos and sin to match the shape of query_states
-    cos = cos[:, :, None, :self.head_dim].expand_as(query_states)
-    sin = sin[:, :, None, :self.head_dim].expand_as(query_states)
-    print(f"cos: {cos.shape} | sin: {sin.shape}")
-
-    # Apply rotary embeddings to queries and keys
-    query_states = (query_states * cos) + (rotate_half(query_states) * sin)
-    key_states = (key_states * cos) + (rotate_half(key_states) * sin)
-
-    # Repeat keys and values if needed
-    if self.num_heads > self.num_kv_heads:
-      n_rep = self.num_heads // self.num_kv_heads
-      key_states = torch.repeat_interleave(key_states, n_rep, dim=1)
-      value_states = torch.repeat_interleave(value_states, n_rep, dim=1)
-
-    print(f"query_states: {query_states.shape}")
-    print(f"key_states: {key_states.shape}")
-    print(f"value_states: {value_states.shape}")
-
-    # Forcing caching always enabled
-    key_states, value_states = self.kv_cache.update(key_states, value_states)
-
-    # Compute attention scores
-    attn_weights = torch.matmul(query_states, key_states.transpose(-2, -1)) / math.sqrt(self.head_dim)
-
-    # Apply causal mask, if applicable
-    if self.is_causal:
-      causal_mask = torch.tril(torch.ones((seq_len, seq_len), device=hidden_states.device))
-      attn_weights = attn_weights.masked_fill(causal_mask == 0, float('-inf'))
-
-    # Apply attention mask, if provided
-    if attention_mask is not None:
-      attn_weights = attn_weights + attention_mask
-
-    # Softmax normalization
-    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-    attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
-
-    # Compute attention output
-    attn_output = torch.matmul(attn_weights, value_states)
-
-    # Reshape to [batch_size, seq_len, hidden_size]
-    attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
-
-    # Project back to hidden size
-    attn_output = self.o_proj(attn_output)
-
-    return attn_output
-
 class RotaryEmbedding(nn.Module):
-  """Rotary Position Embedding."""
+  """
+  Rotary Position Embedding.
 
-  def __init__(self, dim, max_position_embeddings=2048, base=10000, scaling_factor=1.0, rope_type="default", device=None):
+  This computes the inverse frequencies according to the original RoPE implementation.
+  There are other implementations that will be added.
+  Ref: https://github.com/huggingface/transformers/blob/main/src/transformers/modeling_rope_utils.py
+  """
+
+  def __init__(self, dim, max_position_embeddings=2048, base=10000, scaling_factor=1.0):
     super().__init__()
     self.dim = dim
     self.max_position_embeddings = max_position_embeddings
     self.base = base
     self.scaling_factor = scaling_factor
-    self.rope_type = rope_type
 
     # Initialize the inverse frequency for RoPE
-    inv_freq = 1.0 / (self.base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+    inv_freq = 1.0 / (self.base ** (torch.arange(0, dim, 2, dtype=torch.int64).float() / dim))
     self.register_buffer("inv_freq", inv_freq, persistent=False)
 
+  @torch.no_grad()
   def forward(self, x, position_ids) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Compute the rotary position embeddings (cos, sin) for the given input tensor.
@@ -371,22 +250,318 @@ class RotaryEmbedding(nn.Module):
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: The cos and sin embeddings.
     """
-    # Expand inv_freq to match the batch size and sequence length
-    batch_size, seq_len = position_ids.size(0), position_ids.size(1)
-    inv_freq_expanded = self.inv_freq[None, :, None].expand(batch_size, -1, seq_len)
-
-    # Expand position_ids to match the frequency tensor
+    # Expand inv_freq to match the batch size
+    inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.size(0), -1, 1)
     position_ids_expanded = position_ids[:, None, :].float()
 
     # Compute cos and sin embeddings
-    freqs = torch.einsum("bnd,bnl->bnd", inv_freq_expanded, position_ids_expanded)
-    emb = torch.cat((freqs, freqs), dim=-1)
-    cos = emb.cos()
-    sin = emb.sin()
+    device_type = x.device.type
+    device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
+    with torch.autocast(device_type=device_type, enabled=False):
+      freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+      emb = torch.cat((freqs, freqs), dim=-1)
+      cos = emb.cos()
+      sin = emb.sin()
 
     # Apply the scaling factor to cos and sin embeddings
     cos = cos * self.scaling_factor
     sin = sin * self.scaling_factor
 
     return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
+# ------------------
+# Attention Methods
+# ------------------
+
+class MultiHeadAttention(nn.Module):
+  """
+  Multi-headed attention mechanism.
+
+  Using the "attention is all you need" implementation. Other implementations will follow.
+  Ref: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L277
+  Ref: https://pytorch.org/torchtune/0.3/_modules/torchtune/modules/attention.html
+  """
+
+  def __init__(
+    self,
+    hidden_size,
+    num_heads,
+    num_kv_heads,
+    head_dim,
+    rotary_emb,
+    kv_cache: Optional[ttm.KVCache] = None,
+    attention_dropout=0.0,
+    is_causal=True,
+    attention_bias=False
+  ):
+    super().__init__()
+    self.hidden_size = hidden_size
+    self.num_heads = num_heads
+    self.num_kv_heads = num_kv_heads
+    self.head_dim = head_dim
+    self.attention_dropout = attention_dropout
+    self.is_causal = is_causal
+    self.kv_cache = kv_cache
+
+    # nn layers
+    self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=attention_bias)
+    self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=attention_bias)
+    self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=attention_bias)
+    self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=attention_bias)
+    self.rotary_emb = rotary_emb
+
+  def forward(
+    self,
+    hidden_states: torch.Tensor,
+    position_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    cos_sin_unsqueeze: int=1
+  ) -> Tuple[torch.Tensor, ttm.KVCache]:
+    batch_size, seq_len, _ = hidden_states.size()
+
+    # Project to queries, keys, and values
+    query_states = self.q_proj(hidden_states)
+    key_states = self.k_proj(hidden_states)
+    value_states = self.v_proj(hidden_states)
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Reshape to [batch_size, num_heads, seq_len, head_dim]
+    query_states = query_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+    key_states = key_states.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+    value_states = value_states.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Apply rotary positional embeddings if position_ids are provided
+    # or use position_embeddings
+    if position_embeddings is not None:
+      cos, sin = position_embeddings
+    else:
+      cos, sin = self.rotary_emb(value_states, position_ids)
+
+    print(f"cos: {cos.shape} | sin: {sin.shape}")
+    # Expand cos and sin to match hidden_states' shape
+    cos = cos.unsqueeze(cos_sin_unsqueeze)
+    sin = sin.unsqueeze(cos_sin_unsqueeze)
+    print(f"cos: {cos.shape} | sin: {sin.shape}")
+
+    # Apply rotary embeddings to queries and keys
+    query_states = (query_states * cos) + (rotate_half(query_states) * sin)
+    key_states = (key_states * cos) + (rotate_half(key_states) * sin)
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Forcing caching always enabled
+    if self.kv_cache is not None:
+      print(f"self.kv_cache.size {self.kv_cache.size}")
+    print(f"key_states.size(0) {key_states.size(2)}")
+    if self.kv_cache is None or self.kv_cache.batch_size != key_states.size(0):
+      print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
+      self.kv_cache = ttm.KVCache(
+        batch_size=key_states.size(0),
+        max_seq_len=key_states.size(2),
+        num_heads=self.num_kv_heads,
+        head_dim=self.head_dim,
+        dtype=hidden_states.dtype
+      )
+    key_states, value_states = self.kv_cache.update(key_states, value_states)
+    print(f"kv_cache: {self.kv_cache.size}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Repeat keys and values if needed
+    #if self.num_heads > self.num_kv_heads:
+    n_rep = self.num_heads // self.num_kv_heads
+    key_states = torch.repeat_interleave(key_states, n_rep, dim=1)
+    value_states = torch.repeat_interleave(value_states, n_rep, dim=1)
+
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Compute attention scores
+    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+    print(f"attn_weights: {attn_weights.shape}")
+
+    # Apply attention mask, if provided
+    if attention_mask is not None:
+      print(f"attention_mask: {attention_mask.shape}")
+      causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+      print(f"causal_mask: {causal_mask.shape}")
+      attn_weights = attn_weights + causal_mask
+      print(f"attn_weights: {attn_weights.shape}")
+
+    # Softmax normalization
+    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+    print(f"attn_weights: {attn_weights.shape}")
+
+    # Compute attention output
+    attn_output = torch.matmul(attn_weights, value_states)
+    print(f"attn_output: {attn_output.shape}")
+
+    # Transpose attention output
+    attn_output = attn_output.transpose(1,2).contiguous()
+    print(f"attn_output: {attn_output.shape}")
+
+    # Reshape [batch_size, seq_len, -1]
+    attn_output = attn_output.reshape(batch_size, seq_len, -1)
+    print(f"attn_output after transpose: {attn_output.shape}")
+
+    # Project back to hidden size
+    attn_output = self.o_proj(attn_output)
+    print(f"attn_output: {attn_output.shape}")
+
+    return attn_output, self.kv_cache
+
+class SDPAttention(nn.Module):
+  """
+  Scaled dot product attention mechanism.
+
+  Using the scaled dot product attention method from pytorch
+  Ref: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L524
+  """
+
+  def __init__(
+    self,
+    hidden_size,
+    num_heads,
+    num_kv_heads,
+    head_dim,
+    rotary_emb,
+    kv_cache: Optional[ttm.KVCache] = None,
+    attention_dropout=0.0,
+    is_causal=True,
+    attention_bias=False
+  ):
+    super().__init__()
+    self.hidden_size = hidden_size
+    self.num_heads = num_heads
+    self.num_kv_heads = num_kv_heads
+    self.head_dim = head_dim
+    self.attention_dropout = attention_dropout
+    self.is_causal = is_causal
+    self.kv_cache = kv_cache
+
+    # nn layers
+    self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=attention_bias)
+    self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=attention_bias)
+    self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=attention_bias)
+    self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=attention_bias)
+    self.rotary_emb = rotary_emb
+
+  def forward(
+    self,
+    hidden_states: torch.Tensor,
+    position_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    cos_sin_unsqueeze: int=1
+  ) -> Tuple[torch.Tensor, ttm.KVCache]:
+    batch_size, seq_len, _ = hidden_states.size()
+
+    # Project to queries, keys, and values
+    query_states = self.q_proj(hidden_states)
+    key_states = self.k_proj(hidden_states)
+    value_states = self.v_proj(hidden_states)
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Reshape to [batch_size, num_heads, seq_len, head_dim]
+    query_states = query_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+    key_states = key_states.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+    value_states = value_states.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Apply rotary positional embeddings if position_ids are provided
+    # or use position_embeddings
+    if position_embeddings is not None:
+      cos, sin = position_embeddings
+    else:
+      cos, sin = self.rotary_emb(value_states, position_ids)
+
+    print(f"cos: {cos.shape} | sin: {sin.shape}")
+    # Expand cos and sin to match hidden_states' shape
+    cos = cos.unsqueeze(cos_sin_unsqueeze)
+    sin = sin.unsqueeze(cos_sin_unsqueeze)
+    print(f"cos: {cos.shape} | sin: {sin.shape}")
+
+    # Apply rotary embeddings to queries and keys
+    query_states = (query_states * cos) + (rotate_half(query_states) * sin)
+    key_states = (key_states * cos) + (rotate_half(key_states) * sin)
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    # Forcing caching always enabled
+    if self.kv_cache is not None:
+      print(f"self.kv_cache.size {self.kv_cache.size}")
+    print(f"key_states.size(0) {key_states.size(2)}")
+    if self.kv_cache is None or self.kv_cache.size != key_states.size(2):
+      print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
+      self.kv_cache = ttm.KVCache(
+        batch_size=key_states.size(0),
+        max_seq_len=key_states.size(2),
+        num_heads=self.num_kv_heads,
+        head_dim=self.head_dim,
+        dtype=hidden_states.dtype
+      )
+    key_states, value_states = self.kv_cache.update(key_states, value_states)
+    print(f"kv_cache: {self.kv_cache.size}")
+    print(f"from kv_cache / key_states: {key_states.shape}")
+    print(f"from kv_cache / value_states: {value_states.shape}")
+
+    # Repeat keys and values if needed
+    #if self.num_heads > self.num_kv_heads:
+    n_rep = self.num_heads // self.num_kv_heads
+    key_states = torch.repeat_interleave(key_states, n_rep, dim=1)
+    value_states = torch.repeat_interleave(value_states, n_rep, dim=1)
+
+    print(f"query_states: {query_states.shape}")
+    print(f"key_states: {key_states.shape}")
+    print(f"value_states: {value_states.shape}")
+
+    causal_mask = attention_mask
+    if causal_mask is not None:
+      causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
+      print(f"causal_mask: {causal_mask.shape}")
+
+    if query_states.device.type == "cuda" and causal_mask is not None:
+      query_states = query_states.contiguous()
+      key_states = key_states.contiguous()
+      value_states = value_states.contiguous()
+
+      print(f"query_states: {query_states.shape}")
+      print(f"key_states: {key_states.shape}")
+      print(f"value_states: {value_states.shape}")
+
+    is_causal = True if causal_mask is None and seq_len > 1 else False
+
+    attn_output = F.scaled_dot_product_attention(
+      query_states,
+      key_states,
+      value_states,
+      attn_mask=causal_mask,
+      dropout_p=self.attention_dropout if self.training else 0.0,
+      is_causal=is_causal,
+    )
+
+    print(f"attn_output: {attn_output.shape}")
+
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    attn_output = attn_output.view(batch_size, seq_len, -1)
+
+    attn_output = self.o_proj(attn_output)
+
+    print(f"attn_output: {attn_output.shape}")
+
+    return attn_output, self.kv_cache
 

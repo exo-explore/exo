@@ -9,27 +9,31 @@ from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file as load_safetensors
 from exo.inference.torch.models.llm_utils import load_model_config, select_next_token
-from exo.inference.torch.models.llama3 import LlamaModel, KVCache
+from exo.inference.torch.models.llama3 import LlamaModel
 from exo.inference.shard import Shard
 
 MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
 TEMP=0.7
-TOP_K=35
+TOP_K=25
 TOP_P=0.9
 
 
-def test_generation(model, tokenizer, text, max_length=10):
+def test_generation(model, tokenizer, text, max_length=10, config=None):
   """
   Test the generation capabilities of the LlamaModel with sample text.
   """
   # Tokenize input text
   prompt = tokenizer.apply_chat_template([
     {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
       "role": "user",
       "content": text
     }
   ], tokenize=False, add_generation_prompt=True)
-  
+
   print(f"prompt: {prompt}")
 
   inputs = tokenizer(prompt, return_tensors="pt")
@@ -39,47 +43,48 @@ def test_generation(model, tokenizer, text, max_length=10):
   print(f"input_ids: {input_ids}")
   print(f"attention_mask: {attention_mask}")
 
-  # Initialize KVCache for caching
-  past_kv_cache = None
-  #past_kv_cache = KVCache(
-  #  batch_size=input_ids.size(0),
-  #  max_seq_len=model.max_position_embeddings,
-  #  num_heads=model.num_heads,
-  #  head_dim=model.head_dim,
-  #  dtype=input_ids.dtype
-  #)
-
-  #print(f"past_kv_cache: {past_kv_cache}")
-
   # Start with initial input_ids
   generated_ids = input_ids.clone()
 
   # Generate tokens step-by-step
+  past_kvs = None
+
+  print(f"{model}")
+
   for _ in range(max_length):
     with torch.no_grad():
-      logits, _, past_kv_cache = model(
+      pred_score, hstates, past_kvs = model(
         generated_ids,
         attention_mask=attention_mask,
-        past_kv_cache=past_kv_cache
+        past_kv_cache=past_kvs
       )
 
-    # Select next token using logits
-    #next_token = select_next_token(logits, top_k=TOP_K, top_p=TOP_P, temperature=TEMP, use_max=False)
-    next_token = ttg.sample(logits[:, -1, :].clone().float(), temperature=TEMP, top_k=TOP_K).squeeze(-1)
+    print(f"pred_score: {pred_score.shape}")
+    print(f"hstates: {hstates.shape if hstates is not None else None}")
+    print(f"past_kvs: {past_kvs.size if past_kvs is not None else None}")
+    # Select next token using pred_score
+    #next_token = select_next_token(pred_score, top_k=TOP_K, top_p=TOP_P, temperature=TEMP, use_max=False)
+    next_token = ttg.sample(pred_score, temperature=TEMP, top_k=TOP_K)[:, -1, :]
     print(f"next_token: {next_token}")
 
     # Update generated_ids
-    generated_ids = torch.cat([generated_ids, next_token.unsqueeze(0)], dim=1)
+    generated_ids = torch.cat([generated_ids, next_token], dim=1)
     print(f"generated_ids: {generated_ids}")
 
     # Check for EOS token
-    if next_token.item() == tokenizer.eos_token_id:
-      break
+    print(f"next_token.item(): {next_token.item()}")
+
+    if config:
+      print(config["eos_token_id"])
+      if next_token.item() in config["eos_token_id"]:
+        break
+    else:
+      if next_token.item() == tokenizer.eos_token_id:
+        break
 
   # Decode generated text
   generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-  print(f"\nPrompt: {text}")
-  print(f"\nGenerated Response: {generated_text}")
+  print(f"\n\n\n\nGenerated Response: {generated_text}")
 
 if __name__ == "__main__":
   print("\nTesting generation:")
@@ -101,7 +106,7 @@ if __name__ == "__main__":
   )
 
   # Initialize tokenizer
-  tokenizer = AutoTokenizer.from_pretrained(cache_dir)
+  tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
 
   # Initialize LlamaModel with config and tokenizer
   model = LlamaModel(config, shard)
@@ -120,7 +125,7 @@ if __name__ == "__main__":
   model.eval()  # Set the model to evaluation mode
 
   # Sample text for testing
-  test_text = "What color is a red apple?"
+  test_text = "Hello"
 
-  test_generation(model, tokenizer, test_text)
+  test_generation(model, tokenizer, test_text, 5, config)
 
