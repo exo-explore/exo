@@ -4,8 +4,8 @@ document.addEventListener("alpine:init", () => {
     cstate: {
       time: null,
       messages: [],
-      selectedModel: 'llama-3.1-8b',
-    },
+      selectedModel: 'llama-3.2-1b',
+    },    
 
     // historical state
     histories: JSON.parse(localStorage.getItem("histories")) || [],
