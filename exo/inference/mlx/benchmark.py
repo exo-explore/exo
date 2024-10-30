@@ -19,7 +19,6 @@ def _benchmark_matmul(n, dtype) -> float:
         x = mx.eval(a@b)
         mx.synchronize()
     toc = time.perf_counter()
-    print(f"Time taken: {toc - tic} seconds")
 
     sec = (toc - tic) / num_iters
     tflops = (2 * (n ** 3) / sec) / 1e12
