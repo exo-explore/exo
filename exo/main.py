@@ -13,6 +13,7 @@ from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
+from exo.telemetry.errors import report_error
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent, NoopShardDownloader
@@ -198,6 +199,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   except Exception as e:
     print(f"Error processing prompt: {str(e)}")
     traceback.print_exc()
+    raise e
   finally:
     node.on_token.deregister(callback_id)
 
@@ -226,15 +228,27 @@ async def main():
 
 
 def run():
-  loop = asyncio.new_event_loop()
-  asyncio.set_event_loop(loop)
-  try:
-    loop.run_until_complete(main())
-  except KeyboardInterrupt:
-    print("Received keyboard interrupt. Shutting down...")
-  finally:
-    loop.run_until_complete(shutdown(signal.SIGTERM, loop))
-    loop.close()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Received keyboard interrupt. Shutting down...")
+    except Exception as e:
+        # First tear down the TUI if it exists
+        if topology_viz and not args.disable_tui:
+            topology_viz.stop()
+        
+        print(f"\n\nError in run: {str(e)}\n")
+        print("--------------------------------")
+        report = input("\nThere was an error that got triggered in the code, would you like to report it? (y/N): ").strip()
+        if report.lower() == 'y' or report.lower() == 'yes':
+            report_error(e)
+    finally:
+        print("Shutting down")
+        loop.run_until_complete(shutdown(signal.SIGTERM, loop))
+        loop.close()
+        print("Exiting")
 
 
 if __name__ == "__main__":

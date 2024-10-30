@@ -305,3 +305,8 @@ class TopologyViz:
         summary.add_row("", progress_bar, eta_str)
 
     return summary
+
+  def stop(self):
+    """Cleanly stop the live display."""
+    if hasattr(self, 'live_panel'):
+      self.live_panel.stop()
