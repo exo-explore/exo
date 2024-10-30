@@ -6,6 +6,7 @@ import subprocess
 import psutil
 from exo.topology.device_flops import DeviceFlops
 
+
 class DeviceCapabilities(BaseModel):
   model: str
   chip: str
@@ -24,9 +25,9 @@ class DeviceCapabilities(BaseModel):
 
 
 class LazyDeviceCapabilities:
-  def __init__(self, inference_engine: InferenceEngine, device_capabilities: DeviceCapabilities | None = None):
+  def __init__(self, inference_engine: InferenceEngine):
     self.inference_engine = inference_engine
-    self._caps = device_capabilities
+    self._caps: DeviceCapabilities | None = None
 
   async def __getattr__(self, name):
     if name == 'caps':
@@ -45,6 +46,7 @@ UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(
   memory=psutil.virtual_memory().total // 2**20,
   flops=DeviceFlops(fp32=0, fp16=0, int8=0),
 )
+
 
 async def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   if psutil.MACOS:
@@ -71,12 +73,10 @@ async def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCa
   else:
     memory = memory_value
 
-  device_capabilities = DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=await inference_engine.benchmark_tflops())
-  
-  return device_capabilities
+  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=await inference_engine.benchmark_tflops())
 
 
-async def linux_device_capabilities(inference_engine: InferenceEngine) -> LazyDeviceCapabilities:
+async def linux_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   import psutil
   from tinygrad import Device
 
@@ -93,7 +93,7 @@ async def linux_device_capabilities(inference_engine: InferenceEngine) -> LazyDe
 
     if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
-    device_capabilities = DeviceCapabilities(
+    return DeviceCapabilities(
       model=f"Linux Box ({gpu_name})",
       chip=gpu_name,
       memory=gpu_memory_info.total // 2**20,
@@ -101,18 +101,16 @@ async def linux_device_capabilities(inference_engine: InferenceEngine) -> LazyDe
     )
   elif Device.DEFAULT == "AMD":
     # TODO AMD support
-    device_capabilities = DeviceCapabilities(
+    return DeviceCapabilities(
       model="Linux Box (AMD)",
       chip="Unknown AMD",
       memory=psutil.virtual_memory().total // 2**20,
       flops=flops,
     )
   else:
-    device_capabilities = DeviceCapabilities(
+    return DeviceCapabilities(
       model=f"Linux Box (Device: {Device.DEFAULT})",
       chip=f"Unknown Chip (Device: {Device.DEFAULT})",
       memory=psutil.virtual_memory().total // 2**20,
       flops=flops,
     )
-  
-  return device_capabilities
