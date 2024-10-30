@@ -260,3 +260,29 @@ exo supports the following inference engines:
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+## CLI Options
+
+- `<command>` (run): Command to run
+- `<model_name>`: Model name to run
+- `--node-id` (str): Node ID
+- `--node-host` (str) (default: '0.0.0.0'): Node host
+- `--node-port` (int): Node port
+- `--listen-port` (int) (default: 5678): Listening port for discovery
+- `--download-quick-check` (flag) (default: False): Quick check local path for model shards download
+- `--max-parallel-downloads` (int) (default: 4): Max parallel downloads for model shards download
+- `--prometheus-client-port` (int): Prometheus client port
+- `--broadcast-port` (int) (default: 5678): Broadcast port for discovery
+- `--discovery-module` (str) (default: 'udp'): Discovery module to use
+- `--discovery-timeout` (int) (default: 30): Discovery timeout in seconds
+- `--discovery-config-path` (str): Path to discovery config json file
+- `--wait-for-peers` (int) (default: 0): Number of peers to wait to connect to before starting
+- `--chatgpt-api-port` (int) (default: 8000): ChatGPT API port
+- `--chatgpt-api-response-timeout` (int) (default: 90): ChatGPT API response timeout in seconds
+- `--max-generate-tokens` (int) (default: 10000): Max tokens to generate in each request
+- `--inference-engine` (str): Inference engine to use (mlx, tinygrad, or dummy)
+- `--disable-tui`, `--no-disable-tui`: Disable TUI
+- `--run-model` (str): Specify a model to run directly
+- `--prompt` (str) (default: 'Who are you?'): Prompt for the model when using --run-model
+- `--tailscale-api-key` (str): Tailscale API key
+- `--tailnet-name` (str): Tailnet name
