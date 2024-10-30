@@ -23,7 +23,28 @@ class DeviceCapabilities(BaseModel):
     return {"model": self.model, "chip": self.chip, "memory": self.memory, "flops": self.flops.to_dict()}
 
 
-UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
+class LazyDeviceCapabilities:
+  def __init__(self, inference_engine: InferenceEngine, device_capabilities: DeviceCapabilities | None = None):
+    self.inference_engine = inference_engine
+    self._caps = device_capabilities
+
+  async def __getattr__(self, name):
+    if name == 'caps':
+      if self._caps is None:
+        try:
+          self._caps = await device_capabilities(self.inference_engine)
+        except Exception as e:
+          self._caps = UNKNOWN_DEVICE_CAPABILITIES
+      return self._caps
+    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+
+UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(
+  model="Unknown Device",
+  chip="Unknown Chip",
+  memory=psutil.virtual_memory().total // 2**20,
+  flops=DeviceFlops(fp32=0, fp16=0, int8=0),
+)
 
 async def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
   if psutil.MACOS:
@@ -31,12 +52,7 @@ async def device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabi
   elif psutil.LINUX:
     return await linux_device_capabilities(inference_engine)
   else:
-    return DeviceCapabilities(
-      model="Unknown Device",
-      chip="Unknown Chip",
-      memory=psutil.virtual_memory().total // 2**20,
-      flops=DeviceFlops(fp32=0, fp16=0, int8=0),
-    )
+    return UNKNOWN_DEVICE_CAPABILITIES
 
 
 async def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
@@ -55,10 +71,12 @@ async def mac_device_capabilities(inference_engine: InferenceEngine) -> DeviceCa
   else:
     memory = memory_value
 
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=await inference_engine.benchmark_tflops())
+  device_capabilities = DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=await inference_engine.benchmark_tflops())
+  
+  return device_capabilities
 
 
-async def linux_device_capabilities(inference_engine: InferenceEngine) -> DeviceCapabilities:
+async def linux_device_capabilities(inference_engine: InferenceEngine) -> LazyDeviceCapabilities:
   import psutil
   from tinygrad import Device
 
@@ -75,7 +93,7 @@ async def linux_device_capabilities(inference_engine: InferenceEngine) -> Device
 
     if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
-    return DeviceCapabilities(
+    device_capabilities = DeviceCapabilities(
       model=f"Linux Box ({gpu_name})",
       chip=gpu_name,
       memory=gpu_memory_info.total // 2**20,
@@ -83,16 +101,18 @@ async def linux_device_capabilities(inference_engine: InferenceEngine) -> Device
     )
   elif Device.DEFAULT == "AMD":
     # TODO AMD support
-    return DeviceCapabilities(
+    device_capabilities = DeviceCapabilities(
       model="Linux Box (AMD)",
       chip="Unknown AMD",
       memory=psutil.virtual_memory().total // 2**20,
       flops=flops,
     )
   else:
-    return DeviceCapabilities(
+    device_capabilities = DeviceCapabilities(
       model=f"Linux Box (Device: {Device.DEFAULT})",
       chip=f"Unknown Chip (Device: {Device.DEFAULT})",
       memory=psutil.virtual_memory().total // 2**20,
       flops=flops,
     )
+  
+  return device_capabilities

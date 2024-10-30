@@ -4,8 +4,7 @@ import traceback
 from typing import List, Dict, Callable, Tuple
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
-from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
-from exo.inference.inference_engine import InferenceEngine
+from exo.topology.device_capabilities import DeviceCapabilities, LazyDeviceCapabilities
 from exo.helpers import DEBUG, DEBUG_DISCOVERY
 from .tailscale_helpers import get_device_id, update_device_attributes, get_device_attributes, get_tailscale_devices, Device
 
@@ -14,23 +13,21 @@ class TailscaleDiscovery(Discovery):
     self,
     node_id: str,
     node_port: int,
-    inference_engine: InferenceEngine,
+    lazy_device_capabilities: LazyDeviceCapabilities,
     create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle],
     discovery_interval: int = 5,
     discovery_timeout: int = 30,
     update_interval: int = 15,
-    device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     tailscale_api_key: str = None,
     tailnet: str = None,
   ):
     self.node_id = node_id
     self.node_port = node_port
-    self.inference_engine = inference_engine
+    self.lazy_device_capabilities = lazy_device_capabilities
     self.create_peer_handle = create_peer_handle
     self.discovery_interval = discovery_interval
     self.discovery_timeout = discovery_timeout
     self.update_interval = update_interval
-    self.device_capabilities = device_capabilities
     self.known_peers: Dict[str, Tuple[PeerHandle, float, float]] = {}
     self.discovery_task = None
     self.cleanup_task = None
@@ -40,7 +37,6 @@ class TailscaleDiscovery(Discovery):
     self.update_task = None
 
   async def start(self):
-    self.device_capabilities = await device_capabilities(self.inference_engine)
     self.discovery_task = asyncio.create_task(self.task_discover_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
     self.update_task = asyncio.create_task(self.task_update_device_posture_attributes())
@@ -64,7 +60,7 @@ class TailscaleDiscovery(Discovery):
     return self._device_id
 
   async def update_device_posture_attributes(self):
-    await update_device_attributes(await self.get_device_id(), self.tailscale_api_key, self.node_id, self.node_port, self.device_capabilities)
+    await update_device_attributes(await self.get_device_id(), self.tailscale_api_key, self.node_id, self.node_port, await self.lazy_device_capabilities.caps)
 
   async def task_discover_peers(self):
     while True:

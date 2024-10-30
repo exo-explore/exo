@@ -9,7 +9,7 @@ from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
 from .node import Node
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
+from exo.topology.device_capabilities import LazyDeviceCapabilities
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
@@ -25,10 +25,10 @@ class StandardNode(Node):
     server: Server,
     inference_engine: InferenceEngine,
     discovery: Discovery,
+    lazy_device_capabilities: LazyDeviceCapabilities,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
     topology_viz: Optional[TopologyViz] = None,
-    device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     shard_downloader: Optional[HFShardDownloader] = None,
   ):
     self.id = _id
@@ -38,7 +38,7 @@ class StandardNode(Node):
     self.partitioning_strategy = partitioning_strategy
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
-    self.device_capabilities = device_capabilities
+    self.lazy_device_capabilities = lazy_device_capabilities
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
@@ -50,7 +50,6 @@ class StandardNode(Node):
     self.shard_downloader = shard_downloader
 
   async def start(self, wait_for_peers: int = 0) -> None:
-    self.device_capabilities = await device_capabilities(self.inference_engine)
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)
@@ -399,7 +398,7 @@ class StandardNode(Node):
 
   async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
     next_topology = Topology()
-    next_topology.update_node(self.id, self.device_capabilities)
+    next_topology.update_node(self.id, await self.lazy_device_capabilities.caps)
 
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 
