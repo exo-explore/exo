@@ -15,6 +15,7 @@ install_requires = [
   "numpy==2.0.0",
   "nvidia-ml-py==12.560.30",
   "pillow==10.4.0",
+  "platformdirs==4.3.6",
   "prometheus-client==0.20.0",
   "protobuf==5.27.1",
   "psutil==6.0.0",

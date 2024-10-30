@@ -169,32 +169,6 @@ def is_valid_uuid(val):
     return False
 
 
-def get_or_create_node_id():
-  NODE_ID_FILE = Path(tempfile.gettempdir())/".exo_node_id"
-  try:
-    if NODE_ID_FILE.is_file():
-      with open(NODE_ID_FILE, "r") as f:
-        stored_id = f.read().strip()
-      if is_valid_uuid(stored_id):
-        if DEBUG >= 2: print(f"Retrieved existing node ID: {stored_id}")
-        return stored_id
-      else:
-        if DEBUG >= 2: print("Stored ID is not a valid UUID. Generating a new one.")
-
-    new_id = str(uuid.uuid4())
-    with open(NODE_ID_FILE, "w") as f:
-      f.write(new_id)
-
-    if DEBUG >= 2: print(f"Generated and stored new node ID: {new_id}")
-    return new_id
-  except IOError as e:
-    if DEBUG >= 2: print(f"IO error creating node_id: {e}")
-    return str(uuid.uuid4())
-  except Exception as e:
-    if DEBUG >= 2: print(f"Unexpected error creating node_id: {e}")
-    return str(uuid.uuid4())
-
-
 def pretty_print_bytes(size_in_bytes: int) -> str:
   if size_in_bytes < 1024:
     return f"{size_in_bytes} B"
