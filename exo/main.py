@@ -13,6 +13,7 @@ from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
+from exo.telemetry.constants import TelemetryAction
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
 from exo.config import session_config
@@ -25,7 +26,7 @@ from exo.inference.dummy_inference_engine import DummyInferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
 from exo.models import model_base_shards
-from exo.telemetry.errors import ErrorReporter
+from exo.telemetry.logger import Logger
 from exo.viz.topology_viz import TopologyViz
 
 # parse args
@@ -53,7 +54,7 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
-parser.add_argument("--logging-url", type=str, default="https://exo-logging-api-dev.foobar.dev/api/v1/logs/", help="Logging URL")
+parser.add_argument("--logging-url", type=str, default="https://exo-logs.foobar.dev/api/v1/logs/bulk", help="Logging URL")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -132,8 +133,9 @@ node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
 
-error_reporter = ErrorReporter(args.logging_url)
-
+# Initialize the logger singleton
+logger = Logger(args.logging_url, session_config.get("node_id"))
+logger.write_log(TelemetryAction.START)
 
 def preemptively_start_download(request_id: str, opaque_status: str):
   try:
@@ -249,7 +251,7 @@ def run():
         print("--------------------------------")
         report = input("\nThere was an error that got triggered in the code, would you like to report it? (y/N): ").strip()
         if report.lower() == 'y' or report.lower() == 'yes':
-            error_reporter.report_error(e)
+            logger.report_error(e)
     finally:
         print("Shutting down")
         loop.run_until_complete(shutdown(signal.SIGTERM, loop))

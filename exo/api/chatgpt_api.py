@@ -17,6 +17,9 @@ from exo.orchestration import Node
 from exo.models import model_base_shards
 from typing import Callable
 
+from exo.telemetry.constants import TelemetryAction
+from exo.telemetry.logger import Logger
+
 
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
@@ -224,6 +227,8 @@ class ChatGPTAPI:
     return web.json_response(progress_data)
 
   async def handle_post_chat_completions(self, request):
+    logger = Logger()
+    logger.write_log(TelemetryAction.REQUEST_RECEIVED)
     data = await request.json()
     if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)

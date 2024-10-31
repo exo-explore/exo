@@ -1,5 +1,5 @@
 from .device_capabilities import DeviceCapabilities
-from typing import Dict, Set, Optional
+from typing import Any, Dict, Set, Optional
 
 
 class Topology:
@@ -7,6 +7,13 @@ class Topology:
     self.nodes: Dict[str, DeviceCapabilities] = {}  # Maps node IDs to DeviceCapabilities
     self.peer_graph: Dict[str, Set[str]] = {}  # Adjacency list representing the graph
     self.active_node_id: Optional[str] = None
+
+  def serialize(self) -> Dict[str, Any]:
+    return {
+      "nodes": [node.to_dict() for node in self.nodes.values()],
+      "peer_graph": self.peer_graph,
+      "active_node_id": self.active_node_id
+    }
 
   def update_node(self, node_id: str, device_capabilities: DeviceCapabilities):
     self.nodes[node_id] = device_capabilities

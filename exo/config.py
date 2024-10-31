@@ -3,8 +3,18 @@ from pathlib import Path
 from platformdirs import user_data_dir
 import uuid
 
+from exo.helpers import get_git_hash
+
 class PersistentConfig:
-    """Persistent configuration that should be saved between sessions"""
+    """
+    Persistent configuration that should be saved between sessions.
+    
+    Note that this syncs with the SessionConfig instance and is a 
+    subset of the data stored there, so modules should prefer to use
+    SessionConfig for reading any data, but for writing data that they
+    need to persist beyond the current session, they should use this
+    class.
+    """
     CONFIG_FILE_NAME = "config.json"
     _instance = None
     _initialized = False
@@ -19,14 +29,14 @@ class PersistentConfig:
             self._config_file = self.initialize()
             self._initialized = True
 
-            # add default values
+            # add default values (but don't overwrite if already set)
             self.set("device_id", str(uuid.uuid4()), replace_if_exists=False)
             self.set("node_id", str(uuid.uuid4()), replace_if_exists=False)
 
     def initialize(self):
         app_data = Path(user_data_dir("exo", appauthor="exo_labs"))
-        app_data.mkdir(parents=True, exist_ok=True)
         print(f"Using app data directory: {app_data}")
+        app_data.mkdir(parents=True, exist_ok=True)
         config_file = app_data / self.CONFIG_FILE_NAME
         
         if not config_file.exists():
@@ -76,6 +86,7 @@ class SessionConfig:
             self._session_data = {}
             self.sync_with_persistent()
             self.set("session_id", str(uuid.uuid4()))
+            self.set("commit_id", get_git_hash())
             self._initialized = True
 
     def sync_with_persistent(self):

@@ -12,6 +12,7 @@ from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
 from exo import DEBUG
+from exo.config import session_config
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import RepoProgressEvent
@@ -415,6 +416,10 @@ class StandardNode(Node):
     self.topology = next_topology
     if self.topology_viz:
       self.topology_viz.update_visualization(self.current_topology, self.partitioning_strategy.partition(self.current_topology), self.id)
+    
+    serialized_topology = next_topology.serialize()
+    session_config.set("topology", serialized_topology)
+    
     return next_topology
 
   @property

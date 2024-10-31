@@ -8,6 +8,7 @@ import psutil
 import uuid
 import netifaces
 from pathlib import Path
+import subprocess
 import tempfile
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
@@ -208,3 +209,11 @@ def get_all_ip_addresses():
   except:
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
     return ["localhost"]
+
+
+def get_git_hash():
+    try:
+        git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode("utf-8")
+        return git_hash
+    except subprocess.CalledProcessError:
+        return None  # In case the command fails (e.g., if not in a git repository)
