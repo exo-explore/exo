@@ -1,6 +1,8 @@
 import asyncio
-from multiprocessing import process
+import os
 from pathlib import Path
+
+import psutil
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine
@@ -28,7 +30,7 @@ async def test_model():
         print(f"Created inference engine: {engine.__class__.__name__}")
 
         # Add memory usage logging if possible
-        print(f"Memory usage before inference: {process.memory_info().rss / 1024 / 1024:.2f} MB")
+        print(f"Memory usage before inference: {psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024:.2f} MB")
 
         # Test prompt
         prompt = "Write a short poem about AI:"
