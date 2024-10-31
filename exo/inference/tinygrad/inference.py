@@ -28,44 +28,25 @@ MODEL_PARAMS = {
 
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
-    print(f"Building transformer for {model_path}, shard: {shard}, model_size: {model_size}")    
-    try:
-        # build model
-        linear = nn.Linear
-        with Context(THREEFRY=0):
-            print("Creating Transformer model...")
-            model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
-            print("Transformer model created")
+  # build model
+  linear = nn.Linear
+  with Context(THREEFRY=0):
+    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
 
-        # load weights
-        print(f"Loading weights from {model_path}")
-        if model_path.is_dir():
-            print(f"Model path is directory. Contents: {list(model_path.glob('*'))}")
-            if (model_path/"model.safetensors.index.json").exists():
-                weights = load(str(model_path/"model.safetensors.index.json"), shard)
-            elif (model_path/"model.safetensors").exists():
-                weights = load(str(model_path/"model.safetensors"), shard)
-            else:
-                weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
-        else:
-            weights = load(str(model_path), shard)
-        
-        print("Converting weights from huggingface format")
-        weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
-        weights = fix_bf16(weights)
-        print("Weights converted successfully")
+  # load weights
+  if model_path.is_dir():
+    if (model_path/"model.safetensors.index.json").exists(): weights = load(str(model_path/"model.safetensors.index.json"), shard)
+    elif (model_path/"model.safetensors").exists(): weights = load(str(model_path/"model.safetensors"), shard)
+    else: weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
+  else:
+    weights = load(str(model_path), shard)
+  weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
+  weights = fix_bf16(weights)
 
-        with Context(BEAM=0):
-            print("Loading weights into model")
-            load_state_dict(model, weights, strict=False, consume=False)
-            print("Weights loaded successfully")
-        
-        return model
-    except Exception as e:
-        print(f"Error in build_transformer: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise
+  with Context(BEAM=0):
+    # replace weights in model
+    load_state_dict(model, weights, strict=False, consume=False)  # consume=True
+  return model
 
 
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
