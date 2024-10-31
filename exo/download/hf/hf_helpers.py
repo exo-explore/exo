@@ -70,8 +70,10 @@ def _add_wildcard_to_directories(pattern: str) -> str:
     return pattern + "*"
   return pattern
 
+
 def get_hf_endpoint() -> str:
-    return os.environ.get('HF_ENDPOINT', "https://huggingface.co")
+  return os.environ.get('HF_ENDPOINT', "https://huggingface.co")
+
 
 def get_hf_home() -> Path:
   """Get the Hugging Face home directory."""
@@ -394,7 +396,7 @@ def extract_layer_num(tensor_name: str) -> Optional[int]:
 
 
 def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
-  default_patterns = set(["*.json","*.py","tokenizer.model","*.tiktoken","*.txt"])
+  default_patterns = set(["*.json", "*.py", "tokenizer.model", "*.tiktoken", "*.txt"])
   shard_specific_patterns = set()
   if weight_map:
     for tensor_name, filename in weight_map.items():

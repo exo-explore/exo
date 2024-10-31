@@ -10,6 +10,10 @@ commands:
         type: string
       model_id:
         type: string
+      expected_output:
+        type: string
+      prompt:
+        type: string
     steps:
       - run:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
@@ -44,12 +48,19 @@ commands:
             # Check processes before proceeding
             check_processes
 
+            # Special handling for dummy engine
+            if [ "<<parameters.inference_engine>>" = "dummy" ]; then
+              expected_content="This is a dummy response"
+            else
+              expected_content="Michael Jackson"
+            fi
+
             echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
               -d '{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }')
             echo "Response 1: $response_1"
@@ -62,7 +73,7 @@ commands:
               -H "Content-Type: application/json" \
               -d '{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }')
             echo "Response 2: $response_2"
@@ -74,8 +85,8 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
-              echo "Test failed: Response does not contain 'Michael Jackson'"
+            if ! echo "$response_1" | grep -q "<<parameters.expected_output>>" || ! echo "$response_2" | grep -q "<<parameters.expected_output>>"; then
+              echo "Test failed: Response does not contain '<<parameters.expected_output>>'"
               echo "Response 1: $response_1"
               echo ""
               echo "Response 2: $response_2"
@@ -85,7 +96,7 @@ commands:
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains 'Michael Jackson'"
+              echo "Test passed: Response from both nodes contains '<<parameters.expected_output>>'"
             fi
 
 jobs:
@@ -177,6 +188,32 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
+
+  chatgpt_api_integration_test_dummy:
+    macos:
+      xcode: "16.0.0"
+    resource_class: m2pro.large
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: dummy
+          model_id: dummy-model
+          prompt: "Dummy prompt."
+          expected_output: "dummy"
 
   test_macos_m1:
     macos:
@@ -207,6 +244,8 @@ jobs:
   #     - run_chatgpt_api_test:
   #         inference_engine: tinygrad
   #         model_id: llama-3-8b
+  #         prompt: "Keep responses concise. Who was the king of pop?"
+  #         expected_output: "Michael Jackson"
 
   build_exo_macos:
     macos:
@@ -328,6 +367,7 @@ workflows:
       - unit_test
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
+      - chatgpt_api_integration_test_dummy
       - test_macos_m1
       - build_exo_macos
       - build_exo_linux

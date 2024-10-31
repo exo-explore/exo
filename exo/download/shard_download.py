@@ -24,3 +24,12 @@ class ShardDownloader(ABC):
   @abstractmethod
   def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
     pass
+
+
+class NoopShardDownloader(ShardDownloader):
+  async def ensure_shard(self, shard: Shard) -> Path:
+    return Path("/tmp/noop_shard")
+
+  @property
+  def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
+    return AsyncCallbackSystem()
