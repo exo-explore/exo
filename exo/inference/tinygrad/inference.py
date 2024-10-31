@@ -70,7 +70,7 @@ def NF4Linear(block_size):
     def __call__(self, x: Tensor) -> Tensor:
       high_bits = self.weight
       low_bits = (self.weight * 2 ** 4).contiguous()
-      unpacked = Tensor.stack(high_bits, low_bits, dim=-1).idiv(2 ** 4)
+      unpacked = Tensor.stack(high_bits, low_bits, dim=-1) // (2 ** 4)
       unscaled = CODE[unpacked].to(x.device).reshape(-1, block_size) * self.scale
       return x.linear(unscaled.reshape(self.out_features, self.in_features).T)
 
@@ -93,7 +93,7 @@ def NF4Linear(block_size):
   return _NF4Linear
 
 
-def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None, quantize="int8"):
+def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None, quantize="nf4"):
   # build model
 
   if quantize == "int8": linear = Int8Linear
