@@ -17,7 +17,7 @@ class InferenceEngine(ABC):
     pass
 
 
-def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
+def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader', quantize: Optional[str] = None):
   if DEBUG >= 2:
     print(f"get_inference_engine called with: {inference_engine_name}")
   if inference_engine_name == "mlx":
@@ -29,7 +29,7 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
     import tinygrad.helpers
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
-    return TinygradDynamicShardInferenceEngine(shard_downloader)
+    return TinygradDynamicShardInferenceEngine(shard_downloader, quantize)
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()
