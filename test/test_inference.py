@@ -1,7 +1,5 @@
 import asyncio
 import os
-from pathlib import Path
-
 import psutil
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
