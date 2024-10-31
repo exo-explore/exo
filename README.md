@@ -222,6 +222,20 @@ For the **tinygrad** inference engine specifically, there is a separate DEBUG fl
 TINYGRAD_DEBUG=2 exo
 ```
 
+## Formatting
+
+We use [yapf](https://github.com/google/yapf) to format the code. To format the code, first install the formatting requirements:
+
+```sh
+pip3 install -e '.[formatting]'
+```
+
+Then run the formatting script:
+
+```sh
+python3 format.py ./exo
+```
+
 ## Known Issues
 
 - On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually:
