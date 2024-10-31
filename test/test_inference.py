@@ -13,7 +13,7 @@ async def test_model():
     shard = Shard(
         model_id="mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated",  
         start_layer=0,
-        end_layer=3,
+        end_layer=1,
         n_layers=32  
     )
     print(f"Created shard: {shard}")
