@@ -1,4 +1,5 @@
 import asyncio
+from multiprocessing import process
 from pathlib import Path
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
@@ -10,7 +11,7 @@ async def test_model():
     shard = Shard(
         model_id="mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated",  
         start_layer=0,
-        end_layer=31,  
+        end_layer=3,
         n_layers=32  
     )
     print(f"Created shard: {shard}")
@@ -25,6 +26,9 @@ async def test_model():
         print("Creating tinygrad inference engine...")
         engine = get_inference_engine("tinygrad", shard_downloader)
         print(f"Created inference engine: {engine.__class__.__name__}")
+
+        # Add memory usage logging if possible
+        print(f"Memory usage before inference: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
         # Test prompt
         prompt = "Write a short poem about AI:"

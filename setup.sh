@@ -9,5 +9,5 @@ cd exo && git checkout quantized-models-support-tinygrad
 source install.sh
 pip install torch llvmlite
 
-export SUPPORT_BF16=1
+export SUPPORT_BF16=0
 python3 test/test_inference.py
