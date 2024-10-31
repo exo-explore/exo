@@ -93,7 +93,7 @@ def NF4Linear(block_size):
   return _NF4Linear
 
 
-def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None, quantize=None):
+def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None, quantize="int8"):
   # build model
 
   if quantize == "int8": linear = Int8Linear
