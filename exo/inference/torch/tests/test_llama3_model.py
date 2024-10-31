@@ -17,6 +17,24 @@ TEMP=0.7
 TOP_K=25
 TOP_P=0.9
 
+def check_weights(model, state_dict):
+  """
+  Verifies that the weights from the state dictionary are properly loaded into the model.
+  """
+  model_state_dict = model.state_dict()
+  for name, param in model_state_dict.items():
+    if name in state_dict:
+      loaded_param = state_dict[name]
+      if param.shape != loaded_param.shape:
+        print(f"Shape mismatch for {name}: expected {param.shape}, got {loaded_param.shape}")
+      else:
+        print(f"{name}: loaded correctly")
+    else:
+       print(f"{name} not found in the state_dict")
+
+  for name in state_dict:
+    if name not in model_state_dict:
+      print(f"Unexpected weight {name} found in state_dict")
 
 def test_generation(model, tokenizer, text, max_length=10, config=None):
   """
@@ -110,6 +128,7 @@ if __name__ == "__main__":
 
   # Initialize LlamaModel with config and tokenizer
   model = LlamaModel(config, shard)
+  print(f"\nmodel: {model}")
 
   # Load weights from safetensors files in the cache directory
   safetensors_files = list(cache_dir.glob("*.safetensors"))
@@ -120,8 +139,24 @@ if __name__ == "__main__":
   for safetensor_file in safetensors_files:
     print(f"Loading weights from: {safetensor_file}")
     state_dict = load_safetensors(safetensor_file)
-    model.load_state_dict(state_dict, strict=False)
 
+    # remap to work with our model
+    remapped_state_dict = {}
+    for key, value in state_dict.items():
+      # Remove the 'model.' prefix if it exists
+      print(f"remapping: {key}")
+      if key.startswith('model.'):
+        new_key = key[len('model.'):]  # Remove 'model.'
+      else:
+        new_key = key
+
+      remapped_state_dict[new_key] = value
+
+    model.load_state_dict(remapped_state_dict, strict=False)
+
+    check_weights(model, remapped_state_dict)
+
+  #exit()
   model.eval()  # Set the model to evaluation mode
 
   # Sample text for testing

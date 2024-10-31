@@ -71,7 +71,7 @@ class LlamaBlock(nn.Module):
     #hidden_states = hidden_states.view(batch_size, seq_len, self.num_heads, self.head_dim).squeeze()
     #print(f"hidden_states: {hidden_states.shape}")
 
-    # Apply MultiHeadAttention with KVCache 
+    # Apply MultiHeadAttention with KVCache
     hidden_states, kv_cache = self.self_attn(
       hidden_states=hidden_states,
       position_ids=position_ids,
@@ -132,7 +132,7 @@ class LlamaModel(nn.Module):
     self.padding_idx = config.get("pad_token_id")
 
     # Model layers and methods, order matters
-    self.embed = nn.Embedding(self.vocab_size, self.hidden_size, self.padding_idx)
+    self.embed_tokens = nn.Embedding(self.vocab_size, self.hidden_size, self.padding_idx)
     self.layers = nn.ModuleList([
       LlamaBlock(
         dim=self.hidden_size,
@@ -191,7 +191,7 @@ class LlamaModel(nn.Module):
     batch_size, seq_len = input_ids.shape
 
     # Create initial embeddings
-    input_embeds = self.embed(input_ids)
+    input_embeds = self.embed_tokens(input_ids)
 
     ## Initialize or use the provided KVCache
     #if past_kv_cache is None:
@@ -216,10 +216,17 @@ class LlamaModel(nn.Module):
       print(f"cache_position: {cache_position.shape}")
 
     if position_ids is None:
-      position_ids = cache_position.unsqueeze(0)
+      #position_ids = cache_position.unsqueeze(0)
+      position_ids = attention_mask.long().cumsum(-1) - 1
+      position_ids.masked_fill_(attention_mask == 0, 1)
 
-    print(f"input_embeds: {input_embeds.shape}")
-    hidden_states = input_embeds
+    # cache based input generation
+    if past_kv_cache is not None:
+      hidden_states = input_embeds[:, -cache_position.shape[0]:]
+    else:
+      hidden_states = input_embeds
+
+    print(f"LM hidden_states: {hidden_states.shape}")
 
     # Reshape hidden_states to (batch_size, seq_len, num_heads, head_dim)
     batch_size, seq_len, _ = hidden_states.shape
@@ -247,7 +254,7 @@ class LlamaModel(nn.Module):
       target_len = past_kv_cache.size + seq_len + 1
     else:
       target_len = seq_len + 1
-    causal_mask = create_4d_causal_attention_mask(
+    attention_mask = create_4d_causal_attention_mask(
       attention_mask=attention_mask,
       seq_len=seq_len,
       target_len=target_len,
@@ -258,7 +265,6 @@ class LlamaModel(nn.Module):
     )
 
     print(f"attention_mask: {attention_mask.shape}")
-    print(f"causal_mask: {causal_mask.shape}")
 
     # Forward pass through layers with KVCache
     for layer_idx in range(self.shard.start_layer, self.shard.end_layer):
@@ -267,7 +273,7 @@ class LlamaModel(nn.Module):
       print(f"encoder_layer\n{encoder_layer}")
       layer_hidden_state, layer_kv_cache = self.layers[layer_idx](
         hidden_states=hidden_states,
-        attention_mask=causal_mask,
+        attention_mask=attention_mask,
         position_ids=position_ids,
         position_embeddings=position_embeddings
       )
@@ -277,14 +283,15 @@ class LlamaModel(nn.Module):
 
       print(f"layer_kv_cache: {layer_kv_cache.size}")
 
-    # Apply final layer normalization
-    hidden_states = self.norm(hidden_states)
-
     # Compute prediction score from lm head if at end layer
     if self.shard.is_last_layer():
-      pred_score = self.lm_head(hidden_states)
+      # Apply final layer normalization
+      hidden_states = self.norm(hidden_states)
+      pred_score = self.lm_head(hidden_states[:, -1:, :])
     else:
       pred_score = None
+
+    print(f"end attention_mask: {attention_mask.shape}")
 
     if pred_score is None:
       return pred_score, hidden_states, past_kv_cache
