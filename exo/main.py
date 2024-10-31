@@ -231,7 +231,11 @@ async def main():
     await run_model_cli(node, inference_engine, model_name, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
-    open_web_chat()
+    try:
+      open_web_chat()
+    except Exception as e:
+      print(f"Error opening web chat: {e}")
+      traceback.print_exc()
     await asyncio.Event().wait()
 
 
