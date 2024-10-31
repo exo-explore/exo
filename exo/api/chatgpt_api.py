@@ -231,7 +231,7 @@ class ChatGPTAPI:
     stream = data.get("stream", False)
     chat_request = parse_chat_request(data, self.default_model)
     if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to llama instead
-      chat_request.model = self.default_model if self.default_model.startswith("llama") else "llama-3.1-8b"
+      chat_request.model = self.default_model if self.default_model.startswith("llama") else "llama-3.2-1b"
     if not chat_request.model or chat_request.model not in model_base_shards:
       if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_base_shards.keys())}. Defaulting to {self.default_model}")
       chat_request.model = self.default_model
