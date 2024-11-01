@@ -1,0 +1,7 @@
+@font-face {
+  font-family: 'Megrim';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/megrim/v16/46kulbz5WjvLqJZlbQ.ttf) format('truetype');
+}

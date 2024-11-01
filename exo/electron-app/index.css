@@ -1,0 +1,417 @@
+/* define colors */
+:root {
+  --primary-color: #a52e4d;
+  --primary-color-transparent: #a52e4d66;
+  --secondary-color: #228039;
+  --secondary-color-transparent: #22803966;
+
+  --red-color: #a52e4d;
+  --green-color: #228039;
+  --silver-color: #88808e;
+}
+@media(prefers-color-scheme: light) {
+  :root {
+    --primary-bg-color: #f0f0f0;
+    --secondary-bg-color: #eeeeee;
+    --tertiary-bg-color: #dddddd;
+    --foreground-color: #111111;
+    --accent-color: #000000;
+  }
+}
+@media(prefers-color-scheme: dark) {
+  :root {
+    --primary-bg-color: #111111;
+    --secondary-bg-color: #131313;
+    --tertiary-bg-color: #232323;
+    --foreground-color: #f0f0f0;
+    --accent-color: #aaaaaa;
+  }
+}
+
+main {
+  width: 100%;
+  height: 100%;
+
+  display: flex;
+  flex-direction: column;
+
+  place-items: center;
+}
+
+.home {
+  width: 100%;
+  height: 90%;
+
+  margin-bottom: 10rem;
+}
+
+.title {
+  font-size: 3rem;
+  margin: 1rem 0;
+  margin-top: 3rem;
+}
+
+.histories-container-container {
+  width: 100%;
+  max-height: 75%;
+
+  position: relative;
+}
+
+.histories-container {
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  height: 100%;
+
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+
+  margin: 0;
+  padding: 3rem 1rem;
+}
+
+.histories-start {
+  height: 3rem;
+  width: 100%;
+
+  z-index: 999;
+  top: 0;
+  position: absolute;
+
+  background: linear-gradient(180deg, var(--primary-bg-color) 0%, transparent 100%);
+}
+.histories-end {
+  height: 3rem;
+  width: 100%;
+
+  z-index: 999;
+  bottom: 0;
+  position: absolute;
+
+  background: linear-gradient(0deg, var(--primary-bg-color) 0%, transparent 100%);
+}
+
+.history {
+  padding: 1rem;
+  width: 100%;
+  max-width: 40rem;
+
+  background-color: var(--tertiary-bg-color);
+  border-radius: 10px;
+  border-left: 2px solid var(--primary-color);
+
+  cursor: pointer;
+
+  transform: translateX(calc(1px * var(--tx, 0)));
+  opacity: var(--opacity, 1);
+}
+.history:hover {
+  background-color: var(--secondary-bg-color);
+}
+
+.history-delete-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.5rem;
+  margin: 0;
+  outline: none;
+  border: none;
+  background-color: var(--secondary-bg-color);
+  color: var(--foreground-color);
+  border-radius: 0 0 0 10px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.history-delete-button:hover {
+  background-color: var(--tertiary-bg-color);
+  padding: 0.75rem;
+}
+
+.messages {
+  overflow-y: auto;
+  height: 100%;
+  width: 100%;
+
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  padding-top: 1rem;
+  padding-bottom: 11rem;
+}
+
+.message {
+  width: 96%;
+  max-width: 80rem;
+
+  display: grid;
+
+  background-color: var(--secondary-bg-color);
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+}
+.message-role-assistant {
+  border-bottom: 2px solid var(--primary-color);
+  border-left: 2px solid var(--primary-color);
+  box-shadow: -10px 10px 20px 2px var(--primary-color-transparent);
+}
+.message-role-user {
+  border-bottom: 2px solid var(--secondary-color);
+  border-right: 2px solid var(--secondary-color);
+  box-shadow: 10px 10px 20px 2px var(--secondary-color-transparent);
+}
+.download-progress {
+  margin-bottom: 12em;
+  overflow-y: auto;
+}
+.message > pre {
+  white-space: pre-wrap;
+}
+
+.progress-bar-container {
+  width: 100%;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  margin: 10px 0;
+}
+.progress-bar {
+  height: 20px;
+  border-radius: 4px;
+  transition: width 0.5s ease-in-out;
+}
+.progress-bar.complete {
+  background-color: #4CAF50;
+}
+.progress-bar.in-progress {
+  background-color: #2196F3;
+}
+
+.toast {
+    width: 100%; /* Take up the full width of the page */
+    background-color: #fc2a2a; /* Dark background color */
+    color: #fff; /* White text color */
+    text-align: center; /* Centered text */
+    border-radius: 2px; /* Rounded borders */
+    padding: 16px; /* Padding */
+    position: fixed; /* Sit on top of the screen content */
+    z-index: 9999; /* Add a z-index if needed */
+    top: 0; /* Position at the top of the page */
+    left: 0; /* Extend from the left edge */
+    right: 0; /* Extend to the right edge */
+}
+
+.hljs {
+  width: 100%;
+  position: relative;
+  border-radius: 10px;
+  /* wrap code blocks */
+  white-space: pre-wrap;
+}
+/* put clipboard button in the top right corner of the code block */
+.clipboard-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.5rem;
+  margin: 0;
+  outline: none;
+  border: none;
+  background-color: var(--secondary-bg-color);
+  color: var(--foreground-color);
+  border-radius: 0 0 0 10px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.clipboard-button:hover {
+  background-color: var(--tertiary-bg-color);
+  padding: 0.75rem;
+}
+
+.input-container {
+  position: absolute;
+  bottom: 0;
+
+  /* linear gradient from background-color to transparent on the top */
+  background: linear-gradient(0deg, var(--primary-bg-color) 55%, transparent 100%);
+
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+}
+
+.input-performance {
+  margin-top: 4rem;
+
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+}
+
+.input-performance-point {
+  display: flex;
+  flex-direction: row;
+  place-items: center;
+  gap: 0.5rem;
+}
+.input-performance-point > p {
+  height: 1rem;
+  line-height: normal;
+}
+
+.input {
+  width: 90%;
+  min-height: 3rem;
+  flex-shrink: 0;
+
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 0.5rem;
+
+  align-items: flex-end;
+  margin-bottom: 2rem;
+}
+
+.input-form {
+  width: 100%;
+  padding: 1rem;
+  min-height: 3rem;
+  max-height: 8rem;
+
+  background-color: var(--tertiary-bg-color);
+  color: var(--foreground-color);
+  border-radius: 10px;
+  border: none;
+  resize: none;
+  outline: none;
+}
+
+.input-button {
+  height: 3rem;
+  width: 4rem;
+
+  background-color: var(--secondary-color);
+  color: var(--foreground-color);
+  border-radius: 10px;
+  padding: 0.5rem;
+  cursor: pointer;
+}
+.input-button:hover {
+  background-color: var(--secondary-color-transparent);
+}
+.input-button:disabled {
+  background-color: var(--secondary-bg-color);
+  cursor: not-allowed;
+}
+
+/* wrap text */
+p {
+  white-space: pre-wrap;
+}
+
+/* fonts */
+.megrim-regular {
+  font-family: "Megrim", system-ui;
+  font-weight: 400;
+  font-style: normal;
+}
+
+.monospace {
+  font-family: monospace;
+}
+
+.model-selector {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+.model-selector select {
+  padding: 10px 20px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  background-color: #f8f8f8;
+  cursor: pointer;
+}
+.model-selector select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0,123,255,.25);
+}
+
+/* Image upload button styles */
+.image-input-button {
+  background-color: var(--secondary-color);
+  color: var(--foreground-color);
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10px;
+}
+
+.image-input-button:hover {
+  background-color: var(--secondary-color-transparent);
+  transform: scale(1.1);
+}
+
+.image-input-button:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--secondary-color-rgb), 0.5);
+}
+
+.image-input-button i {
+  transition: all 0.3s ease;
+}
+
+.image-input-button:hover i {
+  transform: scale(1.2);
+}
+
+/* Hidden file input styles */
+#image-upload {
+  display: none;
+}
+
+.image-preview-container {
+  position: relative;
+  display: inline-block;
+  margin-right: 10px;
+}
+
+.image-preview {
+  max-width: 100px;
+  max-height: 100px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+
+.remove-image-button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background-color: rgba(255, 255, 255, 0.8);
+  border: none;
+  border-radius: 50%;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+
+.message > p > img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}

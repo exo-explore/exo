@@ -18,7 +18,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.models import model_base_shards
 from typing import Callable
-
+import signal
 
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
@@ -183,19 +183,30 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
+    cors.add(self.app.router.add_post("/quit", self.handle_quit), {"*": cors_options})
 
     if is_frozen():
       base_path = os.path.dirname(sys.executable)  
-      tinychat_path = os.path.join(base_path, "tinychat")
+      tinychat_path = os.path.join(base_path, "electron-app")
       self.static_dir = Path(tinychat_path).resolve()
     else:
-      self.static_dir = Path(__file__).parent.parent/"tinychat"
+      self.static_dir = Path(__file__).parent.parent/"electron-app"
 
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
 
     self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)
+  
+  async def handle_quit(self, request):
+    print("Received quit signal")
+    from exo.main import shutdown
+    response = web.json_response({"detail": "Quit signal received"}, status=200)
+    await response.prepare(request)
+    await response.write_eof()
+
+    await shutdown(signal.SIGINT, asyncio.get_event_loop())
+    return response
 
   async def timeout_middleware(self, app, handler):
     async def middleware(request):

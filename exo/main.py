@@ -6,7 +6,6 @@ import platform
 import time
 import traceback
 import uuid
-import webbrowser
 import time
 import traceback
 import uuid
@@ -207,7 +206,13 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
 def open_web_chat():
   if web_chat_urls:
-    webbrowser.open(web_chat_urls[0])
+    import subprocess
+    import os
+    electron_app_path = os.path.join(os.path.dirname(__file__), 'electron-app')
+    subprocess.Popen(['npm', 'install'], cwd=electron_app_path)
+    subprocess.Popen(['npm', 'start'], 
+                    cwd=electron_app_path, 
+                    env={**os.environ, 'CHAT_URL': web_chat_urls[0]})
 
 async def main():
   loop = asyncio.get_running_loop()

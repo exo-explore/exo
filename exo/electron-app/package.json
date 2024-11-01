@@ -1,0 +1,14 @@
+{
+  "name": "electra",
+  "version": "1.0.0",
+  "description": "apping",
+  "main": "main.js",
+  "scripts": {
+    "start": "HOST=127.0.0.1 PORT=8000 electron ."
+  },
+  "author": "josh",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^33.0.2"
+  }
+}
