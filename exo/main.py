@@ -208,13 +208,14 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
 def open_web_chat():
   if web_chat_urls:
-    import subprocess
-    import os
-    electron_app_path = os.path.join('exo', 'electron-app')
-    subprocess.Popen(['npm', 'install'], cwd=electron_app_path)
-    subprocess.Popen(['npm', 'start'], 
-                    cwd=electron_app_path, 
-                    env={**os.environ, 'CHAT_URL': web_chat_urls[0]})
+    if not "__nuitka__" in globals():
+      import subprocess
+      import os
+      electron_app_path = os.path.join('exo', 'electron-app')
+      subprocess.Popen(['npm', 'install'], cwd=electron_app_path)
+      subprocess.Popen(['npm', 'start'], 
+                      cwd=electron_app_path, 
+                      env={**os.environ, 'CHAT_URL': web_chat_urls[0]})
 
 def is_frozen():
   return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
