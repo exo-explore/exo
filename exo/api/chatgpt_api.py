@@ -187,9 +187,8 @@ class ChatGPTAPI:
 
     if not is_frozen():
       self.static_dir = Path(__file__).parent.parent/"tinychat"
-
-    self.app.router.add_get("/", self.handle_root)
-    self.app.router.add_static("/", self.static_dir, name="static")
+      self.app.router.add_get("/", self.handle_root)
+      self.app.router.add_static("/", self.static_dir, name="static")
 
     self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)

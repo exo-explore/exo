@@ -44,10 +44,6 @@ def run():
             "--linux-icon=docs/exo-rounded.png"
         ])
 
-    command.extend([
-        "--include-data-dir=exo/tinychat=tinychat"
-    ])
-
     try:
         subprocess.run(command, check=True)
         print("Build completed!")
