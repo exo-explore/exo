@@ -185,12 +185,7 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
     cors.add(self.app.router.add_post("/quit", self.handle_quit), {"*": cors_options})
 
-    if is_frozen():
-      base_path = os.path.dirname(sys.executable)  
-      tinychat_path = os.path.join(base_path, "electron-app")
-      self.static_dir = Path(tinychat_path).resolve()
-    else:
-      self.static_dir = Path(__file__).parent.parent/"electron-app"
+    self.static_dir = Path(__file__).parent.parent/"tinychat"
 
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")

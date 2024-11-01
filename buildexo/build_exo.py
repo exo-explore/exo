@@ -10,18 +10,16 @@ def run():
         "--product-name=exo",
         "--output-dir=dist",
         "--follow-imports",
+        "--onefile",
         "--standalone",
-        "--output-filename=exo",
-        "--static-libpython=yes"
+        "--output-filename=exo"
     ]
 
     if sys.platform == "darwin": 
         command.extend([
             "--macos-app-name=exo",
-            "--macos-app-mode=gui",
+            "--macos-app-mode=background",
             "--macos-app-version=0.0.1",
-            "--macos-create-app-bundle",
-            "--macos-app-icon=docs/exo-logo.icns",
             "--include-module=exo.inference.mlx.models.llama",
             "--include-module=exo.inference.mlx.models.deepseek_v2",
             "--include-module=exo.inference.mlx.models.base",
@@ -36,7 +34,6 @@ def run():
         ])
     elif sys.platform == "win32":  
         command.extend([
-            "--onefile",
             "--windows-icon-from-ico=docs/exo-logo-win.ico",
             "--file-version=0.0.1",
             "--product-version=0.0.1"
@@ -47,9 +44,6 @@ def run():
             "--linux-icon=docs/exo-rounded.png"
         ])
 
-    command.extend([
-        "--include-data-dir=exo/tinychat=tinychat"
-    ])
 
     try:
         subprocess.run(command, check=True)
