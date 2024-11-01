@@ -47,7 +47,15 @@ const createTray = () => {
   tray = new Tray(trayIcon)
   
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show App', click: () => mainWindow.show() },
+    { label: 'Show App', 
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show()
+        } else {
+          createWindow()
+        }
+      }
+    },
     { label: 'Quit', click: () => sendQuitSignal() }
   ])
   
