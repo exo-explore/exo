@@ -210,7 +210,7 @@ def open_web_chat():
   if web_chat_urls:
     import subprocess
     import os
-    electron_app_path = os.path.join(os.path.dirname(__file__), 'electron-app')
+    electron_app_path = os.path.join('exo', 'electron-app')
     subprocess.Popen(['npm', 'install'], cwd=electron_app_path)
     subprocess.Popen(['npm', 'start'], 
                     cwd=electron_app_path, 
