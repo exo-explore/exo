@@ -93,7 +93,7 @@ def NF4Linear(block_size):
   return _NF4Linear
 
 
-def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None, quantize="nf4"):
+def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None, quantize=None):
   # build model
 
   if quantize == "int8": linear = Int8Linear
@@ -169,7 +169,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     model_path = await self.shard_downloader.ensure_shard(shard)
 
     if self.shard != shard:
-      self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B", self.quantize)
+      self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, "8B" if "8b" in shard.model_id.lower() else "70B",None, self.quantize)
 
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
