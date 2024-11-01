@@ -51,3 +51,36 @@ GPU 4: NVIDIA Quadro P400 2GB
 GPU 5: NVIDIA Quadro P400 2GB 
 ```
 
+## Current Model
+
+WIP pytorch llama model
+
+```
+# Llama-3.2-1B-Instruct #
+
+LlamaModel(
+  (embed): Embedding(128256, 2048)
+  (layers): ModuleList(
+    (0-15): 16 x LlamaBlock(
+      (self_attn): SDPAttention(
+        (q_proj): Linear(in_features=2048, out_features=2048, bias=False)
+        (k_proj): Linear(in_features=2048, out_features=512, bias=False)
+        (v_proj): Linear(in_features=2048, out_features=512, bias=False)
+        (o_proj): Linear(in_features=2048, out_features=2048, bias=False)
+        (rotary_emb): RotaryEmbedding()
+      )
+      (mlp): MultiLayerPreceptron(
+        (gate_proj): Linear(in_features=2048, out_features=8192, bias=False)
+        (up_proj): Linear(in_features=2048, out_features=8192, bias=False)
+        (down_proj): Linear(in_features=8192, out_features=2048, bias=False)
+        (act_fn): SiLU()
+      )
+      (input_layer_norm): RMSNorm()
+      (post_attention_norm): RMSNorm()
+    )
+  )
+  (norm): RMSNorm()
+  (rotary_pos_emb): RotaryEmbedding()
+  (lm_head): Linear(in_features=2048, out_features=128256, bias=False)
+)
+```
