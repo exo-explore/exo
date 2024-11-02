@@ -61,6 +61,7 @@ coverage.xml
 cover/
 
 backend/
+out/
 # Translations
 *.mo
 *.pot
