@@ -8,6 +8,7 @@ install_requires = [
   "aiohttp==3.10.2",
   "aiohttp_cors==0.7.0",
   "aiofiles==24.1.0",
+  "certifi==2024.8.30",
   "grpcio==1.64.1",
   "grpcio-tools==1.64.1",
   "Jinja2==3.1.4",

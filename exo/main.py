@@ -6,6 +6,11 @@ import logging
 import time
 import traceback
 import uuid
+import platform
+import webbrowser
+import os
+import ssl
+import certifi
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.manual.network_topology_config import NetworkTopology
 from exo.orchestration.standard_node import StandardNode
@@ -42,7 +47,7 @@ parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale",
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
 parser.add_argument("--discovery-config-path", type=str, default=None, help="Path to discovery config json file")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
-parser.add_argument("--chatgpt-api-port", type=int, default=8000, help="ChatGPT API port")
+parser.add_argument("--chatgpt-api-port", type=int, default=52415, help="ChatGPT API port")
 parser.add_argument("--chatgpt-api-response-timeout", type=int, default=90, help="ChatGPT API response timeout in seconds")
 parser.add_argument("--max-generate-tokens", type=int, default=10000, help="Max tokens to generate in each request")
 parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use (mlx, tinygrad, or dummy)")
@@ -53,6 +58,14 @@ parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailsca
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
+
+def setup_certificates():
+    """Configure SSL certificates for the application."""
+    os.environ['SSL_CERT_FILE'] = certifi.where()
+    ssl._create_default_https_context = ssl._create_unverified_context
+
+# Set up SSL certificates
+setup_certificates()
 
 print_yellow_exo()
 
@@ -227,7 +240,7 @@ async def main():
     await run_model_cli(node, inference_engine, model_name, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
-    open_web_chat()
+    # open_web_chat()
     await asyncio.Event().wait()
 
 

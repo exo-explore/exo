@@ -19,8 +19,9 @@ def run():
     if sys.platform == "darwin": 
         command.extend([
             "--macos-app-name=exo",
-            "--macos-app-mode=gui",
+            "--macos-app-mode=background",
             "--macos-app-version=0.0.1",
+            "--onefile",
             "--macos-create-app-bundle",
             "--macos-app-icon=docs/exo-logo.icns",
             "--include-module=exo.inference.mlx.models.llama",
@@ -31,8 +32,8 @@ def run():
             "--include-distribution-meta=mlx",
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",
-            f"--include-data-files=./env/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
-            f"--include-data-files=./env/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=./mlx.metallib",
+            f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
+            f"--include-data-files=./.venv/lib/{python_version}/site-packages/mlx/lib/mlx.metallib=./mlx.metallib",
             "--include-distribution-meta=pygments"
         ])
     elif sys.platform == "win32":  
