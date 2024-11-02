@@ -183,22 +183,23 @@ async def main():
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
 
     # Add the inference endpoint when in Allora mode
-    if args.allora_mode:
-        @api.app.get("/inference/{token}")
-        async def inference_endpoint(token: str):
-            # Use the inference_engine to process the token
-            request_id = str(uuid.uuid4())
-            shard = Shard(model_id="coin_model", shard_id="shard_1")
-            output_data, inference_state, completed = await inference_engine.infer_prompt(
-                request_id, shard, token
-            )
-            return {
-                "token": token,
-                "prediction": output_data.tolist(),
-                "completed": completed
-            }
+  if args.allora_mode:
+      async def inference_endpoint(request):
+        # Use the inference_engine to process the token
+        token = request.match_info.get('token')
+        request_id = str(uuid.uuid4())
+        shard = Shard(model_id="LinearRegression", start_layer=1, end_layer=1, n_layers=1)
+        output_data, inference_state, completed = await inference_engine.infer_prompt(
+            request_id, shard, token
+        )
+        return {
+            "token": token,
+            "prediction": output_data.tolist(),
+            "completed": completed
+        }
+      api.app.router.add_get("/inference/{token}", inference_endpoint)
 
-    await asyncio.Event().wait()
+  await asyncio.Event().wait()
 
 if __name__ == "__main__":
   loop = asyncio.new_event_loop()

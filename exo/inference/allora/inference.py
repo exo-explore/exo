@@ -13,8 +13,12 @@ import pandas as pd
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.linear_model import BayesianRidge, LinearRegression
 from sklearn.svm import SVR
-from updater import download_binance_daily_data, download_binance_current_day_data, download_coingecko_data, download_coingecko_current_day_data
-# Import your configuration settings
+from .updater import (
+    download_binance_daily_data,
+    download_binance_current_day_data,
+    download_coingecko_data,
+    download_coingecko_current_day_data
+)# Import your configuration settings
 
 class CoinPredictionInferenceEngine(InferenceEngine):
     def __init__(self, shard_downloader: ShardDownloader):
@@ -24,19 +28,12 @@ class CoinPredictionInferenceEngine(InferenceEngine):
         self.training_price_data_path = '/downloads/data.csv'
         self.trained_model_path = '/downloads/model'
         self.token = 'ETH'  # To keep track of the current token
-        self.timeframe = '1D'  # Default timeframe
+        self.timeframe = '1D'  # Default timeframe```
         self.region = 'US'  # Default region
         self.data_provider = 'binance'  # Default data provider
 
-
-    async def ensure_shard(self, shard: Shard):
-        if self.shard == shard:
-            return
-        # Load the model corresponding to the shard
-        model_path = await self.shard_downloader.ensure_shard(shard)
-        with open(model_path, "rb") as f:
-            self.model = pickle.load(f)
-        self.shard = shard
+    async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (bool):
+        return False
 
     async def infer_prompt(
         self,
@@ -64,41 +61,12 @@ class CoinPredictionInferenceEngine(InferenceEngine):
             return np.array([]), inference_state or '', True
 
     async def ensure_shard(self, shard: Shard):
-        if self.shard == shard:
-            return
-        # Load the model corresponding to the shard
-        model_path = await self.shard_downloader.ensure_shard(shard)
-        with open(model_path, "rb") as f:
-            self.model = pickle.load(f)
+        self.update_data()
         self.shard = shard
-
-    async def infer_prompt(
-        self,
-        request_id: str,
-        shard: Shard,
-        prompt: str,
-        image_str: Optional[str] = None,
-        inference_state: Optional[str] = None
-    ) -> Tuple[np.ndarray, str, bool]:
-        await self.ensure_shard(shard)
-        
-        # Extract token symbol from prompt
-        token = prompt.strip()
-        
-        # Update token if it has changed
-        if self.token != token:
-            self.token = token
-
-        try:
-            predicted_price = self.get_inference()
-            output_data = np.array([[predicted_price]])
-            return output_data, inference_state or '', True  # True indicates completion
-        except Exception as e:
-            print(f"Error during inference: {e}")
-            return np.array([]), inference_state or '', True
 
     def get_inference(self):
         # Load current data
+        self.ensure_shard()
         current_day_data = download_binance_current_day_data(f"{self.token}USDT", self.region)
 
         X_new = self.load_frame(current_day_data, self.timeframe)
@@ -107,10 +75,11 @@ class CoinPredictionInferenceEngine(InferenceEngine):
 
     def update_data(self):
         """Download price data, format data and train model."""
+        os.makedirs(os.path.dirname(self.trained_model_path), exist_ok=True)
         if self.data_provider == "binance":
-            files = sorted([x for x in os.listdir(self.binance_data_path) if x.startswith(f"{self.token}USDT")])
+            files = sorted([x for x in os.listdir(self.trained_model_path) if x.startswith(f"{self.token}USDT")])
         elif self.data_provider == "coingecko":
-            files = sorted([x for x in os.listdir(self.coingecko_data_path) if x.endswith(".json")])
+            files = sorted([x for x in os.listdir(self.trained_model_path) if x.endswith(".json")])
         self.format_data(files, self.data_provider, self.training_price_data_path)
         self.train_model(self.timeframe, self.model, self.training_price_data_path, self.trained_model_path)
 
