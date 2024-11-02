@@ -10,7 +10,6 @@ def run():
         "--product-name=exo",
         "--output-dir=dist",
         "--follow-imports",
-        "--onefile",
         "--standalone",
         "--output-filename=exo"
     ]
@@ -30,7 +29,8 @@ def run():
             "--include-module=mlx._os_warning",
             f"--include-data-files={site_packages}/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
             f"--include-data-files={site_packages}/mlx/lib/mlx.metallib=./mlx.metallib",
-            "--include-distribution-meta=pygments"
+            "--include-distribution-meta=pygments",
+            "--nofollow-import-to=tinygrad"
         ])
     elif sys.platform == "win32":  
         command.extend([

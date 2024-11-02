@@ -68,6 +68,16 @@
       if (home === -1) setTimeout(() => home = 0, 100);
     " x-show="home === 0" x-transition="">
       <h1 class="title megrim-regular">exo</h1>
+      <main x-data="state" x-init="console.log(endpoint)">
+        <!-- Loading Overlay -->
+        <div 
+          x-show="!backendReady" 
+          class="loading-overlay"
+          x-transition.opacity
+        >
+          <i class="fas fa-spinner fa-spin fa-3x"></i>
+          <p class="loading-text">Starting exo ...</p>
+        </div>
       <div class="histories-container-container">
         <template x-if="histories.length">
           <div class="histories-start"></div>

@@ -1,4 +1,23 @@
 /* define colors */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(231, 230, 230, 0.8);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.loading-text {
+  color: rgb(3, 3, 3);
+  margin-top: 1rem;
+  font-size: 1.5rem;
+}
 :root {
   --primary-color: #a52e4d;
   --primary-color-transparent: #a52e4d66;

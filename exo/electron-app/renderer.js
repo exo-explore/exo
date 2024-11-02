@@ -14,7 +14,8 @@ document.addEventListener("alpine:init", () => {
       generating: false,
       endpoint: `${'http://127.0.0.1:8000'}/v1`,
       errorMessage: null,
-  
+      backendReady: false,
+
       // performance tracking
       time_till_first: 0,
       tokens_per_second: 0,
@@ -29,13 +30,29 @@ document.addEventListener("alpine:init", () => {
   
       // Pending message storage
       pendingMessage: null,
+
+      
   
-      init() {
+      async init() {
         // Clean up any pending messages
         localStorage.removeItem("pendingMessage");
   
         // Start polling for download progress
         this.startDownloadProgressPolling();
+
+        const checkBackend = async () => {
+          try {
+            const response = await fetch(`${this.endpoint}/models`);
+            if (response.status === 200) {
+              this.backendReady = true;
+            } else {
+              setTimeout(checkBackend, 1000); 
+            }
+          } catch (error) {
+            setTimeout(checkBackend, 1000);
+          }
+        };
+        checkBackend();
       },
   
       removeHistory(cstate) {
@@ -533,4 +550,6 @@ document.addEventListener("alpine:init", () => {
   function hasBom(buffer) {
     return BOM.every((charCode, index) => buffer.charCodeAt(index) === charCode);
   }
+  
+
   
