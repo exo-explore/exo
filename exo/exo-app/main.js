@@ -2,15 +2,17 @@ const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron')
 const path = require('path')
 const http = require('http')
 const { execFile } = require('child_process')
+
+
 let trayIcon = nativeImage.createFromPath(path.join(__dirname, 'images/exo-rounded-small.png'))
 let appIcon = nativeImage.createFromPath(path.join(__dirname, 'images/exo-rounded.png'))
 
-app.setName('exo');
+app.setName('exo')
 
 app.setAboutPanelOptions({
   applicationName: 'exo',
-  applicationVersion: '0.1.0',
-  applicationIcon: appIcon,
+  applicationVersion: '0.0.1',
+  applicationIcon: path.join(__dirname, 'images/exo-rounded.png'),
   copyright: 'Copyright © 2024 exo Labs, Inc.'
 })
 
@@ -32,7 +34,6 @@ const createWindow = () => {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
   })
-  mainWindow.webContents.openDevTools()
 }
 
 const sendQuitSignal = () => {
@@ -48,6 +49,28 @@ const sendQuitSignal = () => {
     app.quit()
   })
   req.end()
+}
+
+const createDockMenu = () => {
+  const template = [
+    {
+      label: 'josh',
+    },
+    { label: 'Hide', 
+      accelerator: process.platform === 'darwin' ? 'Command+H' : 'Alt+H',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.hide()
+        }
+      }
+    },
+    { type: 'separator' },
+    { label: 'Quit', 
+      accelerator: process.platform === 'darwin' ? 'Command+Q' : 'Alt+F4',
+      click: () => sendQuitSignal() 
+    }
+  ]
+  return Menu.buildFromTemplate(template)
 }
 
 const createTray = () => {
@@ -84,9 +107,14 @@ app.whenReady().then(async () => {
   createTray()
 })
 
+app.on('before-quit', () => {
+  sendQuitSignal()
+})
+
 app.on('window-all-closed', (e) => {
   if (process.platform !== 'darwin') {
     app.quit()
+    sendQuitSignal()
   }
 })
 
