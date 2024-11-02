@@ -1,6 +1,7 @@
 """
 Test of pytorch based llama3 model
 """
+import re
 from pathlib import Path
 
 import torch
@@ -14,7 +15,7 @@ from exo.inference.shard import Shard
 
 MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
 TEMP=0.7
-TOP_K=25
+TOP_K=35
 TOP_P=0.9
 
 def check_weights(model, state_dict):
@@ -22,6 +23,7 @@ def check_weights(model, state_dict):
   Verifies that the weights from the state dictionary are properly loaded into the model.
   """
   model_state_dict = model.state_dict()
+  print(f"model_state_dict: {model_state_dict.keys()}")
   for name, param in model_state_dict.items():
     if name in state_dict:
       loaded_param = state_dict[name]
@@ -29,8 +31,8 @@ def check_weights(model, state_dict):
         print(f"Shape mismatch for {name}: expected {param.shape}, got {loaded_param.shape}")
       else:
         print(f"{name}: loaded correctly")
-    else:
-       print(f"{name} not found in the state_dict")
+    #else:
+    #   print(f"{name} not found in the state_dict")
 
   for name in state_dict:
     if name not in model_state_dict:
@@ -65,44 +67,46 @@ def test_generation(model, tokenizer, text, max_length=10, config=None):
   generated_ids = input_ids.clone()
 
   # Generate tokens step-by-step
-  past_kvs = None
-
   print(f"{model}")
 
   for _ in range(max_length):
     with torch.no_grad():
-      pred_score, hstates, past_kvs = model(
+      pred_score, hstates = model(
         generated_ids,
-        attention_mask=attention_mask,
-        past_kv_cache=past_kvs
+        attention_mask=attention_mask
       )
 
+    print("\n\n------------------------------------------------------")
     print(f"pred_score: {pred_score.shape}")
     print(f"hstates: {hstates.shape if hstates is not None else None}")
-    print(f"past_kvs: {past_kvs.size if past_kvs is not None else None}")
     # Select next token using pred_score
-    #next_token = select_next_token(pred_score, top_k=TOP_K, top_p=TOP_P, temperature=TEMP, use_max=False)
-    next_token = ttg.sample(pred_score, temperature=TEMP, top_k=TOP_K)[:, -1, :]
+    next_token = select_next_token(pred_score, top_k=TOP_K, top_p=TOP_P, temperature=TEMP, use_max=False)
+    #next_token = ttg.sample(pred_score, temperature=TEMP, top_k=TOP_K)[:, -1, :]
     print(f"next_token: {next_token}")
 
     # Update generated_ids
     generated_ids = torch.cat([generated_ids, next_token], dim=1)
-    print(f"generated_ids: {generated_ids}")
+    print(f"generated_ids: {generated_ids.shape}")
+
+    # Update attention mask
+    #attention_mask = torch.cat([attention_mask, torch.ones((attention_mask.size(0), 1), device=attention_mask.device)], dim=1)
+    print(f"attention_mask: {attention_mask.shape}")
 
     # Check for EOS token
     print(f"next_token.item(): {next_token.item()}")
 
     if config:
-      print(config["eos_token_id"])
       if next_token.item() in config["eos_token_id"]:
         break
     else:
       if next_token.item() == tokenizer.eos_token_id:
         break
 
-  # Decode generated text
-  generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-  print(f"\n\n\n\nGenerated Response: {generated_text}")
+    # Decode generated text
+    generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+    print(f"\n\n\n\nGenerated Response: {generated_text}")
+
+    print("\n\n------------------------------------------------------")
 
 if __name__ == "__main__":
   print("\nTesting generation:")
@@ -142,6 +146,7 @@ if __name__ == "__main__":
 
     # remap to work with our model
     remapped_state_dict = {}
+    tied_embed_weight = None
     for key, value in state_dict.items():
       # Remove the 'model.' prefix if it exists
       print(f"remapping: {key}")
@@ -150,7 +155,22 @@ if __name__ == "__main__":
       else:
         new_key = key
 
+      # change o_proj to output_proj
+      re_o_proj = re.findall(r'layers.(\d+).(\w+).(o_proj).(\w+)', new_key)
+      if len(re_o_proj) != 0:
+        new_key = f"layers.{re_o_proj[0][0]}.{re_o_proj[0][1]}.output_proj.weight"
+
       remapped_state_dict[new_key] = value
+
+      # saving embed for tied weights
+      if new_key == 'embed_tokens.weight':
+        tied_embed_weight = value
+
+      if new_key == 'lm_head.weight':
+        model.has_lm_head_weight = True
+
+    if not model.has_lm_head_weight:
+      remapped_state_dict['lm_head.weight'] = tied_embed_weight
 
     model.load_state_dict(remapped_state_dict, strict=False)
 

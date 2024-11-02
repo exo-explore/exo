@@ -11,8 +11,6 @@ import torch.nn.functional as F
 import torchtune.modules as ttm
 import math
 
-from transformers.models.mamba.modeling_mamba import causal_conv1d_update
-
 from exo.helpers import DEBUG
 
 def load_model_config(model_config_path: Path) -> dict:
@@ -89,60 +87,6 @@ def select_next_token(
     print(f"Next token: {next_token}")
 
   return next_token
-
-class MultiLayerPreceptron(nn.Module):
-  def __init__(
-    self,
-    input_dim,
-    hidden_dim,
-    activation='gelu',
-    use_bias=False
-  ):
-    """
-    General MLP (Multi-Layer Perceptron) module.
-
-    Args:
-      input_dim (int): Dimensionality of the input.
-      hidden_dims (int): Hidden layer/intermediate dimensions.
-      output_dim (int): Dimensionality of the output.
-      activation (str): Activation function ('relu', 'gelu', 'tanh', 'sigmoid', etc.).
-      dropout (float): Dropout probability.
-      use_batchnorm (bool): Whether to use batch normalization.
-    """
-    super(MultiLayerPreceptron, self).__init__()
-
-    # Activation function mapping
-    activations = {
-      'relu': nn.ReLU(),
-      'gelu': nn.GELU(),
-      'tanh': nn.Tanh(),
-      'sigmoid': nn.Sigmoid(),
-      'leaky_relu': nn.LeakyReLU(0.2),
-      'silu': nn.SiLU()
-    }
-
-    # Ensure valid activation
-    if activation not in activations:
-      raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
-
-    # Construct MLP layers
-    self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
-    self.up_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
-    self.down_proj = nn.Linear(hidden_dim, input_dim, bias=use_bias)
-    self.act_fn = activations[activation]
-
-  def forward(self, x) -> torch.Tensor:
-    """
-    Forward pass for the MLP module.
-
-    Args:
-      x (torch.Tensor): Input tensor.
-
-    Returns:
-      torch.Tensor: Output tensor after the MLP transformations.
-    """
-    down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-    return down_proj
 
 def create_4d_causal_attention_mask(
   attention_mask: torch.Tensor,
@@ -269,6 +213,83 @@ class RotaryEmbedding(nn.Module):
 
     return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
+class MultiLayerPreceptron(nn.Module):
+  def __init__(
+    self,
+    input_dim,
+    hidden_dim,
+    activation='silu',
+    use_bias=False
+  ):
+    """
+    General MLP (Multi-Layer Perceptron) module.
+
+    Args:
+      input_dim (int): Dimensionality of the input.
+      hidden_dims (int): Hidden layer/intermediate dimensions.
+      output_dim (int): Dimensionality of the output.
+      activation (str): Activation function ('relu', 'gelu', 'tanh', 'sigmoid', etc.).
+      dropout (float): Dropout probability.
+      use_batchnorm (bool): Whether to use batch normalization.
+    """
+    super(MultiLayerPreceptron, self).__init__()
+
+    # Activation function mapping
+    activations = {
+      'relu': nn.ReLU(),
+      'gelu': nn.GELU(),
+      'tanh': nn.Tanh(),
+      'sigmoid': nn.Sigmoid(),
+      'leaky_relu': nn.LeakyReLU(0.2),
+      'silu': nn.SiLU()
+    }
+
+    # Ensure valid activation
+    if activation not in activations:
+      raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
+
+    # Construct MLP layers
+    self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
+    self.up_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
+    self.down_proj = nn.Linear(hidden_dim, input_dim, bias=use_bias)
+    self.act_fn = activations[activation]
+
+  def forward(self, x) -> torch.Tensor:
+    """
+    Forward pass for the MLP module.
+
+    Args:
+      x (torch.Tensor): Input tensor.
+
+    Returns:
+      torch.Tensor: Output tensor after the MLP transformations.
+    """
+
+    return self.down_proj(
+      self.act_fn(
+        self.gate_proj(x)
+      ) * self.up_proj(x)
+    )
+
+class RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        RMSNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+
 # ------------------
 # Attention Methods
 # ------------------
@@ -289,7 +310,6 @@ class MultiHeadAttention(nn.Module):
     num_kv_heads,
     head_dim,
     rotary_emb,
-    kv_cache: Optional[ttm.KVCache] = None,
     attention_dropout=0.0,
     is_causal=True,
     attention_bias=False
@@ -301,7 +321,6 @@ class MultiHeadAttention(nn.Module):
     self.head_dim = head_dim
     self.attention_dropout = attention_dropout
     self.is_causal = is_causal
-    self.kv_cache = kv_cache
 
     # nn layers
     self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=attention_bias)
@@ -316,8 +335,9 @@ class MultiHeadAttention(nn.Module):
     position_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor] = None,
     position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    kv_cache: Optional[ttm.KVCache] = None,
     cos_sin_unsqueeze: int=1
-  ) -> Tuple[torch.Tensor, ttm.KVCache]:
+  ) -> Tuple[torch.Tensor, Optional[ttm.KVCache]]:
     batch_size, seq_len, _ = hidden_states.size()
 
     # Project to queries, keys, and values
@@ -357,22 +377,25 @@ class MultiHeadAttention(nn.Module):
     print(f"value_states: {value_states.shape}")
 
     # Forcing caching always enabled
-    if self.kv_cache is not None:
-      print(f"self.kv_cache.size {self.kv_cache.size}")
-    print(f"key_states.size(0) {key_states.size(2)}")
-    if self.kv_cache is None or self.kv_cache.size != key_states.size(2):
-      print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
-      self.kv_cache = ttm.KVCache(
-        batch_size=key_states.size(0),
-        max_seq_len=key_states.size(2),
-        num_heads=self.num_kv_heads,
-        head_dim=self.head_dim,
-        dtype=hidden_states.dtype
-      )
-    key_states, value_states = self.kv_cache.update(key_states, value_states)
-    print(f"kv_cache: {self.kv_cache.size}")
-    print(f"key_states: {key_states.shape}")
-    print(f"value_states: {value_states.shape}")
+    if kv_cache is not None:
+      #print(f"kv_cache.size {kv_cache.size}")
+
+      #print(f"key_states.size(2) {key_states.size(2)}")
+
+      #if kv_cache.size != key_states.size(2):
+      #  print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
+      #  kv_cache = ttm.KVCache(
+      #    batch_size=key_states.size(0),
+      #    max_seq_len=key_states.size(2),
+      #    num_heads=self.num_kv_heads,
+      #    head_dim=self.head_dim,
+      #    dtype=hidden_states.dtype
+      #  )
+
+      key_states, value_states = kv_cache.update(key_states, value_states)
+      print(f"kv_cache: {kv_cache.size}")
+      print(f"key_states: {key_states.shape}")
+      print(f"value_states: {value_states.shape}")
 
     # Repeat keys and values if needed
     #if self.num_heads > self.num_kv_heads:
@@ -417,7 +440,7 @@ class MultiHeadAttention(nn.Module):
     attn_output = self.o_proj(attn_output)
     print(f"attn_output: {attn_output.shape}")
 
-    return attn_output, self.kv_cache
+    return attn_output, kv_cache
 
 class SDPAttention(nn.Module):
   """
@@ -434,7 +457,6 @@ class SDPAttention(nn.Module):
     num_kv_heads,
     head_dim,
     rotary_emb,
-    kv_cache: Optional[ttm.KVCache] = None,
     attention_dropout=0.0,
     is_causal=True,
     attention_bias=False
@@ -446,7 +468,6 @@ class SDPAttention(nn.Module):
     self.head_dim = head_dim
     self.attention_dropout = attention_dropout
     self.is_causal = is_causal
-    self.kv_cache = kv_cache
 
     # nn layers
     self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=attention_bias)
@@ -461,8 +482,9 @@ class SDPAttention(nn.Module):
     position_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor] = None,
     position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    kv_cache: Optional[ttm.KVCache] = None,
     cos_sin_unsqueeze: int=1
-  ) -> Tuple[torch.Tensor, ttm.KVCache]:
+  ) -> Tuple[torch.Tensor, Optional[ttm.KVCache]]:
     batch_size, seq_len, _ = hidden_states.size()
 
     # Project to queries, keys, and values
@@ -502,22 +524,30 @@ class SDPAttention(nn.Module):
     print(f"value_states: {value_states.shape}")
 
     # Forcing caching always enabled
-    if self.kv_cache is not None:
-      print(f"self.kv_cache.size {self.kv_cache.size}")
-    print(f"key_states.size(0) {key_states.size(2)}")
-    if self.kv_cache is None or self.kv_cache.size != key_states.size(2):
-      print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
-      self.kv_cache = ttm.KVCache(
-        batch_size=key_states.size(0),
-        max_seq_len=key_states.size(2),
-        num_heads=self.num_kv_heads,
-        head_dim=self.head_dim,
-        dtype=hidden_states.dtype
-      )
-    key_states, value_states = self.kv_cache.update(key_states, value_states)
-    print(f"kv_cache: {self.kv_cache.size}")
-    print(f"from kv_cache / key_states: {key_states.shape}")
-    print(f"from kv_cache / value_states: {value_states.shape}")
+    if kv_cache is not None:
+      #print(f"kv_cache.size {kv_cache.size}")
+      #print(f"key_states.size(0) {key_states.size(2)}")
+
+      #if kv_cache.size != key_states.size(2):
+      #  print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
+      #  kv_cache = ttm.KVCache(
+      #    batch_size=key_states.size(0),
+      #    max_seq_len=key_states.size(2),
+      #    num_heads=self.num_kv_heads,
+      #    head_dim=self.head_dim,
+      #    dtype=hidden_states.dtype
+      #  )
+
+      key_states, value_states = kv_cache.update(key_states, value_states)
+
+      # **Slice KVCache to match `query_states` length**
+      key_states = key_states[:, :, :seq_len, :]
+      value_states = value_states[:, :, :seq_len, :]
+
+      # kv_cache.update(key_states, value_states)
+      print(f"kv_cache: {kv_cache.size}")
+      print(f"from kv_cache / key_states: {key_states.shape}")
+      print(f"from kv_cache / value_states: {value_states.shape}")
 
     # Repeat keys and values if needed
     #if self.num_heads > self.num_kv_heads:
@@ -550,7 +580,7 @@ class SDPAttention(nn.Module):
       key_states,
       value_states,
       attn_mask=causal_mask,
-      dropout_p=self.attention_dropout if self.training else 0.0,
+      dropout_p=0.0,
       is_causal=is_causal,
     )
 
@@ -563,5 +593,5 @@ class SDPAttention(nn.Module):
 
     print(f"attn_output: {attn_output.shape}")
 
-    return attn_output, self.kv_cache
+    return attn_output, kv_cache
 
