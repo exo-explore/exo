@@ -56,6 +56,7 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--disable-browser-launch", action="store_true", help="Disable browser launch")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -240,7 +241,8 @@ async def main():
     await run_model_cli(node, inference_engine, model_name, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
-    # open_web_chat()
+    if not args.disable_browser_launch:
+      open_web_chat()
     await asyncio.Event().wait()
 
 
