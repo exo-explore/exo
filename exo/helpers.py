@@ -61,7 +61,7 @@ def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 6
       try:
         write_used_port(port, used_ports)
       except Exception as e:
-        if DEBUG >= 2: print(f"Unable write to file")
+        if DEBUG >= 2: print(f"Unable to write to file using the write_used_port function")
         raise RuntimeError (e)
       return port
     except socket.error:
