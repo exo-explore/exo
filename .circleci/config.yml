@@ -2,7 +2,6 @@ version: 2.1
 
 orbs:
   python: circleci/python@2
-  win: circleci/windows@5.0
 commands:
   run_chatgpt_api_test:
     parameters:
@@ -246,119 +245,6 @@ jobs:
   #         model_id: llama-3-8b
   #         prompt: "Keep responses concise. Who was the king of pop?"
   #         expected_output: "Michael Jackson"
-
-  build_exo_macos:
-    macos:
-      xcode: "16.0.0"
-    resource_class: m2pro.large
-    steps:
-      - checkout
-      - run:
-          name: Set up Python environment
-          command: |
-            brew install python@3.12
-            python3.12 -m venv env
-      - run:
-          name: Install dependencies
-          command: |
-            source env/bin/activate
-            pip install --upgrade pip
-            pip install .
-      - run:
-          name: Build exo for macOS
-          command: |
-            source env/bin/activate
-            python3 buildexo/build_exo.py
-      - run:
-          name: Create a macOS app
-          command: |
-            mv dist/main.app dist/exo.app
-        
-  build_exo_linux:
-    machine:
-      image: ubuntu-2004:current
-    resource_class: xlarge
-    steps:
-      - checkout
-      - run:
-          name: Set up Python environment
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y python3 python3-venv
-            sudo apt-get install clang
-            sudo apt-get install patchelf
-            python3 -m venv env
-      - run:
-          name: Install dependencies
-          command: |
-            source env/bin/activate
-            pip install --upgrade pip
-            pip install .
-      - run:
-          name: Build exo for Linux
-          no_output_timeout: 90m
-          command: |
-            source env/bin/activate
-            python3 buildexo/build_exo.py
-      - run:
-          name: Create an AppImage
-          command: |
-            sudo wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
-            sudo chmod +x /usr/local/bin/appimagetool
-            mkdir -p exo.AppDir/usr/bin
-            cp -r env/lib/python3.12/site-packages/tinygrad exo.AppDir/usr/bin
-            cp -r dist/main.dist/* exo.AppDir/usr/bin
-            # copying icons from docs to exo.AppDir
-            cp docs/exo-rounded.png exo.AppDir
-            cat > exo.AppDir/exo.desktop << 'EOF'
-            [Desktop Entry]
-            Name=exo
-            Icon=exo-rounded
-            Terminal=false
-            Type=Application
-            Categories=Utility;
-            EOF
-
-            cat > exo.AppDir/AppRun << 'EOF'
-            #!/bin/bash
-            export APPDIR="$(dirname "$(readlink -f "$0")")"
-            export PATH="$APPDIR/usr/bin/:$PATH"
-            export LD_LIBRARY_PATH="$APPDIR/usr/lib:$LD_LIBRARY_PATH"
-            export XDG_DATA_DIRS="$APPDIR/usr/share/:/usr/share/:$XDG_DATA_DIRS"
-            "$APPDIR"/usr/bin/exo "$@"
-            EOF
-            
-            chmod +x exo.AppDir/AppRun
-            appimagetool exo.AppDir/
-            mv *.AppImage ./output/
-                      
-  build_exo_windows:
-    executor: win/default
-    steps:
-      - checkout
-      - run:
-          name: Install Conda
-          command: |
-            choco install anaconda3 --yes
-      - run:
-          name: Set up Conda environment
-          command: |
-            conda create -n exo-env python=3.12 --yes
-            conda activate exo-env
-            conda install -c conda-forge python=3.12 
-            conda install -c conda-forge libstatic
-            conda install -c conda-forge rust
-      - run:
-          name: Install dependencies
-          command: |
-            conda activate exo-env
-            pip install --upgrade pip
-            pip install .
-      - run:
-          name: Build Exo for Windows
-          command: |
-            conda activate exo-env
-            python buildexo/build_exo.py
 
 workflows:
   version: 2
