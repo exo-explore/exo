@@ -1,19 +1,21 @@
 sudo apt-get update -y
 sudo apt install nvidia-cuda-toolkit -y
-sudo apt install python3-pip
-
+sudo apt install python3-pip -y
 sudo apt install python3-venv -y
-
 sudo apt-get -y install --no-install-recommends clang python3-clang
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
+reboot
+wget https://developer.download.nvidia.com/compute/cudnn/9.5.1/local_installers/cudnn-local-repo-ubuntu2204-9.5.1_1.0-1_amd64.deb
+sudo dpkg -i cudnn-local-repo-ubuntu2204-9.5.1_1.0-1_amd64.deb
 sudo cp /var/cudnn-local-repo-ubuntu2204-9.5.1/cudnn-*-keyring.gpg /usr/share/keyrings/
 sudo apt-get update -y
 sudo apt-get -y install cudnn
+reboot
 sudo ubuntu-drivers autoinstall
-
+reboot
 git clone https://github.com/RashikShahjahan/exo.git
 cd exo && git checkout quantized-models-support-tinygrad
 source install.sh
 pip install torch llvmlite
+
+SUPPORT_BF16=0 python3 exo/test_quantization.py
 
