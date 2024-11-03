@@ -77,7 +77,7 @@ async def profile_inference(
 
 async def main():
     models_to_test = ["llama-3.1-8b"]  # Add more models as needed
-    quantization_levels = ["int8", "nf4"]
+    quantization_levels = [None, "int8", "nf4"]
     test_prompt = "Explain the concept of quantum computing in simple terms."
     
     results = []
