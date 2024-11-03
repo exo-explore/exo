@@ -1,9 +1,10 @@
 """
 Utility methods used by LLMs
 """
+import re
 import json
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,18 @@ import torch.nn.functional as F
 import torchtune.modules as ttm
 import math
 
+from safetensors.torch import load_file as load_safetensors
+
+from transformers import (
+  LogitsProcessorList,
+  TopKLogitsWarper,
+  TopPLogitsWarper,
+  TemperatureLogitsWarper
+)
+from transformers.cache_utils import Cache, DynamicCache
+
 from exo.helpers import DEBUG
+from exo.inference.shard import Shard
 
 def load_model_config(model_config_path: Path) -> dict:
   """
@@ -28,65 +40,127 @@ def load_model_config(model_config_path: Path) -> dict:
     model_config = json.load(f)
   return model_config
 
-def select_next_token(
-    logits,
-    top_k=0,
-    top_p=0.0,
-    temperature=1.0,
-    use_max=False,
-):
+def check_weights(model, state_dict):
   """
-  Selects the next token from logits using top-k, top-p, and temperature scaling.
-
-  Args:
-    logits (torch.Tensor): Logits or prediction scores tensor of shape (batch_size, vocab_size).
-    top_k (int): Number of top logits to consider for sampling.
-    top_p (float): Cumulative probability threshold for nucleus sampling.
-    temperature (float): Scaling factor for temperature.
-    use_max (bool): Whether to use argmax for next token selection.
-    debug (bool): If True, prints debugging information.
-
-  Returns:
-    next_token (torch.Tensor): The next token selected (batch_size,).
+  Verifies that the weights from the state dictionary are properly loaded into the model.
   """
-  # Get logits for the last token in the sequence
+  model_state_dict = model.state_dict()
+  for name, param in model_state_dict.items():
+    if name in state_dict:
+      print(f"\nchecking {name}\n")
+      loaded_param = state_dict[name]
+      if param.shape != loaded_param.shape:
+        print(f"Shape mismatch for {name}: expected {param.shape}, got {loaded_param.shape}")
+      else:
+        print(f"{name}: loaded correctly")
+  
+  for name in state_dict:
+    if name not in model_state_dict:
+      print(f"Unexpected weight {name} found in state_dict")
+
+def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
+  """
+  Loads weights from huggingface and changes it to match torchtune naming structure
+  """
+  # Load weights from safetensors files in the cache directory
+  safetensors_files = list(cache_dir.glob("*.safetensors"))
+  if not safetensors_files:
+    raise FileNotFoundError("No safetensors files found in the cache directory.")
+
+  # Load weights from each found safetensors file
+  stitch_lmhead = True
+  for safetensor_file in safetensors_files:
+    state_dict = load_safetensors(safetensor_file)
+
+    # remap to work with our model
+    remapped_state_dict = {}
+    tied_embed_weight = None
+    for key, value in state_dict.items():
+      # load layer by shard
+      lnrgx = re.findall(r'model\.layers\.(\d+).*', key)
+      layer_num = int(lnrgx[0]) if len(lnrgx) > 0 else None
+      shard_layer_range = list(range(shard.start_layer, shard.end_layer))
+      if layer_num in shard_layer_range:
+        # change input layer norm to sa_norm for torchtune
+        re_iln = re.findall(
+          rf'model.layers\.{layer_num}\.(input_layernorm)\.weight', key)
+        if len(re_iln) != 0:
+          key = f"model.layers.{layer_num}.sa_norm.weight"
+
+        # change post attention layernorm to mlp_norm for torchtune
+        re_pal = re.findall(
+          rf'model.layers\.{layer_num}\.(post_attention_layernorm)\.weight', key)
+        if len(re_pal) != 0:
+          key = f"model.layers.{layer_num}.mlp_norm.weight"
+
+        # change o_proj to output_proj
+        re_o_proj = re.findall(rf'model\.layers\.{layer_num}.(\w+)\.o_proj\.weight', key)
+        if len(re_o_proj) != 0:
+          key = f"model.layers.{layer_num}.{re_o_proj[0]}.output_proj.weight"
+
+        # change self_attn to attn
+        re_attn = re.findall(rf'model\.layers\.{layer_num}.(\w+)\.(\w+)\.(\w+)', key)
+        if len(re_attn) != 0 and re_attn[0][0] == "self_attn":
+          key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
+
+      # saving embed for tied weights
+      elif key == 'model.embed_tokens.weight':
+        tied_embed_weight = value
+        # change name for torchtune
+        key = 'model.tok_embeddings.weight'
+
+      elif key == 'lm_head.weight':
+        stitch_lmhead = False
+        # change key for torchtune
+        key = 'model.output.weight'
+
+      elif key == 'model.norm.weight':
+        key = 'model.norm.weight'
+
+      remapped_state_dict[key] = value
+
+    if stitch_lmhead:
+      remapped_state_dict['model.output.weight'] = tied_embed_weight
+
+    model.load_state_dict(remapped_state_dict, strict=False)
+
+    #if DEBUG >= 7:
+    print("\n--- checking weights ----\n")
+    check_weights(model, remapped_state_dict)
+
+def hf_logit_sample(
+  logits,
+  input_ids,
+  use_max: bool=False,
+  top_k: int=0,
+  top_p: float=0.9,
+  temp: float=1.0,
+) -> torch.Tensor:
+  """
+  Logit sampling using transformers
+  """
+  logits_processor = LogitsProcessorList([
+    TopKLogitsWarper(top_k),
+    TemperatureLogitsWarper(temp),
+    TopPLogitsWarper(top_p)
+  ])
+
+  # get a single cloned logit
   logits = logits[:, -1, :].clone().float()
 
-  # Apply temperature scaling
-  if temperature != 1.0:
-    logits = logits / temperature
+  next_token_scores = logits_processor(input_ids, logits)
 
-  # Apply top-k filtering
-  if top_k > 0:
-    top_k = min(top_k, logits.size(-1))
-    min_topk = torch.topk(logits, top_k)[0][..., -1, None]
-    logits = logits.masked_fill(logits < min_topk, float("-inf"))
-
-  # Apply top-p (nucleus) filtering
-  if top_p > 0.0:
-    sorted_logits, sorted_indices = torch.sort(logits, descending=False)
-    cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-    sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
-    sorted_indices_to_remove[..., -1:] = 0
-
-    indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-    logits = logits.masked_fill(indices_to_remove, float('-inf'))
-
-  # Select next token
   if not use_max:
-    probs = F.softmax(logits, dim=-1)
+    probs = nn.functional.softmax(next_token_scores, dim=-1)
     next_token = torch.multinomial(probs, num_samples=1)
   else:
-    next_token = torch.argmax(logits, dim=-1, keepdim=True)
+    next_token = torch.argmax(next_token_scores, dim=-1)
 
-  next_token = next_token[:, None].squeeze(-1)
-
-  # Debugging output
   if DEBUG >= 4:
-    print(f"Logits: {logits}")
-    print(f"Next token: {next_token}")
+    print(f"input_ids: {input_ids}")
+    print(f"next_token: {next_token}")
 
-  return next_token
+  return next_token[:, None].squeeze(-1)
 
 def create_4d_causal_attention_mask(
   attention_mask: torch.Tensor,
@@ -98,7 +172,7 @@ def create_4d_causal_attention_mask(
   batch_size: int,
 ) -> torch.Tensor:
   """
-  Creates a 4D causal attention mask from a 2D mask, with adjustments for static caching.
+  Creates a 4D causal attention mask from a 2D mask
 
   Args:
     attention_mask (torch.Tensor):
@@ -142,17 +216,16 @@ def create_4d_causal_attention_mask(
   # Expand to 4D and batch size
   causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
 
-  if attention_mask is not None:
-    # Create a padding mask based on the input attention_mask
-    mask_len = attention_mask.shape[-1]
-    causal_mask = causal_mask.clone()  # Ensure contiguous memory for in-place operations
-    padding_mask = causal_mask[:, :, :, :mask_len] + attention_mask[:, None, None, :]
-    padding_mask = padding_mask == 0
+  # Create a padding mask based on the input attention_mask
+  mask_len = attention_mask.shape[-1]
+  causal_mask = causal_mask.clone()  # Ensure contiguous memory for in-place operations
+  padding_mask = causal_mask[:, :, :, :mask_len] + attention_mask[:, None, None, :]
+  padding_mask = padding_mask == 0
 
-    # Apply padding to the causal mask
-    causal_mask[:, :, :, :mask_len] = causal_mask[:, :, :, :mask_len].masked_fill(
-      padding_mask, min_value
-    )
+  # Apply padding to the causal mask
+  causal_mask[:, :, :, :mask_len] = causal_mask[:, :, :, :mask_len].masked_fill(
+    padding_mask, min_value
+  )
 
   return causal_mask
 
@@ -278,17 +351,14 @@ class RMSNorm(nn.Module):
         """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
+        self.eps = eps
 
     def forward(self, hidden_states):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
         return self.weight * hidden_states.to(input_dtype)
-
-    def extra_repr(self):
-        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 # ------------------
 # Attention Methods

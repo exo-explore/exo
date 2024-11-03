@@ -1,112 +1,148 @@
 """
 Test of pytorch based llama3 model
 """
-import re
 from pathlib import Path
 
 import torch
-import torchtune.generation as ttg
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
-from safetensors.torch import load_file as load_safetensors
-from exo.inference.torch.models.llm_utils import load_model_config, select_next_token
-from exo.inference.torch.models.llama3 import LlamaModel
+
+import torchtune.generation as ttg
+from torchtune.models import llama3
+from torchtune.data import Message
+
+from exo.inference.torch.models.llm_utils import (
+  load_model_config,
+  hf_logit_sample,
+  load_model_weights_torchtune,
+  create_4d_causal_attention_mask
+)
+from exo.inference.torch.models.llama3 import ShardedLlamaModel
 from exo.inference.shard import Shard
 
-MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
-TEMP=0.7
+
+MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
+TEMP=0.6
 TOP_K=35
 TOP_P=0.9
+MAX_SEQ_LEN=2048
 
-def check_weights(model, state_dict):
-  """
-  Verifies that the weights from the state dictionary are properly loaded into the model.
-  """
-  model_state_dict = model.state_dict()
-  print(f"model_state_dict: {model_state_dict.keys()}")
-  for name, param in model_state_dict.items():
-    if name in state_dict:
-      loaded_param = state_dict[name]
-      if param.shape != loaded_param.shape:
-        print(f"Shape mismatch for {name}: expected {param.shape}, got {loaded_param.shape}")
-      else:
-        print(f"{name}: loaded correctly")
-    #else:
-    #   print(f"{name} not found in the state_dict")
-
-  for name in state_dict:
-    if name not in model_state_dict:
-      print(f"Unexpected weight {name} found in state_dict")
-
-def test_generation(model, tokenizer, text, max_length=10, config=None):
+def test_generation(text, max_length=10, config=None):
   """
   Test the generation capabilities of the LlamaModel with sample text.
   """
   # Tokenize input text
-  prompt = tokenizer.apply_chat_template([
-    {
-      "role": "system",
-      "content": "You are a helpful assistant."
-    },
-    {
-      "role": "user",
-      "content": text
-    }
-  ], tokenize=False, add_generation_prompt=True)
+  messages = []
+  messages.extend(
+    [
+      Message(role="user", content=text),
+      # Empty assistant message to kick-start generation
+      Message(role="assistant", content=""),
+    ]
+  )
 
-  print(f"prompt: {prompt}")
+  tokenizer_out = llama_tokenizer({"messages": messages}, inference=True)
+  print(f"tokenizer_out: {tokenizer_out}")
+  tokens = tokenizer_out["tokens"]
+  prompt = torch.tensor(tokens, dtype=torch.int)
 
-  inputs = tokenizer(prompt, return_tensors="pt")
-  input_ids = inputs.get("input_ids")
-  attention_mask = inputs.get("attention_mask")
+  if prompt.ndim == 1:
+    prompt = prompt.view(1, -1)
 
-  print(f"input_ids: {input_ids}")
-  print(f"attention_mask: {attention_mask}")
+  bsz, prompt_length = prompt.size()
+  total_response_length = prompt_length + MAX_SEQ_LEN
+  generated_tokens = prompt.clone()
+  resp_max_seq_len = (
+    total_response_length
+    if not shard_model.model.caches_are_enabled()
+    else shard_model.model.decoder_max_cache_seq_len
+  )
 
-  # Start with initial input_ids
-  generated_ids = input_ids.clone()
+  # masking for proper attention
+  padding_masks = prompt != llama_tokenizer.pad_id
+  if not padding_masks.all():
+    padding_masks = torch.nn.functional.pad(
+      padding_masks,
+      (0, MAX_SEQ_LEN),
+      value=True
+    )
 
-  # Generate tokens step-by-step
-  print(f"{model}")
+    masks = ttg.get_causal_mask_from_padding_mask(
+      padding_masks,
+      target_seq_len=resp_max_seq_len
+    )
+
+    input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
+  else:
+    masks = torch.tril(
+      torch.ones(
+        total_response_length,
+        resp_max_seq_len if resp_max_seq_len is not None else MAX_SEQ_LEN,
+        dtype=torch.bool,
+        device=prompt.device,
+      )
+    ).unsqueeze(0)
+
+    input_pos = torch.arange(
+      0, total_response_length, device=prompt.device
+    ).unsqueeze(0)
+
+  if shard_model.model.caches_are_enabled():
+    curr_masks = masks[:, :prompt_length]
+  else:
+    curr_masks = masks[:, :prompt_length, :prompt_length]
+
+  print(f"padding_masks: {padding_masks.shape}")
+  print(padding_masks.all())
+
+  next_token, gen_logits = ttg.generate_next_token(
+    shard_model.model,
+    input_pos=input_pos[:, :prompt_length].squeeze(),
+    x=prompt,
+    mask=curr_masks,
+    q=torch.empty(
+      (
+        prompt.size(0),
+        shard_model.model.tok_embeddings.num_embeddings
+      ), device=prompt.device
+    ).exponential_(1, generator=None)
+  )
+
+  print(f"next_token: {next_token}")
+
+  generated_tokens = torch.cat([generated_tokens, next_token], dim=-1)
+
+  print(f"generated_tokens: {generated_tokens}")
+
+  curr_pos = prompt_length
+
+  # stop tokens logic
+  stop_tokens = None
+  stop_token_reached = torch.zeros(bsz, dtype=torch.bool, device=prompt.device)
+  stop_tokens = (
+    torch.tensor(stop_tokens, device=prompt.device, dtype=tokens.dtype)
+    if stop_tokens
+    else None
+  )
+  stop_token_mask = torch.ones(
+    (bsz, prompt_length + 1), dtype=torch.int32, device=prompt.device
+  )
+
+  # finish writing stop token logic using torchtune generation
+  # ref https://github.com/pytorch/torchtune/blob/main/torchtune/generation/_generation.py#L337
 
   for _ in range(max_length):
-    with torch.no_grad():
-      pred_score, hstates = model(
-        generated_ids,
-        attention_mask=attention_mask
-      )
 
-    print("\n\n------------------------------------------------------")
-    print(f"pred_score: {pred_score.shape}")
-    print(f"hstates: {hstates.shape if hstates is not None else None}")
-    # Select next token using pred_score
-    next_token = select_next_token(pred_score, top_k=TOP_K, top_p=TOP_P, temperature=TEMP, use_max=False)
-    #next_token = ttg.sample(pred_score, temperature=TEMP, top_k=TOP_K)[:, -1, :]
-    print(f"next_token: {next_token}")
-
-    # Update generated_ids
-    generated_ids = torch.cat([generated_ids, next_token], dim=1)
-    print(f"generated_ids: {generated_ids.shape}")
-
-    # Update attention mask
-    #attention_mask = torch.cat([attention_mask, torch.ones((attention_mask.size(0), 1), device=attention_mask.device)], dim=1)
-    print(f"attention_mask: {attention_mask.shape}")
-
-    # Check for EOS token
-    print(f"next_token.item(): {next_token.item()}")
-
-    if config:
-      if next_token.item() in config["eos_token_id"]:
-        break
+    if shard_model.model.caches_are_enabled():
+      curr_input_pos = input_pos[:, curr_pos]
+      curr_masks = masks[:, curr_pos, None, :]
     else:
-      if next_token.item() == tokenizer.eos_token_id:
-        break
+      tokens = generated_tokens.clone()
+      curr_input_pos = input_pos[:, : curr_pos + 1]
+      curr_masks = masks[:, : curr_pos + 1, : curr_pos + 1]
 
-    # Decode generated text
-    generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-    print(f"\n\n\n\nGenerated Response: {generated_text}")
-
-    print("\n\n------------------------------------------------------")
+  generated_tokens = generated_tokens.tolist()
+  print(f"resp: {llama_tokenizer.decode(generated_tokens[0])}")  
 
 if __name__ == "__main__":
   print("\nTesting generation:")
@@ -123,64 +159,25 @@ if __name__ == "__main__":
   shard = Shard(
     model_id=MODEL_NAME,
     start_layer=0,
-    end_layer=int(config["num_hidden_layers"]) - 1,
+    end_layer=int(config["num_hidden_layers"]),
     n_layers=int(config["num_hidden_layers"])
   )
 
   # Initialize tokenizer
-  tokenizer = AutoTokenizer.from_pretrained(shard.model_id)
+  llama_tokenizer_path = f"{cache_dir}/original/tokenizer.model"
+  llama_tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
+  #tokenizer = AutoTokenizer.from_pretrained(
+  #  MODEL_NAME,
+  #  add_eos_token=True
+  #)
 
   # Initialize LlamaModel with config and tokenizer
-  model = LlamaModel(config, shard)
-  print(f"\nmodel: {model}")
-
-  # Load weights from safetensors files in the cache directory
-  safetensors_files = list(cache_dir.glob("*.safetensors"))
-  if not safetensors_files:
-    raise FileNotFoundError("No safetensors files found in the cache directory.")
-
-  # Load weights from each found safetensors file
-  for safetensor_file in safetensors_files:
-    print(f"Loading weights from: {safetensor_file}")
-    state_dict = load_safetensors(safetensor_file)
-
-    # remap to work with our model
-    remapped_state_dict = {}
-    tied_embed_weight = None
-    for key, value in state_dict.items():
-      # Remove the 'model.' prefix if it exists
-      print(f"remapping: {key}")
-      if key.startswith('model.'):
-        new_key = key[len('model.'):]  # Remove 'model.'
-      else:
-        new_key = key
-
-      # change o_proj to output_proj
-      re_o_proj = re.findall(r'layers.(\d+).(\w+).(o_proj).(\w+)', new_key)
-      if len(re_o_proj) != 0:
-        new_key = f"layers.{re_o_proj[0][0]}.{re_o_proj[0][1]}.output_proj.weight"
-
-      remapped_state_dict[new_key] = value
-
-      # saving embed for tied weights
-      if new_key == 'embed_tokens.weight':
-        tied_embed_weight = value
-
-      if new_key == 'lm_head.weight':
-        model.has_lm_head_weight = True
-
-    if not model.has_lm_head_weight:
-      remapped_state_dict['lm_head.weight'] = tied_embed_weight
-
-    model.load_state_dict(remapped_state_dict, strict=False)
-
-    check_weights(model, remapped_state_dict)
-
-  #exit()
-  model.eval()  # Set the model to evaluation mode
+  shard_model = ShardedLlamaModel(config, shard)
+  print(f"\nshard_model: {shard_model}")
+  load_model_weights_torchtune(cache_dir, shard, shard_model)
 
   # Sample text for testing
   test_text = "Hello"
 
-  test_generation(model, tokenizer, test_text, 5, config)
+  test_generation(test_text, 5, config)
 
