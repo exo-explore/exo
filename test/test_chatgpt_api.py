@@ -31,8 +31,8 @@ class MockCallback:
         return True
 
     async def wait(self, callback, timeout=None):
-        await asyncio.sleep(0.1)  # Short sleep to simulate waiting
-        return None, [1, 2, 3], True  # Mock token output
+        await asyncio.sleep(0.1)
+        return None, [1, 2, 3], True
 
 # Mock the tokenizer
 class MockTokenizer:
@@ -145,9 +145,9 @@ async def test_chat_completion_no_downloads():
         print(f"Node cancelled: {node.cancelled}")
         print(f"Prompt calls: {node.prompt_calls}")
     
-    assert response.status == 408  # Timeout status
-    assert node.cancelled == True  # Task was cancelled
-    assert len(node.prompt_calls) == 1  # Process was started
+    assert response.status == 408
+    assert node.cancelled == True
+    assert len(node.prompt_calls) == 1
 
 @pytest.mark.asyncio
 async def test_chat_completion_with_downloads():
@@ -172,9 +172,9 @@ async def test_chat_completion_with_downloads():
         print(f"Node cancelled: {node.cancelled}")
         print(f"Prompt calls: {node.prompt_calls}")
     
-    assert response.status == 408  # Timeout status
-    assert node.cancelled == False  # Task was not cancelled due to downloads
-    assert len(node.prompt_calls) == 1  # Process was started
+    assert response.status == 408
+    assert node.cancelled == False
+    assert len(node.prompt_calls) == 1
 
 @pytest.mark.asyncio
 async def test_chat_completion_normal_operation():
@@ -183,7 +183,7 @@ async def test_chat_completion_normal_operation():
         print("\nStarting test_chat_completion_normal_operation")
     
     node = DummyNode(has_downloads=False)
-    api = ChatGPTAPI(node, "dummy", response_timeout=5)  # Longer timeout
+    api = ChatGPTAPI(node, "dummy", response_timeout=5)
     
     request = await create_mock_request({
         "model": "dummy",
@@ -202,9 +202,9 @@ async def test_chat_completion_normal_operation():
         print(f"Node cancelled: {node.cancelled}")
         print(f"Prompt calls: {node.prompt_calls}")
     
-    assert response.status == 200  # Success status
-    assert node.cancelled == False  # Task should not be cancelled
-    assert len(node.prompt_calls) == 1  # Process was started
+    assert response.status == 200
+    assert node.cancelled == False
+    assert len(node.prompt_calls) == 1
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
