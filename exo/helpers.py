@@ -174,7 +174,7 @@ def is_valid_uuid(val):
 
 
 def get_or_create_node_id():
-  NODE_ID_FILE = Path(tempfile.gettempdir()) / ".exo_node_id"
+  NODE_ID_FILE = Path(tempfile.gettempdir())/".exo_node_id"
   try:
     if NODE_ID_FILE.is_file():
       with open(NODE_ID_FILE, "r") as f:
