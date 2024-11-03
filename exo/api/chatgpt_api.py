@@ -272,7 +272,16 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {image_str=}")
 
     try:
-      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, image_str, request_id=request_id))), timeout=self.response_timeout)
+      # Only shield if there are active downloads
+      prompt_task = asyncio.create_task(
+          self.node.process_prompt(shard, prompt, image_str, request_id=request_id)
+      )
+      
+      if self.node.has_active_downloads():
+          # Shield the task if downloads are in progress
+          prompt_task = asyncio.shield(prompt_task)
+          
+      await asyncio.wait_for(prompt_task, timeout=self.response_timeout)
 
       if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
 
@@ -347,11 +356,16 @@ class ChatGPTAPI:
 
         return web.json_response(generate_completion(chat_request, tokenizer, prompt, request_id, tokens, stream, finish_reason, "chat.completion"))
     except asyncio.TimeoutError:
+      if not self.node.has_active_downloads():
+        prompt_task.cancel()
       return web.json_response({"detail": "Response generation timed out"}, status=408)
     except Exception as e:
       if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
     finally:
+      # Clean up both the task and callback
+      if 'prompt_task' in locals() and not self.node.has_active_downloads():
+        prompt_task.cancel()
       deregistered_callback = self.node.on_token.deregister(callback_id)
       if DEBUG >= 2: print(f"Deregister {callback_id=} {deregistered_callback=}")
 
