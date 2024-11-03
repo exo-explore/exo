@@ -160,7 +160,12 @@ def is_frozen():
 
 
 class ChatGPTAPI:
-  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
+  def __init__(self, 
+               node: Node, 
+               inference_engine_classname: str, 
+               response_timeout: int = 90, 
+               on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None,
+               disable_tinychat=False):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
     self.response_timeout = response_timeout
@@ -185,9 +190,10 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
     cors.add(self.app.router.add_get("/status", self.handle_get_status), {"*": cors_options})
 
-    # self.static_dir = Path(__file__).parent.parent/"tinychat"
-    # self.app.router.add_get("/", self.handle_root)
-    # self.app.router.add_static("/", self.static_dir, name="static")
+    if not disable_tinychat:
+      self.static_dir = Path(__file__).parent.parent/"tinychat"
+      self.app.router.add_get("/", self.handle_root)
+      self.app.router.add_static("/", self.static_dir, name="static")
 
     self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)
