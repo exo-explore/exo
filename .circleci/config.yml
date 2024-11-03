@@ -270,10 +270,22 @@ jobs:
             source env/bin/activate
             python3 buildexo/build_exo.py
       - run:
-          name: Create a macOS app
+          name: Move exo.app to exo-app
           command: |
-            mv dist/main.app dist/exo.app
-        
+            mkdir -p exo/exo-app/backend
+            mv dist/exo.app exo/exo.app/backend
+      -run:
+          name: package electron app
+          command:
+            cd exo/exo-app
+            npm install
+            npm run make
+            mv out/make/zip/darwin/arm64/exo-darwin-arm64.zip exo/exo-app/exo-darwin-arm64.zip
+      -persist_to_workspace:
+          root: .
+          paths:
+            - exo/exo-app/exo-darwin-arm64.zip
+
   build_exo_linux:
     machine:
       image: ubuntu-2004:current
@@ -360,6 +372,20 @@ jobs:
             conda activate exo-env
             python buildexo/build_exo.py
 
+  publish_github_release:
+    docker:
+      - image: circleci/golang:1.8
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Publish Release on GitHub
+          command: |
+            echo "Publish GitHub release"
+            go install github.com/tcnksm/ghr@latest
+            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} \
+              -c ${CIRCLE_SHA1} -delete ${VERSION} ./exo/exo-app/exo-darwin-arm64.zip
+
 workflows:
   version: 2
   build_and_test:
@@ -369,6 +395,16 @@ workflows:
       - chatgpt_api_integration_test_mlx
       - chatgpt_api_integration_test_dummy
       - test_macos_m1
-      - build_exo_macos
-      - build_exo_linux
-      # - chatgpt_api_integration_test_tinygrad
+      - chatgpt_api_integration_test_tinygrad
+      - build_exo_macos:
+        filters:
+          tags:
+            only: /.*/
+      - publish_github_release:
+          requires:
+            - build_exo_macos
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
