@@ -12,13 +12,13 @@ from typing import Optional, Tuple, Union, List, Callable
 from PIL import Image
 from io import BytesIO
 import base64
+import traceback
 
 import mlx.core as mx
 import mlx.nn as nn
 from transformers import AutoProcessor
 
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
-from mlx_lm.tuner.utils import apply_lora_layers
 
 from exo import DEBUG
 from ..shard import Shard
@@ -53,6 +53,7 @@ def _get_classes(config: dict):
   except ImportError:
     msg = f"Model type {model_type} not supported."
     logging.error(msg)
+    traceback.print_exc()
     raise ValueError(msg)
 
   return arch.Model, arch.ModelArgs
@@ -167,9 +168,6 @@ async def load_shard(
   lazy: bool = False,
 ) -> Tuple[nn.Module, TokenizerWrapper]:
   model = load_model_shard(model_path, shard, lazy, model_config)
-  if adapter_path is not None:
-    model = apply_lora_layers(model, adapter_path)
-    model.eval()
 
   # TODO: figure out a generic solution
   if model.model_type == "llava":

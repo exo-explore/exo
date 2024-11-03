@@ -34,8 +34,8 @@ extras_require = {
     "yapf==0.40.2",
   ],
   "apple_silicon": [
-    "mlx==0.18.0",
-    "mlx-lm==0.18.2",
+    "mlx==0.19.3",
+    "mlx-lm==0.19.2",
   ],
 }
 
