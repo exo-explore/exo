@@ -24,6 +24,7 @@ from transformers.cache_utils import Cache, DynamicCache
 
 from exo.helpers import DEBUG
 from exo.inference.shard import Shard
+from exo.inference.torch.tests.test_llama3_model import MAX_SEQ_LEN
 
 def load_model_config(model_config_path: Path) -> dict:
   """
@@ -68,13 +69,13 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
     raise FileNotFoundError("No safetensors files found in the cache directory.")
 
   # Load weights from each found safetensors file
-  stitch_lmhead = True
+  paried_lmhead = True
   for safetensor_file in safetensors_files:
     state_dict = load_safetensors(safetensor_file)
 
     # remap to work with our model
     remapped_state_dict = {}
-    tied_embed_weight = None
+    paried_embed_weight = None
     for key, value in state_dict.items():
       # load layer by shard
       lnrgx = re.findall(r'model\.layers\.(\d+).*', key)
@@ -103,14 +104,14 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         if len(re_attn) != 0 and re_attn[0][0] == "self_attn":
           key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
 
-      # saving embed for tied weights
+      # saving embed for paired weights
       elif key == 'model.embed_tokens.weight':
-        tied_embed_weight = value
+        paried_embed_weight = value
         # change name for torchtune
         key = 'model.tok_embeddings.weight'
 
       elif key == 'lm_head.weight':
-        stitch_lmhead = False
+        paried_lmhead = False
         # change key for torchtune
         key = 'model.output.weight'
 
@@ -119,8 +120,8 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
 
       remapped_state_dict[key] = value
 
-    if stitch_lmhead:
-      remapped_state_dict['model.output.weight'] = tied_embed_weight
+    if paried_lmhead:
+      remapped_state_dict['model.output.weight'] = paried_embed_weight
 
     model.load_state_dict(remapped_state_dict, strict=False)
 
@@ -529,7 +530,8 @@ class SDPAttention(nn.Module):
     rotary_emb,
     attention_dropout=0.0,
     is_causal=True,
-    attention_bias=False
+    attention_bias=False,
+    kv_max_seq_len=2048
   ):
     super().__init__()
     self.hidden_size = hidden_size
@@ -538,6 +540,7 @@ class SDPAttention(nn.Module):
     self.head_dim = head_dim
     self.attention_dropout = attention_dropout
     self.is_causal = is_causal
+    self.kv_max_seq_len = kv_max_seq_len
 
     # nn layers
     self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=attention_bias)
@@ -593,20 +596,19 @@ class SDPAttention(nn.Module):
     print(f"key_states: {key_states.shape}")
     print(f"value_states: {value_states.shape}")
 
-    # Forcing caching always enabled
+    # Caching
     if kv_cache is not None:
-      #print(f"kv_cache.size {kv_cache.size}")
-      #print(f"key_states.size(0) {key_states.size(2)}")
+      if kv_cache.size >= self.max_seq_len:
+        # double the cache each time space is ran out
+        self.kv_max_seq_len = self.kv_max_seq_len + self.kv_max_seq_len
 
-      #if kv_cache.size != key_states.size(2):
-      #  print(f"\n MAKE NEW KVCACHE batch_size={key_states.size(0)} max_seq_len={key_states.size(2)}")
-      #  kv_cache = ttm.KVCache(
-      #    batch_size=key_states.size(0),
-      #    max_seq_len=key_states.size(2),
-      #    num_heads=self.num_kv_heads,
-      #    head_dim=self.head_dim,
-      #    dtype=hidden_states.dtype
-      #  )
+        kv_cache = ttm.KVCache(
+          batch_size=key_states.size(0),
+          max_seq_len=self.kv_max_seq_len,
+          num_heads=self.num_kv_heads,
+          head_dim=self.head_dim,
+          dtype=hidden_states.dtype
+        )
 
       key_states, value_states = kv_cache.update(key_states, value_states)
 

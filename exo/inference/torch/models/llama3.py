@@ -3,7 +3,7 @@ llama3 model
 
 Written with pytorch using torchtune and other methods
 """
-from typing import Tuple, List
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -105,8 +105,6 @@ def LlamaModel(
   """
   LlamaModel using torchtune
   """
-  print(shard)
-
   # Load configurations from config
   rope_scaling = config.get("rope_scaling")
   hidden_head_dim = config["hidden_size"] // config["num_attention_heads"]
@@ -185,19 +183,29 @@ def LlamaModel(
   )
 
 class ShardedLlamaModel(nn.Module):
-  def __init__(self, config: dict, shard: Shard, is_causal=True):
+  def __init__(self,
+    config: dict,
+    shard: Shard,
+    device: torch.device=torch.device("cpu"),
+    hidden_states: Optional[torch.Tensor] = None,
+    is_causal=True
+  ):
     super(ShardedLlamaModel, self).__init__()
 
     self.shard = shard
     self.config = config
     self.model = LlamaModel(config, shard, is_causal)
+    self.device = device
 
-  def generate(
-    self,
-    prompt: torch.Tensor
-  ):
+  def generate(self, prompt: torch.Tensor):
     """
-    move login being done in test_llama3_model for generation to here
-    along with test sharding
+    move logit generation being done in test_llama3_model for generation to here
+    along with sharding
     """
+    self.model.output_hidden_states = list(range(shard.start_layer, shard.end_layer))
+    
+    # pass hidden state to model until last layer
+    # can be done with model's encoder_input and encoder_mask
+    # on last layer can generate
+
     pass
