@@ -38,8 +38,8 @@ async def profile_inference(
         shard_downloader=downloader
     )
     
-    # Initialize the node
-    await node.start()
+    # Initialize topology without networking
+    node.topology.update_node(node.id, node.device_capabilities)
     
     # Get model shard
     shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
