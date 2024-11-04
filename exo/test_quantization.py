@@ -89,47 +89,53 @@ async def main():
     for quant in quantization_levels:
         print(f"\n=== Testing {model_name} with quantization {quant or 'fp32'} ===")
         
-        # Create inference engine with specific quantization
-        engine = get_inference_engine("tinygrad", downloader, quantize=quant)
-        
-        # Get model shard
-        shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
-        if not shard:
-            print(f"Unsupported model: {model_name}")
-            continue
+        try:
+            # Create inference engine with specific quantization
+            engine = get_inference_engine("tinygrad", downloader, quantize=quant)
             
-        # Create node
-        node = StandardNode(
-            str(uuid.uuid4()),
-            None,
-            engine,
-            None,
-            partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
-            max_generate_tokens=512,
-            shard_downloader=downloader
-        )
-        
-        # Initialize topology
-        node.topology.update_node(node.id, node.device_capabilities)
-        
-        # Get tokenizer
-        tokenizer = await resolve_tokenizer(shard.model_id)
-        
-        # Ensure model is loaded
-        await engine.ensure_shard(shard)
-        
-        # Run inference test
-        result = await run_inference_test(
-            node,
-            tokenizer,
-            shard,
-            test_prompt
-        )
-        results.append(result)
-        
-        # Clean up
-        await asyncio.sleep(1)  # Give time for cleanup
-    
+            # Get model shard
+            shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
+            if not shard:
+                print(f"Unsupported model: {model_name}")
+                continue
+                
+            # Create node
+            node = StandardNode(
+                str(uuid.uuid4()),
+                None,
+                engine,
+                None,
+                partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
+                max_generate_tokens=512,
+                shard_downloader=downloader
+            )
+            
+            # Initialize topology
+            node.topology.update_node(node.id, node.device_capabilities)
+            
+            # Get tokenizer
+            tokenizer = await resolve_tokenizer(shard.model_id)
+            
+            # Ensure model is loaded - run in main thread
+            await engine.ensure_shard(shard)
+            
+            # Run inference test
+            result = await run_inference_test(
+                node,
+                tokenizer,
+                shard,
+                test_prompt
+            )
+            result['quantization'] = quant or 'fp32'  # Add quantization info to results
+            results.append(result)
+            
+            # Clean up
+            await asyncio.sleep(1)  # Give time for cleanup
+            
+        except Exception as e:
+            print(f"Error testing quantization {quant}: {str(e)}")
+            continue
+
     # Print results table
     print("\n=== Results ===")
     print(f"{'Model':<15} {'Quant':<8} {'Avg Latency':<12} {'Tokens/sec':<10} {'Memory (MB)':<12}")
@@ -139,4 +145,6 @@ async def main():
               f"{r['tokens_per_second']:.2f} {r['memory_increase_mb']:.1f}")
 
 if __name__ == "__main__":
+    # Set environment variable to use single thread for SQLite operations
+    os.environ["TINYGRAD_CACHE_DIR"] = ".cache"  # Use local cache directory
     asyncio.run(main())
