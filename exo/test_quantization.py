@@ -29,7 +29,14 @@ async def profile_inference(
     if not shard:
         raise ValueError(f"Unsupported model: {model_name}")
     
-   
+    # Get proper tokenizer and format prompt
+    tokenizer = await resolve_tokenizer(shard.model_id)
+    formatted_prompt = tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}], 
+        tokenize=False, 
+        add_generation_prompt=True
+    )
+    
     # Measure initial memory before model loading
     process = psutil.Process(os.getpid())
     initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
@@ -39,7 +46,7 @@ async def profile_inference(
 
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    model_output, metadata, _ = await engine.infer_prompt(model_name, shard, prompt)
+    model_output, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
     
     # Convert logits to token ids and decode
     token_ids = np.argmax(model_output[0], axis=-1)  # [0] to get first batch
@@ -63,7 +70,7 @@ async def profile_inference(
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        model_output, metadata, _ = await engine.infer_prompt(model_name, shard, prompt)
+        model_output, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
         metadata_dict = json.loads(metadata)
         num_tokens = metadata_dict['n_captured_toks']
         
@@ -96,7 +103,7 @@ async def profile_inference(
 
     
 async def main():
-    models_to_test = ["TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R"]
+    models_to_test = ["llama-3.1-8b"]
     quantization_levels = [None, "int8", "nf4"]
     test_prompt = "What does exo mean?"
     
