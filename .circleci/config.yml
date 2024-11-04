@@ -285,7 +285,7 @@ jobs:
       - persist_to_workspace:
           root: .
           paths:
-            - ./exo-darwin-arm64-*.zip
+            - exo-darwin-arm64-*.zip
 
   build_exo_linux:
     machine:
@@ -375,7 +375,7 @@ jobs:
 
   publish_github_release:
     docker:
-      - image: circleci/golang:1.8
+      - image: cibuilds/github:0.10
     steps:
       - attach_workspace:
           at: .
@@ -383,9 +383,9 @@ jobs:
           name: Publish Release on GitHub
           command: |
             echo "Publish GitHub release"
-            go install github.com/tcnksm/ghr@latest
+            VERSION=$(ls exo-darwin-arm64-*.zip | sed 's/exo-darwin-arm64-\(.*\)\.zip/\1/')
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} \
-              -c ${CIRCLE_SHA1} -delete ${VERSION} ./exo-darwin-arm64-*.zip
+              -c ${CIRCLE_SHA1} -replace -n ${VERSION} ./exo-darwin-arm64-*.zip
 
 workflows:
   version: 2
@@ -401,6 +401,8 @@ workflows:
         filters:
           tags:
             only: /.*/
+          branches:
+            only: main
       - publish_github_release:
           requires:
             - build_exo_macos
@@ -408,4 +410,4 @@ workflows:
             tags:
               only: /^v.*/
             branches:
-              ignore: /.*/
+              only: main
