@@ -8,54 +8,18 @@ from exo.models import model_base_shards
 from exo.inference.tokenizers import resolve_tokenizer
 import psutil
 import os
-import numpy as np
-import json
-from exo.orchestration.standard_node import StandardNode
 import uuid
+from exo.orchestration.standard_node import StandardNode
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 
-async def profile_inference(
-    model_name: str,
+async def run_inference_test(
+    node: StandardNode,
+    tokenizer,
+    shard,
     prompt: str,
-    quantization: Optional[str] = None,
     num_runs: int = 1,
-    downloader: Optional[HFShardDownloader] = None
 ) -> dict:
-    """Profile inference performance for a given model and quantization level."""
-    
-    # Use passed downloader or create new one
-    downloader = downloader or HFShardDownloader()
-    engine = get_inference_engine("tinygrad", downloader, quantize=quantization)
-    
-    # Create node (similar to main.py)
-    node = StandardNode(
-        str(uuid.uuid4()),  # random node id
-        None,              # no server needed
-        engine,
-        None,              # no discovery needed
-        partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
-        max_generate_tokens=512,
-        shard_downloader=downloader
-    )
-    
-    # Initialize topology without networking
-    node.topology.update_node(node.id, node.device_capabilities)
-    
-    # Get model shard
-    shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
-    if not shard:
-        raise ValueError(f"Unsupported model: {model_name}")
-    
-    # Get proper tokenizer and format prompt
-    tokenizer = await resolve_tokenizer(shard.model_id)
-    formatted_prompt = tokenizer.apply_chat_template(
-        [{"role": "user", "content": prompt}], 
-        tokenize=False, 
-        add_generation_prompt=True
-    )
-    
-    # Ensure model is loaded before starting inference
-    await engine.ensure_shard(shard)
+    """Run inference test with an initialized node."""
     
     # Measure initial memory
     process = psutil.Process(os.getpid())
@@ -66,11 +30,16 @@ async def profile_inference(
     token_counts = []
     peak_memory = initial_memory
     
+    formatted_prompt = tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}], 
+        tokenize=False, 
+        add_generation_prompt=True
+    )
+    
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
         
-        # Use node's callback system to get tokens
         request_id = str(uuid.uuid4())
         callback_id = f"test-{request_id}"
         callback = node.on_token.register(callback_id)
@@ -87,7 +56,6 @@ async def profile_inference(
             latencies.append(latency)
             token_counts.append(len(tokens))
             
-            # Print generated text for verification
             if i == 0:
                 print("\nGenerated text:")
                 print(tokenizer.decode(tokens))
@@ -97,11 +65,10 @@ async def profile_inference(
             
         finally:
             node.on_token.deregister(callback_id)
-            
     
     return {
-        "model": model_name,
-        "quantization": quantization or "fp32",
+        "model": shard.model_id,
+        "quantization": node.engine.quantize or "fp32",
         "avg_latency": statistics.mean(latencies),
         "std_latency": statistics.stdev(latencies) if len(latencies) > 1 else 0,
         "avg_tokens": statistics.mean(token_counts),
@@ -111,28 +78,58 @@ async def profile_inference(
         "peak_memory_mb": peak_memory
     }
 
-    
 async def main():
-    models_to_test = ["llama-3.1-8b"]
-    quantization_levels = [None, "int8", "nf4"]
+    model_name = "llama-3.1-8b"
     test_prompt = "What is the meaning of exo?"
+    quantization_levels = [None, "int8", "nf4"]
+    results = []
     
-    # Initialize downloader once at the start
+    # Initialize downloader once
     downloader = HFShardDownloader()
     
-    results = []
-    for model in models_to_test:
-        print(f"\n=== Testing {model} ===")
-        for quant in quantization_levels:
-            # Pass the downloader instance
-            result = await profile_inference(
-                model, 
-                test_prompt, 
-                quantization=quant,
-                downloader=downloader
-            )
-            results.append(result)
-
+    for quant in quantization_levels:
+        print(f"\n=== Testing {model_name} with quantization {quant or 'fp32'} ===")
+        
+        # Create inference engine with specific quantization
+        engine = get_inference_engine("tinygrad", downloader, quantize=quant)
+        
+        # Get model shard
+        shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
+        if not shard:
+            print(f"Unsupported model: {model_name}")
+            continue
+            
+        # Create node
+        node = StandardNode(
+            str(uuid.uuid4()),
+            None,
+            engine,
+            None,
+            partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
+            max_generate_tokens=512,
+            shard_downloader=downloader
+        )
+        
+        # Initialize topology
+        node.topology.update_node(node.id, node.device_capabilities)
+        
+        # Get tokenizer
+        tokenizer = await resolve_tokenizer(shard.model_id)
+        
+        # Ensure model is loaded
+        await engine.ensure_shard(shard)
+        
+        # Run inference test
+        result = await run_inference_test(
+            node,
+            tokenizer,
+            shard,
+            test_prompt
+        )
+        results.append(result)
+        
+        # Clean up
+        await asyncio.sleep(1)  # Give time for cleanup
     
     # Print results table
     print("\n=== Results ===")
@@ -143,4 +140,4 @@ async def main():
               f"{r['tokens_per_second']:.2f} {r['memory_increase_mb']:.1f}")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
