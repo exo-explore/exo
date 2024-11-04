@@ -15,7 +15,7 @@ async def profile_inference(
     model_name: str,
     prompt: str,
     quantization: Optional[str] = None,
-    num_runs: int = 3,
+    num_runs: int = 1,
     downloader: Optional[HFShardDownloader] = None
 ) -> dict:
     """Profile inference performance for a given model and quantization level."""
@@ -65,7 +65,7 @@ async def profile_inference(
         is_finished = False
         
         # Keep generating until finished or max tokens
-        while not is_finished and len(tokens) < 512:  # Use max_tokens parameter
+        while not is_finished and len(tokens) < 32:  # Use max_tokens parameter
             result, new_state, is_finished = await engine.infer_prompt(
                 model_name, 
                 shard, 
