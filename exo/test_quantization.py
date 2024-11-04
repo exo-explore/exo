@@ -18,13 +18,21 @@ async def track_memory() -> Tuple[float, float]:
     """Get current and peak memory usage in MB."""
     gc.collect()  # Force garbage collection
     process = psutil.Process(os.getpid())
+    
+    # Get memory info for main process
     current = process.memory_info().rss / 1024 / 1024
     
     # Get memory info for child processes too
     children_mem = sum(child.memory_info().rss for child in process.children(recursive=True))
     children_mem = children_mem / 1024 / 1024
     
-    return current + children_mem, process.memory_info().peak_rss / 1024 / 1024
+    total_memory = current + children_mem
+    
+    # Get virtual memory stats for peak usage
+    vm = psutil.virtual_memory()
+    peak_memory = (vm.total - vm.available) / 1024 / 1024
+    
+    return total_memory, peak_memory
 
 async def run_inference_test(
     node: StandardNode,
