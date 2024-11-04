@@ -15,7 +15,7 @@ async def profile_inference(
     model_name: str,
     prompt: str,
     quantization: Optional[str] = None,
-    num_runs: int = 3,
+    num_runs: int = 30,
     downloader: Optional[HFShardDownloader] = None
 ) -> dict:
     """Profile inference performance for a given model and quantization level."""
@@ -46,17 +46,7 @@ async def profile_inference(
 
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    model_output, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
-    
-    # Convert logits to token ids and decode
-    token_ids = np.argmax(model_output[0], axis=-1)  # [0] to get first batch
-    generated_text = engine.tokenizer.decode(token_ids)
-    
-    metadata_dict = json.loads(metadata)
-    num_tokens = metadata_dict['n_captured_toks']
-    
-    print(f"Generated {num_tokens} tokens")
-    print(f"Generated text: {generated_text}")
+    _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
     
     # Measure memory after model loading
     post_load_memory = process.memory_info().rss / 1024 / 1024
@@ -70,25 +60,18 @@ async def profile_inference(
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        model_output, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
+        _, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
         metadata_dict = json.loads(metadata)
         num_tokens = metadata_dict['n_captured_toks']
         
-        # Decode and print generated text
-        token_ids = np.argmax(model_output[0], axis=-1)
-        generated_text = engine.tokenizer.decode(token_ids)
-
-        
-        end_time = time.time()
+        end_time = time.time()  
         latency = end_time - start_time
         latencies.append(latency)
         token_counts.append(num_tokens)
             
         current_memory = process.memory_info().rss / 1024 / 1024
         peak_memory = max(peak_memory, current_memory)
-        print(f"\nRun {i+1}: Generated {num_tokens} tokens in {latency:.2f}s")
-        print(f"Generated text: {generated_text}")
-        
+
     return {
             "model": model_name,
             "quantization": quantization or "fp32",
@@ -105,7 +88,7 @@ async def profile_inference(
 async def main():
     models_to_test = ["llama-3.1-8b"]
     quantization_levels = [None, "int8", "nf4"]
-    test_prompt = "What does exo mean?"
+    test_prompt = "What is the meaning of exo?"
     
     # Initialize downloader once at the start
     downloader = HFShardDownloader()
