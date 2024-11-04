@@ -27,15 +27,7 @@ async def profile_inference(
     if not shard:
         raise ValueError(f"Unsupported model: {model_name}")
     
-    # Setup tokenizer and encode prompt
-    print(f"Resolving tokenizer for model_id: {shard.model_id}")
-    tokenizer = await resolve_tokenizer(shard.model_id)
-    
-    # Set pad token to eos token if pad token is not set
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        print(f"Set pad_token to eos_token: {tokenizer.pad_token}")
-    
+   
     # Measure initial memory before model loading
     process = psutil.Process(os.getpid())
     initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
@@ -43,20 +35,11 @@ async def profile_inference(
     # Ensure model is downloaded
     await downloader.ensure_shard(shard)
     
-    # Format prompt using chat template
-    formatted_prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            tokenize=False,
-            add_generation_prompt=True
-        )
-        
-    # Modify the encoding step to properly handle the input
-    encoded = tokenizer(formatted_prompt, return_tensors="pt")
-    input_ids = {"input_ids": encoded["input_ids"][0].tolist()}  # Convert tensor to list
+
         
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    _ = await engine.infer_prompt(model_name, shard, input_ids)
+    _ = await engine.infer_prompt(model_name, shard, prompt)
         
     # Measure memory after model loading
     post_load_memory = process.memory_info().rss / 1024 / 1024
@@ -70,7 +53,7 @@ async def profile_inference(
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        tokens = await engine.infer_prompt(model_name, shard, input_ids)
+        tokens = await engine.infer_prompt(model_name, shard, prompt)
         end_time = time.time()
             
         latency = end_time - start_time
