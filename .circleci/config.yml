@@ -382,7 +382,6 @@ jobs:
       - run:
           name: Publish Release on GitHub
           command: |
-            echo "Publish GitHub release"
             VERSION=$(ls exo-darwin-arm64-*.zip | sed 's/exo-darwin-arm64-\(.*\)\.zip/\1/')
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} \
               -c ${CIRCLE_SHA1} "v${VERSION}" ./exo-darwin-arm64-*.zip
