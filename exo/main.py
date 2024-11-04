@@ -3,7 +3,10 @@ import asyncio
 import signal
 import json
 import platform
+import os
+import sys
 import time
+import subprocess
 import traceback
 import uuid
 import time
@@ -28,8 +31,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
 from exo.models import model_base_shards
 from exo.viz.topology_viz import TopologyViz
-import os
-import sys
+
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -208,8 +210,6 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
 def open_web_chat():
   if web_chat_urls:
-    import subprocess
-    import os
     electron_app_path = os.path.join('exo', 'electron-app')
     subprocess.Popen(['npm', 'install'], cwd=electron_app_path)
     subprocess.Popen(['npm', 'start'], 
