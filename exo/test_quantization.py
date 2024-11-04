@@ -100,7 +100,7 @@ async def profile_inference(
 async def main():
     models_to_test = ["llama-3.1-8b"]
     quantization_levels = [None, "int8", "nf4"]
-    test_prompt = "Explain the concept of quantum computing in simple terms."
+    test_prompt = "What does exo mean?"
     
     # Initialize downloader once at the start
     downloader = HFShardDownloader()
