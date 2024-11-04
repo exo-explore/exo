@@ -82,11 +82,11 @@ async def main():
     parser = argparse.ArgumentParser(description='Run quantization test for a specific model')
     parser.add_argument('--model', type=str, required=True, help='Model name (e.g., "llama-3.1-8b")')
     parser.add_argument('--prompt', type=str, required=True, help='Test prompt')
-    parser.add_argument('--quant', type=str, choices=['int8', 'nf4', 'fp32'], required=True,
-                       help='Quantization level (fp32 for no quantization)')
+    parser.add_argument('--quant', type=str, choices=['int8', 'nf4'], required=False,
+                       help='Quantization level (int8, nf4) ')
     
     args = parser.parse_args()
-    quant = None if args.quant == 'fp32' else args.quant
+    quant = args.quant
     
     print(f"\n=== Testing {args.model} with quantization {args.quant} ===")
     
