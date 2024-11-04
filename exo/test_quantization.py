@@ -1,6 +1,5 @@
 import asyncio
 import time
-import statistics
 from exo.inference.inference_engine import get_inference_engine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.models import model_base_shards
@@ -11,28 +10,6 @@ import uuid
 from exo.orchestration.standard_node import StandardNode
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 import argparse
-import gc
-from typing import List, Tuple
-
-async def track_memory() -> Tuple[float, float]:
-    """Get current and peak memory usage in MB."""
-    gc.collect()  # Force garbage collection
-    process = psutil.Process(os.getpid())
-    
-    # Get memory info for main process
-    current = process.memory_info().rss / 1024 / 1024
-    
-    # Get memory info for child processes too
-    children_mem = sum(child.memory_info().rss for child in process.children(recursive=True))
-    children_mem = children_mem / 1024 / 1024
-    
-    total_memory = current + children_mem
-    
-    # Get virtual memory stats for peak usage
-    vm = psutil.virtual_memory()
-    peak_memory = (vm.total - vm.available) / 1024 / 1024
-    
-    return total_memory, peak_memory
 
 async def run_inference_test(
     node: StandardNode,
@@ -42,12 +19,10 @@ async def run_inference_test(
 ) -> dict:
     """Run inference test with an initialized node."""
     
-    # Track memory at key points
-    memory_points = []
-    
-    # Initial memory
-    initial_memory, _ = await track_memory()
-    memory_points.append(("Initial", initial_memory))
+    # Measure initial memory
+    process = psutil.Process(os.getpid())
+    initial_memory = process.memory_info().rss / 1024 / 1024
+    peak_memory = initial_memory
     
     formatted_prompt = tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}], 
@@ -55,11 +30,8 @@ async def run_inference_test(
         add_generation_prompt=True
     )
     
-    # Memory after prompt formatting
-    current_memory, _ = await track_memory()
-    memory_points.append(("After prompt format", current_memory))
-    
     print("Running inference pass...")
+    # Single run only
     start_time = time.time()
     
     request_id = str(uuid.uuid4())
@@ -67,35 +39,11 @@ async def run_inference_test(
     callback = node.on_token.register(callback_id)
     
     try:
-        # Start generation
         await node.process_prompt(shard, formatted_prompt, None, request_id=request_id)
-        current_memory, _ = await track_memory()
-        memory_points.append(("After starting generation", current_memory))
-        
-        # Track memory during generation
-        token_count = 0
-        last_memory_check = time.time()
-        memory_check_interval = 1.0  # Check memory every second
-        
-        while True:
-            try:
-                _, tokens, is_finished = await callback.wait(
-                    lambda _request_id, tokens, is_finished: _request_id == request_id,
-                    timeout=1.0
-                )
-                token_count = len(tokens)
-                
-                # Periodically check memory
-                if time.time() - last_memory_check >= memory_check_interval:
-                    current_memory, _ = await track_memory()
-                    memory_points.append((f"During generation ({token_count} tokens)", current_memory))
-                    last_memory_check = time.time()
-                
-                if is_finished:
-                    break
-                    
-            except asyncio.TimeoutError:
-                continue
+        _, tokens, _ = await callback.wait(
+            lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
+            timeout=300
+        )
         
         end_time = time.time()
         latency = end_time - start_time
@@ -103,30 +51,20 @@ async def run_inference_test(
         print("\nGenerated text:")
         print(tokenizer.decode(tokens))
         
-        # Final memory check
-        final_memory, peak_memory = await track_memory()
-        memory_points.append(("Final", final_memory))
+        current_memory = process.memory_info().rss / 1024 / 1024
+        peak_memory = max(peak_memory, current_memory)
         
     finally:
         node.on_token.deregister(callback_id)
     
-    # Print detailed memory profile
-    print("\n=== Memory Profile ===")
-    print(f"{'Stage':<30} {'Memory (MB)':<15} {'Delta (MB)':<15}")
-    print("-" * 60)
-    for i, (stage, memory) in enumerate(memory_points):
-        delta = memory - memory_points[0][1] if i > 0 else 0
-        print(f"{stage:<30} {memory:.1f} MB {delta:>+.1f} MB")
-    
     return {
         "model": shard.model_id,
         "latency": latency,
-        "tokens": token_count,
-        "tokens_per_second": token_count / latency,
+        "tokens": len(tokens),
+        "tokens_per_second": len(tokens) / latency,
         "initial_memory_mb": initial_memory,
-        "memory_increase_mb": final_memory - initial_memory,
-        "peak_memory_mb": peak_memory,
-        "memory_profile": memory_points
+        "memory_increase_mb": peak_memory - initial_memory,
+        "peak_memory_mb": peak_memory
     }
 
 async def main():
