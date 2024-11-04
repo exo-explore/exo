@@ -54,7 +54,11 @@ async def profile_inference(
     for i in range(num_runs):
         start_time = time.time()
         tokens = await engine.infer_prompt(model_name, shard, prompt)
-        print(f"Tokens: {tokens}")
+        # Convert tokens to text using the appropriate tokenizer
+        tokenizer = resolve_tokenizer(model_name)
+        generated_text = tokenizer.decode(tokens)
+        print(f"\nGenerated text: {generated_text}")
+        print(f"Raw tokens: {tokens}")
         end_time = time.time()
             
         latency = end_time - start_time
