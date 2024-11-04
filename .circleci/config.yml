@@ -384,8 +384,10 @@ jobs:
           command: |
             echo "Publish GitHub release"
             VERSION=$(ls exo-darwin-arm64-*.zip | sed 's/exo-darwin-arm64-\(.*\)\.zip/\1/')
+            git tag "v${VERSION}"
+            git push origin "v${VERSION}"
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} \
-              -c ${CIRCLE_SHA1} -replace -n ${VERSION} ./exo-darwin-arm64-*.zip
+              -c ${CIRCLE_SHA1} "v${VERSION}" ./exo-darwin-arm64-*.zip
 
 workflows:
   version: 2
@@ -400,7 +402,7 @@ workflows:
       - build_exo_macos:
         filters:
           tags:
-            only: /.*/
+            only: /^v.*/
           branches:
             only: main
       - publish_github_release:
