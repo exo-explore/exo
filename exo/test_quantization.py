@@ -107,17 +107,15 @@ async def main():
     for model in models_to_test:
         print(f"\n=== Testing {model} ===")
         for quant in quantization_levels:
-            try:
-                # Pass the downloader instance
-                result = await profile_inference(
-                    model, 
-                    test_prompt, 
-                    quantization=quant,
-                    downloader=downloader
-                )
-                results.append(result)
-            except Exception as e:
-                print(f"Error testing {model} with {quant or 'fp32'} quantization: {str(e)}")
+            # Pass the downloader instance
+            result = await profile_inference(
+                model, 
+                test_prompt, 
+                quantization=quant,
+                downloader=downloader
+            )
+            results.append(result)
+
     
     # Print results table
     print("\n=== Results ===")
