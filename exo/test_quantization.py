@@ -46,7 +46,7 @@ async def profile_inference(
 
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
+    _ = await engine.infer_prompt(model_name, shard, formatted_prompt, max_tokens=512)
     
     # Measure memory after model loading
     post_load_memory = process.memory_info().rss / 1024 / 1024
@@ -60,7 +60,7 @@ async def profile_inference(
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        _, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
+        _, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt, max_tokens=512)
         metadata_dict = json.loads(metadata)
         num_tokens = metadata_dict['n_captured_toks']
         
