@@ -132,7 +132,6 @@ async def main():
             results.append(result)
             
             # Clean up more aggressively
-            await engine.cleanup()  # if cleanup method exists
             del engine
             del node
             gc.collect()
