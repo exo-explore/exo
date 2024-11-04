@@ -36,6 +36,13 @@ async def profile_inference(
         tokenizer.pad_token = tokenizer.eos_token
         print(f"Set pad_token to eos_token: {tokenizer.pad_token}")
     
+    # Measure initial memory before model loading
+    process = psutil.Process(os.getpid())
+    initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
+    
+    # Ensure model is downloaded
+    await downloader.ensure_shard(shard)
+    
     try:
         # Format prompt using chat template
         formatted_prompt = tokenizer.apply_chat_template(
@@ -43,7 +50,6 @@ async def profile_inference(
             tokenize=False,
             add_generation_prompt=True
         )
-        print(f"Formatted prompt: {formatted_prompt}")
         
         # Modify the encoding step to properly handle the input
         encoded = tokenizer(formatted_prompt, return_tensors="pt")
@@ -54,8 +60,6 @@ async def profile_inference(
         _ = await engine.infer_prompt(model_name, shard, input_ids)
         
         # Measure memory after model loading
-        process = psutil.Process(os.getpid())
-        initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
         post_load_memory = process.memory_info().rss / 1024 / 1024
         memory_increase = post_load_memory - initial_memory
         
@@ -92,12 +96,8 @@ async def profile_inference(
         }
     except Exception as e:
         print(f"Error during inference: {str(e)}")
-        print(f"Tokenizer attributes: {dir(tokenizer)}")
         raise
     
-    # Ensure model is downloaded
-    await downloader.ensure_shard(shard)
-
 async def main():
     models_to_test = ["llama-3.1-8b"]
     quantization_levels = [None, "int8", "nf4"]
