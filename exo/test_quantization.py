@@ -32,13 +32,18 @@ async def profile_inference(
     tokenizer = await resolve_tokenizer(shard.model_id)
     
     try:
-        # Convert list of tokens to the expected format
-        encoded_prompt = tokenizer.encode(prompt)
-        print(f"Raw encoded tokens: {encoded_prompt}")
+        # Use encode_plus instead of encode to get the proper format
+        encoded = tokenizer.encode_plus(
+            prompt,
+            return_tensors="pt",  # Return PyTorch tensors
+            padding=True,
+            truncation=True,
+        )
+        print(f"Encoded format: {encoded}")
+        print(f"Encoded types: {[type(v) for v in encoded.values()]}")
         
-        # Convert to tensor format expected by the model
-        input_ids = {"input_ids": encoded_prompt}
-        print(f"Formatted input: {input_ids}")
+        # Use the encoded format directly
+        input_ids = encoded
         
         # Warmup run
         print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
