@@ -40,8 +40,8 @@ async def profile_inference(
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
     tokens = await engine.infer_prompt(model_name, shard, prompt)
-    print(f"Warmup tokens: {tokens}")
-        
+    print(f"Warmup tokens: {engine.tokenizer.decode(tokens[0])}")
+
     # Measure memory after model loading
     post_load_memory = process.memory_info().rss / 1024 / 1024
     memory_increase = post_load_memory - initial_memory
@@ -54,8 +54,8 @@ async def profile_inference(
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        #etokens = await engine.infer_prompt(model_name, shard, prompt)
-        print(f"Run {i+1} tokens: {engine.tokenizer.decode(tokens)}")
+        tokens = await engine.infer_prompt(model_name, shard, prompt)
+        #print(f"Run {i+1} tokens: {engine.tokenizer.decode(tokens)}")
         end_time = time.time()
             
         latency = end_time - start_time
