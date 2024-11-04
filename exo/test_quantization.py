@@ -79,7 +79,8 @@ async def run_inference_test(
 async def main():
     model_name = "llama-3.1-8b"
     test_prompt = "What is the meaning of exo?"
-    quantization_levels = ["int8", "nf4", None]  # Try int8 first when caches are fresh    results = []
+    quantization_levels = ["int8", "nf4", None]  # Try int8 first when caches are fresh   
+    results = []
     
     # Initialize downloader once
     downloader = HFShardDownloader()
