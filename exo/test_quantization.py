@@ -45,12 +45,9 @@ async def profile_inference(
         )
         print(f"Formatted prompt: {formatted_prompt}")
         
-        # Encode the formatted prompt
-        encoded = tokenizer.encode(formatted_prompt)
-        print(f"Encoded tokens: {encoded}")
-        
-        # Use the encoded format directly
-        input_ids = {"input_ids": encoded}
+        # Modify the encoding step to properly handle the input
+        encoded = tokenizer(formatted_prompt, return_tensors="pt")
+        input_ids = {"input_ids": encoded["input_ids"][0].tolist()}  # Convert tensor to list
         
         # Warmup run
         print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
