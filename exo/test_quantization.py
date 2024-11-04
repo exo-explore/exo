@@ -72,8 +72,7 @@ async def profile_inference(
         # Decode and print generated text
         token_ids = np.argmax(model_output[0], axis=-1)
         generated_text = engine.tokenizer.decode(token_ids)
-        print(f"\nRun {i+1}: Generated {num_tokens} tokens in {latency:.2f}s")
-        print(f"Generated text: {generated_text}")
+
         
         end_time = time.time()
         latency = end_time - start_time
@@ -82,6 +81,8 @@ async def profile_inference(
             
         current_memory = process.memory_info().rss / 1024 / 1024
         peak_memory = max(peak_memory, current_memory)
+        print(f"\nRun {i+1}: Generated {num_tokens} tokens in {latency:.2f}s")
+        print(f"Generated text: {generated_text}")
         
     return {
             "model": model_name,
