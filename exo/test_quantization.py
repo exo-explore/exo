@@ -147,12 +147,12 @@ async def main():
         
     # Print results
     print("\n=== Results ===")
-    print(f"{'Model':<20} {'Quant':<8} {'Latency':<12} {'Tokens':<8} {'Tokens/sec':<12} {'Initial MB':<12} {'Peak MB':<10} {'Increase MB':<12}")
-    print("-" * 95)
+    print(f"{'Model':<20} {'Quant':<8} {'Latency':<12} {'Tokens':<8} {'Tokens/sec':<12} {'Initial MB':<12} {'Peak MB':<10} {'Load MB':<10} {'Infer MB':<10}")
+    print("-" * 100)
     print(f"{result['model']:<20} {result['quantization']:<8} {result['latency']:.2f}s "
           f"{result['tokens']:<8} {result['tokens_per_second']:.2f} "
           f"{result['initial_memory_mb']:.1f} {result['peak_memory_mb']:.1f} "
-          f"{result['memory_increase_mb']:.1f}")
+          f"{result['load_memory_increase_mb']:.1f} {result['inference_memory_increase_mb']:.1f}")
         
 
 if __name__ == "__main__":
