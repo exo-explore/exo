@@ -43,47 +43,46 @@ async def profile_inference(
     # Ensure model is downloaded
     await downloader.ensure_shard(shard)
     
-    try:
-        # Format prompt using chat template
-        formatted_prompt = tokenizer.apply_chat_template(
+    # Format prompt using chat template
+    formatted_prompt = tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}],
             tokenize=False,
             add_generation_prompt=True
         )
         
-        # Modify the encoding step to properly handle the input
-        encoded = tokenizer(formatted_prompt, return_tensors="pt")
-        input_ids = {"input_ids": encoded["input_ids"][0].tolist()}  # Convert tensor to list
+    # Modify the encoding step to properly handle the input
+    encoded = tokenizer(formatted_prompt, return_tensors="pt")
+    input_ids = {"input_ids": encoded["input_ids"][0].tolist()}  # Convert tensor to list
         
-        # Warmup run
-        print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-        _ = await engine.infer_prompt(model_name, shard, input_ids)
+    # Warmup run
+    print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
+    _ = await engine.infer_prompt(model_name, shard, input_ids)
         
-        # Measure memory after model loading
-        post_load_memory = process.memory_info().rss / 1024 / 1024
-        memory_increase = post_load_memory - initial_memory
+    # Measure memory after model loading
+    post_load_memory = process.memory_info().rss / 1024 / 1024
+    memory_increase = post_load_memory - initial_memory
         
-        # Profile multiple runs
-        latencies = []
-        token_counts = []
-        peak_memory = post_load_memory
+    # Profile multiple runs
+    latencies = []
+    token_counts = []
+    peak_memory = post_load_memory
         
-        print(f"Running {num_runs} inference passes...")
-        for i in range(num_runs):
-            start_time = time.time()
-            tokens = await engine.infer_prompt(model_name, shard, input_ids)
-            end_time = time.time()
+    print(f"Running {num_runs} inference passes...")
+    for i in range(num_runs):
+        start_time = time.time()
+        tokens = await engine.infer_prompt(model_name, shard, input_ids)
+        end_time = time.time()
             
-            latency = end_time - start_time
-            latencies.append(latency)
-            token_counts.append(len(tokens))
+        latency = end_time - start_time
+        latencies.append(latency)
+        token_counts.append(len(tokens))
             
-            print(f"Run {i+1}: Generated {len(tokens)} tokens in {latency:.2f}s")
+        print(f"Run {i+1}: Generated {len(tokens)} tokens in {latency:.2f}s")
             
-            current_memory = process.memory_info().rss / 1024 / 1024
-            peak_memory = max(peak_memory, current_memory)
+        current_memory = process.memory_info().rss / 1024 / 1024
+        peak_memory = max(peak_memory, current_memory)
         
-        return {
+    return {
             "model": model_name,
             "quantization": quantization or "fp32",
             "avg_latency": statistics.mean(latencies),
@@ -94,9 +93,7 @@ async def profile_inference(
             "memory_increase_mb": memory_increase,
             "peak_memory_mb": peak_memory
         }
-    except Exception as e:
-        print(f"Error during inference: {str(e)}")
-        raise
+
     
 async def main():
     models_to_test = ["llama-3.1-8b"]
