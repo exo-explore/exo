@@ -10,6 +10,7 @@ import uuid
 from exo.orchestration.standard_node import StandardNode
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 import argparse
+import gc
 
 async def run_inference_test(
     node: StandardNode,
@@ -19,15 +20,16 @@ async def run_inference_test(
 ) -> dict:
     """Run inference test with an initialized node."""
     
-    # Measure memory before model loading
-    pre_load_memory = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
+    # Clear memory before starting
+    gc.collect()
     
-    # Ensure model is loaded
-    await node.engine.ensure_shard(shard)
+    process = psutil.Process(os.getpid())
+    initial_memory = process.memory_info().rss / 1024 / 1024
+    peak_memory = initial_memory
     
-    # Measure memory after model loading
-    post_load_memory = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-    peak_memory = post_load_memory
+    # Track memory during model loading
+    await node.inference_engine.ensure_shard(shard)
+    post_load_memory = process.memory_info().rss / 1024 / 1024
     
     formatted_prompt = tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}], 
@@ -36,28 +38,35 @@ async def run_inference_test(
     )
     
     print("Running inference pass...")
-    # Single run only
     start_time = time.time()
+    
+    # Track memory during inference
+    def memory_callback():
+        nonlocal peak_memory
+        current = process.memory_info().rss / 1024 / 1024
+        peak_memory = max(peak_memory, current)
     
     request_id = str(uuid.uuid4())
     callback_id = f"test-{request_id}"
     callback = node.on_token.register(callback_id)
     
     try:
+        # Monitor memory during inference
+        monitor_task = asyncio.create_task(periodic_memory_check(memory_callback))
+        
         await node.process_prompt(shard, formatted_prompt, None, request_id=request_id)
         _, tokens, _ = await callback.wait(
             lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
             timeout=300
         )
         
+        monitor_task.cancel()
+        
         end_time = time.time()
         latency = end_time - start_time
 
         print("\nGenerated text:")
         print(tokenizer.decode(tokens))
-        
-        current_memory = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-        peak_memory = max(peak_memory, current_memory)
         
     finally:
         node.on_token.deregister(callback_id)
@@ -67,11 +76,20 @@ async def run_inference_test(
         "latency": latency,
         "tokens": len(tokens),
         "tokens_per_second": len(tokens) / latency,
-        "pre_load_memory_mb": pre_load_memory,
-        "model_load_increase_mb": post_load_memory - pre_load_memory,
-        "inference_increase_mb": peak_memory - post_load_memory,
+        "initial_memory_mb": initial_memory,
+        "load_memory_increase_mb": post_load_memory - initial_memory,
+        "inference_memory_increase_mb": peak_memory - post_load_memory,
         "peak_memory_mb": peak_memory
     }
+
+async def periodic_memory_check(callback, interval=0.1):
+    """Periodically check memory usage."""
+    try:
+        while True:
+            callback()
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
 
 async def main():
     # Set up argument parser
@@ -129,12 +147,11 @@ async def main():
         
     # Print results
     print("\n=== Results ===")
-    print(f"{'Model':<20} {'Quant':<8} {'Latency':<12} {'Tokens':<8} {'Tokens/sec':<12} {'Pre-load MB':<12} {'Model Load Increase MB':<12} {'Inference Increase MB':<12} {'Peak MB':<10} {'Increase MB':<12}")
+    print(f"{'Model':<20} {'Quant':<8} {'Latency':<12} {'Tokens':<8} {'Tokens/sec':<12} {'Initial MB':<12} {'Peak MB':<10} {'Increase MB':<12}")
     print("-" * 95)
     print(f"{result['model']:<20} {result['quantization']:<8} {result['latency']:.2f}s "
           f"{result['tokens']:<8} {result['tokens_per_second']:.2f} "
-          f"{result['pre_load_memory_mb']:.1f} {result['model_load_increase_mb']:.1f} "
-          f"{result['inference_increase_mb']:.1f} {result['peak_memory_mb']:.1f} "
+          f"{result['initial_memory_mb']:.1f} {result['peak_memory_mb']:.1f} "
           f"{result['memory_increase_mb']:.1f}")
         
 
