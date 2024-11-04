@@ -17,5 +17,4 @@ cd exo && git checkout quantized-models-support-tinygrad
 source install.sh
 pip install torch llvmlite
 
-SUPPORT_BF16=0 python3 exo/test_quantization.py
-
+python test_quantization.py --model llama-3.1-8b --prompt "What is the meaning of exo?" --quant int8
