@@ -1,7 +1,6 @@
 import asyncio
 import time
 import statistics
-from typing import List, Optional
 from exo.inference.inference_engine import get_inference_engine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.models import model_base_shards
@@ -130,7 +129,7 @@ async def main():
             results.append(result)
             
             # Clean up
-            await asyncio.sleep(1)  # Give time for cleanup
+            await asyncio.sleep(2)  # Give time for cleanup
             
         except Exception as e:
             print(f"Error testing quantization {quant}: {str(e)}")
