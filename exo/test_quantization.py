@@ -38,6 +38,9 @@ async def profile_inference(
         shard_downloader=downloader
     )
     
+    # Initialize the node
+    await node.start()
+    
     # Get model shard
     shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
     if not shard:
