@@ -82,12 +82,8 @@ async def main():
     quantization_levels = ["int8", "nf4", None]
     results = []
     
-    # Initialize downloader once and engine in main thread
+    # Initialize downloader once
     downloader = HFShardDownloader()
-    engines = {
-        quant: get_inference_engine("tinygrad", downloader, quantize=quant) 
-        for quant in quantization_levels
-    }
     
     for quant in quantization_levels:
         print(f"\n=== Testing {model_name} with quantization {quant or 'fp32'} ===")
@@ -96,7 +92,8 @@ async def main():
             import gc
             gc.collect()
             
-            engine = engines[quant]
+            # Create fresh engine for each test
+            engine = get_inference_engine("tinygrad", downloader, quantize=quant)
             
             # Get model shard
             shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
@@ -134,7 +131,11 @@ async def main():
             result['quantization'] = quant or 'fp32'  # Add quantization info to results
             results.append(result)
             
-            # Clean up
+            # Clean up more aggressively
+            await engine.cleanup()  # if cleanup method exists
+            del engine
+            del node
+            gc.collect()
             await asyncio.sleep(1)  # Give time for cleanup
             
         except Exception as e:
