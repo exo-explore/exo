@@ -13,12 +13,13 @@ async def profile_inference(
     model_name: str,
     prompt: str,
     quantization: Optional[str] = None,
-    num_runs: int = 3
+    num_runs: int = 3,
+    downloader: Optional[HFShardDownloader] = None
 ) -> dict:
     """Profile inference performance for a given model and quantization level."""
     
-    # Initialize components
-    downloader = HFShardDownloader()
+    # Use passed downloader or create new one
+    downloader = downloader or HFShardDownloader()
     engine = get_inference_engine("tinygrad", downloader, quantize=quantization)
     
     # Get model shard
@@ -26,79 +27,88 @@ async def profile_inference(
     if not shard:
         raise ValueError(f"Unsupported model: {model_name}")
     
-    # Setup tokenizer
+    # Setup tokenizer and encode prompt
     print(f"Resolving tokenizer for model_id: {shard.model_id}")
     tokenizer = await resolve_tokenizer(shard.model_id)
-    print(f"Tokenizer type: {type(tokenizer)}")
-    print(f"Prompt type: {type(prompt)}")
-    print(f"Prompt: {prompt}")
     
     try:
+        # Convert list of tokens to the expected format
         encoded_prompt = tokenizer.encode(prompt)
-        print(f"Successfully encoded prompt. Result type: {type(encoded_prompt)}")
-        print(f"Encoded tokens: {encoded_prompt}")
+        print(f"Raw encoded tokens: {encoded_prompt}")
+        
+        # Convert to tensor format expected by the model
+        input_ids = {"input_ids": encoded_prompt}
+        print(f"Formatted input: {input_ids}")
+        
+        # Warmup run
+        print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
+        _ = await engine.infer_prompt(model_name, shard, input_ids)
+        
+        # Measure memory after model loading
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
+        post_load_memory = process.memory_info().rss / 1024 / 1024
+        memory_increase = post_load_memory - initial_memory
+        
+        # Profile multiple runs
+        latencies = []
+        token_counts = []
+        peak_memory = post_load_memory
+        
+        print(f"Running {num_runs} inference passes...")
+        for i in range(num_runs):
+            start_time = time.time()
+            tokens = await engine.infer_prompt(model_name, shard, input_ids)
+            end_time = time.time()
+            
+            latency = end_time - start_time
+            latencies.append(latency)
+            token_counts.append(len(tokens))
+            
+            print(f"Run {i+1}: Generated {len(tokens)} tokens in {latency:.2f}s")
+            
+            current_memory = process.memory_info().rss / 1024 / 1024
+            peak_memory = max(peak_memory, current_memory)
+        
+        return {
+            "model": model_name,
+            "quantization": quantization or "fp32",
+            "avg_latency": statistics.mean(latencies),
+            "std_latency": statistics.stdev(latencies) if len(latencies) > 1 else 0,
+            "avg_tokens": statistics.mean(token_counts),
+            "tokens_per_second": statistics.mean(token_counts) / statistics.mean(latencies),
+            "initial_memory_mb": initial_memory,
+            "memory_increase_mb": memory_increase,
+            "peak_memory_mb": peak_memory
+        }
     except Exception as e:
-        print(f"Error during tokenization: {str(e)}")
+        print(f"Error during inference: {str(e)}")
         print(f"Tokenizer attributes: {dir(tokenizer)}")
         raise
     
     # Ensure model is downloaded
     await downloader.ensure_shard(shard)
-    
-    # Warmup run
-    print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    _ = await engine.infer_prompt(model_name, shard, encoded_prompt)
-    
-    # Measure memory after model loading
-    process = psutil.Process(os.getpid())
-    initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
-    post_load_memory = process.memory_info().rss / 1024 / 1024
-    memory_increase = post_load_memory - initial_memory
-    
-    # Profile multiple runs
-    latencies = []
-    token_counts = []
-    peak_memory = post_load_memory
-    
-    print(f"Running {num_runs} inference passes...")
-    for i in range(num_runs):
-        start_time = time.time()
-        tokens = await engine.infer_prompt(model_name, shard, encoded_prompt)
-        end_time = time.time()
-        
-        latency = end_time - start_time
-        latencies.append(latency)
-        token_counts.append(len(tokens))
-        
-        print(f"Run {i+1}: Generated {len(tokens)} tokens in {latency:.2f}s")
-        
-        current_memory = process.memory_info().rss / 1024 / 1024
-        peak_memory = max(peak_memory, current_memory)
-    
-    return {
-        "model": model_name,
-        "quantization": quantization or "fp32",
-        "avg_latency": statistics.mean(latencies),
-        "std_latency": statistics.stdev(latencies) if len(latencies) > 1 else 0,
-        "avg_tokens": statistics.mean(token_counts),
-        "tokens_per_second": statistics.mean(token_counts) / statistics.mean(latencies),
-        "initial_memory_mb": initial_memory,
-        "memory_increase_mb": memory_increase,
-        "peak_memory_mb": peak_memory
-    }
 
 async def main():
-    models_to_test = ["llama-3.1-8b"]  # Add more models as needed
+    models_to_test = ["llama-3.1-8b"]
     quantization_levels = [None, "int8", "nf4"]
     test_prompt = "Explain the concept of quantum computing in simple terms."
     
-    results = []
+    # Initialize downloader once at the start
+    downloader = HFShardDownloader()
     
+    results = []
     for model in models_to_test:
         print(f"\n=== Testing {model} ===")
         for quant in quantization_levels:
             try:
-                result = await profile_inference(model, test_prompt, quant)
+                # Pass the downloader instance
+                result = await profile_inference(
+                    model, 
+                    test_prompt, 
+                    quantization=quant,
+                    downloader=downloader
+                )
                 results.append(result)
             except Exception as e:
                 print(f"Error testing {model} with {quant or 'fp32'} quantization: {str(e)}")
