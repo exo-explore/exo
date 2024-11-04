@@ -68,7 +68,6 @@ async def run_inference_test(
     
     return {
         "model": shard.model_id,
-        "quantization": node.engine.quantize or "fp32",
         "avg_latency": statistics.mean(latencies),
         "std_latency": statistics.stdev(latencies) if len(latencies) > 1 else 0,
         "avg_tokens": statistics.mean(token_counts),
