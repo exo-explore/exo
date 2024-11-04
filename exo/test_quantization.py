@@ -77,7 +77,7 @@ async def run_inference_test(
     }
 
 async def main():
-    model_name = ["llama-3.1-8b","llama-3.1-70b"]
+    model_name = ["llama-3.1-70b"]
     test_prompt = "What is the meaning of exo?"
     quantization_levels = ["int8", "nf4", None]
     results = []
