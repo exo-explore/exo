@@ -37,8 +37,6 @@ async def profile_inference(
     # Ensure model is downloaded
     await downloader.ensure_shard(shard)
 
-
-        
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
     model_output, metadata, _ = await engine.infer_prompt(model_name, shard, prompt)
@@ -98,7 +96,7 @@ async def profile_inference(
 
     
 async def main():
-    models_to_test = ["llama-3.1-8b"]
+    models_to_test = ["TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R"]
     quantization_levels = [None, "int8", "nf4"]
     test_prompt = "What does exo mean?"
     
