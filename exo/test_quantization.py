@@ -31,19 +31,26 @@ async def profile_inference(
     print(f"Resolving tokenizer for model_id: {shard.model_id}")
     tokenizer = await resolve_tokenizer(shard.model_id)
     
+    # Set pad token to eos token if pad token is not set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        print(f"Set pad_token to eos_token: {tokenizer.pad_token}")
+    
     try:
-        # Use encode_plus instead of encode to get the proper format
-        encoded = tokenizer.encode_plus(
-            prompt,
-            return_tensors="pt",  # Return PyTorch tensors
-            padding=True,
-            truncation=True,
+        # Format prompt using chat template
+        formatted_prompt = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True
         )
-        print(f"Encoded format: {encoded}")
-        print(f"Encoded types: {[type(v) for v in encoded.values()]}")
+        print(f"Formatted prompt: {formatted_prompt}")
+        
+        # Encode the formatted prompt
+        encoded = tokenizer.encode(formatted_prompt)
+        print(f"Encoded tokens: {encoded}")
         
         # Use the encoded format directly
-        input_ids = encoded
+        input_ids = {"input_ids": encoded}
         
         # Warmup run
         print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
