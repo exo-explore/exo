@@ -55,7 +55,7 @@ async def profile_inference(
         start_time = time.time()
         tokens = await engine.infer_prompt(model_name, shard, prompt)
         # Convert tokens to text using the appropriate tokenizer
-        tokenizer = resolve_tokenizer(model_name)
+        tokenizer = await resolve_tokenizer(model_name)
         generated_text = tokenizer.decode(tokens)
         print(f"\nGenerated text: {generated_text}")
         print(f"Raw tokens: {tokens}")
