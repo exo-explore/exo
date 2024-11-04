@@ -98,8 +98,6 @@ async def profile_inference(
         finally:
             node.on_token.deregister(callback_id)
             
-        # Clear any cached states between runs
-        await engine.clear_cache()
     
     return {
         "model": model_name,
