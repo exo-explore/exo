@@ -257,6 +257,7 @@ jobs:
           name: Set up Python environment
           command: |
             brew install python@3.12
+            brew install npm
             python3.12 -m venv env
       - run:
           name: Install dependencies
@@ -270,21 +271,21 @@ jobs:
             source env/bin/activate
             python3 buildexo/build_exo.py
       - run:
-          name: Move exo.app to exo-app
+          name: Move exo executable to exo-app
           command: |
-            mkdir -p exo/exo-app/backend
-            mv dist/exo.app exo/exo.app/backend
-      -run:
+            mkdir -p ./exo/exo-app/backend
+            mv ./dist/main.dist/exo ./exo/exo-app/backend/exo
+      - run:
           name: package electron app
           command:
-            cd exo/exo-app
+            cd ./exo/exo-app
             npm install
             npm run make
-            mv out/make/zip/darwin/arm64/exo-darwin-arm64.zip exo/exo-app/exo-darwin-arm64.zip
-      -persist_to_workspace:
+            mv ./out/make/zip/darwin/arm64/exo-darwin-arm64-*.zip ../../
+      - persist_to_workspace:
           root: .
           paths:
-            - exo/exo-app/exo-darwin-arm64.zip
+            - ./exo-darwin-arm64-*.zip
 
   build_exo_linux:
     machine:
