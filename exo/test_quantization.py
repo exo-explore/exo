@@ -27,8 +27,20 @@ async def profile_inference(
         raise ValueError(f"Unsupported model: {model_name}")
     
     # Setup tokenizer
+    print(f"Resolving tokenizer for model_id: {shard.model_id}")
     tokenizer = await resolve_tokenizer(shard.model_id)
-    encoded_prompt = tokenizer.encode(prompt)
+    print(f"Tokenizer type: {type(tokenizer)}")
+    print(f"Prompt type: {type(prompt)}")
+    print(f"Prompt: {prompt}")
+    
+    try:
+        encoded_prompt = tokenizer.encode(prompt)
+        print(f"Successfully encoded prompt. Result type: {type(encoded_prompt)}")
+        print(f"Encoded tokens: {encoded_prompt}")
+    except Exception as e:
+        print(f"Error during tokenization: {str(e)}")
+        print(f"Tokenizer attributes: {dir(tokenizer)}")
+        raise
     
     # Ensure model is downloaded
     await downloader.ensure_shard(shard)
