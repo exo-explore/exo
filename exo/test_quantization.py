@@ -73,13 +73,13 @@ async def main():
     parser = argparse.ArgumentParser(description='Run quantization test for a specific model')
     parser.add_argument('--model', type=str, required=True, help='Model name (e.g., "llama-3.1-8b")')
     parser.add_argument('--prompt', type=str, required=True, help='Test prompt')
-    parser.add_argument('--quant', type=str, choices=['int8', 'nf4'], required=False,
-                       help='Quantization level (int8, nf4) ')
+    parser.add_argument('--quant', type=str, choices=['int8', 'nf4', 'none'], default='none',
+                       help='Quantization level (int8, nf4, none)')
     
     args = parser.parse_args()
-    quant = args.quant
+    quant = args.quant if args.quant != 'none' else None
     
-    print(f"\n=== Testing {args.model} with quantization {args.quant} ===")
+    print(f"\n=== Testing {args.model} with quantization {quant or 'none'} ===")
     
         # Initialize downloader
     downloader = HFShardDownloader()
@@ -120,7 +120,7 @@ async def main():
         shard,
         args.prompt
         )
-    result['quantization'] = args.quant
+    result['quantization'] = quant or 'none'
         
     # Print results
     print("\n=== Results ===")
