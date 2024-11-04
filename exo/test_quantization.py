@@ -10,6 +10,8 @@ import psutil
 import os
 import numpy as np
 import json
+from exo.orchestration.standard_node import StandardNode
+import uuid
 
 async def profile_inference(
     model_name: str,
@@ -24,6 +26,16 @@ async def profile_inference(
     downloader = downloader or HFShardDownloader()
     engine = get_inference_engine("tinygrad", downloader, quantize=quantization)
     
+    # Create node (similar to main.py)
+    node = StandardNode(
+        str(uuid.uuid4()),  # random node id
+        None,              # no server needed
+        engine,
+        None,              # no discovery needed
+        max_generate_tokens=512,
+        shard_downloader=downloader
+    )
+    
     # Get model shard
     shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
     if not shard:
@@ -37,69 +49,58 @@ async def profile_inference(
         add_generation_prompt=True
     )
     
-    # Measure initial memory before model loading
+    # Measure initial memory
     process = psutil.Process(os.getpid())
-    initial_memory = process.memory_info().rss / 1024 / 1024  # Memory in MB
+    initial_memory = process.memory_info().rss / 1024 / 1024
     
-    # Ensure model is downloaded
-    await downloader.ensure_shard(shard)
-
-    # Warmup run
-    print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
-    
-    # Measure memory after model loading
-    post_load_memory = process.memory_info().rss / 1024 / 1024
-    memory_increase = post_load_memory - initial_memory
-        
     # Profile multiple runs
     latencies = []
     token_counts = []
-    peak_memory = post_load_memory
-        
+    peak_memory = initial_memory
+    
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        tokens = []
-        inference_state = None
         
-        # Keep generating until finished or max tokens
-        while len(tokens) < 32:  # Use max_tokens parameter
-            result, new_state, _ = await engine.infer_prompt(
-                model_name, 
-                shard, 
-                formatted_prompt if not tokens else None,  # Only send prompt first time
-                inference_state=inference_state
+        # Use node's callback system to get tokens
+        request_id = str(uuid.uuid4())
+        callback_id = f"test-{request_id}"
+        callback = node.on_token.register(callback_id)
+        
+        try:
+            await node.process_prompt(shard, formatted_prompt, None, request_id=request_id)
+            _, tokens, _ = await callback.wait(
+                lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished,
+                timeout=300
             )
-            inference_state = new_state
             
-            if result.size == 1:
-                tokens.append(result.item())
-        
-        end_time = time.time()
-        latency = end_time - start_time
-        latencies.append(latency)
-        token_counts.append(len(tokens))
-        
-        # Print generated text for verification
-        if i == 0:  # Print first generation
-            print("\nGenerated text:")
-            print(tokenizer.decode(tokens))
-        
-        current_memory = process.memory_info().rss / 1024 / 1024
-        peak_memory = max(peak_memory, current_memory)
-
+            end_time = time.time()
+            latency = end_time - start_time
+            latencies.append(latency)
+            token_counts.append(len(tokens))
+            
+            # Print generated text for verification
+            if i == 0:
+                print("\nGenerated text:")
+                print(tokenizer.decode(tokens))
+            
+            current_memory = process.memory_info().rss / 1024 / 1024
+            peak_memory = max(peak_memory, current_memory)
+            
+        finally:
+            node.on_token.deregister(callback_id)
+    
     return {
-            "model": model_name,
-            "quantization": quantization or "fp32",
-            "avg_latency": statistics.mean(latencies),
-            "std_latency": statistics.stdev(latencies) if len(latencies) > 1 else 0,
-            "avg_tokens": statistics.mean(token_counts),
-            "tokens_per_second": statistics.mean(token_counts) / statistics.mean(latencies),
-            "initial_memory_mb": initial_memory,
-            "memory_increase_mb": memory_increase,
-            "peak_memory_mb": peak_memory
-        }
+        "model": model_name,
+        "quantization": quantization or "fp32",
+        "avg_latency": statistics.mean(latencies),
+        "std_latency": statistics.stdev(latencies) if len(latencies) > 1 else 0,
+        "avg_tokens": statistics.mean(token_counts),
+        "tokens_per_second": statistics.mean(token_counts) / statistics.mean(latencies),
+        "initial_memory_mb": initial_memory,
+        "memory_increase_mb": peak_memory - initial_memory,
+        "peak_memory_mb": peak_memory
+    }
 
     
 async def main():
