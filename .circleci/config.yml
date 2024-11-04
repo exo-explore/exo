@@ -385,7 +385,7 @@ jobs:
             echo "Publish GitHub release"
             go install github.com/tcnksm/ghr@latest
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} \
-              -c ${CIRCLE_SHA1} -delete ${VERSION} ./exo/exo-app/exo-darwin-arm64.zip
+              -c ${CIRCLE_SHA1} -delete ${VERSION} ./exo-darwin-arm64-*.zip
 
 workflows:
   version: 2
