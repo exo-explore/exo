@@ -135,7 +135,7 @@ async def main():
             results.append(result)
             
             # Clean up
-            await asyncio.sleep(10)  # Give time for cleanup
+            await asyncio.sleep(1)  # Give time for cleanup
             
         except Exception as e:
             print(f"Error testing quantization {quant}: {str(e)}")
