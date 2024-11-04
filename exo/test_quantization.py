@@ -89,6 +89,9 @@ async def main():
         print(f"\n=== Testing {model_name} with quantization {quant or 'fp32'} ===")
         
         try:
+            import gc
+            gc.collect()
+            
             # Create inference engine with specific quantization
             engine = get_inference_engine("tinygrad", downloader, quantize=quant)
             
