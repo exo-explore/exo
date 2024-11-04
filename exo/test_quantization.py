@@ -23,10 +23,6 @@ async def run_inference_test(
     # Measure initial memory
     process = psutil.Process(os.getpid())
     initial_memory = process.memory_info().rss / 1024 / 1024
-    
-    # Simplify to single run metrics
-    latencies = []
-    token_counts = []
     peak_memory = initial_memory
     
     formatted_prompt = tokenizer.apply_chat_template(
@@ -52,9 +48,7 @@ async def run_inference_test(
         
         end_time = time.time()
         latency = end_time - start_time
-        latencies.append(latency)
-        token_counts.append(len(tokens))
-        
+
         print("\nGenerated text:")
         print(tokenizer.decode(tokens))
         
@@ -66,9 +60,9 @@ async def run_inference_test(
     
     return {
         "model": shard.model_id,
-        "avg_latency": latencies[0],
-        "avg_tokens": token_counts[0],
-        "tokens_per_second": token_counts[0] / latencies[0],
+        "latency": latency,
+        "tokens": len(tokens),
+        "tokens_per_second": len(tokens) / latency,
         "initial_memory_mb": initial_memory,
         "memory_increase_mb": peak_memory - initial_memory,
         "peak_memory_mb": peak_memory
@@ -130,10 +124,12 @@ async def main():
         
     # Print results
     print("\n=== Results ===")
-    print(f"{'Model':<15} {'Quant':<8} {'Avg Latency':<12} {'Tokens/sec':<10} {'Memory (MB)':<12}")
-    print("-" * 65)
-    print(f"{result['model']:<15} {result['quantization']:<8} {result['avg_latency']:.2f}s "
-          f"{result['tokens_per_second']:.2f} {result['memory_increase_mb']:.1f}")
+    print(f"{'Model':<20} {'Quant':<8} {'Latency':<12} {'Tokens':<8} {'Tokens/sec':<12} {'Initial MB':<12} {'Peak MB':<10} {'Increase MB':<12}")
+    print("-" * 95)
+    print(f"{result['model']:<20} {result['quantization']:<8} {result['latency']:.2f}s "
+          f"{result['tokens']:<8} {result['tokens_per_second']:.2f} "
+          f"{result['initial_memory_mb']:.1f} {result['peak_memory_mb']:.1f} "
+          f"{result['memory_increase_mb']:.1f}")
         
 
 if __name__ == "__main__":
