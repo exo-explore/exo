@@ -15,7 +15,7 @@ async def profile_inference(
     model_name: str,
     prompt: str,
     quantization: Optional[str] = None,
-    num_runs: int = 30,
+    num_runs: int = 3,
     downloader: Optional[HFShardDownloader] = None
 ) -> dict:
     """Profile inference performance for a given model and quantization level."""
@@ -46,7 +46,7 @@ async def profile_inference(
 
     # Warmup run
     print(f"\nWarmup run for {model_name} ({quantization or 'fp32'})...")
-    _ = await engine.infer_prompt(model_name, shard, formatted_prompt, max_tokens=512)
+    _ = await engine.infer_prompt(model_name, shard, formatted_prompt)
     
     # Measure memory after model loading
     post_load_memory = process.memory_info().rss / 1024 / 1024
@@ -60,15 +60,33 @@ async def profile_inference(
     print(f"Running {num_runs} inference passes...")
     for i in range(num_runs):
         start_time = time.time()
-        _, metadata, _ = await engine.infer_prompt(model_name, shard, formatted_prompt, max_tokens=512)
-        metadata_dict = json.loads(metadata)
-        num_tokens = metadata_dict['n_captured_toks']
+        tokens = []
+        inference_state = None
+        is_finished = False
         
-        end_time = time.time()  
+        # Keep generating until finished or max tokens
+        while not is_finished and len(tokens) < 512:  # Use max_tokens parameter
+            result, new_state, is_finished = await engine.infer_prompt(
+                model_name, 
+                shard, 
+                formatted_prompt if not tokens else None,  # Only send prompt first time
+                inference_state=inference_state
+            )
+            inference_state = new_state
+            
+            if result.size == 1:
+                tokens.append(result.item())
+        
+        end_time = time.time()
         latency = end_time - start_time
         latencies.append(latency)
-        token_counts.append(num_tokens)
-            
+        token_counts.append(len(tokens))
+        
+        # Print generated text for verification
+        if i == 0:  # Print first generation
+            print("\nGenerated text:")
+            print(tokenizer.decode(tokens))
+        
         current_memory = process.memory_info().rss / 1024 / 1024
         peak_memory = max(peak_memory, current_memory)
 
