@@ -62,11 +62,10 @@ async def profile_inference(
         start_time = time.time()
         tokens = []
         inference_state = None
-        is_finished = False
         
         # Keep generating until finished or max tokens
-        while not is_finished and len(tokens) < 32:  # Use max_tokens parameter
-            result, new_state, is_finished = await engine.infer_prompt(
+        while len(tokens) < 32:  # Use max_tokens parameter
+            result, new_state, _ = await engine.infer_prompt(
                 model_name, 
                 shard, 
                 formatted_prompt if not tokens else None,  # Only send prompt first time
