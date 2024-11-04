@@ -54,6 +54,9 @@ async def profile_inference(
         add_generation_prompt=True
     )
     
+    # Ensure model is loaded before starting inference
+    await engine.ensure_shard(shard)
+    
     # Measure initial memory
     process = psutil.Process(os.getpid())
     initial_memory = process.memory_info().rss / 1024 / 1024
@@ -94,6 +97,9 @@ async def profile_inference(
             
         finally:
             node.on_token.deregister(callback_id)
+            
+        # Clear any cached states between runs
+        await engine.clear_cache()
     
     return {
         "model": model_name,
