@@ -79,11 +79,15 @@ async def run_inference_test(
 async def main():
     model_name = "llama-3.1-8b"
     test_prompt = "What is the meaning of exo?"
-    quantization_levels = ["int8", "nf4", None]  # Try int8 first when caches are fresh   
+    quantization_levels = ["int8", "nf4", None]
     results = []
     
-    # Initialize downloader once
+    # Initialize downloader once and engine in main thread
     downloader = HFShardDownloader()
+    engines = {
+        quant: get_inference_engine("tinygrad", downloader, quantize=quant) 
+        for quant in quantization_levels
+    }
     
     for quant in quantization_levels:
         print(f"\n=== Testing {model_name} with quantization {quant or 'fp32'} ===")
@@ -92,8 +96,7 @@ async def main():
             import gc
             gc.collect()
             
-            # Create inference engine with specific quantization
-            engine = get_inference_engine("tinygrad", downloader, quantize=quant)
+            engine = engines[quant]
             
             # Get model shard
             shard = model_base_shards.get(model_name, {}).get(engine.__class__.__name__)
