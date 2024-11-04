@@ -12,6 +12,7 @@ import numpy as np
 import json
 from exo.orchestration.standard_node import StandardNode
 import uuid
+from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 
 async def profile_inference(
     model_name: str,
@@ -32,6 +33,7 @@ async def profile_inference(
         None,              # no server needed
         engine,
         None,              # no discovery needed
+        partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
         max_generate_tokens=512,
         shard_downloader=downloader
     )
