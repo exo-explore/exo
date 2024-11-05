@@ -101,14 +101,6 @@ class StandardNode(Node):
   def get_topology_inference_engines(self) -> List[List[str]]:
     return self.topology_inference_engines_pool
 
-  def has_active_downloads(self) -> bool:
-    """Check if any model downloads are currently in progress."""
-    if not hasattr(self, 'shard_downloader'):
-        return False
-    if not hasattr(self.shard_downloader, 'active_downloads'):
-        return False
-    return len(self.shard_downloader.active_downloads) > 0
-
   async def process_prompt(self, base_shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(

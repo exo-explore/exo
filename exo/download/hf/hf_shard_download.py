@@ -18,8 +18,11 @@ class HFShardDownloader(ShardDownloader):
     self._on_progress = AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]()
 
   async def ensure_shard(self, shard: Shard) -> Path:
+    """Ensure a shard is downloaded and return its path. Downloads are protected from cancellation."""
     if shard in self.completed_downloads:
+      if DEBUG >= 2: print(f"Using completed download for {shard}")
       return self.completed_downloads[shard]
+
     if self.quick_check:
       repo_root = get_repo_root(shard.model_id)
       snapshots_dir = repo_root/"snapshots"
@@ -29,10 +32,13 @@ class HFShardDownloader(ShardDownloader):
           most_recent_dir = max(visible_dirs, key=lambda x: x.stat().st_mtime)
           return most_recent_dir
 
-    # If a download on this shard is already in progress, keep that one
-    for active_shard in self.active_downloads:
-      if active_shard == shard:
-        if DEBUG >= 2: print(f"Download already in progress for {shard}. Keeping that one.")
+    # Check for active download
+    if shard in self.active_downloads:
+      if DEBUG >= 2: print(f"Using existing download for {shard}")
+      try:
+        return await self.active_downloads[shard]
+      except asyncio.CancelledError:
+        if DEBUG >= 2: print(f"Ignoring cancellation for existing download of {shard}")
         return await self.active_downloads[shard]
 
     # Cancel any downloads for this model_id on a different shard
@@ -50,17 +56,42 @@ class HFShardDownloader(ShardDownloader):
         traceback.print_exc()
     self.active_downloads = {active_shard: task for active_shard, task in self.active_downloads.items() if active_shard.model_id != shard.model_id}
 
-    # Start new download
-    download_task = asyncio.create_task(self._download_shard(shard))
+    # Start new protected download
+    event = asyncio.Event()
+    result = None
+    error = None
+    
+    async def protected_download():
+      nonlocal result, error
+      try:
+        if DEBUG >= 2: print(f"Starting protected download for {shard}")
+        result = await self._download_shard(shard)
+        self.completed_downloads[shard] = result
+        if DEBUG >= 2: print(f"Download completed for {shard}: {result}")
+        return result
+      except Exception as e:
+        if DEBUG >= 2: print(f"Error in download for {shard}: {e}")
+        error = e
+        raise
+      finally:
+        event.set()
+
+    download_task = asyncio.create_task(protected_download())
     self.active_downloads[shard] = download_task
+
     try:
-      path = await download_task
-      self.completed_downloads[shard] = path
-      return path
+      if DEBUG >= 2: print(f"Waiting for download to complete for {shard}")
+      try:
+        return await download_task
+      except asyncio.CancelledError:
+        if DEBUG >= 2: print(f"Ignoring cancellation and waiting for download to complete for {shard}")
+        await event.wait()
+        if error:
+          raise error
+        return result
     finally:
-      # Ensure the task is removed even if an exception occurs
-      print(f"Removing download task for {shard}: {shard in self.active_downloads}")
-      if shard in self.active_downloads:
+      if DEBUG >= 2: print(f"Cleaning up download task for {shard}")
+      if shard in self.active_downloads and self.active_downloads[shard] is download_task:
         self.active_downloads.pop(shard)
 
   async def _download_shard(self, shard: Shard) -> Path:
