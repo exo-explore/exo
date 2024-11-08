@@ -1,0 +1,55 @@
+name: "🤔 Questions and Help"
+description: Ask a general support question.
+title: "[Question]: "
+labels: ["Type: Support"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Describe your question or the issue you're facing.
+      placeholder: "How can I..."
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      description: Which operating system are you using?
+      multiple: true
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Docker
+        - WSL2
+        - Other
+    validations:
+      required: false
+  - type: dropdown
+    id: gpu
+    attributes:
+      label: GPU
+      description: Which GPU(s) are you using?
+      multiple: true
+      options:
+        - Nvidia
+        - AMD
+        - Intel
+        - Apple
+        - Other
+    validations:
+      required: false
+  - type: dropdown
+    id: cpu
+    attributes:
+      label: CPU
+      description: Which CPU(s) are you using?
+      multiple: true
+      options:
+        - Intel
+        - AMD
+        - Apple
+        - Other
+    validations:
+      required: false
