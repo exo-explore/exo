@@ -196,12 +196,19 @@ def linux_device_capabilities() -> DeviceCapabilities:
       flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
     )
   elif Device.DEFAULT == "AMD":
-    # TODO AMD support
+    import pyamdgpuinfo
+
+    gpu_raw_info = pyamdgpuinfo.get_gpu(0)
+    gpu_name = gpu_raw_info.name
+    gpu_memory_info = gpu_raw_info.memory_info["vram_size"]
+
+    if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")
+
     return DeviceCapabilities(
-      model="Linux Box (AMD)",
-      chip="Unknown AMD",
-      memory=psutil.virtual_memory().total // 2**20,
-      flops=DeviceFlops(fp32=0, fp16=0, int8=0),
+      model=f"Linux Box ({gpu_name})",
+      chip=gpu_name,
+      memory=gpu_memory_info // 2**20,
+      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
     )
   else:
     return DeviceCapabilities(
