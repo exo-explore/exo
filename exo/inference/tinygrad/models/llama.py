@@ -14,8 +14,8 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, dtype=dtype
     original_max_pos_emb = rope_scaling.get('original_max_position_embeddings', end)
 
     freqs[:dim // 4] *= low_freq_factor
-    freqs[dim // 4:] = freqs[dim // 4:].contiguous() * high_freq_factor
-    freqs *= (original_max_pos_emb / end) ** (1.0 / factor)
+    freqs[dim // 4:] = freqs[dim // 4:].contiguous()*high_freq_factor
+    freqs *= (original_max_pos_emb/end)**(1.0/factor)
 
   freqs = Tensor.arange(end).unsqueeze(dim=1)*freqs.unsqueeze(dim=0)
   # TODO: move dtype outside this
