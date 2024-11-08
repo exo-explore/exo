@@ -9,7 +9,9 @@ from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-
+# OKHand.zy add library
+import os
+from pathlib import Path
 
 class MLXDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
@@ -40,8 +42,11 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
       return
-
-    model_path = await self.shard_downloader.ensure_shard(shard)
+    
+    if os.path.isdir(shard.model_id): # if local model
+      model_path = Path(shard.model_id)
+    else:
+      model_path = await self.shard_downloader.ensure_shard(shard)
 
     if self.shard != shard:
       loop = asyncio.get_running_loop()

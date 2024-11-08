@@ -25,6 +25,9 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
 from exo.models import model_base_shards
 from exo.viz.topology_viz import TopologyViz
+# OKHand.zy add library
+import os 
+import json
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -133,13 +136,17 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     status = json.loads(opaque_status)
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
-      if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
-      asyncio.create_task(shard_downloader.ensure_shard(current_shard))
+      if os.path.isdir(current_shard.model_id):
+        # TODO: open ftp to share download model 
+        pass
+      else:
+        if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
+        asyncio.create_task(shard_downloader.ensure_shard(current_shard))
+    
   except Exception as e:
     if DEBUG >= 2:
       print(f"Failed to preemptively start download: {e}")
       traceback.print_exc()
-
 
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
 
@@ -175,11 +182,27 @@ async def shutdown(signal, loop):
 
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
-  shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
-  if not shard:
+  if model_base_shards.get(model_name) :
+    shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
+    if not shard:
+      print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+      return
+    tokenizer = await resolve_tokenizer(shard.model_id)
+  elif os.path.isdir(model_name):
+    # local model   
+    # local model shard
+    model_path = model_name.rstrip('/')
+    model_name = model_path.split('/')[-1]
+    if os.path.isfile(model_path+'/config.json'):
+      with open(model_path+'/config.json', 'r') as file:
+        config = json.load(file)
+        config_n_layers = config['num_hidden_layers']
+      shard = Shard(model_id=model_path, start_layer=0, end_layer=0, n_layers=config_n_layers)
+      tokenizer = await resolve_tokenizer(model_path)
+  else:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return
-  tokenizer = await resolve_tokenizer(shard.model_id)
+  
   request_id = str(uuid.uuid4())
   callback_id = f"cli-wait-response-{request_id}"
   callback = node.on_token.register(callback_id)
