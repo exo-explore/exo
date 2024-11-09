@@ -5,7 +5,7 @@ from PIL import Image
 from io import BytesIO
 
 import mlx.core as mx
-from mlx_lm.models.base import KVCache
+from mlx_lm.models.cache import KVCache
 
 from exo.inference.mlx.sharded_model import StatefulShardedModel
 from exo.inference.mlx.sharded_utils import load_shard

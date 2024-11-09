@@ -9,7 +9,7 @@ from . import node_service_pb2_grpc
 from ..peer_handle import PeerHandle
 from exo.inference.shard import Shard
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import DeviceCapabilities
+from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
 from exo.helpers import DEBUG
 
 
@@ -56,7 +56,7 @@ class GRPCPeerHandle(PeerHandle):
       return response.is_healthy
     except asyncio.TimeoutError:
       return False
-    except:
+    except Exception:
       if DEBUG >= 4:
         print(f"Health check failed for {self._id}@{self.address}.")
         import traceback
@@ -117,7 +117,9 @@ class GRPCPeerHandle(PeerHandle):
     response = await self.stub.CollectTopology(request)
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
-      device_capabilities = DeviceCapabilities(model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory, flops=capabilities.flops)
+      device_capabilities = DeviceCapabilities(
+        model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory, flops=DeviceFlops(fp16=capabilities.flops.fp16, fp32=capabilities.flops.fp32, int8=capabilities.flops.int8)
+      )
       topology.update_node(node_id, device_capabilities)
     for node_id, peers in response.peer_graph.items():
       for peer_id in peers.peer_ids:

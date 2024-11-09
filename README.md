@@ -58,12 +58,7 @@ Unlike other distributed inference frameworks, exo does not use a master-worker 
 
 Exo supports different [partitioning strategies](exo/topology/partitioning_strategy.py) to split up a model across devices. The default partitioning strategy is [ring memory weighted partitioning](exo/topology/ring_memory_weighted_partitioning_strategy.py). This runs an inference in a ring where each device runs a number of model layers proportional to the memory of the device.
 
-<p>
-    <picture>
-        <img alt="ring topology" src="docs/ring-topology.png" width="30%" height="30%">
-    </picture>
-</p>
-
+!["A screenshot of exo running 5 nodes](docs/exo-screenshot.png)
 
 ## Installation
 
@@ -225,6 +220,20 @@ For the **tinygrad** inference engine specifically, there is a separate DEBUG fl
 
 ```sh
 TINYGRAD_DEBUG=2 exo
+```
+
+## Formatting
+
+We use [yapf](https://github.com/google/yapf) to format the code. To format the code, first install the formatting requirements:
+
+```sh
+pip3 install -e '.[formatting]'
+```
+
+Then run the formatting script:
+
+```sh
+python3 format.py ./exo
 ```
 
 ## Known Issues
