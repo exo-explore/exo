@@ -3,7 +3,7 @@ llama3 model
 
 Written with pytorch using torchtune and other methods
 """
-from typing import Optional
+from typing import Optional, Any, Tuple, List
 
 import torch
 import torch.nn as nn
@@ -186,26 +186,91 @@ class ShardedLlamaModel(nn.Module):
   def __init__(self,
     config: dict,
     shard: Shard,
+    tokenizer: Any,
     device: torch.device=torch.device("cpu"),
     hidden_states: Optional[torch.Tensor] = None,
     is_causal=True
   ):
     super(ShardedLlamaModel, self).__init__()
 
+    self.tokenizer = tokenizer
     self.shard = shard
     self.config = config
     self.model = LlamaModel(config, shard, is_causal)
     self.device = device
 
-  def generate(self, prompt: torch.Tensor):
+  def generate(
+    self,
+    input_tensor: torch.Tensor,
+    max_seq_len: int=4096
+  ) -> Tuple[Optional[List[torch.Tensor]], Optional[torch.Tensor]]:
     """
-    move logit generation being done in test_llama3_model for generation to here
-    along with sharding
-    """
-    self.model.output_hidden_states = list(range(shard.start_layer, shard.end_layer))
-    
-    # pass hidden state to model until last layer
-    # can be done with model's encoder_input and encoder_mask
-    # on last layer can generate
+    Generate logits and/or hidden_states from llama model
 
-    pass
+    Args
+      input (torch.Tensor) - tokens if initial first layer input and hidden states after
+      max_seq_len (int) - Max sequence length of generation, default 4096
+    """
+    self.model.output_hidden_states = list(range(self.shard.start_layer, self.shard.end_layer))
+
+    if self.shard.is_first_layer():
+      tokens = input_tensor
+
+      if tokens.ndim == 1:
+        tokens = tokens.view(1, -1)
+
+      _, tokens_length = tokens.size()
+      total_response_length = tokens_length + max_seq_len
+      resp_max_seq_len = (
+        total_response_length
+        if not self.model.caches_are_enabled()
+        else self.model.decoder_max_cache_seq_len
+      )
+
+      # masking for proper attention
+      padding_masks = tokens != self.tokenizer.pad_id
+      if not padding_masks.all():
+        padding_masks = torch.nn.functional.pad(
+          padding_masks,
+          (0, max_seq_len),
+          value=True
+        )
+
+        masks = ttg.get_causal_mask_from_padding_mask(
+          padding_masks,
+          target_seq_len=resp_max_seq_len
+        )
+
+        input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
+      else:
+        masks = torch.tril(
+          torch.ones(
+            total_response_length,
+            resp_max_seq_len if resp_max_seq_len is not None else max_seq_len,
+            dtype=torch.bool,
+            device=tokens.device,
+          )
+        ).unsqueeze(0)
+
+      input_pos = torch.arange(
+        0, total_response_length, device=tokens.device
+      ).unsqueeze(0)
+
+      if self.model.caches_are_enabled():
+        curr_masks = masks[:, :tokens_length]
+      else:
+        curr_masks = masks[:, :tokens_length, :tokens_length]
+
+      model_output = self.model(
+        tokens=tokens,
+        mask=curr_masks,
+        input_pos=input_pos[:, :tokens_length].squeeze()
+      )
+
+      model_logits = model_output[-1]
+      model_output.pop() # remove logits
+      model_hs = model_output # hidden states
+
+      return model_hs, model_logits
+    else:
+      return None, None

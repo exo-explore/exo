@@ -24,7 +24,6 @@ from transformers.cache_utils import Cache, DynamicCache
 
 from exo.helpers import DEBUG
 from exo.inference.shard import Shard
-from exo.inference.torch.tests.test_llama3_model import MAX_SEQ_LEN
 
 def load_model_config(model_config_path: Path) -> dict:
   """
@@ -70,6 +69,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
 
   # Load weights from each found safetensors file
   paried_lmhead = True
+  shard_layer_range = list(range(shard.start_layer, shard.end_layer))
   for safetensor_file in safetensors_files:
     state_dict = load_safetensors(safetensor_file)
 
@@ -80,45 +80,44 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
       # load layer by shard
       lnrgx = re.findall(r'model\.layers\.(\d+).*', key)
       layer_num = int(lnrgx[0]) if len(lnrgx) > 0 else None
-      shard_layer_range = list(range(shard.start_layer, shard.end_layer))
       if layer_num in shard_layer_range:
         # change input layer norm to sa_norm for torchtune
         re_iln = re.findall(
           rf'model.layers\.{layer_num}\.(input_layernorm)\.weight', key)
         if len(re_iln) != 0:
-          key = f"model.layers.{layer_num}.sa_norm.weight"
+          remapped_state_dict[f"model.layers.{layer_num}.sa_norm.weight"] = value
 
         # change post attention layernorm to mlp_norm for torchtune
         re_pal = re.findall(
           rf'model.layers\.{layer_num}\.(post_attention_layernorm)\.weight', key)
         if len(re_pal) != 0:
-          key = f"model.layers.{layer_num}.mlp_norm.weight"
-
-        # change o_proj to output_proj
-        re_o_proj = re.findall(rf'model\.layers\.{layer_num}.(\w+)\.o_proj\.weight', key)
-        if len(re_o_proj) != 0:
-          key = f"model.layers.{layer_num}.{re_o_proj[0]}.output_proj.weight"
+          remapped_state_dict[f"model.layers.{layer_num}.mlp_norm.weight"] = value
 
         # change self_attn to attn
+        # along with changing o_proj to output_proj
         re_attn = re.findall(rf'model\.layers\.{layer_num}.(\w+)\.(\w+)\.(\w+)', key)
         if len(re_attn) != 0 and re_attn[0][0] == "self_attn":
-          key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
+          if re_attn[0][1] == "o_proj":
+            remapped_state_dict[f"model.layers.{layer_num}.attn.output_proj.weight"] = value
+          else:
+            remapped_state_dict[f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"] = value
 
       # saving embed for paired weights
       elif key == 'model.embed_tokens.weight':
         paried_embed_weight = value
         # change name for torchtune
-        key = 'model.tok_embeddings.weight'
+        remapped_state_dict['model.tok_embeddings.weight'] = value
 
       elif key == 'lm_head.weight':
         paried_lmhead = False
-        # change key for torchtune
-        key = 'model.output.weight'
 
-      elif key == 'model.norm.weight':
-        key = 'model.norm.weight'
-
-      remapped_state_dict[key] = value
+      # get everything else except layers, embed_tokens and lm_head
+      if (
+        len(re.findall(r'model\.layers\..*', key)) == 0
+        and key != "model.embed_tokens.weight"
+        and key != "lm_head.weight"
+      ):
+        remapped_state_dict[key] = value
 
     if paried_lmhead:
       remapped_state_dict['model.output.weight'] = paried_embed_weight
@@ -127,6 +126,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
 
     #if DEBUG >= 7:
     print("\n--- checking weights ----\n")
+    print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
     check_weights(model, remapped_state_dict)
 
 def hf_logit_sample(
