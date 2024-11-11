@@ -19,7 +19,15 @@ class DummyTokenizer:
     return "dummy"
 
 
+cached_tokenizers = {}
 async def resolve_tokenizer(model_id: str):
+  if model_id in cached_tokenizers:
+    return cached_tokenizers[model_id]
+  tokenizer = await resolve_tokenizer_no_cache(model_id)
+  cached_tokenizers[model_id] = tokenizer
+  return tokenizer
+
+async def resolve_tokenizer_no_cache(model_id: str):
   if model_id == "dummy":
     return DummyTokenizer()
   local_path = await get_local_snapshot_dir(model_id)
@@ -32,7 +40,6 @@ async def resolve_tokenizer(model_id: str):
     if DEBUG >= 5: print(f"Local check for {local_path=} failed. Resolving tokenizer for {model_id=} normally...")
     if DEBUG >= 5: traceback.print_exc()
   return await _resolve_tokenizer(model_id)
-
 
 async def _resolve_tokenizer(model_id_or_local_path: Union[str, PathLike]):
   try:

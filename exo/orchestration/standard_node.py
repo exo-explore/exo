@@ -171,7 +171,7 @@ class StandardNode(Node):
     if not is_finished:
       asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, image_str=image_str, inference_state=inference_state))
 
-    return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
+    return np.asarray(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
 
   async def process_tensor(
     self,
@@ -247,7 +247,7 @@ class StandardNode(Node):
       if not is_finished:
         asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state=inference_state))
 
-      return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
+      return np.asarray(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
     except Exception as e:
       print(f"Error processing tensor for shard {shard}: {e}")
       traceback.print_exc()
@@ -380,7 +380,7 @@ class StandardNode(Node):
   async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
     if request_id not in self.buffered_token_output:
       return None, False
-    return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
+    return np.array(self.buffered_token_output[request_id][0], copy=False), self.buffered_token_output[request_id][1]
 
   async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
     next_topology = Topology()
