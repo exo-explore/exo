@@ -48,13 +48,6 @@ commands:
             # Check processes before proceeding
             check_processes
 
-            # Special handling for dummy engine
-            if [ "<<parameters.inference_engine>>" = "dummy" ]; then
-              expected_content="This is a dummy response"
-            else
-              expected_content="Michael Jackson"
-            fi
-
             echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
               -H "Content-Type: application/json" \
