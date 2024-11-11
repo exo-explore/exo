@@ -109,7 +109,7 @@ class StandardNode(Node):
   async def process_result(
     self,
     shard,
-    result,
+    result: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[str] = None,
   ):

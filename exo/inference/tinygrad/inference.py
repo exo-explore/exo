@@ -68,7 +68,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   async def sample(self, x: np.ndarray) -> np.ndarray:
     logits = x[:, -1, :]
     def sample_wrapper():
-      return sample_logits(Tensor(x).flatten(), TEMPERATURE, 0, 0.8, 0.0, 0.0).realize()
+      return sample_logits(Tensor(logits).flatten(), TEMPERATURE, 0, 0.8, 0.0, 0.0).realize()
     out = await asyncio.get_running_loop().run_in_executor(self.executor, sample_wrapper)
     return out.numpy()
 
@@ -85,7 +85,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> np.ndarray:
     await self.ensure_shard(shard)
     start_pos = json.loads(inference_state or "{}").get("start_pos", 0)
-    output_data = await asyncio.get_running_loop().run_in_executor(self.executor, self.model, Tensor(input_data), start_pos)
+    output_data = await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.model(Tensor(input_data), start_pos).realize())
     return output_data.numpy()
 
   async def ensure_shard(self, shard: Shard):
@@ -96,7 +96,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     if self.shard != shard:
       parameters = "1B" if "1b" in shard.model_id.lower() else "3B" if "3b" in shard.model_id.lower() else "8B" if "8b" in shard.model_id.lower() else "70B"
-      self.model = await asyncio.get_event_loop().run_in_executor(self.executor, build_transformer, model_path, shard, parameters)
+      self.model = await asyncio.get_running_loop().run_in_executor(self.executor, build_transformer, model_path, shard, parameters)
 
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
