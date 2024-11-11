@@ -20,6 +20,11 @@ commands:
           command: |
             source env/bin/activate
 
+            # Set CLANG=1 for tinygrad only
+            if [ "<<parameters.inference_engine>>" = "tinygrad" ]; then
+              export CLANG=1
+            fi
+
             # Start first instance
             HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout 900 2>&1 | tee output1.log &
             PID1=$!
