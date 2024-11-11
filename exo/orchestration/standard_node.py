@@ -39,6 +39,7 @@ class StandardNode(Node):
     self.topology: Topology = Topology()
     self.device_capabilities = device_capabilities()
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
+    self.buffered_inputs: Dict[str, Tuple[List[np.ndarray], bool]] = {}
     self.buffered_logits: Dict[str, Tuple[List[np.ndarray], bool]] = {}
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
@@ -121,6 +122,8 @@ class StandardNode(Node):
     for i in np.reshape(result, (-1, 1, result.shape[-1])):
       self.buffered_logits[request_id][0].append(i)
 
+    inference_state = json.dumps({"start_pos": len(self.buffered_logits[request_id][0])})
+
     if shard.is_last_layer():
       result = await self.inference_engine.sample(result)
     
@@ -131,6 +134,7 @@ class StandardNode(Node):
 
     if result.size == 1:  # we got a new token out
       self.buffered_token_output[request_id][0].append(result.item())
+      inference_state = json.dumps({"start_pos": json.loads(inference_state or "{}").get("start_pos", 0) + 1})
       self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
     
     if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
