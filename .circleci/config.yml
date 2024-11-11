@@ -22,7 +22,8 @@ commands:
 
             # Set CLANG=1 for tinygrad only
             if [ "<<parameters.inference_engine>>" = "tinygrad" ]; then
-              export CLANG=1
+              pip install llvmlite
+              export TOKENIZERS_PARALLELISM=true SUPPORT_BF16=0 CLANG=1
             fi
 
             # Start first instance
