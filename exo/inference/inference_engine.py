@@ -21,12 +21,14 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
-  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> np.ndarray:
-    pass
-
-  @abstractmethod
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> np.ndarray:
     pass
+  
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[str] = None) -> np.ndarray:
+    tokens = await self.encode(shard, prompt)
+    output_data = await self.infer_tensor(request_id, shard, tokens, inference_state)
+    return output_data 
+
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
   if DEBUG >= 2:
