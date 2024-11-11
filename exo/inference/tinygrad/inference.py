@@ -75,7 +75,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   async def encode(self, shard: Shard, prompt: str):
     await self.ensure_shard(shard)
     tokens = await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.encode, prompt)
-    return tokens
+    return np.array(tokens)
   
   async def decode(self, shard: Shard, tokens):
     await self.ensure_shard(shard)
