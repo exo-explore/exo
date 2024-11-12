@@ -119,8 +119,7 @@ class StandardNode(Node):
     if request_id not in self.buffered_logits:
       self.buffered_logits[request_id] = ([], False)
 
-    for i in np.reshape(result, (-1, 1, result.shape[-1])):
-      self.buffered_logits[request_id][0].append(i)
+    self.buffered_logits[request_id][0] += [i for i in np.reshape(result, (-1, 1, result.shape[-1]))]
 
     if shard.is_last_layer():
       result = await self.inference_engine.sample(result)
