@@ -27,7 +27,7 @@ TOP_K=35
 TOP_P=0.9
 MAX_SEQ_LEN=2048
 
-def test_generation(text, max_length=10, config=None):
+def test_generation_1(shard_model, text):
   """
   Test the generation capabilities of the LlamaModel with sample text.
   """
@@ -49,10 +49,12 @@ def test_generation(text, max_length=10, config=None):
   hidden_states, logits = shard_model.generate(prompt)
 
   if hidden_states is not None:
-    print(f"hidden_states: {hidden_states[0].shape}\n{hidden_states}")
+    print(f"hidden_states[{len(hidden_states)}]: {hidden_states}")
 
   if logits is not None:
     print(f"logits: {logits.shape}\n{logits}")
+
+  return hidden_states, logits, prompt
   #if prompt.ndim == 1:
   #  prompt = prompt.view(1, -1)
 
@@ -155,6 +157,44 @@ def test_generation(text, max_length=10, config=None):
   #generated_tokens = generated_tokens.tolist()
   #print(f"resp: {llama_tokenizer.decode(generated_tokens[0])}")
 
+def test_generation_2(shard_model, tokens, hidden_state):
+  print("Generate with the rest of layers")
+  hidden_states, logits = shard_model.generate(
+    tokens=tokens,
+    hidden_state=hidden_state
+  )
+
+  if hidden_states is not None:
+    print(f"hidden_states {hidden_states.shape}: {hidden_states}")
+
+  if logits is not None:
+    print(f"logits: {logits.shape}\n{logits}")
+
+  rand_sample = torch.empty(
+    (
+      logits.size(0),
+      shard_model.model.tok_embeddings.num_embeddings
+    ), device=logits.device
+  ).exponential_(1, generator=None)
+
+  logit = ttg.sample(
+    logits=logits[:, -1].clone(),
+    temperature=TEMP,
+    top_k=TOP_K,
+    q=rand_sample
+  )
+
+  print(f"logit: {logit}")
+
+  generated_tokens = tokens.clone()
+  generated_tokens = torch.cat([generated_tokens, logit.squeeze(-1)], dim=-1).tolist()
+
+  print(f"generated_tokens: {generated_tokens}")
+
+  print(f"resp: {llama_tokenizer.decode(generated_tokens)}\n\n\n")
+
+  return hidden_states, logits
+
 if __name__ == "__main__":
   print("\nTesting generation:")
   # Get the path to the model files from the Hugging Face cache
@@ -167,10 +207,20 @@ if __name__ == "__main__":
   print(f"current config\n{config}")
 
   # Setup shard
-  shard = Shard(
+  s1_end = int(int(config["num_hidden_layers"])/2)
+  shard_1 = Shard(
     model_id=MODEL_NAME,
     start_layer=0,
-    end_layer=4,#int(config["num_hidden_layers"]),
+    end_layer=s1_end,
+    n_layers=int(config["num_hidden_layers"])
+  )
+
+  s2_start = s1_end + 1
+  s2_end = shard_1.n_layers - 1
+  shard_2 = Shard(
+    model_id=MODEL_NAME,
+    start_layer=s2_start,
+    end_layer=s2_end,
     n_layers=int(config["num_hidden_layers"])
   )
 
@@ -183,12 +233,27 @@ if __name__ == "__main__":
   #)
 
   # Initialize LlamaModel with config and tokenizer
-  shard_model = ShardedLlamaModel(config, shard, llama_tokenizer)
-  print(f"\nshard_model: {shard_model}")
-  load_model_weights_torchtune(cache_dir, shard, shard_model)
+  shard_model_1 = ShardedLlamaModel(config, shard_1, llama_tokenizer)
+  print(f"\nshard_model_1: {shard_model_1}")
+  load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
 
   # Sample text for testing
-  test_text = "Hello"
+  #prompt = "First letter in the word 'Red'"
+  prompt = "Hello"
+  shard_1_hs, shard_1_logits, shard_1_tokens = test_generation_1(shard_model_1, prompt)
 
-  test_generation(test_text, 5, config)
+  print(f"shard_1_hs:\n{shard_1_hs}")
+  print(f"shard_1_logits:\n{shard_1_logits}")
+  print(f"shard_1_tokens:\n{shard_1_tokens}")
+
+  del shard_model_1.model
+  del shard_model_1
+
+  shard_model_2 = ShardedLlamaModel(config, shard_2, llama_tokenizer)
+  print(f"\nshard_model_2: {shard_model_2}")
+  load_model_weights_torchtune(cache_dir, shard_2, shard_model_2)
+  shard_2_hs, shard_2_logits = test_generation_2(shard_model_2, shard_1_tokens, shard_1_hs)
+
+  print(f"shard_2_hs:\n{shard_2_hs}")
+  print(f"shard_2_logits:\n{shard_2_logits}")
 
