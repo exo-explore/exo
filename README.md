@@ -67,6 +67,7 @@ The current recommended way to install exo is from source.
 ### Prerequisites
 
 - Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
+- MLX (Mac) is required for running Deepseek models.
 - Linux (with NVIDIA card):
   - NVIDIA driver (test with `nvidia-smi`)
   - CUDA (https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#cuda-cross-platform-installation) (test with `nvcc --version`)
