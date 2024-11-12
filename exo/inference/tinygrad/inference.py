@@ -70,7 +70,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     def sample_wrapper():
       return sample_logits(Tensor(logits).flatten(), temp, 0, 0.8, top_p, 0.0).realize()
     out = await asyncio.get_running_loop().run_in_executor(self.executor, sample_wrapper)
-    return out.numpy()
+    return out.numpy().astype(int)
 
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     await self.ensure_shard(shard)

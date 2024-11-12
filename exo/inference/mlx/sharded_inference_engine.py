@@ -40,7 +40,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def sample(self, x, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
     y = mx.array(x)
     logits = y[:, -1, :]
-    out = np.array(sample_logits(logits, temp=temp, top_p=top_p))
+    out = np.array(sample_logits(logits, temp=temp, top_p=top_p), dtype=int)
     return out
 
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
