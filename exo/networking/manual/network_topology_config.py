@@ -29,3 +29,8 @@ class NetworkTopology(BaseModel):
       return cls.model_validate_json(config_data)
     except ValidationError as e:
       raise ValueError(f"Error validating network topology config from {path}: {e}") from e
+
+  def reload(self, path: str) -> None:
+    """Reload the configuration from the file and update the peers attribute."""
+    new_topology = self.from_path(path)
+    self.peers = new_topology.peers

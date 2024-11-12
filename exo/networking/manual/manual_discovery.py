@@ -1,6 +1,8 @@
 import asyncio
 from exo.networking.discovery import Discovery
 from typing import Dict, List, Callable
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 from exo.topology.device_capabilities import DeviceCapabilities
 from exo.networking.manual.network_topology_config import NetworkTopology, PeerConfig
@@ -15,6 +17,7 @@ class ManualDiscovery(Discovery):
     node_id: str,
     create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle],
   ):
+    self.network_config_path = network_config_path
     self.topology = NetworkTopology.from_path(network_config_path)
     self.create_peer_handle = create_peer_handle
 
@@ -24,6 +27,7 @@ class ManualDiscovery(Discovery):
       )
 
     self.listen_task = None
+    self.observer = None
 
     self.known_peers: Dict[str, PeerHandle] = {}
     self.peers_in_network: Dict[str, PeerConfig] = self.topology.peers
@@ -31,10 +35,14 @@ class ManualDiscovery(Discovery):
 
   async def start(self) -> None:
     self.listen_task = asyncio.create_task(self.task_find_peers_from_config())
+    self.start_file_watcher()
 
   async def stop(self) -> None:
     if self.listen_task:
       self.listen_task.cancel()
+    if self.observer:
+      self.observer.stop()
+      self.observer.join()
 
   async def discover_peers(self, wait_for_peers: int = 0) -> List[PeerHandle]:
     if wait_for_peers > 0:
@@ -69,3 +77,24 @@ class ManualDiscovery(Discovery):
       await asyncio.sleep(1.0)
 
       if DEBUG_DISCOVERY >= 2: print(f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}")
+
+  def start_file_watcher(self):
+    event_handler = ConfigFileEventHandler(self)
+    self.observer = Observer()
+    self.observer.schedule(event_handler, self.network_config_path, recursive=False)
+    self.observer.start()
+
+  def reload_config(self):
+    if DEBUG_DISCOVERY >= 2: print("Reloading network configuration...")
+    self.topology = NetworkTopology.from_path(self.network_config_path)
+    self.peers_in_network = self.topology.peers
+    if DEBUG_DISCOVERY >= 2: print(f"New configuration loaded: {self.peers_in_network}")
+
+
+class ConfigFileEventHandler(FileSystemEventHandler):
+  def __init__(self, manual_discovery: ManualDiscovery):
+    self.manual_discovery = manual_discovery
+
+  def on_modified(self, event):
+    if event.src_path == self.manual_discovery.network_config_path:
+      self.manual_discovery.reload_config()

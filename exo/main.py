@@ -25,6 +25,8 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
 from exo.models import model_base_shards
 from exo.viz.topology_viz import TopologyViz
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
