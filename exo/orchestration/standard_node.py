@@ -286,7 +286,7 @@ class StandardNode(Node):
     if next_partition_index is not None:
       target_id = self.partitioning_strategy.partition(self.topology)[next_partition_index].node_id
       next_shard = self.get_current_shard(base_shard, next_partition_index)
-      if DEBUG >= 2: print(f"Computed next from: {shard}, {self.topology}. Next partition: {next_partition}")
+      if DEBUG >= 2: print(f"Computed next from: {base_shard} {next_partition_index}, {self.topology}. Next shard: {next_shard}")
       is_tensor = isinstance(tensor_or_prompt, np.ndarray)
       if target_id == self.id:
         if is_tensor:
@@ -296,8 +296,7 @@ class StandardNode(Node):
       else:
         target_peer = next((p for p in self.peers if p.id() == target_id), None)
         if not target_peer:
-          raise ValueError(f"Peer for {next_partition} not found")
-        
+          raise ValueError(f"Peer for {next_partition_index} not found")
         if is_tensor:
           if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor_or_prompt}")
           await target_peer.send_tensor(next_shard, tensor_or_prompt, request_id=request_id, inference_state=inference_state)
