@@ -116,9 +116,15 @@ document.addEventListener("alpine:init", () => {
         localStorage.setItem("pendingMessage", value);
         this.processMessage(value);
       } catch (error) {
-        console.error('error', error)
-        this.lastErrorMessage = error.message || 'Unknown error on handleSend';
-        this.errorMessage = error.message || 'Unknown error on handleSend';
+        console.error('error', error);
+        const errorDetails = {
+            message: error.message || 'Unknown error on handleSend',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+        
+        this.lastErrorMessage = errorDetails;
+        this.errorMessage = `${errorDetails.name}: ${errorDetails.message}\n\nStack Trace:\n${errorDetails.stack}`;
         this.generating = false;
       }
     },
@@ -235,9 +241,15 @@ document.addEventListener("alpine:init", () => {
           console.error("Failed to save histories to localStorage:", error);
         }
       } catch (error) {
-        console.error('error', error)
-        this.lastErrorMessage = error;
-        this.errorMessage = error;
+        console.error('error', error);
+        const errorDetails = {
+            message: error.message || 'Unknown error on processMessage',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+        
+        this.lastErrorMessage = errorDetails;
+        this.errorMessage = `${errorDetails.name}: ${errorDetails.message}\n\nStack Trace:\n${errorDetails.stack}`;
       } finally {
         this.generating = false;
       }
