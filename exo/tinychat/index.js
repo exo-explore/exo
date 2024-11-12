@@ -119,9 +119,6 @@ document.addEventListener("alpine:init", () => {
         console.error('error', error)
         this.lastErrorMessage = error.message || 'Unknown error on handleSend';
         this.errorMessage = error.message || 'Unknown error on handleSend';
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 5 * 1000)
         this.generating = false;
       }
     },
@@ -241,9 +238,6 @@ document.addEventListener("alpine:init", () => {
         console.error('error', error)
         this.lastErrorMessage = error;
         this.errorMessage = error;
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 5 * 1000)
       } finally {
         this.generating = false;
       }

@@ -202,6 +202,22 @@ main {
     top: 0; /* Position at the top of the page */
     left: 0; /* Extend from the left edge */
     right: 0; /* Extend to the right edge */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.toast-close-button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 0 8px;
+    cursor: pointer;
+    font-size: 1.2em;
+}
+
+.toast-close-button:hover {
+    opacity: 0.8;
 }
 
 .hljs {
