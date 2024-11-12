@@ -36,21 +36,17 @@ async def test_dummy_inference_engine():
   shard = Shard(model_id="test_model", start_layer=0, end_layer=1, n_layers=1)
 
   # Test infer_prompt
-  output, state, is_finished = await engine.infer_prompt("test_id", shard, "Test prompt")
+  output = await engine.infer_prompt("test_id", shard, "Test prompt")
 
   assert isinstance(output, np.ndarray), "Output should be a numpy array"
   assert output.ndim == 2, "Output should be 2-dimensional"
-  assert isinstance(state, str), "State should be a string"
-  assert isinstance(is_finished, bool), "is_finished should be a boolean"
 
   # Test infer_tensor
   input_tensor = np.array([[1, 2, 3]])
-  output, state, is_finished = await engine.infer_tensor("test_id", shard, input_tensor)
+  output = await engine.infer_tensor("test_id", shard, input_tensor)
 
   assert isinstance(output, np.ndarray), "Output should be a numpy array"
   assert output.ndim == 2, "Output should be 2-dimensional"
-  assert isinstance(state, str), "State should be a string"
-  assert isinstance(is_finished, bool), "is_finished should be a boolean"
 
   print("All tests passed!")
 
