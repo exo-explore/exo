@@ -1,10 +1,9 @@
-from typing import Dict, Generator, Optional, Tuple
+from typing import Dict, Tuple
 from collections import OrderedDict
 
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.models.cache import make_prompt_cache
-from mlx_lm.sample_utils import top_p_sampling
 
 from ..shard import Shard
 
