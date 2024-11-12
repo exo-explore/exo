@@ -282,7 +282,7 @@ class StandardNode(Node):
       return
 
     next_partition_index = self.get_partition_index(offset = 1)
-    if DEBUG >= 1: print(f"Current partition index: {current_partition_index}")
+    if DEBUG >= 1: print(f"Next partition index: {next_partition_index}")
     if next_partition_index is not None:
       target_id = self.partitioning_strategy.partition(self.topology)[next_partition_index].node_id
       next_shard = self.get_current_shard(base_shard, next_partition_index)
