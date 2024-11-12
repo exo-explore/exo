@@ -7,7 +7,7 @@ from io import BytesIO
 import mlx.core as mx
 from mlx_lm.models.cache import KVCache
 
-from exo.inference.mlx.sharded_model import StatefulShardedModel
+from exo.inference.mlx.stateful_model import StatefulModel
 from exo.inference.mlx.sharded_utils import load_shard
 from exo.inference.shard import Shard
 
