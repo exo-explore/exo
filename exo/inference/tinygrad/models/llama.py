@@ -225,7 +225,7 @@ class Transformer:
       h = inputs
     return h
 
-  def __call__(self, tokens: Tensor, start_pos: Variable, request_id: str, cache: Optional[List[Tensor]] = None):
+  def __call__(self, tokens: Tensor, start_pos: Variable, cache: Optional[List[Tensor]] = None):
     # TODO: better way to handle the first call v.s. the rest?
     h = self.embed(x)
     if tokens.shape[0:2] == (1, 1) and self.forward_jit is not None:
