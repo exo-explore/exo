@@ -203,28 +203,59 @@ main {
     left: 0;
     right: 0;
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    flex-direction: column;
     white-space: pre-wrap;
     font-family: monospace;
 }
 
-.toast span {
-    flex: 1;
-    margin-right: 16px;
+.toast-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.toast-error-message {
+    flex-grow: 1;
+}
+
+.toast-header-buttons {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: 24px;
+}
+
+.toast-expand-button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 4px;
+    cursor: pointer;
+    font-size: 1em;
+    /* text-decoration: underline; */
 }
 
 .toast-close-button {
     background: none;
     border: none;
     color: white;
-    padding: 0 8px;
+    padding: 4px;
     cursor: pointer;
     font-size: 1.2em;
+    line-height: 1;
 }
 
+.toast-expand-button:hover,
 .toast-close-button:hover {
     opacity: 0.8;
+}
+
+.toast-content {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
 }
 
 .hljs {

@@ -14,6 +14,8 @@ document.addEventListener("alpine:init", () => {
     generating: false,
     endpoint: `${window.location.origin}/v1`,
     errorMessage: null,
+    errorExpanded: false,
+    errorTimeout: null,
 
     // performance tracking
     time_till_first: 0,
@@ -118,16 +120,28 @@ document.addEventListener("alpine:init", () => {
       } catch (error) {
         console.error('error', error);
         const errorDetails = {
-            message: error.message || 'Unknown error on handleSend',
+            message: error.message || 'Unknown error',
             stack: error.stack,
             name: error.name || 'Error'
         };
         
-        this.lastErrorMessage = errorDetails;
-        this.errorMessage = `${errorDetails.name}: ${errorDetails.message}\n\nStack Trace:\n${errorDetails.stack}`;
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 30 * 1000)
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
         this.generating = false;
       }
     },
@@ -246,16 +260,28 @@ document.addEventListener("alpine:init", () => {
       } catch (error) {
         console.error('error', error);
         const errorDetails = {
-            message: error.message || 'Unknown error on processMessage',
+            message: error.message || 'Unknown error',
             stack: error.stack,
             name: error.name || 'Error'
         };
         
-        this.lastErrorMessage = errorDetails;
-        this.errorMessage = `${errorDetails.name}: ${errorDetails.message}\n\nStack Trace:\n${errorDetails.stack}`;
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 30 * 1000)
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
       } finally {
         this.generating = false;
       }
