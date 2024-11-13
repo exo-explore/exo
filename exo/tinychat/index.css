@@ -233,7 +233,6 @@ main {
     padding: 4px;
     cursor: pointer;
     font-size: 1em;
-    /* text-decoration: underline; */
 }
 
 .toast-close-button {
