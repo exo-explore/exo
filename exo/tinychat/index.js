@@ -10,14 +10,14 @@ document.addEventListener("alpine:init", () => {
     // historical state
     histories: JSON.parse(localStorage.getItem("histories")) || [],
 
+    home: 0,
+    generating: false,
+    endpoint: `${window.location.origin}/v1`,
+    
     // Initialize error message structure
     errorMessage: null,
     errorExpanded: false,
     errorTimeout: null,
-
-    home: 0,
-    generating: false,
-    endpoint: `${window.location.origin}/v1`,
 
     // performance tracking
     time_till_first: 0,

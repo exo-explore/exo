@@ -255,16 +255,11 @@ class ChatGPTAPI:
 
   async def handle_model_support(self, request):
     try:
-        print("\n=== Model Support Handler Started ===")
         model_pool = {}
         
-        print("\nAvailable Models:")
-        print("-" * 50)
         for model_name, pretty in pretty_name.items():
-            print(f"\nChecking model: {model_name}")
             if model_name in model_cards:
                 model_info = model_cards[model_name]
-                print(f"Model info: {model_info}")
                 
                 # Get required engines
                 required_engines = list(dict.fromkeys([
@@ -273,25 +268,21 @@ class ChatGPTAPI:
                     for engine_name in engine_list 
                     if engine_name is not None
                 ] + [self.inference_engine_classname]))
-                print(f"Required engines: {required_engines}")
                 
                 # Check if model supports required engines
                 if all(map(lambda engine: engine in model_info["repo"], required_engines)):
                     is_downloaded = self.is_model_downloaded(model_name)
-                    print(f"Model {model_name} download status: {is_downloaded}")
+                    if DEBUG >= 2:
+                        print(f"Model {model_name} download status: {is_downloaded}")
                     
                     model_pool[model_name] = {
                         "name": pretty,
                         "downloaded": is_downloaded
                     }
         
-        print("\nFinal model pool:")
-        print(json.dumps(model_pool, indent=2))
-        print("\n=== Model Support Handler Completed ===\n")
-        
         return web.json_response({"model pool": model_pool})
     except Exception as e:
-        print(f"\nError in handle_model_support: {str(e)}")
+        print(f"Error in handle_model_support: {str(e)}")
         traceback.print_exc()
         return web.json_response(
             {"detail": f"Server error: {str(e)}"}, 
