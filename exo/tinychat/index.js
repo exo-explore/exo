@@ -73,25 +73,41 @@ document.addEventListener("alpine:init", () => {
     },
 
     async populateSelector() {
-      const response = await fetch(`${this.endpoint}/modelpool`);
-      console.log("Populating Selector")
-      if(!response.ok) {
-        const errorResBody = await response.json();
-        if (errorResBody?.detail) {
-          throw new Error(`Failed to get model pool: ${errorResBody.detail}`);
-        } else {
-          throw new Error("Failed to get model pool: Unknown error");
+      try {
+        const response = await fetch(`${window.location.origin}/modelpool`);
+        if (!response.ok) {
+          const errorResBody = await response.json();
+          throw new Error(`Failed to get model pool: ${errorResBody?.detail || 'Unknown error'}`);
         }
+
+        const responseJson = await response.json();
+        const sel = document.querySelector(".model-select");
+        if (!sel) {
+          throw new Error("Could not find model selector element");
+        }
+
+        // Clear the current options and add new ones
+        sel.innerHTML = '';
+          
+        const modelDict = responseJson["model pool"];
+
+        Object.entries(modelDict).forEach(([key, value]) => {
+          const opt = document.createElement("option");
+          opt.value = key;
+          opt.textContent = value;
+          sel.appendChild(opt);
+        });
+
+        // Set initial value to the first model
+        const firstKey = Object.keys(modelDict)[0];
+        if (firstKey) {
+          sel.value = firstKey;
+          this.cstate.selectedModel = firstKey;
+        }
+      } catch (error) {
+        console.error("Error populating model selector:", error);
+        this.errorMessage = error.message;
       }
-      sel = document.getElementById("model-select");
-      sel.empty();
-      response["model pool"].map((k, v) => {
-        let opt = document.createElement("option");
-        opt.value = k;
-        opt.innerHtml = v;
-        console.log(`Model: ${k} (${v})`)
-        sel.append(opt);
-      });
     },
 
     async handleImageUpload(event) {
