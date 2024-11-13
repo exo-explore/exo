@@ -78,7 +78,6 @@ document.addEventListener("alpine:init", () => {
 
     async populateSelector() {
       try {
-        console.log("Fetching model pool...");
         const response = await fetch(`${window.location.origin}/modelpool`);
         if (!response.ok) {
           const errorText = await response.text();
@@ -86,8 +85,6 @@ document.addEventListener("alpine:init", () => {
         }
 
         const data = await response.json();
-        console.log("Received model pool data:", data);
-
         const sel = document.querySelector('.model-select');
         sel.innerHTML = '';
 
@@ -96,15 +93,12 @@ document.addEventListener("alpine:init", () => {
           a[1].name.localeCompare(b[1].name)
         );
 
-        console.log("Sorted models:", sortedModels);
-
         sortedModels.forEach(([key, value]) => {
           const opt = document.createElement("option");
           opt.value = key;
           opt.textContent = `${value.name}${value.downloaded ? ' (downloaded)' : ''}`;
           opt.classList.add(value.downloaded ? 'model-downloaded' : 'model-not-downloaded');
           sel.appendChild(opt);
-          console.log(`Added model: ${key} (${value.name}) - Downloaded: ${value.downloaded}`);
         });
       } catch (error) {
         console.error("Error populating model selector:", error);
