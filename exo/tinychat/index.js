@@ -10,12 +10,14 @@ document.addEventListener("alpine:init", () => {
     // historical state
     histories: JSON.parse(localStorage.getItem("histories")) || [],
 
-    home: 0,
-    generating: false,
-    endpoint: `${window.location.origin}/v1`,
+    // Initialize error message structure
     errorMessage: null,
     errorExpanded: false,
     errorTimeout: null,
+
+    home: 0,
+    generating: false,
+    endpoint: `${window.location.origin}/v1`,
 
     // performance tracking
     time_till_first: 0,
@@ -76,51 +78,37 @@ document.addEventListener("alpine:init", () => {
 
     async populateSelector() {
       try {
+        console.log("Fetching model pool...");
         const response = await fetch(`${window.location.origin}/modelpool`);
-        const responseText = await response.text(); // Get raw response text first
-        
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        // Try to parse the response text
-        let responseJson;
-        try {
-          responseJson = JSON.parse(responseText);
-        } catch (parseError) {
-          console.error('Failed to parse JSON:', parseError);
-          throw new Error(`Invalid JSON response: ${responseText}`);
+          const errorText = await response.text();
+          throw new Error(`HTTP error! status: ${response.status}\n${errorText}`);
         }
 
-        const sel = document.querySelector(".model-select");
-        if (!sel) {
-          throw new Error("Could not find model selector element");
-        }
+        const data = await response.json();
+        console.log("Received model pool data:", data);
 
-        // Clear the current options and add new ones
+        const sel = document.querySelector('.model-select');
         sel.innerHTML = '';
-          
-        const modelDict = responseJson["model pool"];
-        if (!modelDict) {
-          throw new Error("Response missing 'model pool' property");
-        }
 
-        Object.entries(modelDict).forEach(([key, value]) => {
+        // Convert the model pool to an array of [key, value] pairs and sort by name
+        const sortedModels = Object.entries(data["model pool"]).sort((a, b) => 
+          a[1].name.localeCompare(b[1].name)
+        );
+
+        console.log("Sorted models:", sortedModels);
+
+        sortedModels.forEach(([key, value]) => {
           const opt = document.createElement("option");
           opt.value = key;
-          opt.textContent = value;
+          opt.textContent = `${value.name}${value.downloaded ? ' (downloaded)' : ''}`;
+          opt.classList.add(value.downloaded ? 'model-downloaded' : 'model-not-downloaded');
           sel.appendChild(opt);
+          console.log(`Added model: ${key} (${value.name}) - Downloaded: ${value.downloaded}`);
         });
-
-        // Set initial value to the first model
-        const firstKey = Object.keys(modelDict)[0];
-        if (firstKey) {
-          sel.value = firstKey;
-          this.cstate.selectedModel = firstKey;
-        }
       } catch (error) {
         console.error("Error populating model selector:", error);
-        this.errorMessage = `Failed to load models: ${error.message}`;
+        this.setError(error);
       }
     },
 
@@ -169,29 +157,7 @@ document.addEventListener("alpine:init", () => {
         this.processMessage(value);
       } catch (error) {
         console.error('error', error);
-        const errorDetails = {
-            message: error.message || 'Unknown error',
-            stack: error.stack,
-            name: error.name || 'Error'
-        };
-        
-        this.errorMessage = {
-            basic: `${errorDetails.name}: ${errorDetails.message}`,
-            stack: errorDetails.stack
-        };
-
-        // Clear any existing timeout
-        if (this.errorTimeout) {
-            clearTimeout(this.errorTimeout);
-        }
-
-        // Only set the timeout if the error details aren't expanded
-        if (!this.errorExpanded) {
-            this.errorTimeout = setTimeout(() => {
-                this.errorMessage = null;
-                this.errorExpanded = false;
-            }, 30 * 1000);
-        }
+        this.setError(error);
         this.generating = false;
       }
     },
@@ -309,29 +275,7 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (error) {
         console.error('error', error);
-        const errorDetails = {
-            message: error.message || 'Unknown error',
-            stack: error.stack,
-            name: error.name || 'Error'
-        };
-        
-        this.errorMessage = {
-            basic: `${errorDetails.name}: ${errorDetails.message}`,
-            stack: errorDetails.stack
-        };
-
-        // Clear any existing timeout
-        if (this.errorTimeout) {
-            clearTimeout(this.errorTimeout);
-        }
-
-        // Only set the timeout if the error details aren't expanded
-        if (!this.errorExpanded) {
-            this.errorTimeout = setTimeout(() => {
-                this.errorMessage = null;
-                this.errorExpanded = false;
-            }, 30 * 1000);
-        }
+        this.setError(error);
       } finally {
         this.generating = false;
       }
@@ -466,6 +410,26 @@ document.addEventListener("alpine:init", () => {
       this.downloadProgressInterval = setInterval(() => {
         this.fetchDownloadProgress();
       }, 1000); // Poll every second
+    },
+
+    // Add a helper method to set errors consistently
+    setError(error) {
+      this.errorMessage = {
+        basic: error.message || "An unknown error occurred",
+        stack: error.stack || ""
+      };
+      this.errorExpanded = false;
+      
+      if (this.errorTimeout) {
+        clearTimeout(this.errorTimeout);
+      }
+
+      if (!this.errorExpanded) {
+        this.errorTimeout = setTimeout(() => {
+          this.errorMessage = null;
+          this.errorExpanded = false;
+        }, 30 * 1000);
+      }
     },
   }));
 });

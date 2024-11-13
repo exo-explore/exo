@@ -17,6 +17,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.models import build_base_shard, model_cards, get_repo, pretty_name
 from typing import Callable
+import os
 
 
 class Message:
@@ -200,25 +201,102 @@ class ChatGPTAPI:
   async def handle_root(self, request):
     return web.FileResponse(self.static_dir/"index.html")
 
+  def is_model_downloaded(self, model_name):
+    if DEBUG >= 2:
+        print(f"\nChecking if model {model_name} is downloaded:")
+    
+    cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+    repo = get_repo(model_name, self.inference_engine_classname)
+    
+    if DEBUG >= 2:
+        print(f"  Cache dir: {cache_dir}")
+        print(f"  Repo: {repo}")
+        print(f"  Engine: {self.inference_engine_classname}")
+    
+    if not repo:
+        return False
+
+    # Convert repo path (e.g. "mlx-community/Llama-3.2-1B-Instruct-4bit")
+    # to directory format (e.g. "models--mlx-community--Llama-3.2-1B-Instruct-4bit")
+    repo_parts = repo.split('/')
+    formatted_path = f"models--{repo_parts[0]}--{repo_parts[1]}"
+    repo_path = cache_dir / formatted_path / "snapshots"
+    
+    if DEBUG >= 2:
+        print(f"  Looking in: {repo_path}")
+        
+    if repo_path.exists():
+        # Look for the most recent snapshot directory
+        snapshots = list(repo_path.glob("*"))
+        if snapshots:
+            latest_snapshot = max(snapshots, key=lambda p: p.stat().st_mtime)
+            
+            # Check for model files and their index files
+            model_files = (
+                list(latest_snapshot.glob("model.safetensors")) +
+                list(latest_snapshot.glob("model.safetensors.index.json")) +
+                list(latest_snapshot.glob("*.mlx"))
+            )
+            
+            if DEBUG >= 2:
+                print(f"  Latest snapshot: {latest_snapshot}")
+                print(f"  Found files: {model_files}")
+                
+            # Model is considered downloaded if we find either:
+            # 1. model.safetensors file
+            # 2. model.safetensors.index.json file (for sharded models)
+            # 3. *.mlx file
+            return len(model_files) > 0
+    
+    if DEBUG >= 2:
+        print("  No valid model files found")
+    return False
+
   async def handle_model_support(self, request):
-    return web.json_response({
-      "model pool": {
-        model_name: pretty_name.get(model_name, model_name) 
-        for model_name in [
-          model_id for model_id, model_info in model_cards.items() 
-          if all(map(
-            lambda engine: engine in model_info["repo"],
-            list(dict.fromkeys([
-              inference_engine_classes.get(engine_name, None) 
-              for engine_list in self.node.topology_inference_engines_pool 
-              for engine_name in engine_list 
-              if engine_name is not None
-            ] + [self.inference_engine_classname]))
-          ))
-        ]
-      }
-    })
-  
+    try:
+        print("\n=== Model Support Handler Started ===")
+        model_pool = {}
+        
+        print("\nAvailable Models:")
+        print("-" * 50)
+        for model_name, pretty in pretty_name.items():
+            print(f"\nChecking model: {model_name}")
+            if model_name in model_cards:
+                model_info = model_cards[model_name]
+                print(f"Model info: {model_info}")
+                
+                # Get required engines
+                required_engines = list(dict.fromkeys([
+                    inference_engine_classes.get(engine_name, None) 
+                    for engine_list in self.node.topology_inference_engines_pool 
+                    for engine_name in engine_list 
+                    if engine_name is not None
+                ] + [self.inference_engine_classname]))
+                print(f"Required engines: {required_engines}")
+                
+                # Check if model supports required engines
+                if all(map(lambda engine: engine in model_info["repo"], required_engines)):
+                    is_downloaded = self.is_model_downloaded(model_name)
+                    print(f"Model {model_name} download status: {is_downloaded}")
+                    
+                    model_pool[model_name] = {
+                        "name": pretty,
+                        "downloaded": is_downloaded
+                    }
+        
+        print("\nFinal model pool:")
+        print(json.dumps(model_pool, indent=2))
+        print("\n=== Model Support Handler Completed ===\n")
+        
+        return web.json_response({"model pool": model_pool})
+    except Exception as e:
+        print(f"\nError in handle_model_support: {str(e)}")
+        traceback.print_exc()
+        return web.json_response(
+            {"detail": f"Server error: {str(e)}"}, 
+            status=500
+        )
+
   async def handle_get_models(self, request):
     return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()])
 

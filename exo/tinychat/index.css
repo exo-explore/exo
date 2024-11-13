@@ -491,3 +491,13 @@ p {
 .clear-history-button i {
   font-size: 14px;
 }
+
+.model-select option.model-not-downloaded {
+  color: #888;
+  font-style: italic;
+}
+
+.model-select option.model-downloaded {
+  color: inherit;
+  font-weight: 500;
+}
