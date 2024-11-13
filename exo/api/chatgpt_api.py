@@ -18,6 +18,7 @@ from exo.orchestration import Node
 from exo.models import build_base_shard, model_cards, get_repo, pretty_name
 from typing import Callable
 import os
+from exo.download.hf.hf_helpers import get_hf_home
 
 
 class Message:
@@ -205,7 +206,7 @@ class ChatGPTAPI:
     if DEBUG >= 2:
         print(f"\nChecking if model {model_name} is downloaded:")
     
-    cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+    cache_dir = get_hf_home() / "hub"
     repo = get_repo(model_name, self.inference_engine_classname)
     
     if DEBUG >= 2:
