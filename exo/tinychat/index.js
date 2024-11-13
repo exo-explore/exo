@@ -125,6 +125,9 @@ document.addEventListener("alpine:init", () => {
         
         this.lastErrorMessage = errorDetails;
         this.errorMessage = `${errorDetails.name}: ${errorDetails.message}\n\nStack Trace:\n${errorDetails.stack}`;
+        setTimeout(() => {
+          this.errorMessage = null;
+        }, 30 * 1000)
         this.generating = false;
       }
     },
@@ -250,6 +253,9 @@ document.addEventListener("alpine:init", () => {
         
         this.lastErrorMessage = errorDetails;
         this.errorMessage = `${errorDetails.name}: ${errorDetails.message}\n\nStack Trace:\n${errorDetails.stack}`;
+        setTimeout(() => {
+          this.errorMessage = null;
+        }, 30 * 1000)
       } finally {
         this.generating = false;
       }
