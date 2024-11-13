@@ -13,7 +13,7 @@ document.addEventListener("alpine:init", () => {
     home: 0,
     generating: false,
     endpoint: `${window.location.origin}/v1`,
-    
+
     // Initialize error message structure
     errorMessage: null,
     errorExpanded: false,
@@ -157,7 +157,29 @@ document.addEventListener("alpine:init", () => {
         this.processMessage(value);
       } catch (error) {
         console.error('error', error);
-        this.setError(error);
+        const errorDetails = {
+            message: error.message || 'Unknown error',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
         this.generating = false;
       }
     },
@@ -275,7 +297,29 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (error) {
         console.error('error', error);
-        this.setError(error);
+        const errorDetails = {
+            message: error.message || 'Unknown error',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
       } finally {
         this.generating = false;
       }
@@ -410,26 +454,6 @@ document.addEventListener("alpine:init", () => {
       this.downloadProgressInterval = setInterval(() => {
         this.fetchDownloadProgress();
       }, 1000); // Poll every second
-    },
-
-    // Add a helper method to set errors consistently
-    setError(error) {
-      this.errorMessage = {
-        basic: error.message || "An unknown error occurred",
-        stack: error.stack || ""
-      };
-      this.errorExpanded = false;
-      
-      if (this.errorTimeout) {
-        clearTimeout(this.errorTimeout);
-      }
-
-      if (!this.errorExpanded) {
-        this.errorTimeout = setTimeout(() => {
-          this.errorMessage = null;
-          this.errorExpanded = false;
-        }, 30 * 1000);
-      }
     },
   }));
 });
