@@ -75,12 +75,21 @@ document.addEventListener("alpine:init", () => {
     async populateSelector() {
       try {
         const response = await fetch(`${window.location.origin}/modelpool`);
+        const responseText = await response.text(); // Get raw response text first
+        
         if (!response.ok) {
-          const errorResBody = await response.json();
-          throw new Error(`Failed to get model pool: ${errorResBody?.detail || 'Unknown error'}`);
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        // Try to parse the response text
+        let responseJson;
+        try {
+          responseJson = JSON.parse(responseText);
+        } catch (parseError) {
+          console.error('Failed to parse JSON:', parseError);
+          throw new Error(`Invalid JSON response: ${responseText}`);
         }
 
-        const responseJson = await response.json();
         const sel = document.querySelector(".model-select");
         if (!sel) {
           throw new Error("Could not find model selector element");
@@ -90,6 +99,9 @@ document.addEventListener("alpine:init", () => {
         sel.innerHTML = '';
           
         const modelDict = responseJson["model pool"];
+        if (!modelDict) {
+          throw new Error("Response missing 'model pool' property");
+        }
 
         Object.entries(modelDict).forEach(([key, value]) => {
           const opt = document.createElement("option");
@@ -106,7 +118,7 @@ document.addEventListener("alpine:init", () => {
         }
       } catch (error) {
         console.error("Error populating model selector:", error);
-        this.errorMessage = error.message;
+        this.errorMessage = `Failed to load models: ${error.message}`;
       }
     },
 
