@@ -14,6 +14,8 @@ document.addEventListener("alpine:init", () => {
     generating: false,
     endpoint: `${window.location.origin}/v1`,
     errorMessage: null,
+    errorExpanded: false,
+    errorTimeout: null,
 
     // performance tracking
     time_till_first: 0,
@@ -166,12 +168,30 @@ document.addEventListener("alpine:init", () => {
         localStorage.setItem("pendingMessage", value);
         this.processMessage(value);
       } catch (error) {
-        console.error('error', error)
-        this.lastErrorMessage = error.message || 'Unknown error on handleSend';
-        this.errorMessage = error.message || 'Unknown error on handleSend';
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 5 * 1000)
+        console.error('error', error);
+        const errorDetails = {
+            message: error.message || 'Unknown error',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+        
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
         this.generating = false;
       }
     },
@@ -288,12 +308,30 @@ document.addEventListener("alpine:init", () => {
           console.error("Failed to save histories to localStorage:", error);
         }
       } catch (error) {
-        console.error('error', error)
-        this.lastErrorMessage = error;
-        this.errorMessage = error;
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 5 * 1000)
+        console.error('error', error);
+        const errorDetails = {
+            message: error.message || 'Unknown error',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+        
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
       } finally {
         this.generating = false;
       }
