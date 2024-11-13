@@ -29,6 +29,11 @@ class InferenceEngine(ABC):
     output_data = await self.infer_tensor(request_id, shard, tokens)
     return output_data 
 
+inference_engine_classes = {
+  "mlx": "MLXDynamicShardInferenceEngine",
+  "tinygrad": "TinygradDynamicShardInferenceEngine",
+  "dummy": "DummyInferenceEngine",
+}
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
   if DEBUG >= 2:
