@@ -3,15 +3,10 @@
 # Get the total memory in MB
 TOTAL_MEM_MB=$(($(sysctl -n hw.memsize) / 1024 / 1024))
 
-# Calculate the maximum limit as 80% of the total memory
+# Set WIRED_LIMIT_MB to 80%
 WIRED_LIMIT_MB=$(($TOTAL_MEM_MB * 80 / 100))
-
-# Calculate the lower bound as 60%-80% of the maximum limit
-WIRED_LWM_MIN=$(($WIRED_LIMIT_MB * 60 / 100))
-WIRED_LWM_MAX=$(($WIRED_LIMIT_MB * 80 / 100))
-
-# Choose a mid-range value for wired_lwm_mb
-WIRED_LWM_MB=$(($WIRED_LWM_MIN + ($WIRED_LWM_MAX - $WIRED_LWM_MIN) / 2))
+# Set  WIRED_LWM_MB to 70%
+WIRED_LWM_MB=$(($TOTAL_MEM_MB * 70 / 100))
 
 # Display the calculated values
 echo "Total memory: $TOTAL_MEM_MB MB"
