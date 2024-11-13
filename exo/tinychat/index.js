@@ -88,16 +88,11 @@ document.addEventListener("alpine:init", () => {
         const sel = document.querySelector('.model-select');
         sel.innerHTML = '';
 
-        // Convert the model pool to an array of [key, value] pairs and sort by name
-        const sortedModels = Object.entries(data["model pool"]).sort((a, b) => 
-          a[1].name.localeCompare(b[1].name)
-        );
-
-        sortedModels.forEach(([key, value]) => {
+        // Use the model pool entries in their original order
+        Object.entries(data["model pool"]).forEach(([key, value]) => {
           const opt = document.createElement("option");
           opt.value = key;
           opt.textContent = `${value.name}${value.downloaded ? ' (downloaded)' : ''}`;
-          opt.classList.add(value.downloaded ? 'model-downloaded' : 'model-not-downloaded');
           sel.appendChild(opt);
         });
       } catch (error) {
