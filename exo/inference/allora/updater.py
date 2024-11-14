@@ -69,7 +69,7 @@ def daterange(start_date, end_date):
 def download_binance_daily_data(pair, training_days, region, download_path):
     base_url = f"https://data.binance.vision/data/spot/daily/klines"
 
-    end_date = date.today() - date.day
+    end_date = date.today()# - date.day
     start_date = end_date - timedelta(days=int(training_days))
     
     global files

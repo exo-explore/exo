@@ -19,6 +19,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
 from exo.models import model_base_shards
 from exo.viz.topology_viz import TopologyViz
+from aiohttp import web
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -192,11 +193,11 @@ async def main():
         output_data, inference_state, completed = await inference_engine.infer_prompt(
             request_id, shard, token
         )
-        return {
+        return web.json_response({
             "token": token,
             "prediction": output_data.tolist(),
             "completed": completed
-        }
+        })
       api.app.router.add_get("/inference/{token}", inference_endpoint)
 
   await asyncio.Event().wait()
