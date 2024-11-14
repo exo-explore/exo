@@ -12,7 +12,8 @@ def run():
         "--follow-imports",
         "--standalone",
         "--output-filename=exo",
-        "--onefile"
+        "--onefile",
+        "--python-flag=no_site"
     ]
 
     if sys.platform == "darwin": 

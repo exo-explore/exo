@@ -108,9 +108,7 @@ def get_repo_root(repo_id: str) -> Path:
   sanitized_repo_id = str(repo_id).replace("/", "--")
   if "Qwen2.5-0.5B-Instruct-4bit" in str(repo_id) and is_frozen():
     root_path = Path(sys.argv[0]).parent/f"models--{sanitized_repo_id}"
-    if DEBUG >= 0: print(f"resources path {root_path}")
     return root_path
-  if DEBUG >= 0: print(f"Getting repo root for {repo_id=} {sanitized_repo_id=}")
   return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"
 
 
