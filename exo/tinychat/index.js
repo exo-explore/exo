@@ -34,6 +34,8 @@ document.addEventListener("alpine:init", () => {
     // Pending message storage
     pendingMessage: null,
 
+    modelPoolInterval: null,
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -43,6 +45,9 @@ document.addEventListener("alpine:init", () => {
       
       // Call populateSelector immediately after initialization
       this.populateSelector();
+      this.modelPoolInterval = setInterval(() => {
+        this.populateSelector();
+      }, 5000);
     },
 
     removeHistory(cstate) {
@@ -83,20 +88,41 @@ document.addEventListener("alpine:init", () => {
       try {
         const response = await fetch(`${window.location.origin}/modelpool`);
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP error! status: ${response.status}\n${errorText}`);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const data = await response.json();
+        console.log("Model pool data:", data);
+        
         const sel = document.querySelector('.model-select');
-        sel.innerHTML = '';
-
-        // Use the model pool entries in their original order
-        Object.entries(data["model pool"]).forEach(([key, value]) => {
-          const opt = document.createElement("option");
-          opt.value = key;
-          opt.textContent = `${value.name}${value.downloaded ? ' (downloaded)' : ''}`;
-          sel.appendChild(opt);
+        
+        // Only create options if they don't exist
+        if (sel.children.length === 0) {
+          Object.entries(data["model pool"]).forEach(([key, value]) => {
+            const opt = document.createElement("option");
+            opt.value = key;
+            opt.dataset.modelName = value.name;  // Store base name in dataset
+            opt.textContent = value.name;
+            sel.appendChild(opt);
+          });
+        }
+        
+        // Update existing options text
+        Array.from(sel.options).forEach(opt => {
+          const modelInfo = data["model pool"][opt.value];
+          if (modelInfo) {
+            let displayText = modelInfo.name;
+            if (modelInfo.downloaded) {
+              if (modelInfo.download_percentage === 100) {
+                displayText += ' (downloaded)';
+              } else if (modelInfo.download_percentage != null) {
+                displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
+              }
+            } else if (modelInfo.download_percentage != null && modelInfo.download_percentage > 0) {
+              displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
+            }
+            opt.textContent = displayText;
+          }
         });
       } catch (error) {
         console.error("Error populating model selector:", error);

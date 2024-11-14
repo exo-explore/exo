@@ -19,6 +19,7 @@ from exo.models import build_base_shard, model_cards, get_repo, pretty_name
 from typing import Callable
 import os
 from exo.download.hf.hf_helpers import get_hf_home
+from exo.download.hf.hf_shard_download import HFShardDownloader
 
 
 class Message:
@@ -271,14 +272,30 @@ class ChatGPTAPI:
                 
                 # Check if model supports required engines
                 if all(map(lambda engine: engine in model_info["repo"], required_engines)):
-                    is_downloaded = self.is_model_downloaded(model_name)
-                    if DEBUG >= 2:
-                        print(f"Model {model_name} download status: {is_downloaded}")
-                    
-                    model_pool[model_name] = {
-                        "name": pretty,
-                        "downloaded": is_downloaded
-                    }
+                    # Create a shard for status checking
+                    shard = build_base_shard(model_name, self.inference_engine_classname)
+                    if shard:
+                        downloader = HFShardDownloader()
+                        downloader.current_shard = shard
+                        downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
+                        status = await downloader.get_shard_download_status()
+                        if DEBUG >= 2:
+                            print(f"Download status for {model_name}: {status}")
+                        
+                        # Calculate overall percentage if we have status
+                        download_percentage = None
+                        if status:
+                            percentages = list(status.values())
+                            if percentages:
+                                download_percentage = sum(percentages) / len(percentages)
+                                if DEBUG >= 2:
+                                    print(f"Calculated download percentage for {model_name}: {download_percentage}")
+                        
+                        model_pool[model_name] = {
+                            "name": pretty,
+                            "downloaded": self.is_model_downloaded(model_name),
+                            "download_percentage": download_percentage
+                        }
         
         return web.json_response({"model pool": model_pool})
     except Exception as e:
