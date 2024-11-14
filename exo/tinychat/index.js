@@ -40,6 +40,9 @@ document.addEventListener("alpine:init", () => {
 
       // Start polling for download progress
       this.startDownloadProgressPolling();
+      
+      // Call populateSelector immediately after initialization
+      this.populateSelector();
     },
 
     removeHistory(cstate) {
