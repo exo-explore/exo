@@ -111,19 +111,17 @@ document.addEventListener("alpine:init", () => {
         Array.from(sel.options).forEach(opt => {
           const modelInfo = data["model pool"][opt.value];
           if (modelInfo) {
-            let displayText = modelInfo.name;
-            if (modelInfo.downloaded) {
-              if (modelInfo.download_percentage === 100) {
-                displayText += ' (downloaded)';
-              } else if (modelInfo.download_percentage != null) {
-                displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
+              let displayText = modelInfo.name;
+              if (modelInfo.download_percentage != null) {
+                  if (modelInfo.downloaded) {
+                      displayText += ' (downloaded)';
+                  } else {
+                      displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
+                  }
               }
-            } else if (modelInfo.download_percentage != null && modelInfo.download_percentage > 0) {
-              displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
-            }
-            opt.textContent = displayText;
+              opt.textContent = displayText;
           }
-        });
+      });
       } catch (error) {
         console.error("Error populating model selector:", error);
         this.setError(error);
