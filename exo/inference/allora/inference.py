@@ -25,8 +25,8 @@ class CoinPredictionInferenceEngine(InferenceEngine):
         self.shard = None
         self.shard_downloader = shard_downloader
         self.model = 'LinearRegression'
-        self.training_price_data_path = '/downloads/data.csv'
-        self.trained_model_path = '/downloads/model'
+        self.training_price_data_path = '~/Downloads/data.csv'
+        self.trained_model_path = '~/Downloads/'
         self.token = 'ETH'  # To keep track of the current token
         self.timeframe = '1D'  # Default timeframe```
         self.region = 'US'  # Default region
@@ -66,10 +66,14 @@ class CoinPredictionInferenceEngine(InferenceEngine):
 
     def get_inference(self):
         # Load current data
-        self.ensure_shard()
+        
         current_day_data = download_binance_current_day_data(f"{self.token}USDT", self.region)
-
+        
         X_new = self.load_frame(current_day_data, self.timeframe)
+        print(X_new.tail())
+        print(X_new.shape)
+
+        #self.ensure_shard()
         current_price_pred = self.model.predict(X_new)
         return current_price_pred[0]
 
