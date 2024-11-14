@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 import json
 import os
+import sys
 from urllib.parse import urljoin
 from typing import Callable, Optional, Coroutine, Any, Dict, List, Union, Literal
 from datetime import datetime, timedelta
@@ -17,6 +18,11 @@ from aiofiles import os as aios
 
 T = TypeVar("T")
 
+
+def is_frozen():
+  return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
+    or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
+    or ('__compiled__' in globals())
 
 async def get_local_snapshot_dir(repo_id: str, revision: str = "main") -> Optional[Path]:
   refs_dir = get_repo_root(repo_id)/"refs"
@@ -100,6 +106,11 @@ async def get_auth_headers():
 def get_repo_root(repo_id: str) -> Path:
   """Get the root directory for a given repo ID in the Hugging Face cache."""
   sanitized_repo_id = str(repo_id).replace("/", "--")
+  if "Qwen2.5-0.5B-Instruct-4bit" in str(repo_id) and is_frozen():
+    root_path = Path(sys.argv[0]).parent/f"models--{sanitized_repo_id}"
+    if DEBUG >= 0: print(f"resources path {root_path}")
+    return root_path
+  if DEBUG >= 0: print(f"Getting repo root for {repo_id=} {sanitized_repo_id=}")
   return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"
 
 

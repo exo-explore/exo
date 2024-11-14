@@ -11,13 +11,14 @@ def run():
         "--output-dir=dist",
         "--follow-imports",
         "--standalone",
-        "--output-filename=exo"
+        "--output-filename=exo",
+        "--onefile"
     ]
 
     if sys.platform == "darwin": 
         command.extend([
             "--macos-app-name=exo",
-            "--macos-app-mode=background",
+            "--macos-app-mode=gui",
             "--macos-app-version=0.0.1",
             "--include-module=exo.inference.mlx.models.llama",
             "--include-module=exo.inference.mlx.models.deepseek_v2",

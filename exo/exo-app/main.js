@@ -19,11 +19,6 @@ app.setAboutPanelOptions({
 let tray = null
 let mainWindow = null
 
-const launchBackend = () => {
-  const backendPath = path.join(__dirname, 'backend/exo')
-  execFile(`${backendPath}`)
-}
-
 const createWindow = () => {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -97,7 +92,6 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIcon)
   }
-  launchBackend()
   if (!mainWindow) {
     createWindow()
   }

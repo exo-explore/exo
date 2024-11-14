@@ -14,8 +14,7 @@
     "forge": {
       "packagerConfig": {
         "asar": true,
-        "icon": "images/exo-logo.icns",
-        "extraResource": "./backend/exo"
+        "icon": "images/exo-logo.icns"
       },
       "makers": [
         {
