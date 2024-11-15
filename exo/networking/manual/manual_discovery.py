@@ -112,7 +112,7 @@ class ManualDiscovery(Discovery):
             f"one of the keys in the config file: {[k for k, _ in topology.peers]}"
           )
 
-        peers_in_network: Dict[str, PeerConfig] = topology.peers
+        peers_in_network = topology.peers
         peers_in_network.pop(self.node_id)
 
         self._cached_peers = peers_in_network
