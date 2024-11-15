@@ -208,6 +208,12 @@ With a custom prompt:
 exo run llama-3.2-3b --prompt "What is the meaning of exo?"
 ```
 
+### Model Storage
+
+Models by default are stored in `~/.cache/huggingface/hub`.
+
+You can set a different model storage location by setting the `HF_HOME` env var.
+
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).

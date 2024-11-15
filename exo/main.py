@@ -23,7 +23,7 @@ from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.dummy_inference_engine import DummyInferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
-from exo.models import model_base_shards
+from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 # OKHand.zy add library
 import os 
@@ -183,14 +183,14 @@ async def shutdown(signal, loop):
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   if model_base_shards.get(model_name) :
-    shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
+    inference_class = inference_engine.__class__.__name__
+    shard = build_base_shard(model_name, inference_class)
     if not shard:
       print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
       return
-    tokenizer = await resolve_tokenizer(shard.model_id)
+    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   elif os.path.isdir(model_name):
-    # local model   
-    # local model shard
+    # local model and shard
     model_path = model_name.rstrip('/')
     model_name = model_path.split('/')[-1]
     if os.path.isfile(model_path+'/config.json'):
@@ -212,7 +212,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
   try:
     print(f"Processing prompt: {prompt}")
-    await node.process_prompt(shard, prompt, None, request_id=request_id)
+    await node.process_prompt(shard, prompt, request_id=request_id)
 
     _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
 
