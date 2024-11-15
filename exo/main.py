@@ -23,7 +23,7 @@ from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.dummy_inference_engine import DummyInferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
-from exo.models import build_base_shard, get_repo
+from exo.models import model_cards, build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 # OKHand.zy add library
 import os 
@@ -182,7 +182,7 @@ async def shutdown(signal, loop):
 
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
-  if model_base_shards.get(model_name) :
+  if model_cards.get(model_name):
     inference_class = inference_engine.__class__.__name__
     shard = build_base_shard(model_name, inference_class)
     if not shard:
