@@ -64,10 +64,7 @@ class ManualDiscovery(Discovery):
             self.known_peers[peer_id] = peer
           else:
             if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is not healthy.")
-            try:
-              del self.known_peers[peer_id]
-            except KeyError:
-              pass
+            self.known_peers.pop(peer_id, None)
         except Exception as e:
           if DEBUG_DISCOVERY >= 2: print(f"Exception occured when attempting to add {peer_id=}: {e}")
       await asyncio.sleep(1.0)
@@ -83,8 +80,7 @@ class ManualDiscovery(Discovery):
 
         for peer in peers_to_remove:
           if DEBUG_DISCOVERY >= 2: print(f"{peer} is no longer found in the config but is currently a known peer. Removing from known peers...")
-          try: del self.known_peers[peer]
-          except KeyError: pass
+          self.known_peers.pop(peer, None)
 
       await asyncio.sleep(1.0)
 
