@@ -60,6 +60,10 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     print(f"tokens.ndim: {tokens.ndim}")
     if tokens.ndim == 3:
       h = tokens  # Use directly as hidden states
+
+      # check states alignment
+      align_check = self.layers[0].in_features == h.shape[-1]
+      print(f"align_check {align_check}")
     else:
       h = self.tok_embeddings(tokens)  # Apply token tok_embeddings
 
