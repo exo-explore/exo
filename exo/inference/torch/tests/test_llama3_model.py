@@ -240,7 +240,7 @@ if __name__ == "__main__":
 
   # Sample text for testing
   #prompt = "First letter in the word 'Red'"
-  prompt = "Hello"
+  prompt = "GM, say it back"
   shard_1_hs, shard_1_logits, shard_1_tokens = test_generation_1(shard_model_1, prompt)
 
   print(f"shard_1_hs:\n{shard_1_hs}")
