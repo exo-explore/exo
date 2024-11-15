@@ -23,7 +23,7 @@ from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.dummy_inference_engine import DummyInferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
-from exo.models import model_cards, build_base_shard, get_repo
+from exo.models import model_cards, build_local_model_card, build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 # OKHand.zy add library
 import os 
@@ -62,16 +62,18 @@ print_yellow_exo()
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
-shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check,
-                                                      max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
+
+# default use HF Downloader Model
+shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check,
+                                                      max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
 if args.node_port is None:
-  args.node_port = find_available_port(args.node_host)
+  args.node_port = find_available_port(args.node_host) # 0.0.0.0:49152 ~ 65535
   if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()
@@ -85,6 +87,7 @@ if DEBUG >= 0:
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
+# Default use udp discovery
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(
     args.node_id,
@@ -107,6 +110,7 @@ elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
   discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities))
+
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
 node = StandardNode(
   args.node_id,
@@ -186,7 +190,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     inference_class = inference_engine.__class__.__name__
     shard = build_base_shard(model_name, inference_class)
     if not shard:
-      print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+      print(f"Error: exo Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
       return
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   elif os.path.isdir(model_name):
@@ -197,8 +201,12 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
       with open(model_path+'/config.json', 'r') as file:
         config = json.load(file)
         config_n_layers = config['num_hidden_layers']
+      build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, config_n_layers)
       shard = Shard(model_id=model_path, start_layer=0, end_layer=0, n_layers=config_n_layers)
       tokenizer = await resolve_tokenizer(model_path)
+    else:
+      print(f"Error: Not Find Local model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+      return
   else:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return

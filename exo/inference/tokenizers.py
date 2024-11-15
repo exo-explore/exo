@@ -26,7 +26,7 @@ async def resolve_tokenizer(model_id: str):
   local_path = await get_local_snapshot_dir(model_id)
   if not local_path: # local model path
     local_path = model_id.rstrip('/')
-    model_id = 'local/'+str(local_path.split('/')[-1])
+    model_id = 'Local/'+str(local_path.split('/')[-1])
 
   if DEBUG >= 2: print(f"Checking if local path exists to load tokenizer from local {local_path=}")
   try:
