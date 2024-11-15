@@ -119,7 +119,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
       ):
         remapped_state_dict[key] = value
 
-    if paried_lmhead and shard.is_last_layer():
+    if paried_lmhead:
       remapped_state_dict['model.output.weight'] = paried_embed_weight
 
     model.load_state_dict(remapped_state_dict, strict=False)
