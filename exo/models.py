@@ -349,8 +349,8 @@ model_cards = {
         },
     },
 
-  # dummy
-  "dummy": { "layers": 8, "repo": { "DummyInferenceEngine": "dummy", }, },
+    # dummy
+    "dummy": { "layers": 8, "repo": { "DummyInferenceEngine": "dummy", }, },
 }
 
 pretty_name = {
