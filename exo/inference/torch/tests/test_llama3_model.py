@@ -192,7 +192,7 @@ def test_generation_2(shard_model, tokens, hidden_state):
 
   print(f"generated_tokens: {generated_tokens}")
 
-  print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens)}\n\n\n")
+  print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(logit.squeeze(-1).tolist())}\n\n\n")
 
   return hidden_states, logits
 
