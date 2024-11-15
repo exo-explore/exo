@@ -40,7 +40,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def sample(self, x, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
     y = mx.array(x)
     logits = y[:, -1, :]
-    out = np.array(sample_logits(logits, temp=temp, top_p=top_p))
+    out = np.array(sample_logits(logits, temp=temp, top_p=top_p), dtype=int)
     return out
 
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
@@ -53,7 +53,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     tokens = await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.decode, tokens)
     return tokens
     
-  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> np.ndarray:
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
     output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, self.model, mx.array(input_data), request_id))
     return output_data
@@ -62,7 +62,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    model_path = await self.shard_downloader.ensure_shard(shard)
+    model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
 
     if self.shard != shard:
       loop = asyncio.get_running_loop()
