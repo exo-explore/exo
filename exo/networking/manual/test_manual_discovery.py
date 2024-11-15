@@ -41,6 +41,10 @@ class TestManualDiscovery(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.peer1 = mock.AsyncMock()
         self.peer2 = mock.AsyncMock()
+
+        self.peer1.id = mock.MagicMock(return_value="node2")
+        self.peer2.id = mock.MagicMock(return_value="node1")
+
         self.peer1.connect = mock.AsyncMock()
         self.peer2.connect = mock.AsyncMock()
         self.discovery1 = ManualDiscovery(
