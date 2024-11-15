@@ -56,19 +56,12 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     encoder_mask: Optional[torch.Tensor] = None,
     input_pos: Optional[torch.Tensor] = None,
   ) -> Union[torch.Tensor, List[torch.Tensor]]:
-    # for captured hidden states 
-    hidden = []
-
     # Determine the type of input and shape
     print(f"tokens.ndim: {tokens.ndim}")
     if tokens.ndim == 3:
       h = tokens  # Use directly as hidden states
     else:
       h = self.tok_embeddings(tokens)  # Apply token tok_embeddings
-
-      # capture tok hidden state, if needed
-      if 0 in self.output_hidden_states:
-        hidden.append(h)
 
     seq_len = h.shape[1]
 
@@ -81,9 +74,13 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     )
 
     # Initialize a list to capture hidden states if requested
-    hidden = []
+    # for captured hidden states
+    hidden = None
+
     for i in range(self.shard.start_layer, self.shard.end_layer+1):
-      layer = self.layers[i] 
+      layer = self.layers[i]
+
+      print(f"\nhidden layer in H[{i}]\n{h}\n")
 
       # Process through each transformer layer
       h = layer(
@@ -94,12 +91,13 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
         input_pos=input_pos,
       )
 
-      # capture wanted hidden states
-      if i in self.output_hidden_states:
-        hidden.append(h)
+      # for shard model just capture the last hs computed
+      if i == self.shard.end_layer:
+        hidden = h
 
-      print(f"\n\n\nhidden layer H[{i}]\n{h}\n\n\n")
+      print(f"\nhidden layer out H[{i}]->H[{i+1}]\n{h}\n")
 
+    print(f"last hidden: {hidden}")
     # Apply normalization
     h = self.norm(h)
 
@@ -110,7 +108,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
         output = self.output(h).float()
 
     # Return list if hidden states are requested
-    output = output if not hidden else [*hidden, output]
+    output = [hidden, output]
     print(f"\n\noutput {output}\n\n")
     return output
 
@@ -207,8 +205,8 @@ class ShardedLlamaModel(nn.Module):
     shard: Shard,
     tokenizer: Any,
     device: torch.device=torch.device("cpu"),
-    hidden_states: Optional[torch.Tensor] = None,
-    is_causal=True
+    is_causal=True,
+    use_cache=False
   ):
     super(ShardedLlamaModel, self).__init__()
 
@@ -217,6 +215,7 @@ class ShardedLlamaModel(nn.Module):
     self.config = config
     self.model = LlamaModel(config, shard, is_causal)
     self.device = device
+    self.use_cache = use_cache
 
   def generate(
     self,
@@ -234,13 +233,19 @@ class ShardedLlamaModel(nn.Module):
     """
     print(self.shard)
     print(self.shard.is_last_layer())
-    if not self.shard.is_last_layer():
-      self.model.output_hidden_states = [self.shard.end_layer]
 
     if tokens.ndim == 1:
       tokens = tokens.view(1, -1)
 
-    _, tokens_length = tokens.size()
+    bsz, tokens_length = tokens.size()
+
+    # setup cache
+    if not self.model.caches_are_enabled() and self.use_cache:
+      self.model.setup_caches(bsz, torch.float, decoder_max_seq_len=self.model.decoder_max_cache_seq_len)
+
+    if not self.shard.is_last_layer():
+      self.model.output_hidden_states = [self.shard.end_layer]
+
     total_response_length = tokens_length + max_seq_len
     resp_max_seq_len = (
       total_response_length
@@ -323,9 +328,9 @@ class ShardedLlamaModel(nn.Module):
     print(f"\nmodel_output: {model_output}")
 
     if isinstance(model_output, list):
-      model_logits = model_output[-1]
+      model_logits = model_output[1]
       model_output.pop() # remove logits
-      model_hs = model_output[-1] # get last hidden state
+      model_hs = model_output[0] # get last hidden state
     else:
       model_logits = model_output
       model_hs = None

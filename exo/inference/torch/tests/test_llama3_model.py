@@ -2,7 +2,8 @@
 Test of pytorch based llama3 model
 """
 from pathlib import Path
-
+import gc
+import time
 import torch
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
@@ -246,14 +247,19 @@ if __name__ == "__main__":
   print(f"shard_1_logits:\n{shard_1_logits}")
   print(f"shard_1_tokens:\n{shard_1_tokens}")
 
+  gc.collect()
+  torch.cuda.empty_cache()
+
+  if shard_model_1.model.caches_are_enabled():
+    shard_model_1.model.reset_caches()
+
   del shard_model_1.model
   del shard_model_1
+
+  #time.sleep(10)
 
   shard_model_2 = ShardedLlamaModel(config, shard_2, llama_tokenizer)
   print(f"\nshard_model_2: {shard_model_2}")
   load_model_weights_torchtune(cache_dir, shard_2, shard_model_2)
   shard_2_hs, shard_2_logits = test_generation_2(shard_model_2, shard_1_tokens, shard_1_hs)
-
-  print(f"shard_2_hs:\n{shard_2_hs}")
-  print(f"shard_2_logits:\n{shard_2_logits}")
 
