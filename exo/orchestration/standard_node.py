@@ -461,3 +461,9 @@ class StandardNode(Node):
   @property
   def current_topology(self) -> Topology:
     return self.topology
+
+  async def preload_models(self, shards: List[Shard]) -> None:
+    preload_tasks = []
+    for shard in shards:
+      preload_tasks.append(asyncio.create_task(self.inference_engine.preload_model(shard)))
+    await asyncio.gather(*preload_tasks)

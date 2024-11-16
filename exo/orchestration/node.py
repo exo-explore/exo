@@ -45,3 +45,7 @@ class Node(ABC):
   @abstractmethod
   def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
     pass
+
+  @abstractmethod
+  async def preload_models(self, shards: List[Shard]) -> None:
+    pass
