@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import signal
 import json
-import logging
 import time
 import traceback
 import uuid

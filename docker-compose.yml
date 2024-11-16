@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  exo_1:
+    build:
+      context: .
+    environment:
+      - PYTHONUNBUFFERED=1
+    # mem_limit: 8G
+    # mem_reservation: 4G
+    ports:
+      - "8001:8000"  # ChatGPT API port - changed to avoid conflict
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface  # Cache HF models
+    command: ["exo", "--inference-engine", "mlx", "--disable-tui"]
+    networks:
+      - exo_network
+
+  exo_2:
+    build:
+      context: .
+    environment:
+      - PYTHONUNBUFFERED=1
+    # mem_limit: 8G
+    # mem_reservation: 4G
+    ports:
+      - "8002:8000"  # ChatGPT API port - changed to avoid conflict
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface  # Cache HF models
+    command: ["exo", "--inference-engine", "mlx", "--disable-tui"]
+    networks:
+      - exo_network
+
+networks:
+  exo_network:
+    driver: bridge
