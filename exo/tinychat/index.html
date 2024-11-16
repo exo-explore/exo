@@ -30,8 +30,8 @@
         <div class="toast-header">
             <span class="toast-error-message" x-text="errorMessage.basic"></span>
             <div class="toast-header-buttons">
-                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }" 
-                        class="toast-expand-button" 
+                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }"
+                        class="toast-expand-button"
                         x-show="errorMessage.stack">
                     <span x-text="errorExpanded ? 'Hide Details' : 'Show Details'"></span>
                 </button>
