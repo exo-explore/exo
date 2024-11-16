@@ -129,17 +129,20 @@ node.on_token.register("update_topology_viz").on_next(
 )
 
 
-def preemptively_start_download(request_id: str, opaque_status: str):
-  try:
-    status = json.loads(opaque_status)
-    if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
-      current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
-      if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
-      asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
-  except Exception as e:
-    if DEBUG >= 2:
-      print(f"Failed to preemptively start download: {e}")
-      traceback.print_exc()
+async def preemptively_start_download(request_id: str, opaque_status: str):
+    try:
+        status = json.loads(opaque_status)
+        if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
+            current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
+            if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
+            await shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__)
+            await node.preload_models([current_shard])
+            return current_shard
+    except Exception as e:
+        if DEBUG >= 2:
+            print(f"Failed to preemptively start download: {e}")
+            traceback.print_exc()
+    return None
 
 
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
@@ -225,18 +228,6 @@ async def main():
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
-
-  if args.preload_models:
-    models_to_preload = [Shard.from_dict(model_base_shards[model_name][inference_engine.__class__.__name__]) 
-                         for model_name in args.preload_models.split(',')]
-    for shard in models_to_preload:
-      current_shard = preemptively_start_download(str(uuid.uuid4()), json.dumps({
-        "type": "node_status", 
-        "status": "start_process_prompt",
-        "shard": shard.to_dict()
-      }))
-      if current_shard:
-        await node.preload_models([current_shard])
 
 
 def run():
