@@ -25,9 +25,10 @@ TOP_K = 20
 TEMP = 0.6
 TOP_P = 0.9
 
-class TorchDynamicShardInferenceEngine(InferenceEngine):
+class HFDynamicShardInferenceEngine(InferenceEngine):
   """
-  Torch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
+  HuggingFace Dynamic Shard Inference Engine 
+  Performing model inference with sharded Pytorch based HuggingFace models.
   """
 
   def __init__(self, shard_downloader: HFShardDownloader):
