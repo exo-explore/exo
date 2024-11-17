@@ -223,7 +223,8 @@ class ChatGPTAPI:
                 if all(map(lambda engine: engine in model_info["repo"], required_engines)):
                     shard = build_base_shard(model_name, self.inference_engine_classname)
                     if shard:
-                        downloader = HFShardDownloader()
+                        # Use HFShardDownloader to check status without initiating download
+                        downloader = HFShardDownloader(quick_check=True)  # quick_check=True prevents downloads
                         downloader.current_shard = shard
                         downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
                         status = await downloader.get_shard_download_status()
