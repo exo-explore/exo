@@ -23,7 +23,7 @@ from exo.inference.torch.models.llm_utils import (
 
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 TEMP = 0.6
-TOP_K = 300
+TOP_K = 25
 MAX_GEN_TOKENS = 50
 
 def main(model, prompt: str, device: torch.device=torch.device("cpu")):
@@ -107,7 +107,6 @@ if __name__ == "__main__":
   # Initialize tokenizer
   llama_tokenizer_path = f"{cache_dir}/original/tokenizer.model"
   llama_tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
-  print(llama_tokenizer.stop_tokens)
 
   # Initialize LlamaModel with config and tokenizer
   # device = torch.device("cuda")

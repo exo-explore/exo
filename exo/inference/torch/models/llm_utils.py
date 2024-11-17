@@ -76,7 +76,7 @@ def check_weights(model, state_dict):
   model_state_dict = model.state_dict()
   for name, param in model_state_dict.items():
     if name in state_dict:
-      print(f"\nchecking {name}\n")
+      # print(f"\nchecking {name}\n")
       loaded_param = state_dict[name]
       if param.shape != loaded_param.shape:
         print(f"Shape mismatch for {name}: expected {param.shape}, got {loaded_param.shape}")
@@ -115,9 +115,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   paried_embed_weight = None
   for key, value in full_state_dict.items():
     # load layer by shard
-    lnrgx = re.findall(r"model\.layers\.(\d+).*", key)
-    layer_num = int(lnrgx[0]) if len(lnrgx) > 0 else None
-    if layer_num in shard_layer_range:
+    for layer_num in range(shard.start_layer, shard.end_layer + 1):
       # change input layer norm to sa_norm for torchtune
       re_iln = re.findall(rf"model.layers\.{layer_num}\.(input_layernorm)\.weight", key)
       if len(re_iln) != 0:
@@ -153,7 +151,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         remapped_state_dict[new_key] = value
 
     # saving embed for paired weights
-    elif key == "model.embed_tokens.weight":
+    if key == "model.embed_tokens.weight":
       paried_embed_weight = value
       # change name for torchtune
       # print("model.embed_tokens.weight == model.tok_embeddings.weight")
@@ -180,7 +178,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   # if DEBUG >= 7:
   # print("\n--- checking weights ----\n")
   # print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
-  # check_weights(model, remapped_state_dict)
+  check_weights(model, remapped_state_dict)
 
 
 class MultiLayerPreceptron(nn.Module):

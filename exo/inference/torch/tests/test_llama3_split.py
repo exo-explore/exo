@@ -22,7 +22,7 @@ from exo.inference.torch.models.llm_utils import (
 
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 TEMP = 0.6
-TOP_K = 300
+TOP_K = 25
 
 def test_generation_1(shard_model, prompt):
   """
@@ -90,7 +90,7 @@ def test_generation_2(shard_model, in_tokens, hidden_state):
 if __name__ == "__main__":
   print("\nTesting generation:")
 
-  prompt = "What is the capital of france? Say it in one word and nothing else, please."
+  prompt = "Say 'Hello'"
 
   # Get the path to the model files from the Hugging Face cache
   cache_dir = Path(snapshot_download(MODEL_NAME))

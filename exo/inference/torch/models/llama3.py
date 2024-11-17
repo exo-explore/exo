@@ -230,7 +230,7 @@ class ShardedLlamaModel(nn.Module):
     self.device = device if device is not None else torch.device("cpu")
     self.use_cache = self.config.get("use_cache", False)
     self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
-    self.max_seq_len = max_seq_len if max_seq_len is not None else 4096
+    self.max_seq_len = self.config["max_seq_len"]
 
   def generate(self, tokens: torch.Tensor, hidden_state: Optional[torch.Tensor] = None) -> Tuple[Optional[List[torch.Tensor]], Optional[torch.Tensor]]:
     """
