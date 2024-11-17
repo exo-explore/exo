@@ -66,6 +66,7 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
   print(f"tokens prompt: {prompt}")
   print(f"pad_id: {llama_tokenizer.pad_id}")
 
+  
   generated_tokens, _ = ttg.generate(
     model=model.model,
     prompt=prompt,
@@ -75,6 +76,7 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
     top_k=TOP_K,
     stop_tokens=llama_tokenizer.stop_tokens,
   )
+
   generated_tokens = generated_tokens[:, -MAX_GEN_TOKENS:].tolist()
 
   print(f"generated_tokens: {generated_tokens}")

@@ -152,27 +152,28 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
 
     # saving embed for paired weights
     if key == "model.embed_tokens.weight":
-      paried_embed_weight = value
+      # paried_embed_weight = value
       # change name for torchtune
       # print("model.embed_tokens.weight == model.tok_embeddings.weight")
       remapped_state_dict["model.tok_embeddings.weight"] = value
 
-    elif key == "lm_head.weight":
-      paried_lmhead = False
+    # elif key == "lm_head.weight":
+      # paried_lmhead = False
 
   # get everything else except layers, embed_tokens and lm_head
   if len(re.findall(r"model\.layers\..*", key)) == 0 and key != "model.embed_tokens.weight" and key != "lm_head.weight":
     # print(f"loading other weight: {key}")
     remapped_state_dict[key] = value
 
-  if paried_lmhead:
+  # if paried_lmhead:
     # print(f"model.output.weight: {paried_embed_weight}")
-    remapped_state_dict["model.output.weight"] = paried_embed_weight
+    # remapped_state_dict["model.output.weight"] = paried_embed_weight
 
   # print("\nRemapped state dict\n")
   # for rsdk in remapped_state_dict.keys():
   #   print(f"--  {rsdk}")
-
+  del state_dict
+  del full_state_dict
   model.load_state_dict(remapped_state_dict, strict=False)
 
   # if DEBUG >= 7:

@@ -23,6 +23,8 @@ from exo.inference.torch.models.llm_utils import (
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 TEMP = 0.6
 TOP_K = 25
+MAX_NEW_TOKENS=10
+
 
 def test_generation_1(shard_model, prompt):
   """
@@ -52,10 +54,7 @@ def test_generation_1(shard_model, prompt):
 
 def test_generation_2(shard_model, in_tokens, hidden_state):
   print("Generate with the rest of layers")
-  hidden_states, logits = shard_model.generate(
-    tokens=in_tokens,
-    hidden_state=hidden_state
-  )
+  hidden_states, logits = shard_model.generate(tokens=in_tokens, hidden_state=hidden_state)
 
   if hidden_states is not None:
     print(f"hidden_states {hidden_states.shape}: {hidden_states}")
@@ -90,7 +89,7 @@ def test_generation_2(shard_model, in_tokens, hidden_state):
 if __name__ == "__main__":
   print("\nTesting generation:")
 
-  prompt = "Say 'Hello'"
+  prompt = "Hello, just say 'Hello' back nothing else"
 
   # Get the path to the model files from the Hugging Face cache
   cache_dir = Path(snapshot_download(MODEL_NAME))
@@ -100,32 +99,34 @@ if __name__ == "__main__":
 
   # Setup shard
   n_layers = int(config["num_layers"])
-  s1_end = int(n_layers/2)
-  shard_1 = Shard(
-    model_id=MODEL_NAME,
-    start_layer=0,
-    end_layer=s1_end,
-    n_layers=n_layers
-  )
+  s1_end = int(n_layers / 2)
+  shard_1 = Shard(model_id=MODEL_NAME, start_layer=0, end_layer=s1_end, n_layers=n_layers)
 
-  shard_2 = Shard(
-    model_id=MODEL_NAME,
-    start_layer=s1_end + 1,
-    end_layer=n_layers - 1,
-    n_layers=n_layers
-  )
+  shard_2 = Shard(model_id=MODEL_NAME, start_layer=s1_end + 1, end_layer=n_layers - 1, n_layers=n_layers)
 
   # Initialize tokenizer
   llama_tokenizer_path = f"{cache_dir}/original/tokenizer.model"
   llama_tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
 
   # Initialize LlamaModel with config and tokenizer
-  shard_model_1 = ShardedLlamaModel(config, shard_1, llama_tokenizer)
+  shard_model_1 = ShardedLlamaModel(
+    config,
+    shard_1,
+    llama_tokenizer,
+    None,
+    MAX_NEW_TOKENS
+  )
   print(f"\nshard_model_1: {shard_model_1}")
   load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
   shard_1_hs, shard_1_tokens = test_generation_1(shard_model_1, prompt)
 
-  shard_model_2 = ShardedLlamaModel(config, shard_2, llama_tokenizer)
+  shard_model_2 = ShardedLlamaModel(
+    config,
+    shard_2,
+    llama_tokenizer,
+    None,
+    MAX_NEW_TOKENS
+  )
   print(f"\nshard_model_2: {shard_model_2}")
   load_model_weights_torchtune(cache_dir, shard_2, shard_model_2)
   test_generation_2(shard_model_2, shard_1_tokens, shard_1_hs)

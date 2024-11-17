@@ -14,11 +14,7 @@ from torchtune.models.llama3_1 import Llama3ScaledRoPE
 from torchtune.modules.attention_utils import _MaskType
 
 from exo.inference.shard import Shard
-from exo.inference.torch.models.llm_utils import (
-  MultiLayerPreceptron,
-  RMSNorm,
-  get_torch_dtype
-)
+from exo.inference.torch.models.llm_utils import MultiLayerPreceptron, RMSNorm, get_torch_dtype
 
 
 class ShardTransformerDecoder(ttm.TransformerDecoder):
@@ -27,6 +23,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
   Custom version of torchtune TransformerDecoder to allow for
   sharding of models and passing of hidden layers between shards
   """
+
   def __init__(
     self,
     *,
@@ -55,6 +52,44 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
 
     self.shard = shard
 
+  def setup_caches(
+    self,
+    batch_size: int,
+    dtype: torch.dtype,
+    *,
+    encoder_max_seq_len: Optional[int] = None,
+    decoder_max_seq_len: Optional[int] = None,
+  ):
+    """
+    modified version for shard
+
+    assume just decoder layers
+    """
+    if decoder_max_seq_len is not None:
+      self.decoder_max_cache_seq_len = decoder_max_seq_len
+    else:
+      self.decoder_max_cache_seq_len = self.max_seq_len
+
+    for layer in self.layers:
+      if layer is not None:
+        layer.setup_caches(
+          batch_size,
+          dtype,
+          encoder_max_seq_len=self.encoder_max_cache_seq_len,
+          decoder_max_seq_len=self.decoder_max_cache_seq_len,
+        )
+  
+  def caches_are_enabled(self) -> bool:
+    """
+    modified version for shard
+    """
+    if self.layers[0] is not None:
+      return self.layers[0].caches_are_enabled()
+    else:
+      for layer in self.layers:
+        if layer is not None:
+          return layer.caches_are_enabled()
+  
   def forward(
     self,
     tokens: torch.Tensor,
@@ -90,18 +125,19 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       print(f"\nhidden layer in H[{i}]\n{h}\nmask\n{mask}\ninput_pos\n{input_pos}\n{self.output_hidden_states}\n")
 
       # Process through each transformer layer
-      h = layer(
-        h,
-        mask=mask,
-        encoder_input=encoder_input,
-        encoder_mask=encoder_mask,
-        input_pos=input_pos,
-      )
+      with torch.no_grad():
+        h = layer(
+          h,
+          mask=mask,
+          encoder_input=encoder_input,
+          encoder_mask=encoder_mask,
+          input_pos=input_pos,
+        )
 
-      if i in self.output_hidden_states:
-        hidden.append(h)
+        if i in self.output_hidden_states:
+          hidden.append(h)
 
-      print(f"\nhidden layer out H[{i}]->H[{i + 1}]\n{h}\n")
+        print(f"\nhidden layer out H[{i}]->H[{i + 1}]\n{h}\n")
 
     # Apply normalization
     h = self.norm(h)
@@ -116,6 +152,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     output = [hidden[-1], output] if hidden else output
     print(f"\n\noutput {output}\n\n")
     return output
+
 
 def LlamaModel(config: dict, shard: Shard):
   """
@@ -132,8 +169,10 @@ def LlamaModel(config: dict, shard: Shard):
     scale_factor=scale_factor,
   )
 
-  layers = []
-  for _ in range(shard.n_layers):
+  # hack to align sharded weights with layers
+  # fill unused layer positions with None
+  layers = [None for _ in range(shard.n_layers)]
+  for i in range(shard.start_layer, shard.end_layer + 1):
     self_attn = ttm.MultiHeadAttention(
       embed_dim=config["embed_dim"],
       num_heads=config["num_heads"],
@@ -164,11 +203,7 @@ def LlamaModel(config: dict, shard: Shard):
       pos_embeddings=rope,
     )
 
-    mlp = MultiLayerPreceptron(
-      config["embed_dim"],
-      config["intermediate_dim"],
-      config["hidden_act"]
-    )
+    mlp = MultiLayerPreceptron(config["embed_dim"], config["intermediate_dim"], config["hidden_act"])
 
     layer = ttm.TransformerSelfAttentionLayer(
       attn=self_attn,
@@ -177,16 +212,18 @@ def LlamaModel(config: dict, shard: Shard):
       mlp_norm=RMSNorm(config["embed_dim"], eps=config["norm_eps"]),
     )
 
-    layers.append(layer)
-  
+    layers[i] = layer
+
+  for i in range(len(layers)):
+    print(f"layers[{i}]: {layers[i]}")
   layers = nn.ModuleList(layers)
   tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
-  # output_proj = ttm.TiedLinear(tok_embeddings)
-  output_proj = nn.Linear(
-    config["embed_dim"],
-    config["vocab_size"],
-    bias=config["attn_bias"],
-  )
+  output_proj = ttm.TiedLinear(tok_embeddings)
+  # output_proj = nn.Linear(
+  #   config["embed_dim"],
+  #   config["vocab_size"],
+  #   bias=config["attn_bias"],
+  # )
 
   return ShardTransformerDecoder(
     tok_embeddings=tok_embeddings,
@@ -197,7 +234,7 @@ def LlamaModel(config: dict, shard: Shard):
     head_dim=config["head_dim"],
     norm=RMSNorm(config["embed_dim"], eps=config["norm_eps"]),
     output=output_proj,
-    num_layers=config["num_layers"]
+    num_layers=config["num_layers"],
   )
 
   # return ttm.TransformerDecoder(
@@ -214,13 +251,14 @@ def LlamaModel(config: dict, shard: Shard):
 
 class ShardedLlamaModel(nn.Module):
   def __init__(
-      self,
-      config: dict,
-      shard: Shard,
-      tokenizer: Any,
-      device: Optional[torch.device] = None,
-      max_seq_len: Optional[int] = None
-    ):
+    self, 
+    config: dict, 
+    shard: Shard, 
+    tokenizer: Any, 
+    device: Optional[torch.device] = None,
+    max_new_tokens: Optional[int] = 10,
+    use_cache: Optional[bool] = False
+  ):
     super(ShardedLlamaModel, self).__init__()
 
     self.tokenizer = tokenizer
@@ -228,11 +266,19 @@ class ShardedLlamaModel(nn.Module):
     self.config = config
     self.dtype = get_torch_dtype(self.config["torch_dtype"]) if "torch_dtype" in self.config else torch.float
     self.device = device if device is not None else torch.device("cpu")
-    self.use_cache = self.config.get("use_cache", False)
-    self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
+    self.use_cache = self.config.get("use_cache", False) if not use_cache else use_cache
+    
+    
+    self.max_new_tokens = max_new_tokens
     self.max_seq_len = self.config["max_seq_len"]
 
-  def generate(self, tokens: torch.Tensor, hidden_state: Optional[torch.Tensor] = None) -> Tuple[Optional[List[torch.Tensor]], Optional[torch.Tensor]]:
+    self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
+
+  def generate(
+    self,
+    tokens: torch.Tensor,
+    hidden_state: Optional[torch.Tensor] = None
+  ) -> Tuple[Optional[List[torch.Tensor]], Optional[torch.Tensor]]:
     """
     Generate logits and/or hidden_states from llama model
 
@@ -241,6 +287,7 @@ class ShardedLlamaModel(nn.Module):
       hidden_state (torch.Tensor, optional) - hidden state from last activated hidden layer, if any
       max_seq_len (int) - Max sequence length of generation, default 4096
     """
+    
     print(self.shard)
     print(self.shard.is_last_layer())
 
@@ -252,7 +299,11 @@ class ShardedLlamaModel(nn.Module):
     # setup cache
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
-        self.model.setup_caches(bsz, self.dtype, decoder_max_seq_len=self.model.decoder_max_cache_seq_len)
+        self.model.setup_caches(
+          bsz,
+          self.dtype,
+          decoder_max_seq_len=tokens.numel() + self.max_new_tokens
+        )
 
     if not self.shard.is_last_layer():
       self.model.output_hidden_states = [self.shard.end_layer]
@@ -282,7 +333,7 @@ class ShardedLlamaModel(nn.Module):
       ).unsqueeze(0)
 
       input_pos = torch.arange(0, total_response_length, device=generated_tokens.device).unsqueeze(0)
-      
+
     if self.model.caches_are_enabled():
       curr_masks = masks[:, :tokens_length]
     else:
