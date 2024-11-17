@@ -24,7 +24,7 @@ from exo.inference.torch.models.llm_utils import (
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 TEMP = 0.6
 TOP_K = 25
-MAX_GEN_TOKENS = 50
+MAX_NEW_TOKENS = 10
 
 def main(model, prompt: str, device: torch.device=torch.device("cpu")):
   # Tokenize input text
@@ -70,14 +70,14 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
   generated_tokens, _ = ttg.generate(
     model=model.model,
     prompt=prompt,
-    max_generated_tokens=MAX_GEN_TOKENS,
+    max_generated_tokens=MAX_NEW_TOKENS,
     pad_id=llama_tokenizer.pad_id,
     temperature=TEMP,
     top_k=TOP_K,
     stop_tokens=llama_tokenizer.stop_tokens,
   )
 
-  generated_tokens = generated_tokens[:, -MAX_GEN_TOKENS:].tolist()
+  generated_tokens = generated_tokens[:, -MAX_NEW_TOKENS:].tolist()
 
   print(f"generated_tokens: {generated_tokens}")
 
@@ -113,8 +113,16 @@ if __name__ == "__main__":
   # Initialize LlamaModel with config and tokenizer
   # device = torch.device("cuda")
   device = None
-  shard_model_1 = ShardedLlamaModel(config, shard_1, llama_tokenizer, device=device)
+  shard_model_1 = ShardedLlamaModel(
+    config, 
+    shard_1, 
+    llama_tokenizer,
+    device,
+    MAX_NEW_TOKENS,
+    use_cache=True
+  )
   print(f"\nshard_model_1: {shard_model_1}")
+  exit()
 
   load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
 

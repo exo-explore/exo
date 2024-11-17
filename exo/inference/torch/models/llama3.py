@@ -70,6 +70,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     else:
       self.decoder_max_cache_seq_len = self.max_seq_len
 
+    lic = 0
     for layer in self.layers:
       if layer is not None:
         layer.setup_caches(
@@ -78,6 +79,9 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
           encoder_max_seq_len=self.encoder_max_cache_seq_len,
           decoder_max_seq_len=self.decoder_max_cache_seq_len,
         )
+
+        print(f"Setup cache for layer {lic}")
+        lic+=1
   
   def caches_are_enabled(self) -> bool:
     """
@@ -266,7 +270,7 @@ class ShardedLlamaModel(nn.Module):
     self.config = config
     self.dtype = get_torch_dtype(self.config["torch_dtype"]) if "torch_dtype" in self.config else torch.float
     self.device = device if device is not None else torch.device("cpu")
-    self.use_cache = self.config.get("use_cache", False) if not use_cache else use_cache
+    self.use_cache = use_cache if use_cache else self.config.get("use_cache", False)
     
     
     self.max_new_tokens = max_new_tokens
@@ -287,10 +291,6 @@ class ShardedLlamaModel(nn.Module):
       hidden_state (torch.Tensor, optional) - hidden state from last activated hidden layer, if any
       max_seq_len (int) - Max sequence length of generation, default 4096
     """
-    
-    print(self.shard)
-    print(self.shard.is_last_layer())
-
     if tokens.ndim == 1:
       tokens = tokens.view(1, -1)
 
@@ -299,6 +299,7 @@ class ShardedLlamaModel(nn.Module):
     # setup cache
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
+        print("\n\nSETTING UP CACHES\n\n")
         self.model.setup_caches(
           bsz,
           self.dtype,

@@ -114,7 +114,8 @@ if __name__ == "__main__":
     shard_1,
     llama_tokenizer,
     None,
-    MAX_NEW_TOKENS
+    MAX_NEW_TOKENS,
+    use_cache=True
   )
   print(f"\nshard_model_1: {shard_model_1}")
   load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
@@ -125,7 +126,8 @@ if __name__ == "__main__":
     shard_2,
     llama_tokenizer,
     None,
-    MAX_NEW_TOKENS
+    MAX_NEW_TOKENS,
+    use_cache=True
   )
   print(f"\nshard_model_2: {shard_model_2}")
   load_model_weights_torchtune(cache_dir, shard_2, shard_model_2)
