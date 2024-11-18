@@ -14,7 +14,6 @@ from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEv
 from exo.inference.shard import Shard
 import aiofiles
 from aiofiles import os as aios
-import traceback
 
 T = TypeVar("T")
 
@@ -468,7 +467,5 @@ async def get_file_download_percentage(
             return (local_size / remote_size) * 100 if remote_size > 0 else 0
         
     except Exception as e:
-        if DEBUG >= 2: 
-            print(f"Error checking file download status for {file_path}: {e}")
-            traceback.print_exc()
+        if DEBUG >= 2: print(f"Error checking file download status for {file_path}: {e}")
         return 0
