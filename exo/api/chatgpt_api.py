@@ -11,11 +11,9 @@ import traceback
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict
-from exo.inference.inference_engine import inference_engine_classes
-from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.models import build_base_shard, model_cards, get_repo, pretty_name
+from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get_supported_models
 from typing import Callable, Optional
 
 
@@ -208,18 +206,7 @@ class ChatGPTAPI:
     return web.json_response({
       "model pool": {
         model_name: pretty_name.get(model_name, model_name) 
-        for model_name in [
-          model_id for model_id, model_info in model_cards.items() 
-          if all(map(
-            lambda engine: engine in model_info["repo"],
-            list(dict.fromkeys([
-              inference_engine_classes.get(engine_name, None) 
-              for engine_list in self.node.topology_inference_engines_pool 
-              for engine_name in engine_list 
-              if engine_name is not None
-            ] + [self.inference_engine_classname]))
-          ))
-        ]
+        for model_name in get_supported_models(self.node.topology_inference_engines_pool)
       }
     })
   
