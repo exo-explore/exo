@@ -19,7 +19,7 @@ commands:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
           command: |
             source env/bin/activate
-            
+
             # Start first instance
             HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout 900 2>&1 | tee output1.log &
             PID1=$!
@@ -47,6 +47,13 @@ commands:
 
             # Check processes before proceeding
             check_processes
+
+            # Special handling for dummy engine
+            if [ "<<parameters.inference_engine>>" = "dummy" ]; then
+              expected_content="This is a dummy response"
+            else
+              expected_content="Michael Jackson"
+            fi
 
             echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
@@ -216,29 +223,29 @@ jobs:
       - checkout
       - run: system_profiler SPHardwareDataType
 
-chatgpt_api_integration_test_tinygrad:
-  #   macos:
-  #     xcode: "16.0.0"
-  #   resource_class: m2pro.large
-  #   steps:
-  #     - checkout
-  #     - run:
-  #         name: Set up Python
-  #         command: |
-  #           brew install python@3.12
-  #           python3.12 -m venv env
-  #           source env/bin/activate
-  #     - run:
-  #         name: Install dependencies
-  #         command: |
-  #           source env/bin/activate
-  #           pip install --upgrade pip
-  #           pip install .
-  #     - run_chatgpt_api_test:
-  #         inference_engine: tinygrad
-  #         model_id: llama-3-8b
-  #         prompt: "Keep responses concise. Who was the king of pop?"
-  #         expected_output: "Michael Jackson"
+# chatgpt_api_integration_test_tinygrad:
+#   macos:
+#     xcode: "16.0.0"
+#   resource_class: m2pro.large
+#   steps:
+#     - checkout
+#     - run:
+#         name: Set up Python
+#         command: |
+#           brew install python@3.12
+#           python3.12 -m venv env
+#           source env/bin/activate
+#     - run:
+#         name: Install dependencies
+#         command: |
+#           source env/bin/activate
+#           pip install --upgrade pip
+#           pip install .
+#     - run_chatgpt_api_test:
+#         inference_engine: tinygrad
+#         model_id: llama-3-8b
+#         prompt: "Keep responses concise. Who was the king of pop?"
+#         expected_output: "Michael Jackson"
 
 workflows:
   version: 2
