@@ -231,14 +231,10 @@ class ChatGPTAPI:
                         if DEBUG >= 2:
                             print(f"Download status for {model_name}: {status}")
                         
-                        # Calculate overall percentage if we have status
-                        download_percentage = None
-                        if status:
-                            percentages = list(status.values())
-                            if percentages:
-                                download_percentage = sum(percentages) / len(percentages)
-                                if DEBUG >= 2:
-                                    print(f"Calculated download percentage for {model_name}: {download_percentage}")
+                        # Get overall percentage from status
+                        download_percentage = status.get("overall") if status else None
+                        if DEBUG >= 2 and download_percentage is not None:
+                            print(f"Overall download percentage for {model_name}: {download_percentage}")
                         
                         model_pool[model_name] = {
                             "name": pretty,
