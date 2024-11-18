@@ -96,6 +96,7 @@ class HFShardDownloader(ShardDownloader):
         return None
             
     try:
+        # If no snapshot directory exists, return None - no need to check remote files
         snapshot_dir = await get_local_snapshot_dir(self.current_repo_id, self.revision)
         if not snapshot_dir:
             if DEBUG >= 2: print(f"No snapshot directory found for {self.current_repo_id}")
