@@ -167,6 +167,8 @@ main {
 .download-progress {
   margin-bottom: 12em;
   overflow-y: auto;
+  min-height: 300px;
+  padding: 2rem;
 }
 .message > pre {
   white-space: pre-wrap;
