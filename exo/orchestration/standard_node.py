@@ -18,6 +18,7 @@ from exo.download.hf.hf_helpers import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
+
 class StandardNode(Node):
   def __init__(
     self,
@@ -101,11 +102,11 @@ class StandardNode(Node):
 
   def get_topology_inference_engines(self) -> List[List[str]]:
     return self.topology_inference_engines_pool
-  
+
   async def encode_prompt(self, shard: Shard, prompt):
     toks = await self.inference_engine.encode(shard, prompt)
     return toks
-  
+
   async def process_result(
     self,
     shard,
@@ -114,7 +115,7 @@ class StandardNode(Node):
   ):
     if request_id not in self.buffered_token_output:
       self.buffered_token_output[request_id] = ([], False)
-    
+
     if request_id not in self.buffered_logits:
       self.buffered_logits[request_id] = []
 
@@ -122,7 +123,7 @@ class StandardNode(Node):
 
     if shard.is_last_layer():
       result = await self.inference_engine.sample(result)
-    
+
     await self.inference_engine.ensure_shard(shard)
     is_finished = result.size == 1 and result.item() == self.inference_engine.tokenizer.eos_token_id or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
 
@@ -131,7 +132,7 @@ class StandardNode(Node):
     if result.size == 1:  # we got a new token out
       self.buffered_token_output[request_id][0].append(result.item())
       self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
-    
+
     if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
     if is_finished:
@@ -196,7 +197,7 @@ class StandardNode(Node):
       return None
     else:
       result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
-      ret = await self.process_result(shard, result, request_id) 
+      ret = await self.process_result(shard, result, request_id)
       return result
 
   async def process_tensor(
@@ -255,7 +256,7 @@ class StandardNode(Node):
     if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
     try:
       result = await self.inference_engine.infer_tensor(request_id, shard, tensor)
-      ret = await self.process_result(shard, result, request_id) 
+      ret = await self.process_result(shard, result, request_id)
       return ret
     except Exception as e:
       print(f"Error processing tensor for shard {shard}: {e}")
@@ -272,7 +273,7 @@ class StandardNode(Node):
       if DEBUG >= 1: print("No partitioning strategy found. Skipping forward.")
       return
 
-    next_partition_index = self.get_partition_index(offset = 1)
+    next_partition_index = self.get_partition_index(offset=1)
     if DEBUG >= 1: print(f"Next partition index: {next_partition_index}")
     if next_partition_index is not None:
       target_id = self.partitioning_strategy.partition(self.topology)[next_partition_index].node_id
@@ -299,7 +300,7 @@ class StandardNode(Node):
     current_partition_index = next((i for i, p in enumerate(partitions) if p.node_id == self.id), None)
     if current_partition_index is None:
       raise ValueError(f"No current partition found for node: {self.id}")
-    return (current_partition_index + offset) % len(partitions)
+    return (current_partition_index+offset) % len(partitions)
 
   def get_current_shard(self, base_shard: Shard, index: Optional[int] = None) -> Shard:
     if index is None:
@@ -429,7 +430,7 @@ class StandardNode(Node):
   def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
     if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} num_tokens={len(tokens)} {is_finished=}")
     self.on_token.trigger_all(request_id, tokens, is_finished)
-  
+
   async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     async def send_result_to_peer(peer):
       try:
@@ -463,7 +464,4 @@ class StandardNode(Node):
     return self.topology
 
   async def preload_models(self, shards: List[Shard]) -> None:
-    preload_tasks = []
-    for shard in shards:
-      preload_tasks.append(asyncio.create_task(self.inference_engine.preload_model(shard)))
-    await asyncio.gather(*preload_tasks)
+    await asyncio.gather(*(asyncio.create_task(self.inference_engine.preload_model(shard)) for shard in shards))
