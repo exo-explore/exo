@@ -131,7 +131,7 @@ async def download_file(
 ):
   base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
   url = urljoin(base_url, file_path)
-  local_path = Path(os.path.join(save_directory, file_path))
+  local_path = os.path.join(save_directory, file_path)
 
   await aios.makedirs(os.path.dirname(local_path), exist_ok=True)
 
