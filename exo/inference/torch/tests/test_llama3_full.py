@@ -122,7 +122,6 @@ if __name__ == "__main__":
     use_cache=True
   )
   print(f"\nshard_model_1: {shard_model_1}")
-  exit()
 
   load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
 
