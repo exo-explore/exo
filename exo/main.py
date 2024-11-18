@@ -3,7 +3,11 @@ import asyncio
 import signal
 import json
 import logging
+import platform
+import os
+import sys
 import time
+import subprocess
 import traceback
 import uuid
 from exo.networking.manual.manual_discovery import ManualDiscovery
@@ -210,8 +214,9 @@ async def main():
   def handle_exit():
     asyncio.ensure_future(shutdown(signal.SIGTERM, loop))
 
-  for s in [signal.SIGINT, signal.SIGTERM]:
-    loop.add_signal_handler(s, handle_exit)
+  if platform.system() != "Windows":
+    for s in [signal.SIGINT, signal.SIGTERM]:
+      loop.add_signal_handler(s, handle_exit)
 
   await node.start(wait_for_peers=args.wait_for_peers)
 
