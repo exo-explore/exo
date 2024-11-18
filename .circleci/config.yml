@@ -2,7 +2,7 @@ version: 2.1
 
 orbs:
   python: circleci/python@2
-  win: circleci/windows@5.0
+
 commands:
   run_chatgpt_api_test:
     parameters:
@@ -19,6 +19,12 @@ commands:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
           command: |
             source env/bin/activate
+
+            # Set CLANG=1 for tinygrad only
+            if [ "<<parameters.inference_engine>>" = "tinygrad" ]; then
+              pip install llvmlite
+              export TOKENIZERS_PARALLELISM=true SUPPORT_BF16=0 CLANG=1
+            fi
 
             # Start first instance
             HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout 900 2>&1 | tee output1.log &
@@ -47,13 +53,6 @@ commands:
 
             # Check processes before proceeding
             check_processes
-
-            # Special handling for dummy engine
-            if [ "<<parameters.inference_engine>>" = "dummy" ]; then
-              expected_content="This is a dummy response"
-            else
-              expected_content="Michael Jackson"
-            fi
 
             echo "Sending request to first instance..."
             response_1=$(curl -s http://localhost:8000/v1/chat/completions \
@@ -223,168 +222,29 @@ jobs:
       - checkout
       - run: system_profiler SPHardwareDataType
 
-  # chatgpt_api_integration_test_tinygrad:
-  #   macos:
-  #     xcode: "16.0.0"
-  #   resource_class: m2pro.large
-  #   steps:
-  #     - checkout
-  #     - run:
-  #         name: Set up Python
-  #         command: |
-  #           brew install python@3.12
-  #           python3.12 -m venv env
-  #           source env/bin/activate
-  #     - run:
-  #         name: Install dependencies
-  #         command: |
-  #           source env/bin/activate
-  #           pip install --upgrade pip
-  #           pip install .
-  #     - run_chatgpt_api_test:
-  #         inference_engine: tinygrad
-  #         model_id: llama-3-8b
-  #         prompt: "Keep responses concise. Who was the king of pop?"
-  #         expected_output: "Michael Jackson"
-
-  build_exo_macos:
+  chatgpt_api_integration_test_tinygrad:
     macos:
       xcode: "16.0.0"
     resource_class: m2pro.large
     steps:
       - checkout
       - run:
-          name: Set up Python environment
+          name: Set up Python
           command: |
             brew install python@3.12
-            brew install npm
             python3.12 -m venv env
+            source env/bin/activate
       - run:
           name: Install dependencies
           command: |
             source env/bin/activate
             pip install --upgrade pip
             pip install .
-      - run:
-          name: Build exo for macOS
-          command: |
-            source env/bin/activate
-            python3 buildexo/build_exo.py
-      - run:
-          name: Move exo executable to exo-app
-          command: |
-            mkdir -p ./exo/exo-app/backend
-            mv ./dist/main.dist/exo ./exo/exo-app/backend/exo
-      - run:
-          name: package electron app
-          command:
-            cd ./exo/exo-app
-            npm install
-            npm run make
-            mv ./out/make/zip/darwin/arm64/exo-darwin-arm64-*.zip ../../
-      - persist_to_workspace:
-          root: .
-          paths:
-            - exo-darwin-arm64-*.zip
-
-  build_exo_linux:
-    machine:
-      image: ubuntu-2004:current
-    resource_class: xlarge
-    steps:
-      - checkout
-      - run:
-          name: Set up Python environment
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y python3 python3-venv
-            sudo apt-get install clang
-            sudo apt-get install patchelf
-            python3 -m venv env
-      - run:
-          name: Install dependencies
-          command: |
-            source env/bin/activate
-            pip install --upgrade pip
-            pip install .
-      - run:
-          name: Build exo for Linux
-          no_output_timeout: 90m
-          command: |
-            source env/bin/activate
-            python3 buildexo/build_exo.py
-      - run:
-          name: Create an AppImage
-          command: |
-            sudo wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
-            sudo chmod +x /usr/local/bin/appimagetool
-            mkdir -p exo.AppDir/usr/bin
-            cp -r env/lib/python3.12/site-packages/tinygrad exo.AppDir/usr/bin
-            cp -r dist/main.dist/* exo.AppDir/usr/bin
-            # copying icons from docs to exo.AppDir
-            cp docs/exo-rounded.png exo.AppDir
-            cat > exo.AppDir/exo.desktop << 'EOF'
-            [Desktop Entry]
-            Name=exo
-            Icon=exo-rounded
-            Terminal=false
-            Type=Application
-            Categories=Utility;
-            EOF
-
-            cat > exo.AppDir/AppRun << 'EOF'
-            #!/bin/bash
-            export APPDIR="$(dirname "$(readlink -f "$0")")"
-            export PATH="$APPDIR/usr/bin/:$PATH"
-            export LD_LIBRARY_PATH="$APPDIR/usr/lib:$LD_LIBRARY_PATH"
-            export XDG_DATA_DIRS="$APPDIR/usr/share/:/usr/share/:$XDG_DATA_DIRS"
-            "$APPDIR"/usr/bin/exo "$@"
-            EOF
-            
-            chmod +x exo.AppDir/AppRun
-            appimagetool exo.AppDir/
-            mv *.AppImage ./output/
-                      
-  build_exo_windows:
-    executor: win/default
-    steps:
-      - checkout
-      - run:
-          name: Install Conda
-          command: |
-            choco install anaconda3 --yes
-      - run:
-          name: Set up Conda environment
-          command: |
-            conda create -n exo-env python=3.12 --yes
-            conda activate exo-env
-            conda install -c conda-forge python=3.12 
-            conda install -c conda-forge libstatic
-            conda install -c conda-forge rust
-      - run:
-          name: Install dependencies
-          command: |
-            conda activate exo-env
-            pip install --upgrade pip
-            pip install .
-      - run:
-          name: Build Exo for Windows
-          command: |
-            conda activate exo-env
-            python buildexo/build_exo.py
-
-  publish_github_release:
-    docker:
-      - image: cibuilds/github:0.10
-    steps:
-      - attach_workspace:
-          at: .
-      - run:
-          name: Publish Release on GitHub
-          command: |
-            VERSION=$(ls exo-darwin-arm64-*.zip | sed 's/exo-darwin-arm64-\(.*\)\.zip/\1/')
-            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} \
-              -c ${CIRCLE_SHA1} "v${VERSION}" ./exo-darwin-arm64-*.zip
+      - run_chatgpt_api_test:
+          inference_engine: tinygrad
+          model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
 
 workflows:
   version: 2
@@ -393,20 +253,6 @@ workflows:
       - unit_test
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
+      - chatgpt_api_integration_test_tinygrad
       - chatgpt_api_integration_test_dummy
       - test_macos_m1
-      - chatgpt_api_integration_test_tinygrad
-      - build_exo_macos:
-        filters:
-          tags:
-            only: /^v.*/
-          branches:
-            only: main
-      - publish_github_release:
-          requires:
-            - build_exo_macos
-          filters:
-            tags:
-              only: /^v.*/
-            branches:
-              only: main
