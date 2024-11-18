@@ -2,6 +2,7 @@ import uuid
 import time
 import asyncio
 import json
+import os
 from pathlib import Path
 from transformers import AutoTokenizer
 from typing import List, Literal, Union, Dict
@@ -17,7 +18,6 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.models import build_base_shard, model_cards, get_repo, pretty_name
 from typing import Callable
-import os
 from exo.download.hf.hf_helpers import get_hf_home
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
