@@ -13,7 +13,8 @@ def run():
         "--standalone",
         "--output-filename=exo",
         "--onefile",
-        "--python-flag=no_site"
+        "--python-flag=no_site",
+        "--lto=yes"
     ]
 
     if sys.platform == "darwin": 
