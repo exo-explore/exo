@@ -247,7 +247,11 @@ class ChatGPTAPI:
     data = await request.json()
     shard = build_base_shard(self.default_model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    if "Local" in shard.model_id:
+      model_path = model_cards.get(shard.model_id, {}).get("repo", {}).get(self.inference_engine_classname,{})
+      tokenizer = await resolve_tokenizer(model_path)
+    else:
+      tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
 
   async def handle_get_download_progress(self, request):
@@ -277,7 +281,11 @@ class ChatGPTAPI:
         status=400,
       )
 
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    if "Local" in shard.model_id:
+      model_path = model_cards.get(shard.model_id, {}).get("repo", {}).get(self.inference_engine_classname,{})
+      tokenizer = await resolve_tokenizer(model_path)
+    else:
+      tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
     prompt = build_prompt(tokenizer, chat_request.messages)

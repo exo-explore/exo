@@ -27,7 +27,9 @@ from exo.models import model_cards, build_local_model_card, build_base_shard, ge
 from exo.viz.topology_viz import TopologyViz
 # OKHand.zy add library
 import os 
+import sys
 import json
+from pathlib import Path
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -54,10 +56,59 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--add-local-model", type=str, nargs=2, metavar=('Model_name', 'Inference_engine'), help="Add local model: MODEL_NAME is the name of model, ENGINE_NAME is mlx/tinygrad/dummy")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
+
+# init folder for Local Model
+exo_path = os.environ.get("Home", Path.home()/".cache"/"exo")
+os.makedirs(exo_path, exist_ok=True)
+print(f"Init exo folder: {exo_path}")
+local_model_config = Path(f'{exo_path}/model_config.txt')
+local_model_config.parent.mkdir(parents=True, exist_ok=True)
+with local_model_config.open('a') as file:
+  file.close()
+print(f"Init local model config: {exo_path}")
+
+# import Local Model
+if args.add_local_model:
+  model_name = args.add_local_model[0]
+  inference_engine = args.add_local_model[1].lower()
+  if inference_engine == "mlx" or inference_engine == "mlxdynamicshardinferenceengine":
+    inference_engine_name = "MLXDynamicShardInferenceEngine"
+  elif inference_engine == "tinygrad" or inference_engine == "tinygradshardinferenceengine":
+    inference_engine_name = "TinyGradShardInferenceEngine"
+  elif inference_engine == "dummy" or inference_engine == "dummyinferenceengine":
+    inference_engine_name = "DummyInferenceEngine"
+  else:
+    sys.exit(f"Invalid inference engine: {inference_engine}")
+  
+  with open(str(exo_path)+f'/{model_name}/config.json', 'r') as file:
+      config = json.load(file)
+      config_n_layers = config['num_hidden_layers']
+  new_model = f"{model_name}:{config_n_layers}:{inference_engine_name}:{str(exo_path)}/{model_name}\n"
+
+  with local_model_config.open('r') as file:
+      existing_content = file.read()
+      file.close()
+  if new_model in existing_content:
+      sys.exit(f"Model already: {model_name} with inference engine: {inference_engine_name}")
+  else:
+    with local_model_config.open('a') as file:
+      file.write(new_model)
+      file.close()
+    sys.exit(f"Add local model: {model_name} with inference engine: {inference_engine_name}")
+
+# Build Local Model Card
+with local_model_config.open('r') as file:
+  all_model = file.read()
+  model_config_list = all_model.split('\n')[:-1]
+for model_config in model_config_list:
+  model_name, config_n_layers, inference_engine, model_path = model_config.split(':')
+  build_local_model_card(model_name, model_path, inference_engine, int(config_n_layers))
+print(f"Init local model card complete")
 
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
@@ -140,8 +191,10 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     status = json.loads(opaque_status)
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
-      if os.path.isdir(current_shard.model_id):
+      
+      if "Local" in current_shard.model_id:
         # TODO: open ftp to share download model 
+        print("Local model detected, skip download")
         pass
       else:
         if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
@@ -195,8 +248,9 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   elif os.path.isdir(model_name):
     # local model and shard
-    model_path = model_name.rstrip('/')
-    model_name = model_path.split('/')[-1]
+    model_name = model_name.rstrip('/').split('/')[-1]
+    model_path = str(os.environ.get("Home", Path.home()/exo_path/model_name))
+
     if os.path.isfile(model_path+'/config.json'):
       with open(model_path+'/config.json', 'r') as file:
         config = json.load(file)

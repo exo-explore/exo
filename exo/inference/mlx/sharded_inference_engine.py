@@ -13,6 +13,7 @@ from functools import partial
 # OKHand.zy add library
 import os
 from pathlib import Path
+from exo.models import get_repo
 
 def sample_logits(
   logits: mx.array,
@@ -66,8 +67,10 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
     
-    if os.path.isdir(shard.model_id): # if local model
-      model_path = Path(shard.model_id)
+    if os.path.isdir(shard.model_id): # cli mode
+      model_path = Path(shard.model_id) 
+    elif "Local" in shard.model_id: # api mode
+      model_path = Path(get_repo(shard.model_id, self.__class__.__name__))
     else:
       model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
 

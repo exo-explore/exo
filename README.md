@@ -28,6 +28,12 @@ Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU:
   <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
 </div>
 
+OKHand.zy fork add new  feature:
+- support CLI and ChatAPI use local model (only support mlx inference engine)
+- add new args "--add-local-model"
+- add init exo folder and model config file in /.cache/exo
+
+
 ## Get Involved
 
 exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
@@ -208,11 +214,48 @@ With a custom prompt:
 exo run llama-3.2-3b --prompt "What is the meaning of exo?"
 ```
 
+### Example Usage on a single device with Local Model 
+- Step1. Download the model from huggingface
+- Step2.   
+  ```shell
+  exo --add-local-model <model_name> <inference-engine>
+  ```
+- Step3.
+  ```shell
+  exo  --inference-engine mlx --run-model <model_path/model_name>
+  or 
+  exo  --inference-engine mlx --run-model <Local/step2's_model_name>
+  ```
+
+### Example Usage on Multiple Devices with Local Model
+#### Both devices are on MacOS:
+- Step1. Download the model from huggingface and put it in the exo folder(/.cache/exo)
+- Step2.   
+  ```shell
+  exo --add-local-model <model_name> <inference-engine>
+  ```
+#### Choose one device to run the following command:
+```shell
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "Local/<model_name>",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
+
 ### Model Storage
 
 Models by default are stored in `~/.cache/huggingface/hub`.
 
 You can set a different model storage location by setting the `HF_HOME` env var.
+
+### Local Model Storage
+
+Please stored models in `~/.cache/exo`.
+
+You can set a different model storage location by setting the `HOME` env var
 
 ## Debugging
 
