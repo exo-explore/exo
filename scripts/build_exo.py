@@ -2,8 +2,6 @@ import site
 import subprocess
 import sys
 import os 
-import pkgutil
-
 def run():
     site_packages = site.getsitepackages()[0]
     command = [
@@ -24,6 +22,7 @@ def run():
             "--macos-app-mode=gui",
             "--macos-app-version=0.0.1",
             "--macos-signed-app-name=com.exolabs.exo",
+            "--macos-sign-notarization",
             "--include-distribution-meta=mlx",
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",
@@ -33,7 +32,7 @@ def run():
             "--nofollow-import-to=tinygrad"
         ])
         inference_modules = [
-            name for _, name, _ in pkgutil.iter_modules(['exo/inference/mlx/models'])
+            name for _, name, _ in pkgutil.iter_modules(['exo/inference/models'])
         ]
         for module in inference_modules:
             command.append(f"--include-module=exo.inference.mlx.models.{module}")
@@ -48,6 +47,7 @@ def run():
             "--include-distribution-metadata=pygments",
             "--linux-icon=docs/exo-rounded.png"
         ])
+
     try:
         subprocess.run(command, check=True)
         print("Build completed!")
