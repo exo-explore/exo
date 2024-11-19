@@ -131,12 +131,6 @@ node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
 
-if not args.models_seed_dir is None:
-  try:
-    await move_models_to_hf(args.models_seed_dir)
-  except Exception as e:
-    print(f"Error moving models to .cache/huggingface: {e}")
-
 def preemptively_start_download(request_id: str, opaque_status: str):
   try:
     status = json.loads(opaque_status)
@@ -200,6 +194,12 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
 async def main():
   loop = asyncio.get_running_loop()
+
+  if not args.models_seed_dir is None:
+    try:
+      await move_models_to_hf(args.models_seed_dir)
+    except Exception as e:
+      print(f"Error moving models to .cache/huggingface: {e}")
 
   # Use a more direct approach to handle signals
   def handle_exit():
