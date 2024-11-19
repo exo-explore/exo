@@ -210,7 +210,7 @@ async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_na
   tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   train, val, test = dataloader(lambda i: tokenizer.encode(i))
   dataset = test
-  print(f"Evaluating {len(dataset)} examples with batch_size {batch_size}")
+  print(f"Evaluating {len(test)} examples with batch_size {batch_size}")
   losses = []
   tokens = []
   for batch in tqdm(iterate_batches(test, batch_size), total=len(dataset) // batch_size):
@@ -228,7 +228,7 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
     return
   tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   train, val, test = dataloader(lambda i: tokenizer.encode(i))
-  print(f"Training on {len(val)} examples with batch_size {batch_size}")
+  print(f"Training on {len(train)} examples with batch_size {batch_size}")
   for epoch in range(iters):
     losses = []
     tokens = []

@@ -266,24 +266,24 @@ class StandardNode(Node):
     if request_id is None:
       request_id = str(uuid.uuid4())
     shard = self.get_current_shard(base_shard)
-
     if DEBUG >= 1: print(f"[{request_id}] process_example: {example.shape=}")
     try:
-      if shard.is_last_layer():
-        if train:
+      target = target.astype(int)
+      if train:
+        if shard.is_last_layer():
           loss, grad = await self.inference_engine.train(request_id, shard, example, target, length)
-          return loss.reshape(example.shape[0], -1) if shard.is_first_layer() else grad
         else:
-          loss = await self.inference_engine.evaluate(request_id, shard, example, target, length)
-          return loss.reshape(example.shape[0], -1)
+          step = await self.inference_engine.infer_tensor(request_id, shard, example)
+          backgrad = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
+          loss, grad = await self.inference_engine.train(request_id, shard, example, backgrad, length, loss="back_gradient")
+        return loss.reshape(example.shape[0], -1) if shard.is_first_layer() else grad
       else:
-        step = await self.inference_engine.infer_tensor(request_id, shard, example)
-        result = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
-        if train:
-          forward = self.get_current_shard(self.get_partition_index(offset = 1))
-          return result
+        if shard.is_last_layer():
+          loss = await self.inference_engine.evaluate(request_id, shard, example, target, length)
         else:
-          return result.reshape(example.shape[0], -1)
+          step = await self.inference_engine.infer_tensor(request_id, shard, example)
+          loss = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
+        return loss.reshape(example.shape[0], -1)
     except Exception as e:
       print(f"Error processing example for shard {shard}: {e}")
       traceback.print_exc()
