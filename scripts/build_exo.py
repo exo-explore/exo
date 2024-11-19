@@ -2,6 +2,8 @@ import site
 import subprocess
 import sys
 import os 
+import pkgutil
+
 def run():
     site_packages = site.getsitepackages()[0]
     command = [
