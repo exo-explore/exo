@@ -133,11 +133,7 @@ node.on_token.register("update_topology_viz").on_next(
 
 if not args.models_seed_dir is None:
   try:
-    if is_frozen():
-      seed_dir = Path(sys.argv[0]).parent
-      await move_models_to_hf(seed_dir)
-    else:
-      await move_models_to_hf(args.model_seed_dir)
+    await move_models_to_hf(args.models_seed_dir)
   except Exception as e:
     print(f"Error moving models to .cache/huggingface: {e}")
 

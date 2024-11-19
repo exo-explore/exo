@@ -1,3 +1,5 @@
+import aiofiles.os as aios
+from typing import Union
 import asyncio
 import aiohttp
 import json
@@ -108,10 +110,10 @@ async def move_models_to_hf(seed_dir: Union[str, Path]):
   source_dir = Path(seed_dir)
   dest_dir = get_hf_home()/"hub"
   await aios.makedirs(dest_dir, exist_ok=True)
-  for path in source_dir.iterdir():
+  async for path in source_dir.iterdir():
     if path.is_dir() and path.startswith("models--"):
       dest_path = dest_dir / path.name
-      shutil.move(str(path), str(dest_path))
+      await aios.rename(str(path), str(dest_path))
 
 async def fetch_file_list(session, repo_id, revision, path=""):
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
