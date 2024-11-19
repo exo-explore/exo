@@ -10,18 +10,13 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Generator, Iterable, TypeVar, TypedDict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from exo.helpers import DEBUG
+from exo.helpers import DEBUG, is_frozen
 from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEvent, RepoProgressCallback, RepoFileProgressCallback
 from exo.inference.shard import Shard
 import aiofiles
 from aiofiles import os as aios
 
 T = TypeVar("T")
-
-def is_frozen():
-  return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
-    or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
-    or ('__compiled__' in globals())
 
 async def get_local_snapshot_dir(repo_id: str, revision: str = "main") -> Optional[Path]:
   refs_dir = get_repo_root(repo_id)/"refs"
@@ -105,7 +100,7 @@ async def get_auth_headers():
 def get_repo_root(repo_id: str) -> Path:
   """Get the root directory for a given repo ID in the Hugging Face cache."""
   sanitized_repo_id = str(repo_id).replace("/", "--")
-  if "Qwen2.5-0.5B-Instruct-4bit" in str(repo_id) and is_frozen():
+  if is_frozen():
     repo_root = Path(sys.argv[0]).parent/f"models--{sanitized_repo_id}"
     return repo_root
   return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"

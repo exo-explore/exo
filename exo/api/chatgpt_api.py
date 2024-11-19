@@ -13,7 +13,7 @@ import signal
 import sys
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
-from exo.helpers import PrefixDict
+from exo.helpers import PrefixDict, shutdown
 from exo.inference.inference_engine import inference_engine_classes
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
@@ -148,11 +148,6 @@ class PromptSession:
     self.timestamp = timestamp
     self.prompt = prompt
 
-def is_frozen():
-  return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
-    or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
-    or '__nuitka__' in globals() or getattr(sys, '__compiled__', False)
-
 class ChatGPTAPI:
   def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
     self.node = node
@@ -193,7 +188,6 @@ class ChatGPTAPI:
   
   async def handle_quit(self, request):
     print("Received quit signal")
-    from exo.main import shutdown
     response = web.json_response({"detail": "Quit signal received"}, status=200)
     await response.prepare(request)
     await response.write_eof()
