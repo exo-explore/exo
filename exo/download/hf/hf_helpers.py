@@ -148,18 +148,18 @@ async def download_file(
     downloaded_this_session = 0
     mode = 'ab' if use_range_request else 'wb'
     percentage = await get_file_download_percentage(
-        session,
-        repo_id,
-        revision,
-        file_path,
-        Path(save_directory)
+      session,
+      repo_id,
+      revision,
+      file_path,
+      Path(save_directory)
     )
     
     if percentage == 100:
-        if DEBUG >= 2: print(f"File already downloaded: {file_path}")
-        if progress_callback:
-            await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, total_size, 0, total_size, 0, timedelta(0), "complete"))
-        return
+      if DEBUG >= 2: print(f"File already downloaded: {file_path}")
+      if progress_callback:
+        await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, total_size, 0, total_size, 0, timedelta(0), "complete"))
+      return
 
     if response.status == 200:
       # File doesn't support range requests or we're not using them, start from beginning
