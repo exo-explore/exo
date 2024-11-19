@@ -3,6 +3,7 @@ import aiohttp
 import json
 import os
 import sys
+import shutil
 from urllib.parse import urljoin
 from typing import Callable, Optional, Coroutine, Any, Dict, List, Union, Literal
 from datetime import datetime, timedelta
@@ -101,10 +102,19 @@ def get_repo_root(repo_id: str) -> Path:
   """Get the root directory for a given repo ID in the Hugging Face cache."""
   sanitized_repo_id = str(repo_id).replace("/", "--")
   if is_frozen():
-    repo_root = Path(sys.argv[0]).parent/f"models--{sanitized_repo_id}"
-    return repo_root
+    exec_root = Path(sys.argv[0]).parent
+    asyncio.run(move_models_to_hf)
   return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"
 
+async def move_models_to_hf():
+  """Move model in resources folder of app to .cache/huggingface/hub"""
+  source_dir = Path(sys.argv[0]).parent
+  dest_dir = get_hf_home()/"hub"
+  await aios.makedirs(dest_dir, exist_ok=True)
+  for path in source_dir.iterdir():
+    if path.is_dir() and path.startswith("models--"):
+      dest_path = dest_dir / path.name
+      shutil.move(str(path), str(dest_path))
 
 async def fetch_file_list(session, repo_id, revision, path=""):
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"

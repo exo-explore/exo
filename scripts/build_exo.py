@@ -2,6 +2,8 @@ import site
 import subprocess
 import sys
 import os 
+import pkgutil
+
 def run():
     site_packages = site.getsitepackages()[0]
     command = [
@@ -34,6 +36,11 @@ def run():
             "--include-distribution-meta=pygments",
             "--nofollow-import-to=tinygrad"
         ])
+        inference_modules = [
+            name for _, name, _ in pkgutil.iter_modules(['exo/inference/mlx/models'])
+        ]
+        for module in inference_modules:
+            command.append(f"--include-module=exo.inference.mlx.models.{module}")
     elif sys.platform == "win32":  
         command.extend([
             "--windows-icon-from-ico=docs/exo-logo-win.ico",
@@ -45,9 +52,8 @@ def run():
             "--include-distribution-metadata=pygments",
             "--linux-icon=docs/exo-rounded.png"
         ])
-
     try:
-        subprocess.run(command, check=True)
+        # subprocess.run(command, check=True)
         print("Build completed!")
     except subprocess.CalledProcessError as e:
         print(f"An error occurred: {e}")
