@@ -24,6 +24,20 @@ class InferenceEngine(ABC):
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     pass
   
+  async def save_session(self, key, value):
+    self.session[key] = value
+  
+  async def ensure_session(self, key, value_gen):
+    if key not in self.session:
+      await self.save_session(key, value_gen())
+  
+  async def ensure_session_match(self, key, check, value_gen):
+    if key not in self.session or not check(self.session[key]):
+      await self.save_session(key, value_gen())
+  
+  async def clear_session(self):
+    session.empty()
+  
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str) -> np.ndarray:
     tokens = await self.encode(shard, prompt)
     x = tokens.reshape(1, -1)

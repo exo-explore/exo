@@ -1,6 +1,7 @@
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
+import mlx.optimizers as optim
 from ..inference_engine import InferenceEngine
 from .stateful_model import StatefulModel
 from .sharded_utils import load_shard, get_image_from_str
@@ -37,6 +38,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
+    self.session = {}
 
   async def sample(self, x, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
     y = mx.array(x)
@@ -60,6 +62,34 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, self.model, mx.array(input_data), request_id))
     #print(f"infer_tensor out -> {output_data}")
     return output_data
+  
+  async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss):
+    await self.ensure_shard(shard)
+    await self.ensure_session('loss', lambda: loss)
+    await self.ensure_session('task', lambda: ('eval', self.model.eval()))
+    #print(f"evaluate in <- {inputs}")
+    x = mx.array(inputs).astype(mx.int64) if self.shard.is_first_layer() else mx.array(inputs)
+    y = mx.array(targets).astype(mx.int64)
+    l = mx.array(lengths)
+    score = await asyncio.get_running_loop().run_in_executor(self.executor, self.session['loss'], self.model, x, y, l)
+    #print(f"evaluate out -> {score}")
+    return np.array(score)
+  
+  async def train(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss, opt=optim.Adam, lr=1e-5):
+    await self.ensure_shard(shard)
+    await self.ensure_session('loss', lambda: loss)
+    await self.ensure_session('LVaG', lambda: nn.value_and_grad(self.model, self.session['loss']))
+    await self.ensure_session('opt', lambda: opt(lr))
+    await self.ensure_session('task', lambda: ('train', self.model.train()))
+
+    x = mx.array(inputs).astype(mx.int64) if self.shard.is_first_layer() else mx.array(inputs)
+    y = mx.array(targets).astype(mx.int64)
+    l = mx.array(lengths)
+    loop = asyncio.get_running_loop()
+    loss, grad = await loop.run_in_executor(self.executor, self.session['LVaG'], self.model, x, y, l)
+    await loop.run_in_executor(self.executor, lambda: self.session['opt'].update(self.model, grad))
+
+    return np.array(loss), np.array(grad)
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
@@ -77,14 +107,3 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       self.shard = shard
       self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
 
-  async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss):
-    await self.ensure_shard(shard)
-    #print(f"evaluate in <- {inputs}")
-    x = mx.array(inputs).astype(mx.int64)
-    y = mx.array(targets).astype(mx.int64)
-    l = mx.array(lengths)
-    def model_wrapper(e):
-      return self.model(e, request_id)
-    score = await asyncio.get_running_loop().run_in_executor(self.executor, loss, model_wrapper, x, y, l)
-    #print(f"evaluate out -> {score}")
-    return np.array(score)

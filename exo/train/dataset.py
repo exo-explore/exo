@@ -44,19 +44,14 @@ def iterate_batches(dset, batch_size, train=False, uniform_length=True):
       break
 
 class Dataset:
-  preprocess = lambda item: item
-  load = lambda line: line
-  def __init__(self, path: Path, preprocess=None, load=None, metrics={}):
+  def __init__(self, path: Path, preprocess=lambda item: item, loadline=json.loads, metrics={}):
     if not path.exists():
       self._data = None
     else:
-      if preprocess is not None:
-        self.preprocess = preprocess
-      if load is not None:
-        self.load = load
+      self.preprocess = preprocess
       with open(path, "r") as fid:
-        self._data = [load(l) for l in fid]
-        self._maxlen = max([len(self.preprocess(x)) for x in self._data])
+        self._data = [loadline(l) for l in fid]
+        self._maxlen = max([len(preprocess(x)) for x in self._data])
         # Check if any sequence is longer than 2048 tokens
         if self._maxlen > 2048:
           print("You've got sequences with over 2048 tokens in here! Split your data fool!")
@@ -69,11 +64,11 @@ class Dataset:
     return len(self._data)
 
 
-def load_dataset(data_path: str, preprocess=None):
+def load_dataset(data_path: str, preprocess=lambda i: i, loadline=json.loads):
   def load_and_check(name):
     dataset_path = Path(data_path) / f"{name}.jsonl"
     try:
-      return Dataset(dataset_path, preprocess=preprocess, load=json.loads)
+      return Dataset(dataset_path, preprocess=preprocess, loadline=loadline)
     except Exception as e:
       print(f"Unable to build dataset {dataset_path} ({e})")
       raise
