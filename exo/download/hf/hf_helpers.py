@@ -113,7 +113,7 @@ async def move_models_to_hf(seed_dir: Union[str, Path]):
   async for path in source_dir.iterdir():
     if path.is_dir() and path.startswith("models--"):
       dest_path = dest_dir / path.name
-      if dest_path.exists:
+      if dest_path.exists():
         if DEBUG>=1: print(f"skipping moving {dest_path}. File already exists")
       else:
         await aios.rename(str(path), str(dest_path))
