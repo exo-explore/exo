@@ -193,6 +193,12 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   finally:
     node.on_token.deregister(callback_id)
 
+def clean_path(path):
+    """Clean and resolve given path."""
+    """strips swift optional type"""
+    if path.startswith("Optional("):
+        path = path.strip('Optional("').rstrip('")')
+    return os.path.expanduser(path)
 
 async def main():
   loop = asyncio.get_running_loop()
@@ -211,7 +217,8 @@ async def main():
     
   if not args.models_seed_dir is None:
     try:
-      await move_models_to_hf(args.models_seed_dir)
+      models_seed_dir = clean_path(args.models_seed_dir)
+      await move_models_to_hf(models_seed_dir)
     except Exception as e:
       print(f"Error moving models to .cache/huggingface: {e}")
 
