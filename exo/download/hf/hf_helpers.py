@@ -103,9 +103,9 @@ def get_repo_root(repo_id: str) -> Path:
   sanitized_repo_id = str(repo_id).replace("/", "--")
   return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"
 
-async def move_models_to_hf():
+async def move_models_to_hf(seed_dir: Union[str, Path]):
   """Move model in resources folder of app to .cache/huggingface/hub"""
-  source_dir = Path(sys.argv[0]).parent
+  source_dir = Path(seed_dir)
   dest_dir = get_hf_home()/"hub"
   await aios.makedirs(dest_dir, exist_ok=True)
   for path in source_dir.iterdir():

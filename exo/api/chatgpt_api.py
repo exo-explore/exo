@@ -187,7 +187,7 @@ class ChatGPTAPI:
     self.app.middlewares.append(self.log_request)
   
   async def handle_quit(self, request):
-    print("Received quit signal")
+    if DEBUG>=1: print("Received quit signal")
     response = web.json_response({"detail": "Quit signal received"}, status=200)
     await response.prepare(request)
     await response.write_eof()
