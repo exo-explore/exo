@@ -427,45 +427,48 @@ async def get_file_download_percentage(
     repo_id: str,
     revision: str,
     file_path: str,
-    snapshot_dir: Path
+    snapshot_dir: Path,
 ) -> float:
-    """
+  """
     Calculate the download percentage for a file by comparing local and remote sizes.
     """
-    try:
-        local_path = snapshot_dir / file_path
-        if not await aios.path.exists(local_path):
-            return 0
+  try:
+    local_path = snapshot_dir / file_path
+    if not await aios.path.exists(local_path):
+      return 0
 
-        # Get local file size first
-        local_size = await aios.path.getsize(local_path)
-        if local_size == 0:
-            return 0
-            
-        # Check remote size
-        base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
-        url = urljoin(base_url, file_path)
-        headers = await get_auth_headers()
-        
-        # Use HEAD request with redirect following for all files
-        async with session.head(url, headers=headers, allow_redirects=True) as response:
-            if response.status != 200:
-                if DEBUG >= 2: print(f"Failed to get remote file info for {file_path}: {response.status}")
-                return 0
-                
-            remote_size = int(response.headers.get('Content-Length', 0))
-            
-            if remote_size == 0:
-                if DEBUG >= 2: print(f"Remote size is 0 for {file_path}")
-                return 0
-                
-            # Only return 100% if sizes match exactly
-            if local_size == remote_size:
-                return 100.0
-                
-            # Calculate percentage based on sizes
-            return (local_size / remote_size) * 100 if remote_size > 0 else 0
-        
-    except Exception as e:
-        if DEBUG >= 2: print(f"Error checking file download status for {file_path}: {e}")
+    # Get local file size first
+    local_size = await aios.path.getsize(local_path)
+    if local_size == 0:
+      return 0
+
+    # Check remote size
+    base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
+    url = urljoin(base_url, file_path)
+    headers = await get_auth_headers()
+
+    # Use HEAD request with redirect following for all files
+    async with session.head(url, headers=headers, allow_redirects=True) as response:
+      if response.status != 200:
+        if DEBUG >= 2:
+          print(f"Failed to get remote file info for {file_path}: {response.status}")
         return 0
+
+      remote_size = int(response.headers.get('Content-Length', 0))
+
+      if remote_size == 0:
+        if DEBUG >= 2:
+          print(f"Remote size is 0 for {file_path}")
+        return 0
+
+      # Only return 100% if sizes match exactly
+      if local_size == remote_size:
+        return 100.0
+
+      # Calculate percentage based on sizes
+      return (local_size / remote_size) * 100 if remote_size > 0 else 0
+
+  except Exception as e:
+    if DEBUG >= 2:
+      print(f"Error checking file download status for {file_path}: {e}")
+    return 0
