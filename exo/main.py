@@ -131,7 +131,7 @@ node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
 
-if args.model_seed_dir is not None:
+if not args.model_seed_dir is None:
   try:
     await move_models_to_hf()
   except:
