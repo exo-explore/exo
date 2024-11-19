@@ -4,6 +4,7 @@ import mlx.nn as nn
 from ..inference_engine import InferenceEngine
 from .stateful_model import StatefulModel
 from .sharded_utils import load_shard, get_image_from_str
+from .losses import length_masked_ce_loss
 from ..shard import Shard
 from typing import Dict, Optional, Tuple
 from exo.download.shard_download import ShardDownloader
@@ -55,7 +56,9 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
+    #print(f"infer_tensor in <- {input_data}")
     output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, self.model, mx.array(input_data), request_id))
+    #print(f"infer_tensor out -> {output_data}")
     return output_data
 
   async def ensure_shard(self, shard: Shard):
@@ -73,3 +76,15 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.shard = shard
       self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+
+  async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss):
+    await self.ensure_shard(shard)
+    #print(f"evaluate in <- {inputs}")
+    x = mx.array(inputs).astype(mx.int64)
+    y = mx.array(targets).astype(mx.int64)
+    l = mx.array(lengths)
+    def model_wrapper(e):
+      return self.model(e, request_id)
+    score = await asyncio.get_running_loop().run_in_executor(self.executor, loss, model_wrapper, x, y, l)
+    #print(f"evaluate out -> {score}")
+    return np.array(score)

@@ -12,6 +12,7 @@ from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
 from concurrent.futures import ThreadPoolExecutor
 from .stateful_model import StatefulModel
+from .losses import length_masked_ce_loss
 import asyncio
 
 Tensor.no_grad = True
@@ -77,11 +78,15 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   
   async def decode(self, shard: Shard, tokens) -> str:
     await self.ensure_shard(shard)
-    return await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.decode, tokens)
-
+    tokens = await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.decode, tokens)
+    return tokens
+  
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
-    return await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.model(Tensor(input_data), request_id).realize().numpy())
+    #print(f"infer_tensor in <- {input_data}")
+    output_data = await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.model(Tensor(input_data), request_id).realize())
+    #print(f"infer_tensor out -> {output_data}")
+    return output_data.numpy()
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
@@ -98,3 +103,12 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
       self.shard = shard
       self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+
+  async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss):
+    await self.ensure_shard(shard)
+    def model_wrapper(x):
+      return self.model(x, request_id)
+    score = await asyncio.get_running_loop().run_in_executor(self.executor, lambda: loss(model_wrapper, Tensor(inputs), Tensor(targets), Tensor(lengths)).realize())
+    out = score.numpy()
+    return out
+
