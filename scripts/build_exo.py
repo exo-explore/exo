@@ -23,7 +23,7 @@ def run():
             "--macos-app-name=exo",
             "--macos-app-mode=gui",
             "--macos-app-version=0.0.1",
-            "-macos-signed-app-name=com.exolabs.exo",
+            "--macos-signed-app-name=com.exolabs.exo",
             "--macos-sign-identity=auto",
             "--macos-sign-notarization",
             "--include-distribution-meta=mlx",
