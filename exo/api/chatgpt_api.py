@@ -8,16 +8,15 @@ from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
 import traceback
+import os
+import sys
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
-from exo.helpers import PrefixDict
-from exo.inference.inference_engine import inference_engine_classes
-from exo.inference.shard import Shard
+from exo.helpers import PrefixDict, shutdown
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.models import build_base_shard, model_cards, get_repo, pretty_name
-from typing import Callable
-
+from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get_supported_models
+from typing import Callable, Optional
 
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
@@ -26,6 +25,7 @@ class Message:
 
   def to_dict(self):
     return {"role": self.role, "content": self.content}
+
 
 
 class ChatCompletionRequest:
@@ -145,9 +145,8 @@ class PromptSession:
     self.timestamp = timestamp
     self.prompt = prompt
 
-
 class ChatGPTAPI:
-  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None):
+  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None, default_model: Optional[str] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
     self.response_timeout = response_timeout
@@ -156,7 +155,7 @@ class ChatGPTAPI:
     self.prompts: PrefixDict[str, PromptSession] = PrefixDict()
     self.prev_token_lens: Dict[str, int] = {}
     self.stream_tasks: Dict[str, asyncio.Task] = {}
-    self.default_model = "llama-3.2-1b"
+    self.default_model = default_model or "llama-3.2-1b"
 
     cors = aiohttp_cors.setup(self.app)
     cors_options = aiohttp_cors.ResourceOptions(
@@ -174,13 +173,22 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
     cors.add(self.app.router.add_get("/modelpool", self.handle_model_support), {"*": cors_options})
     cors.add(self.app.router.add_get("/healthcheck", self.handle_healthcheck), {"*": cors_options})
+    cors.add(self.app.router.add_post("/quit", self.handle_quit), {"*": cors_options})
 
-    self.static_dir = Path(__file__).parent.parent/"tinychat"
-    self.app.router.add_get("/", self.handle_root)
-    self.app.router.add_static("/", self.static_dir, name="static")
+    if "__compiled__" not in globals():
+      self.static_dir = Path(__file__).parent.parent/"tinychat"
+      self.app.router.add_get("/", self.handle_root)
+      self.app.router.add_static("/", self.static_dir, name="static")
 
     self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)
+  
+  async def handle_quit(self, request):
+    if DEBUG>=1: print("Received quit signal")
+    response = web.json_response({"detail": "Quit signal received"}, status=200)
+    await response.prepare(request)
+    await response.write_eof()
+    await shutdown(signal.SIGINT, asyncio.get_event_loop())
 
   async def timeout_middleware(self, app, handler):
     async def middleware(request):
@@ -208,18 +216,7 @@ class ChatGPTAPI:
     return web.json_response({
       "model pool": {
         model_name: pretty_name.get(model_name, model_name) 
-        for model_name in [
-          model_id for model_id, model_info in model_cards.items() 
-          if all(map(
-            lambda engine: engine in model_info["repo"],
-            list(dict.fromkeys([
-              inference_engine_classes.get(engine_name, None) 
-              for engine_list in self.node.topology_inference_engines_pool 
-              for engine_name in engine_list 
-              if engine_name is not None
-            ] + [self.inference_engine_classname]))
-          ))
-        ]
+        for model_name in get_supported_models(self.node.topology_inference_engines_pool)
       }
     })
   
@@ -247,8 +244,8 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)
     chat_request = parse_chat_request(data, self.default_model)
-    if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to llama instead
-      chat_request.model = self.default_model if self.default_model.startswith("llama") else "llama-3.2-1b"
+    if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to default model
+      chat_request.model = self.default_model
     if not chat_request.model or chat_request.model not in model_cards:
       if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
       chat_request.model = self.default_model
