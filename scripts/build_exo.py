@@ -53,7 +53,7 @@ def run():
             "--linux-icon=docs/exo-rounded.png"
         ])
     try:
-        # subprocess.run(command, check=True)
+        subprocess.run(command, check=True)
         print("Build completed!")
     except subprocess.CalledProcessError as e:
         print(f"An error occurred: {e}")
