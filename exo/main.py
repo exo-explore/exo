@@ -7,7 +7,6 @@ import platform
 import os
 import sys
 import time
-import subprocess
 import traceback
 import uuid
 from exo.networking.manual.manual_discovery import ManualDiscovery
