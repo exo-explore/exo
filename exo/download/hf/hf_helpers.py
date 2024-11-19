@@ -110,15 +110,14 @@ async def move_models_to_hf(seed_dir: Union[str, Path]):
   source_dir = Path(seed_dir)
   dest_dir = get_hf_home()/"hub"
   await aios.makedirs(dest_dir, exist_ok=True)
-  for path in source_dir.iterdir():
+  async for path in async_iterdir(source_dir):  
     if path.is_dir() and path.name.startswith("models--"):
-        dest_path = dest_dir / path.name
-        if dest_path.exists():
-            if DEBUG >= 1:
-                print(f"skipping moving {dest_path}. File already exists")
-        else:
-            await aios.rename(str(path), str(dest_path))
-        
+      dest_path = dest_dir / path.name
+      if await async_exists(dest_path): 
+          if DEBUG >= 1: print(f"skipping moving {dest_path}. File already exists")
+      else:
+          await aios.rename(str(path), str(dest_path))
+      
 
 async def fetch_file_list(session, repo_id, revision, path=""):
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
