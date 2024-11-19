@@ -33,7 +33,7 @@ def run():
             "--nofollow-import-to=tinygrad"
         ])
         inference_modules = [
-            name for _, name, _ in pkgutil.iter_modules(['exo/inference/models'])
+            name for _, name, _ in pkgutil.iter_modules(['exo/inference/mlx/models'])
         ]
         for module in inference_modules:
             command.append(f"--include-module=exo.inference.mlx.models.{module}")
