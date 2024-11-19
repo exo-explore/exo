@@ -208,7 +208,7 @@ async def main():
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}
           """)
-
+    
   if not args.models_seed_dir is None:
     try:
       await move_models_to_hf(args.models_seed_dir)
