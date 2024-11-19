@@ -21,6 +21,7 @@ from transformers import AutoProcessor
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
 
 from exo import DEBUG
+from exo.inference.tokenizers import resolve_tokenizer
 from ..shard import Shard
 
 
@@ -67,7 +68,6 @@ def load_config(model_path: Path) -> dict:
     logging.error(f"Config file not found in {model_path}")
     raise
   return config
-
 
 def load_model_shard(
   model_path: Path,
@@ -131,8 +131,17 @@ def load_model_shard(
 
   model_class, model_args_class = _get_classes(config=config)
 
+  class ShardedModel(model_class):
+    def __init__(self, args):
+      super().__init__(args)
+      self.shard = Shard(args.shard.model_id, args.shard.start_layer, args.shard.end_layer, args.shard.n_layers)
+
+    def __call__(self, x, *args, **kwargs):
+      y = super().__call__(x[None] if self.shard.is_first_layer() else x, *args, **kwargs)
+      return y
+
   model_args = model_args_class.from_dict(config)
-  model = model_class(model_args)
+  model = ShardedModel(model_args)
 
   if hasattr(model, "sanitize"):
     weights = model.sanitize(weights)
@@ -158,7 +167,6 @@ def load_model_shard(
   model.eval()
   return model
 
-
 async def load_shard(
   model_path: str,
   shard: Shard,
@@ -176,7 +184,7 @@ async def load_shard(
     processor.encode = processor.tokenizer.encode
     return model, processor
   else:
-    tokenizer = load_tokenizer(model_path, tokenizer_config)
+    tokenizer = await resolve_tokenizer(model_path)
     return model, tokenizer
 
 

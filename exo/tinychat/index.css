@@ -167,6 +167,8 @@ main {
 .download-progress {
   margin-bottom: 12em;
   overflow-y: auto;
+  min-height: 350px;
+  padding: 2rem;
 }
 .message > pre {
   white-space: pre-wrap;
@@ -191,17 +193,70 @@ main {
 }
 
 .toast {
-    width: 100%; /* Take up the full width of the page */
-    background-color: #fc2a2a; /* Dark background color */
-    color: #fff; /* White text color */
-    text-align: center; /* Centered text */
-    border-radius: 2px; /* Rounded borders */
-    padding: 16px; /* Padding */
-    position: fixed; /* Sit on top of the screen content */
-    z-index: 9999; /* Add a z-index if needed */
-    top: 0; /* Position at the top of the page */
-    left: 0; /* Extend from the left edge */
-    right: 0; /* Extend to the right edge */
+    width: 100%;
+    background-color: #fc2a2a;
+    color: #fff;
+    text-align: left;
+    border-radius: 2px;
+    padding: 16px;
+    position: fixed;
+    z-index: 9999;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    white-space: pre-wrap;
+    font-family: monospace;
+}
+
+.toast-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.toast-error-message {
+    flex-grow: 1;
+}
+
+.toast-header-buttons {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: 24px;
+}
+
+.toast-expand-button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 4px;
+    cursor: pointer;
+    font-size: 1em;
+}
+
+.toast-close-button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 4px;
+    cursor: pointer;
+    font-size: 1.2em;
+    line-height: 1;
+}
+
+.toast-expand-button:hover,
+.toast-close-button:hover {
+    opacity: 0.8;
+}
+
+.toast-content {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
 }
 
 .hljs {
@@ -414,4 +469,27 @@ p {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+.clear-history-button {
+  background-color: var(--red-color);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+  margin: 1rem auto;
+  border: none;
+  cursor: pointer;
+}
+
+.clear-history-button:hover {
+  opacity: 0.8;
+  transform: scale(1.05);
+}
+
+.clear-history-button i {
+  font-size: 14px;
 }
