@@ -195,7 +195,6 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
 
 def clean_path(path):
     """Clean and resolve given path."""
-    """strips swift optional type"""
     if path.startswith("Optional("):
         path = path.strip('Optional("').rstrip('")')
     return os.path.expanduser(path)
