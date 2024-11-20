@@ -3,6 +3,7 @@ import subprocess
 import sys
 import os 
 import pkgutil
+import shutil
 
 def run():
     site_packages = site.getsitepackages()[0]
@@ -14,7 +15,6 @@ def run():
         "--follow-imports",
         "--standalone",
         "--output-filename=exo",
-        "--onefile",
         "--python-flag=no_site"
     ]
 
@@ -48,9 +48,10 @@ def run():
             "--include-distribution-metadata=pygments",
             "--linux-icon=docs/exo-rounded.png"
         ])
-
     try:
         subprocess.run(command, check=True)
+        os.makedirs('./dist/main.dist/transformers/models', exist_ok=True)
+        shutil.copytree(f"{site_packages}/transformers/models", "dist/main.dist/transformers/models")
         print("Build completed!")
     except subprocess.CalledProcessError as e:
         print(f"An error occurred: {e}")
