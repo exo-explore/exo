@@ -1,3 +1,4 @@
+import os
 import traceback
 from aiofiles import os as aios
 from os import PathLike
@@ -7,8 +8,6 @@ from transformers import AutoTokenizer, AutoProcessor
 from exo.download.hf.hf_helpers import get_local_snapshot_dir
 from exo.helpers import DEBUG
 
-# OKHand.ziyu add library
-import os
 
 class DummyTokenizer:
   def __init__(self):

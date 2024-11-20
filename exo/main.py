@@ -64,10 +64,8 @@ print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
 
-# init folder for Local Model
 exo_path, local_model_config = init_exo_env()
 
-# import Local Model
 if args.add_local_model:
   model_name = args.add_local_model[0]
   inference_engine = args.add_local_model[1].lower()
@@ -98,7 +96,6 @@ if args.add_local_model:
       file.close()
     sys.exit(f"Add local model: {model_name} with inference engine: {inference_engine_name}")
 
-# Build Local Model Card
 with local_model_config.open('r') as file:
   all_model = file.read()
   model_config_list = all_model.split('\n')[:-1]
@@ -113,7 +110,6 @@ print(f"Detected system: {system_info}")
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
 
-# default use HF Downloader Model
 shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check,
                                                       max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 
@@ -135,7 +131,6 @@ if DEBUG >= 0:
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
-# Default use udp discovery
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(
     args.node_id,
@@ -190,7 +185,6 @@ def preemptively_start_download(request_id: str, opaque_status: str):
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
       
       if "Local" in current_shard.model_id or os.path.isdir(current_shard.model_id):
-        # TODO: open ftp to share download model 
         print("Local model detected, skip download")
         pass
       else:
@@ -230,7 +224,6 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
       return
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   elif os.path.isdir(model_name_or_path):
-    # local model and shard
     model_path = model_name_or_path.rstrip('/')
     model_config_path = Path(model_path)/'config.json'
     model_name = str(model_path.split('/')[-1])
