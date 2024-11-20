@@ -73,3 +73,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.shard = shard
       self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+
+  async def preload_model(self, shard: Shard) -> None:
+    await self.ensure_shard(shard)

@@ -56,6 +56,7 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--preload-models", type=str, help="Comma-separated list of models to preload")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -133,17 +134,21 @@ node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
 
-def preemptively_start_download(request_id: str, opaque_status: str):
+
+async def preemptively_start_download(request_id: str, opaque_status: str):
   try:
     status = json.loads(opaque_status)
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
       if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
-      asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
+      await shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__)
+      await node.preload_models([current_shard])
+      return current_shard
   except Exception as e:
     if DEBUG >= 2:
       print(f"Failed to preemptively start download: {e}")
       traceback.print_exc()
+  return None
 
 
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
@@ -224,6 +229,33 @@ async def main():
       loop.add_signal_handler(s, handle_exit)
 
   await node.start(wait_for_peers=args.wait_for_peers)
+
+  # Preload models if specified
+  if args.preload_models:
+    models_to_preload = [model.strip() for model in args.preload_models.split(",")]
+    if DEBUG >= 2:
+      print(f"Preloading models: {models_to_preload}")
+    
+    inference_class = inference_engine.__class__.__name__
+    shards = [
+        shard for model in models_to_preload
+        if (shard := build_base_shard(model, inference_class)) is not None
+    ]
+    
+    if len(shards) < len(models_to_preload):
+        unsupported = [
+            model for model in models_to_preload 
+            if not build_base_shard(model, inference_class)
+        ]
+        print(f"Warning: Unsupported model(s) for {inference_class}: {', '.join(unsupported)}")
+    
+    try:
+        await node.preload_models(shards)
+        print(f"Successfully preloaded {len(shards)} model(s)")
+    except Exception as e:
+        print(f"Error preloading models: {str(e)}")
+        if DEBUG >= 1:
+            traceback.print_exc()
 
   if args.command == "run" or args.run_model:
     model_name = args.model_name or args.run_model

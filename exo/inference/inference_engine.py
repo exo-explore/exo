@@ -29,6 +29,10 @@ class InferenceEngine(ABC):
     output_data = await self.infer_tensor(request_id, shard, tokens)
     return output_data 
 
+  @abstractmethod
+  async def preload_model(self, shard: Shard) -> None:
+    pass
+
 inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
