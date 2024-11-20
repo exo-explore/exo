@@ -28,12 +28,6 @@ Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU:
   <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
 </div>
 
-OKHand.zy fork add new  feature:
-- support CLI and ChatAPI use local model (only support mlx inference engine)
-- add new args "--add-local-model"
-- add init exo folder and model config file in /.cache/exo
-
-
 ## Get Involved
 
 exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
@@ -236,7 +230,7 @@ exo run llama-3.2-3b --prompt "What is the meaning of exo?"
   ```
 #### Choose one device to run the following command:
 ```shell
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:52415/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
      "model": "Local/<model_name>",
