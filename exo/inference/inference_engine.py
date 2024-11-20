@@ -24,10 +24,10 @@ class InferenceEngine(ABC):
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     pass
   
-  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str) -> np.ndarray:
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[dict] = None) -> np.ndarray:
     tokens = await self.encode(shard, prompt)
-    output_data = await self.infer_tensor(request_id, shard, tokens)
-    return output_data 
+    output_data, inference_state = await self.infer_tensor(request_id, shard, tokens, inference_state)
+    return output_data, inference_state
 
 inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",

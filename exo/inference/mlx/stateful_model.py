@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 from collections import OrderedDict
 
 import mlx.core as mx
@@ -29,14 +29,17 @@ class StatefulModel(nn.Module):
 
     self.caches[request_id] = cache
 
-  def __call__(self, x, request_id: str):
-    if request_id not in self.caches:
-      self.init_cache(request_id)
+  def __call__(self, x, request_id: str, inference_state: Optional[dict] = None):
+    if self.model.model_type !='StableDiffusionPipeline':
+      if request_id not in self.caches:
+        self.init_cache(request_id)
+      else:
+        self.caches.move_to_end(request_id)
+
+      cache = self.caches[request_id]
+
+      y = self.model(x, cache=cache)
     else:
-      self.caches.move_to_end(request_id)
-
-    cache = self.caches[request_id]
-
-    y = self.model(x, cache=cache)
-    return y
+      y, inference_state = self.model(x, **inference_state)
+    return y, inference_state
     

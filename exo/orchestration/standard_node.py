@@ -111,41 +111,50 @@ class StandardNode(Node):
     shard,
     result: np.ndarray,
     request_id: Optional[str] = None,
+    inference_state: Optional[dict] = None,
   ):
-    if request_id not in self.buffered_token_output:
-      self.buffered_token_output[request_id] = ([], False)
-    
-    if request_id not in self.buffered_logits:
-      self.buffered_logits[request_id] = []
+    if shard.model_id != 'stable-diffusion-2-1-base':
+      if request_id not in self.buffered_token_output:
+        self.buffered_token_output[request_id] = ([], False)
+      
+      if request_id not in self.buffered_logits:
+        self.buffered_logits[request_id] = []
 
-    self.buffered_logits[request_id] += [i for i in np.reshape(result, (-1, 1, result.shape[-1]))]
+      self.buffered_logits[request_id] += [i for i in np.reshape(result, (-1, 1, result.shape[-1]))]
+      intermediate_result = self.buffered_token_output[request_id][0]
 
-    if shard.is_last_layer():
-      result = await self.inference_engine.sample(result)
+      if shard.is_last_layer():
+        result = await self.inference_engine.sample(result)
+    else:
+      intermediate_result, inference_state = self.handle_stable_diffusion(inference_state, result)
     
     await self.inference_engine.ensure_shard(shard)
-    is_finished = result.size == 1 and result.item() == self.inference_engine.tokenizer.eos_token_id or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
-
-    asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))  # TODO: this is n^2 communication complexity
-
-    if result.size == 1:  # we got a new token out
-      self.buffered_token_output[request_id][0].append(result.item())
-      self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
+    is_finished = inference_state.get('is_finished', False) if inference_state else (result.size == 1 and result.item() == self.inference_engine.tokenizer.eos_token_id) or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
     
-    if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
 
-    if is_finished:
-      self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+    asyncio.create_task(self.broadcast_result(request_id, intermediate_result, is_finished))  # TODO: this is n^2 communication complexity
+    if shard.model_id != 'stable-diffusion-2-1-base':
+      if result.size == 1:  # we got a new token out
+        self.buffered_token_output[request_id][0].append(result.item())
+        self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
     else:
-      asyncio.create_task(self.forward_to_next_shard(shard, result, request_id))
+      self.trigger_on_token_callbacks(request_id, intermediate_result, is_finished)
 
-    return np.array(self.buffered_token_output[request_id][0]) if len(self.buffered_token_output[request_id][0]) > 0 else None
+    if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(intermediate_result)}")
+    if is_finished:
+      if shard.model_id != 'stable-diffusion-2-1-base':
+          self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+    else:
+      asyncio.create_task(self.forward_to_next_shard(shard, result, request_id, inference_state))
+
+    return np.array(intermediate_result) if len(intermediate_result) > 0 else None
 
   async def process_prompt(
     self,
     base_shard: Shard,
     prompt: str,
     request_id: Optional[str] = None,
+    inference_state: Optional[dict] = {},
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
@@ -163,7 +172,7 @@ class StandardNode(Node):
       )
     )
     start_time = time.perf_counter_ns()
-    resp = await self._process_prompt(base_shard, prompt, request_id)
+    resp = await self._process_prompt(base_shard, prompt, request_id, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     asyncio.create_task(
@@ -184,19 +193,18 @@ class StandardNode(Node):
     )
     return resp
 
-  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None) -> Optional[np.ndarray]:
+  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[dict] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
     shard = self.get_current_shard(base_shard)
-
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=}")
     if shard.start_layer != 0:
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
       await self.forward_to_next_shard(shard, prompt, request_id)
       return None
     else:
-      result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
-      ret = await self.process_result(shard, result, request_id) 
+      result,inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
+      ret = await self.process_result(shard, result, request_id, inference_state) 
       return result
 
   async def process_tensor(
@@ -204,6 +212,7 @@ class StandardNode(Node):
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
+    inference_state: Optional[dict] = None,
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
@@ -222,7 +231,7 @@ class StandardNode(Node):
       )
     )
     start_time = time.perf_counter_ns()
-    resp = await self._process_tensor(shard, tensor, request_id)
+    resp = await self._process_tensor(shard, tensor, request_id, inference_state)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     asyncio.create_task(
@@ -247,6 +256,7 @@ class StandardNode(Node):
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
+    inference_state: Optional[dict] = None,
   ) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
@@ -254,8 +264,8 @@ class StandardNode(Node):
 
     if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
     try:
-      result = await self.inference_engine.infer_tensor(request_id, shard, tensor)
-      ret = await self.process_result(shard, result, request_id) 
+      result, inference_state = await self.inference_engine.infer_tensor(request_id, shard, tensor, inference_state)
+      ret = await self.process_result(shard, result, request_id, inference_state) 
       return ret
     except Exception as e:
       print(f"Error processing tensor for shard {shard}: {e}")
@@ -267,6 +277,7 @@ class StandardNode(Node):
     base_shard: Shard,
     tensor_or_prompt: Union[np.ndarray, str],
     request_id: str,
+    inference_state: Optional[dict] = None,
   ) -> None:
     if not self.partitioning_strategy:
       if DEBUG >= 1: print("No partitioning strategy found. Skipping forward.")
@@ -281,16 +292,16 @@ class StandardNode(Node):
       is_tensor = isinstance(tensor_or_prompt, np.ndarray)
       if target_id == self.id:
         if is_tensor:
-          await self.process_tensor(next_shard, tensor_or_prompt, request_id)
+          await self.process_tensor(next_shard, tensor_or_prompt, request_id, inference_state)
         else:
-          await self.process_prompt(next_shard, tensor_or_prompt, request_id)
+          await self.process_prompt(next_shard, tensor_or_prompt, request_id, inference_state)
       else:
         target_peer = next((p for p in self.peers if p.id() == target_id), None)
         if not target_peer:
           raise ValueError(f"Peer for {next_partition_index} not found")
         if is_tensor:
           if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor_or_prompt}")
-          await target_peer.send_tensor(next_shard, tensor_or_prompt, request_id=request_id)
+          await target_peer.send_tensor(next_shard, tensor_or_prompt, inference_state, request_id=request_id)
         else:
           await target_peer.send_prompt(next_shard, tensor_or_prompt, request_id=request_id)
 
@@ -461,3 +472,12 @@ class StandardNode(Node):
   @property
   def current_topology(self) -> Topology:
     return self.topology
+
+  def handle_stable_diffusion(self, inference_state, result):
+    if inference_state['is_step_finished']:
+      inference_state['step']+=1
+    progress = [inference_state['step'],inference_state['total_steps']]
+    intermediate_result = progress
+    if progress[0] == progress[1]:
+      intermediate_result = result
+    return intermediate_result, inference_state

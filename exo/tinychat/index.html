@@ -115,7 +115,15 @@
           const div = document.createElement('div');
           div.className = `message message-role-${role}`;
           try {
-            div.innerHTML = DOMPurify.sanitize(marked.parse(content));
+              if (content.includes('![Generated Image]')) {
+                const imageUrl = content.match(/\((.*?)\)/)[1];
+                const img = document.createElement('img');
+                img.src = imageUrl;
+                img.alt = 'Generated Image';
+                div.appendChild(img);
+              } else {
+                div.innerHTML = DOMPurify.sanitize(marked.parse(content));
+              }
           } catch (e) {
             console.log(content);
             console.error(e);

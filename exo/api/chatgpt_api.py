@@ -15,7 +15,8 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get_supported_models
 from typing import Callable, Optional
-
+from PIL import Image
+import numpy as np
 
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
@@ -169,13 +170,16 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/v1/chat/token/encode", self.handle_post_chat_token_encode), {"*": cors_options})
     cors.add(self.app.router.add_post("/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
     cors.add(self.app.router.add_post("/v1/chat/completions", self.handle_post_chat_completions), {"*": cors_options})
+    cors.add(self.app.router.add_post("/v1/image/generations", self.handle_post_image_generations), {"*": cors_options})
     cors.add(self.app.router.add_get("/v1/download/progress", self.handle_get_download_progress), {"*": cors_options})
     cors.add(self.app.router.add_get("/modelpool", self.handle_model_support), {"*": cors_options})
     cors.add(self.app.router.add_get("/healthcheck", self.handle_healthcheck), {"*": cors_options})
 
+      
     self.static_dir = Path(__file__).parent.parent/"tinychat"
     self.app.router.add_get("/", self.handle_root)
     self.app.router.add_static("/", self.static_dir, name="static")
+    self.app.router.add_static('/images/', self.static_dir / 'images', name='static_images')
 
     self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)
@@ -359,6 +363,79 @@ class ChatGPTAPI:
       deregistered_callback = self.node.on_token.deregister(callback_id)
       if DEBUG >= 2: print(f"Deregister {callback_id=} {deregistered_callback=}")
 
+  
+  async def handle_post_image_generations(self, request):
+    data = await request.json()
+
+    if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
+    stream = data.get("stream", False)
+    model = data.get("model", "")
+    prompt = data.get("prompt", "")
+    print(f"model: {model}, prompt: {prompt}, stream: {stream}")
+    shard = build_base_shard(model, self.inference_engine_classname)
+    print(f"shard: {shard}")
+    if not shard:
+        return web.json_response({"error": f"Unsupported model: {model} with inference engine {self.inference_engine_classname}"}, status=400)
+
+    request_id = str(uuid.uuid4())
+    callback_id = f"chatgpt-api-wait-response-{request_id}"
+    callback = self.node.on_token.register(callback_id)
+    try:
+      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id))), timeout=self.response_timeout)
+
+
+      response = web.StreamResponse(status=200, reason='OK', headers={'Content-Type': 'application/octet-stream',"Cache-Control": "no-cache",})
+      await response.prepare(request)
+
+      def get_progress_bar(current_step, total_steps, bar_length=50):
+        # Calculate the percentage of completion
+        percent = float(current_step) / total_steps
+        # Calculate the number of hashes to display
+        arrow = '-' * int(round(percent * bar_length) - 1) + '>'
+        spaces = ' ' * (bar_length - len(arrow))
+        
+        # Create the progress bar string
+        progress_bar = f'Progress: [{arrow}{spaces}] {int(percent * 100)}% ({current_step}/{total_steps})'
+        return progress_bar
+
+      async def stream_image(_request_id: str, result, is_finished: bool):
+          if isinstance(result, list):
+              await response.write(json.dumps({'progress': get_progress_bar((result[0]), (result[1]))}).encode('utf-8') + b'\n')
+
+          elif isinstance(result, np.ndarray):
+            im = Image.fromarray(np.array(result))
+            # Save the image to a file
+            image_filename = f"{_request_id}.png"
+            image_path = self.static_dir / "images" / image_filename
+            im.save(image_path)
+            image_url = request.app.router['static_images'].url_for(filename=image_filename)
+            base_url = f"{request.scheme}://{request.host}"
+            # Construct the full URL correctly
+            full_image_url = base_url + str(image_url)
+            
+            await response.write(json.dumps({'images': [{'url': str(full_image_url), 'content_type': 'image/png'}]}).encode('utf-8') + b'\n')
+
+            await response.write_eof()
+              
+
+      stream_task = None
+      def on_result(_request_id: str, result, is_finished: bool):
+          nonlocal stream_task
+          stream_task = asyncio.create_task(stream_image(_request_id, result, is_finished))
+          return _request_id == request_id and is_finished
+
+      await callback.wait(on_result, timeout=self.response_timeout*10)
+      
+      if stream_task:
+          # Wait for the stream task to complete before returning
+          await stream_task
+
+      return response
+
+    except Exception as e:
+        if DEBUG >= 2: traceback.print_exc()
+        return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
+  
   async def run(self, host: str = "0.0.0.0", port: int = 52415):
     runner = web.AppRunner(self.app)
     await runner.setup()

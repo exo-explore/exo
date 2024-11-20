@@ -61,8 +61,16 @@ def _get_classes(config: dict):
 
 def load_config(model_path: Path) -> dict:
   try:
-    with open(model_path/"config.json", "r") as f:
-      config = json.load(f)
+    config_path = model_path / "config.json"
+    if config_path.exists():
+      with open(config_path, "r") as f:
+        config = json.load(f)
+      return config
+    
+    model_index_path = model_path / "model_index.json"
+    if model_index_path.exists():
+      config = load_model_index(model_path, model_index_path)
+      return config
   except FileNotFoundError:
     logging.error(f"Config file not found in {model_path}")
     raise
@@ -109,6 +117,24 @@ def load_model_shard(
     # Try weight for back-compat
     weight_files = glob.glob(str(model_path/"weight*.safetensors"))
 
+  model_class, model_args_class = _get_classes(config=config)
+
+  class ShardedModel(model_class):
+    def __init__(self, args):
+      super().__init__(args)
+      self.shard = Shard(args.shard.model_id, args.shard.start_layer, args.shard.end_layer, args.shard.n_layers)
+
+    def __call__(self, x, *args, **kwargs):
+      y = super().__call__(x[None] if self.shard.is_first_layer() else x, *args, **kwargs)
+      return y
+
+  model_args = model_args_class.from_dict(config)
+  model = ShardedModel(model_args)
+
+  if config.get("model_index", False):
+    model.load()
+    return model
+
   if not weight_files:
     logging.error(f"No safetensors found in {model_path}")
     raise FileNotFoundError(f"No safetensors found in {model_path}")
@@ -128,19 +154,7 @@ def load_model_shard(
 
     weights.update(mx.load(wf))
 
-  model_class, model_args_class = _get_classes(config=config)
-
-  class ShardedModel(model_class):
-    def __init__(self, args):
-      super().__init__(args)
-      self.shard = Shard(args.shard.model_id, args.shard.start_layer, args.shard.end_layer, args.shard.n_layers)
-
-    def __call__(self, x, *args, **kwargs):
-      y = super().__call__(x[None] if self.shard.is_first_layer() else x, *args, **kwargs)
-      return y
-
-  model_args = model_args_class.from_dict(config)
-  model = ShardedModel(model_args)
+  
 
   if hasattr(model, "sanitize"):
     weights = model.sanitize(weights)
@@ -182,6 +196,9 @@ async def load_shard(
     processor.eos_token_id = processor.tokenizer.eos_token_id
     processor.encode = processor.tokenizer.encode
     return model, processor
+  elif hasattr(model, "tokenizer"):
+    tokenizer = model.tokenizer
+    return model, tokenizer
   else:
     tokenizer = load_tokenizer(model_path, tokenizer_config)
     return model, tokenizer
@@ -210,3 +227,29 @@ async def get_image_from_str(_image_str: str):
     return img
   else:
     raise ValueError("Invalid image_str format. Must be a URL or a base64 encoded image.")
+
+# loading a combined config for all models in the index
+def load_model_index(model_path: Path, model_index_path: Path):
+  models_config = {}
+  with open(model_index_path, "r") as f:
+      model_index = json.load(f)
+  models_config["model_index"] = True
+  models_config["model_type"] = model_index["_class_name"]
+  models_config["models"] = {}
+  for model in model_index.keys():
+    model_config_path = glob.glob(str(model_path / model / "*config.json"))
+    if len(model_config_path)>0:
+      with open(model_config_path[0], "r") as f:
+        model_config = { }
+        model_config["model_type"] = model
+        model_config["config"] = json.load(f)
+        model_config["path"] = model_path / model
+        if model_config["path"]/"*model.safetensors":
+          model_config["config"].update({"weight_files": list(glob.glob(str(model_config["path"]/"*model.safetensors")))})
+        model_config["path"] = str(model_path / model)
+        m = {}
+        m[model] = model_config
+        models_config.update(m)
+  models_config = json.dumps(models_config)
+  models_config = json.loads(models_config)
+  return models_config
