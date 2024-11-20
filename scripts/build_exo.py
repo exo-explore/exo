@@ -50,9 +50,9 @@ def run():
         ])
     try:
         subprocess.run(command, check=True)
-        os.makedirs('./dist/main.dist/transformers/models', exist_ok=True)
-        shutil.copytree(f"{site_packages}/transformers/models", "dist/main.dist/transformers/models")
         print("Build completed!")
+        os.makedirs('./dist/main.dist/transformers/models', exist_ok=True)
+        shutil.copytree(f"{site_packages}/transformers/models", "dist/main.dist/transformers/models", dirs_exist_ok=True)
     except subprocess.CalledProcessError as e:
         print(f"An error occurred: {e}")
 
