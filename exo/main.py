@@ -17,7 +17,7 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent, NoopShardDownloader
 from exo.download.hf.hf_shard_download import HFShardDownloader
-from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses, terminal_link
+from exo.helpers import print_yellow_exo, init_exo_env, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses, terminal_link
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.dummy_inference_engine import DummyInferenceEngine
@@ -63,14 +63,7 @@ print(f"Selected inference engine: {args.inference_engine}")
 print_yellow_exo()
 
 # init folder for Local Model
-exo_path = os.environ.get("Home", Path.home()/".cache"/"exo")
-os.makedirs(exo_path, exist_ok=True)
-print(f"Init exo folder: {exo_path}")
-local_model_config = Path(f'{exo_path}/model_config.txt')
-local_model_config.parent.mkdir(parents=True, exist_ok=True)
-with local_model_config.open('a') as file:
-  file.close()
-print(f"Init local model config: {exo_path}")
+exo_path, local_model_config = init_exo_env()
 
 # import Local Model
 if args.add_local_model:
@@ -85,9 +78,11 @@ if args.add_local_model:
   else:
     sys.exit(f"Invalid inference engine: {inference_engine}")
   
-  with open(str(exo_path)+f'/{model_name}/config.json', 'r') as file:
+  config_file_path = Path(exo_path/model_name/'config.json')
+  with open(config_file_path, 'r') as file:
       config = json.load(file)
       config_n_layers = config['num_hidden_layers']
+  
   new_model = f"{model_name}:{config_n_layers}:{inference_engine_name}:{str(exo_path)}/{model_name}\n"
 
   with local_model_config.open('r') as file:
@@ -124,7 +119,7 @@ inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
 if args.node_port is None:
-  args.node_port = find_available_port(args.node_host) # 0.0.0.0:49152 ~ 65535
+  args.node_port = find_available_port(args.node_host) 
   if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()

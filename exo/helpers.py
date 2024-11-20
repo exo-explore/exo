@@ -86,6 +86,16 @@ def terminal_link(uri, label=None):
 
   return escape_mask.format(parameters, uri, label)
 
+def init_exo_env():
+  exo_path = os.environ.get("Home", Path.home()/".cache"/"exo")
+  os.makedirs(exo_path, exist_ok=True)
+  print(f"Init exo folder: {exo_path}")
+  local_model_config = Path(f'{exo_path}/model_config.txt')
+  local_model_config.parent.mkdir(parents=True, exist_ok=True)
+  with local_model_config.open('a') as file:
+    file.close()
+  print(f"Init local model config: {exo_path}")
+  return exo_path, local_model_config
 
 T = TypeVar("T")
 K = TypeVar("K")
