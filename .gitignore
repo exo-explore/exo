@@ -172,4 +172,4 @@ cython_debug/
 **/*.xcodeproj/*
 .aider*
 
-./exo/tinychat/images/*.png
+exo/tinychat/images/*.png
