@@ -98,3 +98,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
       self.shard = shard
       self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+
+  async def preload_model(self, shard: Shard) -> None:
+    await self.ensure_shard(shard)

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, TYPE_CHECKING
+rom typing import Optional, Tuple, TYPE_CHECKING
 import numpy as np
 import random
 import string
@@ -41,3 +41,6 @@ class DummyInferenceEngine(InferenceEngine):
     await asyncio.sleep(0.1)  # Simulate a short delay
     self.shard = shard
     print(f"DummyInferenceEngine: Simulated loading of shard {shard.model_id}")
+
+  async def preload_model(self, shard: Shard) -> None:
+    await self.ensure_shard(shard)

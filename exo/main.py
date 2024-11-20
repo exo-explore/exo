@@ -233,19 +233,29 @@ async def main():
   # Preload models if specified
   if args.preload_models:
     models_to_preload = [model.strip() for model in args.preload_models.split(",")]
-    print(f"Preloading models: {models_to_preload}")
-    for model_name in models_to_preload:
-      try:
-        shard = build_base_shard(model_name, inference_engine.__class__.__name__)
-        if not shard:
-          print(f"Warning: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
-          continue
-        await node.preload_models([shard])
-        print(f"Successfully preloaded model: {model_name}")
-      except Exception as e:
-        print(f"Error preloading model {model_name}: {str(e)}")
+    if DEBUG >= 2:
+      print(f"Preloading models: {models_to_preload}")
+    
+    inference_class = inference_engine.__class__.__name__
+    shards = [
+        shard for model in models_to_preload
+        if (shard := build_base_shard(model, inference_class)) is not None
+    ]
+    
+    if len(shards) < len(models_to_preload):
+        unsupported = [
+            model for model in models_to_preload 
+            if not build_base_shard(model, inference_class)
+        ]
+        print(f"Warning: Unsupported model(s) for {inference_class}: {', '.join(unsupported)}")
+    
+    try:
+        await node.preload_models(shards)
+        print(f"Successfully preloaded {len(shards)} model(s)")
+    except Exception as e:
+        print(f"Error preloading models: {str(e)}")
         if DEBUG >= 1:
-          traceback.print_exc()
+            traceback.print_exc()
 
   if args.command == "run" or args.run_model:
     model_name = args.model_name or args.run_model
