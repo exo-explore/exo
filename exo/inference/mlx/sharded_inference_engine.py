@@ -66,7 +66,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
       return
-    
+
     if os.path.isdir(shard.model_id): # cli mode
       model_path = Path(shard.model_id) 
     elif "Local" in shard.model_id: # api mode

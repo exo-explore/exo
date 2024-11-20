@@ -189,7 +189,7 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
       
-      if "Local" in current_shard.model_id:
+      if "Local" in current_shard.model_id or os.path.isdir(current_shard.model_id):
         # TODO: open ftp to share download model 
         print("Local model detected, skip download")
         pass
