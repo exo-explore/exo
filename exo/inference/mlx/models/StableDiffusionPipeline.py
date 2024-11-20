@@ -198,6 +198,7 @@ class Model(nn.Module):
         if self.shard_unet.start_layer != -1:
             with tqdm(total=total_steps,initial=step+1) as pbar:
                 if step<total_steps:
+                    x = x_t_prev
                     if self.shard_unet.is_first_layer():
                         x_t_unet = mx.concatenate([x] * 2, axis=0) if cfg_weight> 1 else x
                     else:
@@ -214,7 +215,6 @@ class Model(nn.Module):
                     
         if self.shard_vae.is_last_layer():
             is_step_finished=True
-        if t_prev.item() ==0:
             if self.shard_vae.start_layer != -1:
                 x=self.first_stage_model.decode(x)
             if self.shard_vae.is_last_layer():
@@ -224,7 +224,8 @@ class Model(nn.Module):
                 x = x.reshape(1, B // 1, H, W, C).transpose(0, 2, 1, 3, 4)
                 x = x.reshape(1 * H, B // 1 * W, C)
                 x = (x * 255).astype(mx.uint8)
-                is_finished=True   
+                if t_prev.item() ==0:
+                    is_finished=True   
          
         return x, {'conditioning':conditioning, 'mask':mask,'residual':residual,'x_t_prev':x_t_prev,'is_finished':is_finished,'is_step_finished':is_step_finished, 'step':step, 'total_steps':total_steps}
     

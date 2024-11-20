@@ -425,8 +425,8 @@ class ChatGPTAPI:
             full_image_url = base_url + str(image_url)
             
             await response.write(json.dumps({'images': [{'url': str(full_image_url), 'content_type': 'image/png'}]}).encode('utf-8') + b'\n')
-
-            await response.write_eof()
+            if is_finished:
+              await response.write_eof()
               
 
       stream_task = None

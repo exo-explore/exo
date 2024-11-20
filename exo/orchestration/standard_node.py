@@ -477,7 +477,7 @@ class StandardNode(Node):
     if inference_state['is_step_finished']:
       inference_state['step']+=1
     progress = [inference_state['step'],inference_state['total_steps']]
-    intermediate_result = progress
+    intermediate_result = result
     if progress[0] == progress[1]:
       intermediate_result = result
     return intermediate_result, inference_state

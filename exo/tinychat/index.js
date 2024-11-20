@@ -272,9 +272,13 @@ document.addEventListener("alpine:init", () => {
                 this.cstate.messages[this.cstate.messages.length - 1].content = parsed.progress;
               }
               else if (parsed.images) {
+                if (!gottenFirstChunk) {
+                  this.cstate.messages.push({ role: "assistant", content: "" });
+                  gottenFirstChunk = true;
+                }
                 const imageUrl = parsed.images[0].url;
                 console.log(imageUrl)
-                this.cstate.messages[this.cstate.messages.length - 1].content = `![Generated Image](${imageUrl})`;
+                this.cstate.messages[this.cstate.messages.length - 1].content = `![Generated Image](${imageUrl}?t=${Date.now()})`;
               }
             }
           }
