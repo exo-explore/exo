@@ -238,21 +238,22 @@ async def shutdown(signal, loop):
   loop.stop()
 
 
-async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
-  if model_cards.get(model_name):
+async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name_or_path: str, prompt: str):
+  if model_cards.get(model_name_or_path):
     inference_class = inference_engine.__class__.__name__
-    shard = build_base_shard(model_name, inference_class)
+    shard = build_base_shard(model_name_or_path, inference_class)
     if not shard:
-      print(f"Error: exo Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+      print(f"Error: exo Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
       return
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  elif os.path.isdir(model_name):
+  elif os.path.isdir(model_name_or_path):
     # local model and shard
-    model_name = model_name.rstrip('/').split('/')[-1]
-    model_path = str(os.environ.get("Home", Path.home()/exo_path/model_name))
+    model_path = model_name_or_path.rstrip('/')
+    model_config_path = Path(model_path)/'config.json'
+    model_name = str(model_path.split('/')[-1])
 
-    if os.path.isfile(model_path+'/config.json'):
-      with open(model_path+'/config.json', 'r') as file:
+    if os.path.isfile(model_config_path):
+      with open(model_config_path, 'r') as file:
         config = json.load(file)
         config_n_layers = config['num_hidden_layers']
       build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, config_n_layers)
@@ -300,11 +301,11 @@ async def main():
   await node.start(wait_for_peers=args.wait_for_peers)
 
   if args.command == "run" or args.run_model:
-    model_name = args.model_name or args.run_model
-    if not model_name:
+    model_name_or_path = args.model_name or args.run_model
+    if not model_name_or_path:
       print("Error: Model name is required when using 'run' command or --run-model")
       return
-    await run_model_cli(node, inference_engine, model_name, args.prompt)
+    await run_model_cli(node, inference_engine, model_name_or_path, args.prompt)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
