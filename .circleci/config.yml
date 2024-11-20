@@ -126,6 +126,7 @@ jobs:
             METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
             echo "Running tokenizer tests..."
             python3 ./test/test_tokenizers.py
+            python3 ./test/test_model_helpers.py
 
   discovery_integration_test:
     macos:
