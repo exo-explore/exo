@@ -108,14 +108,15 @@ async def move_models_to_hf(seed_dir: Union[str, Path]):
   """Move model in resources folder of app to .cache/huggingface/hub"""
   source_dir = Path(seed_dir)
   dest_dir = get_hf_home()/"hub"
-  await aios.makedirs(dest_dir, exist_ok=True)   
-  async for path in await aios.listdir(source_dir):
-    if await path.is_dir() and path.name.startswith("models--"):
+  await aios.makedirs(dest_dir, exist_ok=True)  
+  for path in source_dir.iterdir():
+    if path.is_dir() and path.name.startswith("models--"):
       dest_path = dest_dir / path.name
       try:
         await aios.rename(str(path), str(dest_path))
       except Exception as e:
-        print(e)
+        print(f'Error moving model to .cache: {e}')
+    
     
 
 async def fetch_file_list(session, repo_id, revision, path=""):
