@@ -21,6 +21,7 @@ from transformers import AutoProcessor
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
 
 from exo import DEBUG
+from exo.inference.tokenizers import resolve_tokenizer
 from ..shard import Shard
 
 
@@ -136,7 +137,7 @@ def load_model_shard(
       self.shard = Shard(args.shard.model_id, args.shard.start_layer, args.shard.end_layer, args.shard.n_layers)
 
     def __call__(self, x, *args, **kwargs):
-      y = super().__call__(x[None] if self.shard.is_first_layer() else x, *args, **kwargs)
+      y = super().__call__(x, *args, **kwargs)
       return y
 
   model_args = model_args_class.from_dict(config)
@@ -183,7 +184,7 @@ async def load_shard(
     processor.encode = processor.tokenizer.encode
     return model, processor
   else:
-    tokenizer = load_tokenizer(model_path, tokenizer_config)
+    tokenizer = await resolve_tokenizer(model_path)
     return model, tokenizer
 
 
