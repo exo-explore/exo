@@ -70,11 +70,11 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     tokens = await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.decode, tokens)
     return tokens
 
-  async def save_checkpoint(self, path: str):
+  async def save_checkpoint(self, shard: Shard, path: str):
     await self.ensure_shard(shard)
     await asyncio.get_running_loop().run_in_executor(self.executor, self.model.save_weights, path)
 
-  async def load_checkpoint(self, path: str):
+  async def load_checkpoint(self, shard: Shard, path: str):
     await self.ensure_shard(shard)
     await asyncio.get_running_loop().run_in_executor(self.executor, self.model.load_weights, path)
     
