@@ -32,9 +32,17 @@
              :class="{ 'selected': cstate.selectedModel === key }"
              @click="cstate.selectedModel = key">
             <div class="model-name" x-text="model.name"></div>
-            <div class="model-progress">
-                <template x-if="model.download_percentage != null">
-                    <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
+            <div class="model-info">
+                <div class="model-progress">
+                    <template x-if="model.download_percentage != null">
+                        <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
+                    </template>
+                </div>
+                <template x-if="model.total_size">
+                    <div class="model-size" x-text="model.total_downloaded ? 
+                        `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` : 
+                        formatBytes(model.total_size)">
+                    </div>
                 </template>
             </div>
         </div>

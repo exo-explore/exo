@@ -546,3 +546,15 @@ main {
   transform: translateX(-5px);
   background-color: var(--secondary-color-transparent);
 }
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-size {
+  font-size: 0.8em;
+  color: var(--secondary-color-transparent);
+  opacity: 0.8;
+}

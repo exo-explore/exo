@@ -244,13 +244,17 @@ class ChatGPTAPI:
               
               # Get overall percentage from status
               download_percentage = status.get("overall") if status else None
+              total_size = status.get("total_size") if status else None
+              total_downloaded = status.get("total_downloaded") if status else False
               if DEBUG >= 2 and download_percentage is not None:
                   print(f"Overall download percentage for {model_name}: {download_percentage}")
               
               model_pool[model_name] = {
                   "name": pretty,
                   "downloaded": download_percentage == 100 if download_percentage is not None else False,
-                  "download_percentage": download_percentage
+                  "download_percentage": download_percentage,
+                  "total_size": total_size,
+                  "total_downloaded": total_downloaded
               }
       
       return web.json_response({"model pool": model_pool})

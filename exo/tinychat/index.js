@@ -105,9 +105,11 @@ document.addEventListener("alpine:init", () => {
             this.models[key].name = value.name;
             this.models[key].downloaded = value.downloaded;
             this.models[key].download_percentage = value.download_percentage;
+            this.models[key].total_size = value.total_size;
+            this.models[key].total_downloaded = value.total_downloaded;
           }
         });
-        
+                
       } catch (error) {
         console.error("Error populating model selector:", error);
         this.setError(error);
