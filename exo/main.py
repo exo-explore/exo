@@ -223,7 +223,7 @@ async def main():
 
   # Use a more direct approach to handle signals
   def handle_exit():
-    asyncio.ensure_future(shutdown(signal.SIGTERM, loop, node))
+    asyncio.ensure_future(shutdown(signal.SIGTERM, loop, node.server))
 
   if platform.system() != "Windows":
     for s in [signal.SIGINT, signal.SIGTERM]:
@@ -250,7 +250,7 @@ def run():
   except KeyboardInterrupt:
     print("Received keyboard interrupt. Shutting down...")
   finally:
-    loop.run_until_complete(shutdown(signal.SIGTERM, loop, node))
+    loop.run_until_complete(shutdown(signal.SIGTERM, loop, node.server))
     loop.close()
 
 
