@@ -36,6 +36,9 @@ document.addEventListener("alpine:init", () => {
 
     modelPoolInterval: null,
 
+    // Add models state alongside existing state
+    models: {},
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -93,34 +96,18 @@ document.addEventListener("alpine:init", () => {
 
         const data = await response.json();
         
-        const sel = document.querySelector('.model-select');
-        
-        // Only create options if they don't exist
-        if (sel.children.length === 0) {
-          Object.entries(data["model pool"]).forEach(([key, value]) => {
-            const opt = document.createElement("option");
-            opt.value = key;
-            opt.dataset.modelName = value.name;  // Store base name in dataset
-            opt.textContent = value.name;
-            sel.appendChild(opt);
-          });
-        }
-        
-        // Update existing options text
-        Array.from(sel.options).forEach(opt => {
-          const modelInfo = data["model pool"][opt.value];
-          if (modelInfo) {
-            let displayText = modelInfo.name;
-            if (modelInfo.download_percentage != null) {
-              if (modelInfo.downloaded) {
-                  displayText += ' (downloaded)';
-              } else {
-                  displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
-              }
-            }
-            opt.textContent = displayText;
+        // Update the models state with the full model pool data
+        Object.entries(data["model pool"]).forEach(([key, value]) => {
+          if (!this.models[key]) {
+            this.models[key] = value;
+          } else {
+            // Update existing model info while preserving reactivity
+            this.models[key].name = value.name;
+            this.models[key].downloaded = value.downloaded;
+            this.models[key].download_percentage = value.download_percentage;
           }
-      });
+        });
+        
       } catch (error) {
         console.error("Error populating model selector:", error);
         this.setError(error);
