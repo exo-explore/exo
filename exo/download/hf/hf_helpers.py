@@ -17,7 +17,6 @@ from exo.helpers import DEBUG, is_frozen
 from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEvent, RepoProgressCallback, RepoFileProgressCallback
 from exo.inference.shard import Shard
 import aiofiles
-from aiofiles import os as aios
 
 T = TypeVar("T")
 
@@ -107,10 +106,10 @@ def get_repo_root(repo_id: str) -> Path:
 
 async def move_models_to_hf(seed_dir: Union[str, Path]):
   """Move model in resources folder of app to .cache/huggingface/hub"""
-  source_dir = AsyncPath(seed_dir)
-  dest_dir = AsyncPath(get_hf_home()/"hub")
+  source_dir = Path(seed_dir)
+  dest_dir = get_hf_home()/"hub"
   await aios.makedirs(dest_dir, exist_ok=True)   
-  async for path in source_dir.iterdir():
+  async for path in await aios.listdir(source_dir):
     if await path.is_dir() and path.name.startswith("models--"):
       dest_path = dest_dir / path.name
       try:
