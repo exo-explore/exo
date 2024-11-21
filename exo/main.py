@@ -225,7 +225,6 @@ async def hold_outstanding(node: Node):
     else:
       return      
 
-
 async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
   losses = []
   tokens = []

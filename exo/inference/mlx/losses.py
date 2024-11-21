@@ -19,9 +19,9 @@ def back_gradient_loss(model, inputs, gradients, lengths):
   grad = gradients.astype(mx.float32)
 
   # Mask padding tokens
-  length_mask = mx.arange(inputs.shape[1])[None, :] < lengths[:, None]
+  length_mask = mx.repeat(mx.arange(inputs.shape[1])[None, :] < lengths[:, None], out.shape[-1]).reshape(out.shape)
 
-  masked_sum = (out * length_mask.T).sum(axis=1)
+  masked_sum = (out * length_mask).sum(axis=1)
   gradient_lens = mx.abs(grad * masked_sum)
   loss = gradient_lens.sum() / length_mask.sum()
 #  print(f"|    {inputs=}\n"

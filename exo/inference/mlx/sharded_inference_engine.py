@@ -134,8 +134,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     layers = [{k: v["weight"] for k,v in l.items() if 'weight' in v} for l in gradients if l]
     #print(layers[0])
 
-    return np.array(score).reshape(inputs.shape[0], -1), np.array(layers[0]['input_layernorm']).reshape(inputs.shape[0], -1)
-    return 0, 0
+    return np.array(score).reshape(1, -1), np.array(layers[0]['input_layernorm'])
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
