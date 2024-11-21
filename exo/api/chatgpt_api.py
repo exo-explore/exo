@@ -189,7 +189,7 @@ class ChatGPTAPI:
     response = web.json_response({"detail": "Quit signal received"}, status=200)
     await response.prepare(request)
     await response.write_eof()
-    await shutdown(signal.SIGINT, asyncio.get_event_loop(), self.node)
+    await shutdown(signal.SIGINT, asyncio.get_event_loop(), self.node.server)
 
   async def timeout_middleware(self, app, handler):
     async def middleware(request):
