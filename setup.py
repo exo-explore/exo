@@ -8,6 +8,7 @@ install_requires = [
   "aiohttp==3.10.11",
   "aiohttp_cors==0.7.0",
   "aiofiles==24.1.0",
+  "anyio==4.6.2",
   "grpcio==1.68.0",
   "grpcio-tools==1.68.0",
   "Jinja2==3.1.4",
@@ -24,7 +25,7 @@ install_requires = [
   "rich==13.7.1",
   "tenacity==9.0.0",
   "tqdm==4.66.4",
-  "transformers==4.46.3",
+  "transformers==4.43.3",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
 ]

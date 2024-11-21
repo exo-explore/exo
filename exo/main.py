@@ -194,7 +194,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     node.on_token.deregister(callback_id)
 
 def clean_path(path):
-    """Clean and resolve given path."""
+    """Clean and resolve path"""
     if path.startswith("Optional("):
         path = path.strip('Optional("').rstrip('")')
     return os.path.expanduser(path)
@@ -223,7 +223,7 @@ async def main():
 
   # Use a more direct approach to handle signals
   def handle_exit():
-    asyncio.ensure_future(shutdown(signal.SIGTERM, loop))
+    asyncio.ensure_future(shutdown(signal.SIGTERM, loop, node))
 
   if platform.system() != "Windows":
     for s in [signal.SIGINT, signal.SIGTERM]:
@@ -250,7 +250,7 @@ def run():
   except KeyboardInterrupt:
     print("Received keyboard interrupt. Shutting down...")
   finally:
-    loop.run_until_complete(shutdown(signal.SIGTERM, loop))
+    loop.run_until_complete(shutdown(signal.SIGTERM, loop, node))
     loop.close()
 
 

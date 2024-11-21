@@ -2,6 +2,7 @@ import aiofiles.os as aios
 from typing import Union
 import asyncio
 import aiohttp
+from anyio import Path as AsyncPath
 import json
 import os
 import sys
@@ -107,17 +108,19 @@ def get_repo_root(repo_id: str) -> Path:
 
 async def move_models_to_hf(seed_dir: Union[str, Path]):
   """Move model in resources folder of app to .cache/huggingface/hub"""
-  source_dir = Path(seed_dir)
-  dest_dir = get_hf_home()/"hub"
-  await aios.makedirs(dest_dir, exist_ok=True)
-  async for path in async_iterdir(source_dir):  
-    if path.is_dir() and path.name.startswith("models--"):
+  source_dir = AsyncPath(seed_dir)
+  if DEBUG>=1: print("moving files")
+  dest_dir = AsyncPath(get_hf_home()/"hub")
+  await aios.makedirs(dest_dir, exist_ok=True)   
+  async for path in source_dir.iterdir():
+    if await path.is_dir() and path.name.startswith("models--"):
+      if DEBUG>=1: print("moving files")
       dest_path = dest_dir / path.name
-      if await async_exists(dest_path): 
-          if DEBUG >= 1: print(f"skipping moving {dest_path}. File already exists")
-      else:
-          await aios.rename(str(path), str(dest_path))
-      
+      try:
+        await aios.rename(str(path), str(dest_path))
+      except Exception as e:
+        print(e)
+    
 
 async def fetch_file_list(session, repo_id, revision, path=""):
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
