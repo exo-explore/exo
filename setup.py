@@ -13,7 +13,7 @@ install_requires = [
   "Jinja2==3.1.4",
   "netifaces==0.11.0",
   "numpy==2.0.0",
-  "nuitka==2.4.11",
+  "nuitka==2.5.1",
   "nvidia-ml-py==12.560.30",
   "pillow==10.4.0",
   "prometheus-client==0.20.0",
@@ -24,7 +24,7 @@ install_requires = [
   "rich==13.7.1",
   "tenacity==9.0.0",
   "tqdm==4.66.4",
-  "transformers==4.46.3" if (sys.version_info.major==3 and sys.version_info.minor>12) else "transformers==4.43.3" ,
+  "transformers==4.46.3",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
 ]

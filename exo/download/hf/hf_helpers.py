@@ -118,7 +118,7 @@ async def move_models_to_hf(seed_dir: Union[str, Path]):
         print(f'Error moving model to .cache: {e}')
     
     
-
+    
 async def fetch_file_list(session, repo_id, revision, path=""):
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
   url = f"{api_url}/{path}" if path else api_url
