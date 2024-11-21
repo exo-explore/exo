@@ -92,7 +92,6 @@ document.addEventListener("alpine:init", () => {
         }
 
         const data = await response.json();
-        console.log("Model pool data:", data);
         
         const sel = document.querySelector('.model-select');
         
