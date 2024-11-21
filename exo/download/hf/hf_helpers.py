@@ -2,7 +2,6 @@ import aiofiles.os as aios
 from typing import Union
 import asyncio
 import aiohttp
-from anyio import Path as AsyncPath
 import json
 import os
 import sys

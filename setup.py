@@ -24,7 +24,7 @@ install_requires = [
   "rich==13.7.1",
   "tenacity==9.0.0",
   "tqdm==4.66.4",
-  "transformers==4.46.3" if (sys.version_info.major==3 and sys.version_info.minor>=12) else "transformers==4.43.3" ,
+  "transformers==4.46.3" if (sys.version_info.major==3 and sys.version_info.minor>12) else "transformers==4.43.3" ,
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
 ]
