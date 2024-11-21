@@ -43,6 +43,7 @@ class StandardNode(Node):
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
     self.buffered_partials: Dict[str, List[np.ndarray]] = {}
+    self.checkpoints: Dict[str, Dict[str, int]] = {}
     
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
@@ -217,7 +218,26 @@ class StandardNode(Node):
       self.outstanding_requests[request_id] = "waiting"
       resp = await self.forward_example(shard, example, target, length, train, request_id, 0) 
     return resp
-    
+
+  async def coordinate_save(
+    self,
+    base_shard: Shard,
+    iteration: int,
+    destination: str,
+  ):
+    shard = self.get_current_shard(base_shard)
+    model = shard.model_id
+    self.outstanding_requests[f"{sid}::{iteration}"] = "Checking"
+    if model not in self.checkpoints:
+      self.checkpoints[model_id] = {}
+    sid = shard.__hash__()
+    if sid not in self.checkpoints[model]:
+      self.checkpoints[model][sid] = []
+    if len(self.checkpoints[model][sid]) and self.checkpoints[model][sid][-1] < iteration:
+      self.outstanding_requests[f"{sid}::{iteration}"] = "Saving"
+      await self.inference_engine.save_checkpoint(f"{destination}/{model}/{hash}-{iteration}")
+      self.checkpoints[model][sid] = sorted(self.checkpoints.model.sid + [iteration])
+    self.outstanding_requests.pop(f"{sid}::{iteration}")
 
   async def process_example(
     self,
