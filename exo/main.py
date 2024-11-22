@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import atexit
 import signal
 import json
 import logging
@@ -9,7 +10,7 @@ import sys
 import time
 import traceback
 import uuid
-import atexit
+
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.manual.network_topology_config import NetworkTopology
 from exo.orchestration.standard_node import StandardNode
@@ -29,8 +30,6 @@ from exo.orchestration.node import Node
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
-
-
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
