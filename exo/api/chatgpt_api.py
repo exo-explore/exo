@@ -8,8 +8,7 @@ from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
 import traceback
-import os
-import sys
+import signal
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict, shutdown
@@ -188,7 +187,7 @@ class ChatGPTAPI:
     response = web.json_response({"detail": "Quit signal received"}, status=200)
     await response.prepare(request)
     await response.write_eof()
-    await shutdown(signal.SIGINT, asyncio.get_event_loop())
+    await shutdown(signal.SIGINT, asyncio.get_event_loop(), self.node.server)
 
   async def timeout_middleware(self, app, handler):
     async def middleware(request):
