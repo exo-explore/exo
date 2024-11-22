@@ -558,3 +558,29 @@ main {
   color: var(--secondary-color-transparent);
   opacity: 0.8;
 }
+
+.model-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.model-delete-button {
+    background: none;
+    border: none;
+    color: var(--red-color);
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 0.7;
+}
+
+.model-delete-button:hover {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.model-option:hover .model-delete-button {
+    opacity: 1;
+}

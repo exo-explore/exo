@@ -435,6 +435,54 @@ document.addEventListener("alpine:init", () => {
         }, 30 * 1000);
       }
     },
+
+    async deleteModel(modelName, model) {
+        const downloadedSize = model.total_downloaded || 0;
+        const sizeMessage = downloadedSize > 0 ? 
+            `This will free up ${this.formatBytes(downloadedSize)} of space.` :
+            'This will remove any partially downloaded files.';
+        
+        if (!confirm(`Are you sure you want to delete ${model.name}? ${sizeMessage}`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${window.location.origin}/models/${modelName}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.detail || 'Failed to delete model');
+            }
+
+            // Update the model status in the UI
+            if (this.models[modelName]) {
+                this.models[modelName].downloaded = false;
+                this.models[modelName].download_percentage = 0;
+                this.models[modelName].total_downloaded = 0;
+            }
+
+            // If this was the selected model, switch to a different one
+            if (this.cstate.selectedModel === modelName) {
+                const availableModel = Object.keys(this.models).find(key => this.models[key].downloaded);
+                this.cstate.selectedModel = availableModel || 'llama-3.2-1b';
+            }
+
+            // Show success message
+            console.log(`Model deleted successfully from: ${data.path}`);
+
+            // Refresh the model list
+            await this.populateSelector();
+        } catch (error) {
+            console.error('Error deleting model:', error);
+            this.setError(error.message || 'Failed to delete model');
+        }
+    }
   }));
 });
 

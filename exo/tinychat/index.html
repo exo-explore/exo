@@ -31,7 +31,15 @@
         <div class="model-option" 
              :class="{ 'selected': cstate.selectedModel === key }"
              @click="cstate.selectedModel = key">
-            <div class="model-name" x-text="model.name"></div>
+            <div class="model-header">
+                <div class="model-name" x-text="model.name"></div>
+                <button 
+                    @click.stop="deleteModel(key, model)"
+                    class="model-delete-button"
+                    x-show="model.download_percentage > 0">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
             <div class="model-info">
                 <div class="model-progress">
                     <template x-if="model.download_percentage != null">
