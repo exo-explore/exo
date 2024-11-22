@@ -41,8 +41,10 @@ parser.add_argument("command", nargs="?", choices=["run", "eval", "train"], help
 parser.add_argument("model_name", nargs="?", help="Model name to run")
 parser.add_argument("--default-model", type=str, default=None, help="Default model")
 parser.add_argument("--iters", type=int, default=100, help="Training iterations")
+parser.add_argument("--save-every", type=int, default=5, help="Save the model every N iterations.")
 parser.add_argument("--data", type=str, default="exo/train/data/lora", help="Directory where training data lives")
 parser.add_argument("--batch-size", type=int, default=1, help="Minibatch size.")
+parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory from which to load and save checkpoints")
 parser.add_argument("--node-id", type=str, default=None, help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=None, help="Node port")
@@ -235,7 +237,7 @@ async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_na
   total_loss = np.sum(losses) / np.sum(tokens)
   print(f"total | loss: {total_loss}, tokens: {np.sum(tokens)}")
 
-async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, iters):
+async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, iters, save_interval=0, checkpoint_dir=None):
   inference_class = inference_engine.__class__.__name__
   shard = build_base_shard(model_name, inference_class)
   if not shard:
@@ -251,8 +253,15 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
       _, _, lengths = batch
       losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch, train=True)))
       tokens.append(np.sum(lengths))
-  total_loss = np.sum(losses) / np.sum(tokens)
-  print(f"total | loss: {total_loss}, tokens: {np.sum(tokens)}")
+    total_loss = np.sum(losses) / np.sum(tokens)
+    print(f"epoch {iters}\t| loss: {total_loss}, tokens: {np.sum(tokens)}")
+
+async def hold_outstanding(node: Node):
+  while True:
+    if node.outstanding_requests:
+      await asyncio.sleep(.1)
+    else:
+      return      
 
 async def main():
   loop = asyncio.get_running_loop()
@@ -317,6 +326,8 @@ async def main():
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
+  
+  await hold_outstanding(node)
   if args.wait_for_peers > 0:
     print("Cooldown to allow peers to exit gracefully")
     for i in tqdm(range(50)):
