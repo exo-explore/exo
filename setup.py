@@ -17,7 +17,7 @@ install_requires = [
   "nvidia-ml-py==12.560.30",
   "pillow==10.4.0",
   "prometheus-client==0.20.0",
-  "protobuf==5.27.1",
+  "protobuf==5.28.1",
   "psutil==6.0.0",
   "pydantic==2.9.2",
   "requests==2.32.3",
