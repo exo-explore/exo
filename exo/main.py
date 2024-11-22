@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import atexit
 import signal
 import json
 import logging
@@ -214,6 +215,13 @@ async def main():
       await move_models_to_hf(args.models_seed_dir)
     except Exception as e:
       print(f"Error moving models to .cache/huggingface: {e}")
+
+  def restore_cursor():
+    if platform.system() != "Windows":
+        os.system("tput cnorm")  # Show cursor
+
+  # Restore the cursor when the program exits
+  atexit.register(restore_cursor)
 
   # Use a more direct approach to handle signals
   def handle_exit():
