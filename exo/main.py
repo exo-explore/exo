@@ -239,7 +239,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
       print(f"Error: Not Find Local model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
       return
   else:
-    print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+    print(f"Error: Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
     return
   
   request_id = str(uuid.uuid4())
