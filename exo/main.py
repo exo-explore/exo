@@ -267,8 +267,7 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
     loss, tokens = await run_iter(node, shard, True, train, batch_size)
     print(f"epoch {epoch + 1}/{iters}\t| loss: {loss}, tokens: {tokens}")
     if save_interval > 0 and epoch > 0 and (epoch % save_interval) == 0 and checkpoint_dir is not None:
-      node.coordinate_save(checkpoint_dir, shard, epoch)
-      print("Hold up let's save a checkpoint")
+      await node.coordinate_save(shard, epoch, checkpoint_dir)
       await hold_outstanding(node)
   await hold_outstanding(node)
 
