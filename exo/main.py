@@ -53,6 +53,7 @@ parser.add_argument("--max-generate-tokens", type=int, default=10000, help="Max 
 parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use (mlx, tinygrad, or dummy)")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
+parser.add_argument("--stream", action=argparse.BooleanOptionalAction, help="Stream the output of running a model")
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
@@ -165,7 +166,7 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
-async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
+async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str, stream_output: bool):
   inference_class = inference_engine.__class__.__name__
   shard = build_base_shard(model_name, inference_class)
   if not shard:
@@ -183,7 +184,11 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     print(f"Processing prompt: {prompt}")
     await node.process_prompt(shard, prompt, request_id=request_id)
 
-    _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
+    def _on_token(_request_id, tokens, is_finished):
+      if stream_output:
+        print(tokenizer.decode(tokens), end='\r', flush=True)
+      return _request_id == request_id and is_finished
+    _, tokens, _ = await callback.wait(_on_token, timeout=300)
 
     print("\nGenerated response:")
     print(tokenizer.decode(tokens))
@@ -230,7 +235,7 @@ async def main():
     if not model_name:
       print("Error: Model name is required when using 'run' command or --run-model")
       return
-    await run_model_cli(node, inference_engine, model_name, args.prompt)
+    await run_model_cli(node, inference_engine, model_name, args.prompt, args.stream)
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
