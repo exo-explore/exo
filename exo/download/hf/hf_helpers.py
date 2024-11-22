@@ -112,10 +112,13 @@ async def move_models_to_hf(seed_dir: Union[str, Path]):
   for path in source_dir.iterdir():
     if path.is_dir() and path.name.startswith("models--"):
       dest_path = dest_dir / path.name
-      try:
-        await aios.rename(str(path), str(dest_path))
-      except Exception as e:
-        print(f'Error moving model to .cache: {e}')
+      if await aios.path.exists(dest_path):
+        if DEBUG>=1: print('Skipping moving model to .cache directory')
+      else:
+        try:
+          await aios.rename(str(path), str(dest_path))
+        except Exception as e:
+          print(f'Error moving model to .cache: {e}')
     
     
     
