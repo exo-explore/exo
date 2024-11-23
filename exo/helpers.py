@@ -247,7 +247,6 @@ async def shutdown(signal, loop, server):
   print(f"Cancelling {len(server_tasks)} outstanding tasks")
   await asyncio.gather(*server_tasks, return_exceptions=True)
   await server.stop()
-  loop.stop()
 
 
 def is_frozen():

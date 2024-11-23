@@ -13,7 +13,7 @@ install_requires = [
   "Jinja2==3.1.4",
   "netifaces==0.11.0",
   "numpy==2.0.0",
-  "nuitka==2.4.10",
+  "nuitka==2.5.1",
   "nvidia-ml-py==12.560.30",
   "pillow==10.4.0",
   "prometheus-client==0.20.0",
