@@ -78,7 +78,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
           encoder_max_seq_len=self.encoder_max_cache_seq_len,
           decoder_max_seq_len=self.decoder_max_cache_seq_len,
         )
-  
+
   def caches_are_enabled(self) -> bool:
     """
     modified version for shard
@@ -89,7 +89,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       for layer in self.layers:
         if layer is not None:
           return layer.caches_are_enabled()
-  
+
   def forward(
     self,
     tokens: torch.Tensor,
@@ -159,6 +159,7 @@ def LlamaModel(config: dict, shard: Shard):
   LlamaModel using torchtune
   """
   # rope scaling config
+  scale_factor = 32
   if config["rope_scaling"] is not None:
     scale_factor = config["rope_scaling"].get("factor", 32)
 
@@ -214,8 +215,8 @@ def LlamaModel(config: dict, shard: Shard):
 
     layers[i] = layer
 
-  for i in range(len(layers)):
-    print(f"layers[{i}]: {layers[i]}")
+  #for i in range(len(layers)):
+  #  print(f"layers[{i}]: {layers[i]}")
   layers = nn.ModuleList(layers)
   tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
   output_proj = ttm.TiedLinear(tok_embeddings)
@@ -251,12 +252,12 @@ def LlamaModel(config: dict, shard: Shard):
 
 class ShardedLlamaModel(nn.Module):
   def __init__(
-    self, 
-    config: dict, 
-    shard: Shard, 
-    tokenizer: Any, 
+    self,
+    config: dict,
+    shard: Shard,
+    tokenizer: Any,
     device: Optional[torch.device] = None,
-    max_new_tokens: Optional[int] = 10,
+    max_new_tokens: int = 2048,
     use_cache: Optional[bool] = False
   ):
     super(ShardedLlamaModel, self).__init__()
@@ -266,19 +267,23 @@ class ShardedLlamaModel(nn.Module):
     self.config = config
     self.dtype = get_torch_dtype(self.config["torch_dtype"]) if "torch_dtype" in self.config else torch.float
     self.device = device if device is not None else torch.device("cpu")
-    self.use_cache = use_cache if use_cache else self.config.get("use_cache", False)
-    
-    
     self.max_new_tokens = max_new_tokens
     self.max_seq_len = self.config["max_seq_len"]
 
+    if use_cache:
+      self.use_cache = use_cache
+    else:
+      self.config.get("use_cache", False)
+
     self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
+
+    print(f"model loaded: {self.model}\n")
 
   def generate(
     self,
     tokens: torch.Tensor,
     hidden_state: Optional[torch.Tensor] = None
-  ) -> Tuple[Optional[List[torch.Tensor]], Optional[torch.Tensor]]:
+  ) -> Tuple[torch.Tensor, Optional[torch.Tensor], bool]:
     """
     Generate logits and/or hidden_states from llama model
 
@@ -292,6 +297,7 @@ class ShardedLlamaModel(nn.Module):
     bsz, tokens_length = tokens.size()
 
     # setup cache
+    print(self.model)
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
         self.model.setup_caches(
@@ -351,6 +357,26 @@ class ShardedLlamaModel(nn.Module):
 
     print(f"\nmodel_output: {model_output}")
 
+    # stop token
+    stop_tokens = None
+
+    stop_token_reached = torch.zeros(
+      bsz,
+      dtype=torch.bool,
+      device=tokens.device
+    )
+    stop_tokens = (
+      torch.tensor(
+        stop_tokens,
+        device=tokens.device,
+        dtype=tokens.dtype
+      )
+      if stop_tokens
+      else None
+    )
+
+    finished = False
+
     if isinstance(model_output, list):
       model_logits = model_output[1]
       model_output.pop()  # remove logits
@@ -359,4 +385,11 @@ class ShardedLlamaModel(nn.Module):
       model_logits = model_output
       model_hs = None
 
-    return model_hs, model_logits
+      if stop_tokens is not None:
+        stop_token_reached = ttg._generation.update_stop_tokens_tracker(
+          tokens, stop_tokens, stop_token_reached
+        )
+
+        finished = True if stop_token_reached.all() else False
+
+    return model_hs, model_logits, finished

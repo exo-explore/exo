@@ -1,4 +1,7 @@
-# experimental, based off of tinygrad/inference.py
+"""
+HFDynamicShardInferenceEngine
+Sharded inference engine using PyTorch based HuggingFace transformers
+"""
 import asyncio
 import os
 import json
@@ -26,11 +29,6 @@ TEMP = 0.6
 TOP_P = 0.9
 
 class HFDynamicShardInferenceEngine(InferenceEngine):
-  """
-  HuggingFace Dynamic Shard Inference Engine 
-  Performing model inference with sharded Pytorch based HuggingFace models.
-  """
-
   def __init__(self, shard_downloader: HFShardDownloader):
     """
     Initialize the inference engine.
