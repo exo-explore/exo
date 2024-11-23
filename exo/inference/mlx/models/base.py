@@ -1,7 +1,7 @@
 from typing import Optional
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models.base import KVCache
+from mlx_lm.models.cache import KVCache
 
 
 class IdentityBlock(nn.Module):

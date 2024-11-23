@@ -1,7 +1,0 @@
-[tool.pylint.format]
-indent-string = '  '
-max-line-length = 200
-
-[tool.autopep8]
-max_line_length = 200
-indent_size = 2
