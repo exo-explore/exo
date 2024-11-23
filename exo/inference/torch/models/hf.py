@@ -1,5 +1,3 @@
-import os
-import json
 from typing import Tuple, Optional, Union, List
 from pathlib import Path
 
@@ -8,8 +6,7 @@ import torch.nn as nn
 
 from exo.inference.shard import Shard
 from exo.helpers import DEBUG
-from exo.inference.torch.utils import extract_layers
-from exo.inference.torch.model.hf_safe_tensor_shard import HFSafeTensorShard
+from exo.inference.torch.models.hf_safe_tensor_shard import HFSafeTensorShard
 
 from transformers import (
   AutoModelForCausalLM,

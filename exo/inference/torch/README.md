@@ -1,4 +1,27 @@
-# PyTorch & HuggingFace inference engine
+# PyTorch inference engine
+
+## Devs
+- [Vincent Castro](https://github.com/risingsunomi)
+
+## Notes/Issues
+### 10/10/2024
+- To select a pytorch device via environment variables, set the variable TORCH_DEVICE
+  - XLA is currently not installed and will need to be added to inference.py, looking into doing this on a TPU VM
+  - With pytorch, CUDA and ROCm are the same so specifying CUDA also enables ROCm support. See this [post](https://github.com/pytorch/pytorch/issues/55223#issuecomment-812587373)
+  - Looking into adding mobile device support properly
+- If device is not CPU the data type defaults to float32 else float16.
+
+### 10/13/2024
+Still working on split model development (see test_split_model.py). Right now, it seems to do it but still transformers is loading more in the RAM and GPU as it loads up a larger models (causing an OOM). Will research and add to next update. Right now, tests are added and are in development.
+
+### 10/21/2024
+Working on removing transformers due to inference and VRAM usage [issues](https://github.com/exo-explore/exo/pull/139#issuecomment-2424953962). Creating a pure pytorch implementation of llama3 as using transformers wont work for exo. Using some code from meta but also implementing the use of torchtune.
+
+### 10/27/2024
+Still working on llama3 model but wanted to note that a better KVCache needs to be investigated.
+
+#### 11/17/2024
+Llama sharded model now working and next step is inference engine. Still testing on small llama 3.2 1B but will try larger models.
 
 ## Tech
 
@@ -31,14 +54,39 @@ GPU 4: NVIDIA Quadro P400 2GB
 GPU 5: NVIDIA Quadro P400 2GB 
 ```
 
+## Current Model
 
-## Notes/Issues
-### 10/10/2024
-- To select a pytorch device via environment variables, set the variable TORCH_DEVICE
-  - XLA is currently not installed and will need to be added to inference.py, looking into doing this on a TPU VM
-  - With pytorch, CUDA and ROCm are the same so specifying CUDA also enables ROCm support. See this [post](https://github.com/pytorch/pytorch/issues/55223#issuecomment-812587373)
-  - Looking into adding mobile device support properly
-- If device is not CPU the data type defaults to float32 else float16.
+WIP pytorch llama model
 
-### 10/13/2024
-Still working on split model development (see test_split_model.py). Right now, it seems to do it but still transformers is loading more in the RAM and GPU as it loads up a larger models (causing an OOM). Will research and add to next update. Right now, tests are added and are in development.
+```
+# Llama-3.2-1B-Instruct #
+
+ShardedLlamaModel(
+  (model): ShardTransformerDecoder(
+    (tok_embeddings): Embedding(128256, 2048)
+    (layers): ModuleList(
+      (0-15): 16 x TransformerSelfAttentionLayer(
+        (attn): MultiHeadAttention(
+          (q_proj): Linear(in_features=2048, out_features=2048, bias=False)
+          (k_proj): Linear(in_features=2048, out_features=512, bias=False)
+          (v_proj): Linear(in_features=2048, out_features=512, bias=False)
+          (output_proj): Linear(in_features=2048, out_features=2048, bias=False)
+          (pos_embeddings): Llama3ScaledRoPE()
+        )
+        (mlp): MultiLayerPreceptron(
+          (gate_proj): Linear(in_features=2048, out_features=8192, bias=False)
+          (up_proj): Linear(in_features=2048, out_features=8192, bias=False)
+          (down_proj): Linear(in_features=8192, out_features=2048, bias=False)
+          (act_fn): SiLU()
+        )
+        (sa_norm): RMSNorm()
+        (mlp_norm): RMSNorm()
+        (sa_scale): Identity()
+        (mlp_scale): Identity()
+      )
+    )
+    (norm): RMSNorm()
+  )
+)
+
+```

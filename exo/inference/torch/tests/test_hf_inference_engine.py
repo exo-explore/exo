@@ -5,7 +5,7 @@ import time
 import asyncio
 
 from exo.inference.shard import Shard
-from exo.inference.torch.inference import TorchDynamicShardInferenceEngine
+from exo.inference.torch.hf_inference import HFDynamicShardInferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.inference_engine import InferenceEngine
 
@@ -119,8 +119,8 @@ if __name__ == '__main__':
   try:
     print("\n\n -------- TEST Qwen/Qwen2-0.5B-Instruct -------- \n\n")
     asyncio.run(test_inference_engine(
-      TorchDynamicShardInferenceEngine(HFShardDownloader()),
-      TorchDynamicShardInferenceEngine(HFShardDownloader()),
+      HFDynamicShardInferenceEngine(HFShardDownloader()),
+      HFDynamicShardInferenceEngine(HFShardDownloader()),
       "Qwen/Qwen2-0.5B-Instruct",
       36
     ))

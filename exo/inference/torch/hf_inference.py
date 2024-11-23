@@ -1,4 +1,7 @@
-# experimental, based off of tinygrad/inference.py
+"""
+HFDynamicShardInferenceEngine
+Sharded inference engine using PyTorch based HuggingFace transformers
+"""
 import asyncio
 import os
 import json
@@ -12,7 +15,7 @@ import torch
 from typing import Optional, Tuple, Union, List
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import InferenceEngine
-from exo.inference.torch.model.hf import ShardedHuggingFaceModel
+from exo.inference.torch.models.hf import ShardedHuggingFaceModel
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -25,11 +28,7 @@ TOP_K = 20
 TEMP = 0.6
 TOP_P = 0.9
 
-class TorchDynamicShardInferenceEngine(InferenceEngine):
-  """
-  Torch Dynamic Shard Inference Engine for performing model inference with sharded Pytorch/HF based models.
-  """
-
+class HFDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: HFShardDownloader):
     """
     Initialize the inference engine.
