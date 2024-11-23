@@ -249,7 +249,7 @@ jobs:
 
   measure_pip_sizes:
     macos:
-      xcode: "15.4.0"
+      xcode: "16.0.0"
     steps:
       - checkout
       - run:
