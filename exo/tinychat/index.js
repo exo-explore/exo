@@ -4,8 +4,8 @@ document.addEventListener("alpine:init", () => {
     cstate: {
       time: null,
       messages: [],
-      selectedModel: 'llama-3.1-8b',
-    },
+      selectedModel: 'llama-3.2-1b',
+    },    
 
     // historical state
     histories: JSON.parse(localStorage.getItem("histories")) || [],
@@ -14,6 +14,8 @@ document.addEventListener("alpine:init", () => {
     generating: false,
     endpoint: `${window.location.origin}/v1`,
     errorMessage: null,
+    errorExpanded: false,
+    errorTimeout: null,
 
     // performance tracking
     time_till_first: 0,
@@ -32,8 +34,10 @@ document.addEventListener("alpine:init", () => {
 
     init() {
       // Clean up any pending messages
-      this.pendingMessage = null;
       localStorage.removeItem("pendingMessage");
+
+      // Start polling for download progress
+      this.startDownloadProgressPolling();
     },
 
     removeHistory(cstate) {
@@ -45,6 +49,12 @@ document.addEventListener("alpine:init", () => {
         localStorage.setItem("histories", JSON.stringify(this.histories));
       }
     },
+
+    clearAllHistory() {
+      this.histories = [];
+      localStorage.setItem("histories", JSON.stringify([]));
+    },
+
     // Utility functions
     formatBytes(bytes) {
       if (bytes === 0) return '0 B';
@@ -62,6 +72,56 @@ document.addEventListener("alpine:init", () => {
       if (h > 0) return `${h}h ${m}m ${s}s`;
       if (m > 0) return `${m}m ${s}s`;
       return `${s}s`;
+    },
+
+    async populateSelector() {
+      try {
+        const response = await fetch(`${window.location.origin}/modelpool`);
+        const responseText = await response.text(); // Get raw response text first
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        // Try to parse the response text
+        let responseJson;
+        try {
+          responseJson = JSON.parse(responseText);
+        } catch (parseError) {
+          console.error('Failed to parse JSON:', parseError);
+          throw new Error(`Invalid JSON response: ${responseText}`);
+        }
+
+        const sel = document.querySelector(".model-select");
+        if (!sel) {
+          throw new Error("Could not find model selector element");
+        }
+
+        // Clear the current options and add new ones
+        sel.innerHTML = '';
+          
+        const modelDict = responseJson["model pool"];
+        if (!modelDict) {
+          throw new Error("Response missing 'model pool' property");
+        }
+
+        Object.entries(modelDict).forEach(([key, value]) => {
+          const opt = document.createElement("option");
+          opt.value = key;
+          opt.textContent = value;
+          sel.appendChild(opt);
+        });
+
+        // Set initial value to the first model
+        const firstKey = Object.keys(modelDict)[0];
+        if (firstKey) {
+          sel.value = firstKey;
+          this.cstate.selectedModel = firstKey;
+        }
+      } catch (error) {
+        console.error("Error populating model selector:", error);
+        this.errorMessage = `Failed to load models: ${error.message}`;
+      }
     },
 
     async handleImageUpload(event) {
@@ -105,38 +165,34 @@ document.addEventListener("alpine:init", () => {
         el.style.height = "auto";
         el.style.height = el.scrollHeight + "px";
 
-        // Proceed to handle the message
-        this.processMessage(value);
-
-        // Start polling for download progress
-        this.startDownloadProgressPolling();
-
-        // Delay the check for downloadProgress by 8 seconds without blocking execution
-        setTimeout(async () => {
-          this.pendingMessageHandler(value);
-        }, 8000);
-
-      } catch (error) {
-        console.error('error', error)
-        this.errorMessage = error.message || 'Errore durante l\'invio del messaggio.';
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 5 * 1000)
-      }
-    },
-
-    async pendingMessageHandler(value) {
-      console.log("Pending message handler called");
-      // Check if download is in progress
-      if (this.downloadProgress && this.downloadProgress.status !== "complete") {
-        // Save the message in pendingMessage
-        this.pendingMessage = value;
         localStorage.setItem("pendingMessage", value);
-        console.log("Pending message saved:", localStorage.getItem("pendingMessage"));
-        // Inform the user
-        this.cstate.messages.push({ role: "system", content: "Download is in progress. Your message will be processed once the download completes." });
-        this.generating = false; // Reset generating
-        return;
+        this.processMessage(value);
+      } catch (error) {
+        console.error('error', error);
+        const errorDetails = {
+            message: error.message || 'Unknown error',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+        
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
+        this.generating = false;
       }
     },
 
@@ -252,11 +308,30 @@ document.addEventListener("alpine:init", () => {
           console.error("Failed to save histories to localStorage:", error);
         }
       } catch (error) {
-        console.error('error', error)
-        this.errorMessage = error;
-        setTimeout(() => {
-          this.errorMessage = null;
-        }, 5 * 1000)
+        console.error('error', error);
+        const errorDetails = {
+            message: error.message || 'Unknown error',
+            stack: error.stack,
+            name: error.name || 'Error'
+        };
+        
+        this.errorMessage = {
+            basic: `${errorDetails.name}: ${errorDetails.message}`,
+            stack: errorDetails.stack
+        };
+
+        // Clear any existing timeout
+        if (this.errorTimeout) {
+            clearTimeout(this.errorTimeout);
+        }
+
+        // Only set the timeout if the error details aren't expanded
+        if (!this.errorExpanded) {
+            this.errorTimeout = setTimeout(() => {
+                this.errorMessage = null;
+                this.errorExpanded = false;
+            }, 30 * 1000);
+        }
       } finally {
         this.generating = false;
       }
@@ -325,54 +400,60 @@ document.addEventListener("alpine:init", () => {
 
     async fetchDownloadProgress() {
       try {
-        console.log("fetching download progress");
-        await new Promise(resolve => setTimeout(resolve, 4000)); // Necessary delay
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
           const progressArray = Object.values(data);
           if (progressArray.length > 0) {
-            const progress = progressArray[0];
-            // Check if download is complete
-            if (progress.status === "complete" || progress.status === "failed") {
-              this.downloadProgress = null; // Hide the progress section
-              // Stop polling
-              this.stopDownloadProgressPolling();
-
+            this.downloadProgress = progressArray.map(progress => {
+              // Check if download is complete
               if (progress.status === "complete") {
-                // Download is complete
-                // Check for pendingMessage
-                const savedMessage = localStorage.getItem("pendingMessage");
-                if (savedMessage) {
-                  // Clear pendingMessage
-                  this.pendingMessage = null;
-                  localStorage.removeItem("pendingMessage");
-                  // Call processMessage() with savedMessage
+                return {
+                  ...progress,
+                  isComplete: true,
+                  percentage: 100
+                };
+              } else if (progress.status === "failed") {
+                return {
+                  ...progress,
+                  isComplete: false,
+                  errorMessage: "Download failed"
+                };
+              } else {
+                return {
+                  ...progress,
+                  isComplete: false,
+                  downloaded_bytes_display: this.formatBytes(progress.downloaded_bytes),
+                  total_bytes_display: this.formatBytes(progress.total_bytes),
+                  overall_speed_display: progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '',
+                  overall_eta_display: progress.overall_eta ? this.formatDuration(progress.overall_eta) : '',
+                  percentage: ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2)
+                };
+              }
+            });
+            const allComplete = this.downloadProgress.every(progress => progress.isComplete);
+            if (allComplete) {
+              // Check for pendingMessage
+              const savedMessage = localStorage.getItem("pendingMessage");
+              if (savedMessage) {
+                // Clear pendingMessage
+                localStorage.removeItem("pendingMessage");
+                // Call processMessage() with savedMessage
+                if (this.lastErrorMessage) {
                   await this.processMessage(savedMessage);
                 }
               }
-            } else {
-              // Compute human-readable strings
-              progress.downloaded_bytes_display = this.formatBytes(progress.downloaded_bytes);
-              progress.total_bytes_display = this.formatBytes(progress.total_bytes);
-              progress.overall_speed_display = progress.overall_speed ? this.formatBytes(progress.overall_speed) + '/s' : '';
-              progress.overall_eta_display = progress.overall_eta ? this.formatDuration(progress.overall_eta) : '';
-              progress.percentage = ((progress.downloaded_bytes / progress.total_bytes) * 100).toFixed(2);
-
-              this.downloadProgress = progress;
+              this.lastErrorMessage = null;
+              this.downloadProgress = null;
             }
           } else {
             // No ongoing download
             this.downloadProgress = null;
-            // Stop polling
-            this.stopDownloadProgressPolling();
           }
         }
       } catch (error) {
         console.error("Error fetching download progress:", error);
         this.downloadProgress = null;
-        // Stop polling in case of error
-        this.stopDownloadProgressPolling();
       }
     },
 
@@ -385,13 +466,6 @@ document.addEventListener("alpine:init", () => {
       this.downloadProgressInterval = setInterval(() => {
         this.fetchDownloadProgress();
       }, 1000); // Poll every second
-    },
-
-    stopDownloadProgressPolling() {
-      if (this.downloadProgressInterval) {
-        clearInterval(this.downloadProgressInterval);
-        this.downloadProgressInterval = null;
-      }
     },
   }));
 });
@@ -549,6 +623,7 @@ function createParser(onParse) {
     }
   }
 }
+
 const BOM = [239, 187, 191];
 function hasBom(buffer) {
   return BOM.every((charCode, index) => buffer.charCodeAt(index) === charCode);

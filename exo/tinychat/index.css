@@ -1,31 +1,11 @@
 /* define colors */
 :root {
-  --primary-color: #a52e4d;
-  --primary-color-transparent: #a52e4d66;
-  --secondary-color: #228039;
-  --secondary-color-transparent: #22803966;
-
+  --primary-color: #fff;
+  --secondary-color: #2a2a2a;
+  --secondary-color-transparent: #ffffff66;
+  --primary-bg-color: #1a1a1a;
+  --foreground-color: #f0f0f0;
   --red-color: #a52e4d;
-  --green-color: #228039;
-  --silver-color: #88808e;
-}
-@media(prefers-color-scheme: light) {
-  :root {
-    --primary-bg-color: #f0f0f0;
-    --secondary-bg-color: #eeeeee;
-    --tertiary-bg-color: #dddddd;
-    --foreground-color: #111111;
-    --accent-color: #000000;
-  }
-}
-@media(prefers-color-scheme: dark) {
-  :root {
-    --primary-bg-color: #111111;
-    --secondary-bg-color: #131313;
-    --tertiary-bg-color: #232323;
-    --foreground-color: #f0f0f0;
-    --accent-color: #aaaaaa;
-  }
 }
 
 main {
@@ -81,7 +61,11 @@ main {
   top: 0;
   position: absolute;
 
-  background: linear-gradient(180deg, var(--primary-bg-color) 0%, transparent 100%);
+  background: linear-gradient(
+    180deg,
+    var(--primary-bg-color) 0%,
+    transparent 100%
+  );
 }
 .histories-end {
   height: 3rem;
@@ -91,7 +75,11 @@ main {
   bottom: 0;
   position: absolute;
 
-  background: linear-gradient(0deg, var(--primary-bg-color) 0%, transparent 100%);
+  background: linear-gradient(
+    0deg,
+    var(--primary-bg-color) 0%,
+    transparent 100%
+  );
 }
 
 .history {
@@ -99,7 +87,7 @@ main {
   width: 100%;
   max-width: 40rem;
 
-  background-color: var(--tertiary-bg-color);
+  background-color: var(--secondary-color);
   border-radius: 10px;
   border-left: 2px solid var(--primary-color);
 
@@ -109,7 +97,7 @@ main {
   opacity: var(--opacity, 1);
 }
 .history:hover {
-  background-color: var(--secondary-bg-color);
+  background-color: var(--secondary-color);
 }
 
 .history-delete-button {
@@ -120,14 +108,14 @@ main {
   margin: 0;
   outline: none;
   border: none;
-  background-color: var(--secondary-bg-color);
+  background-color: var(--secondary-color);
   color: var(--foreground-color);
   border-radius: 0 0 0 10px;
   cursor: pointer;
   transition: 0.2s;
 }
 .history-delete-button:hover {
-  background-color: var(--tertiary-bg-color);
+  background-color: var(--secondary-color);
   padding: 0.75rem;
 }
 
@@ -135,6 +123,7 @@ main {
   overflow-y: auto;
   height: 100%;
   width: 100%;
+  max-width: 1200px;
 
   display: flex;
   flex-direction: column;
@@ -145,44 +134,113 @@ main {
 }
 
 .message {
-  width: 96%;
-  max-width: 80rem;
-
-  display: grid;
-
-  background-color: var(--secondary-bg-color);
+  max-width: 75%;
   padding: 0.5rem 1rem;
-  border-radius: 10px;
+  border-radius: 20px;
 }
 .message-role-assistant {
-  border-bottom: 2px solid var(--primary-color);
-  border-left: 2px solid var(--primary-color);
-  box-shadow: -10px 10px 20px 2px var(--primary-color-transparent);
+  background-color: var(--secondary-color);
+  margin-right: auto;
+  color: #fff;
 }
 .message-role-user {
-  border-bottom: 2px solid var(--secondary-color);
-  border-right: 2px solid var(--secondary-color);
-  box-shadow: 10px 10px 20px 2px var(--secondary-color-transparent);
+  margin-left: auto;
+  background-color: var(--primary-color);
+  color: #000;
 }
-.download-progress{
-  margin-bottom: 20em;
+.download-progress {
+  margin-bottom: 12em;
+  overflow-y: auto;
+  min-height: 350px;
+  padding: 2rem;
 }
 .message > pre {
   white-space: pre-wrap;
 }
 
+.progress-bar-container {
+  width: 100%;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  margin: 10px 0;
+}
+.progress-bar {
+  height: 20px;
+  border-radius: 4px;
+  transition: width 0.5s ease-in-out;
+}
+.progress-bar.complete {
+  background-color: #4CAF50;
+}
+.progress-bar.in-progress {
+  background-color: #2196F3;
+}
+
 .toast {
-    width: 100%; /* Take up the full width of the page */
-    background-color: #fc2a2a; /* Dark background color */
-    color: #fff; /* White text color */
-    text-align: center; /* Centered text */
-    border-radius: 2px; /* Rounded borders */
-    padding: 16px; /* Padding */
-    position: fixed; /* Sit on top of the screen content */
-    z-index: 9999; /* Add a z-index if needed */
-    top: 0; /* Position at the top of the page */
-    left: 0; /* Extend from the left edge */
-    right: 0; /* Extend to the right edge */
+    width: 100%;
+    background-color: #fc2a2a;
+    color: #fff;
+    text-align: left;
+    border-radius: 2px;
+    padding: 16px;
+    position: fixed;
+    z-index: 9999;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    white-space: pre-wrap;
+    font-family: monospace;
+}
+
+.toast-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.toast-error-message {
+    flex-grow: 1;
+}
+
+.toast-header-buttons {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: 24px;
+}
+
+.toast-expand-button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 4px;
+    cursor: pointer;
+    font-size: 1em;
+}
+
+.toast-close-button {
+    background: none;
+    border: none;
+    color: white;
+    padding: 4px;
+    cursor: pointer;
+    font-size: 1.2em;
+    line-height: 1;
+}
+
+.toast-expand-button:hover,
+.toast-close-button:hover {
+    opacity: 0.8;
+}
+
+.toast-content {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
 }
 
 .hljs {
@@ -201,14 +259,14 @@ main {
   margin: 0;
   outline: none;
   border: none;
-  background-color: var(--secondary-bg-color);
+  background-color: var(--secondary-color);
   color: var(--foreground-color);
   border-radius: 0 0 0 10px;
   cursor: pointer;
   transition: 0.2s;
 }
 .clipboard-button:hover {
-  background-color: var(--tertiary-bg-color);
+  background-color: var(--secondary-color);
   padding: 0.75rem;
 }
 
@@ -217,9 +275,14 @@ main {
   bottom: 0;
 
   /* linear gradient from background-color to transparent on the top */
-  background: linear-gradient(0deg, var(--primary-bg-color) 55%, transparent 100%);
+  background: linear-gradient(
+    0deg,
+    var(--primary-bg-color) 55%,
+    transparent 100%
+  );
 
   width: 100%;
+  max-width: 1200px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -266,7 +329,7 @@ main {
   min-height: 3rem;
   max-height: 8rem;
 
-  background-color: var(--tertiary-bg-color);
+  background-color: var(--secondary-color);
   color: var(--foreground-color);
   border-radius: 10px;
   border: none;
@@ -278,8 +341,8 @@ main {
   height: 3rem;
   width: 4rem;
 
-  background-color: var(--secondary-color);
-  color: var(--foreground-color);
+  background-color: var(--primary-color);
+  color: var(--secondary-color);
   border-radius: 10px;
   padding: 0.5rem;
   cursor: pointer;
@@ -288,7 +351,7 @@ main {
   background-color: var(--secondary-color-transparent);
 }
 .input-button:disabled {
-  background-color: var(--secondary-bg-color);
+  background-color: var(--secondary-color);
   cursor: not-allowed;
 }
 
@@ -395,4 +458,27 @@ p {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+.clear-history-button {
+  background-color: var(--red-color);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+  margin: 1rem auto;
+  border: none;
+  cursor: pointer;
+}
+
+.clear-history-button:hover {
+  opacity: 0.8;
+  transform: scale(1.05);
+}
+
+.clear-history-button i {
+  font-size: 14px;
 }

@@ -26,31 +26,27 @@
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
      <!-- Error Toast -->
-    <div x-show="errorMessage" x-transition.opacity x-text="errorMessage" class="toast">
+    <div x-show="errorMessage" x-transition.opacity class="toast">
+        <div class="toast-header">
+            <span class="toast-error-message" x-text="errorMessage.basic"></span>
+            <div class="toast-header-buttons">
+                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }" 
+                        class="toast-expand-button" 
+                        x-show="errorMessage.stack">
+                    <span x-text="errorExpanded ? 'Hide Details' : 'Show Details'"></span>
+                </button>
+                <button @click="errorMessage = null; errorExpanded = false;" class="toast-close-button">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+        <div class="toast-content" x-show="errorExpanded" x-transition>
+            <span x-text="errorMessage.stack"></span>
+        </div>
     </div>
 <div class="model-selector">
-<select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel">
-<option selected="" value="llama-3.2-1b">Llama 3.2 1B</option>
-<option value="llama-3.2-3b">Llama 3.2 3B</option>
-<option value="llama-3.1-8b">Llama 3.1 8B</option>
-<option value="llama-3.1-70b">Llama 3.1 70B</option>
-<option value="llama-3.1-70b-bf16">Llama 3.1 70B (BF16)</option>
-<option value="llama-3.1-405b">Llama 3.1 405B</option>
-<option value="llama-3-8b">Llama 3 8B</option>
-<option value="llama-3-70b">Llama 3 70B</option>
-<option value="mistral-nemo">Mistral Nemo</option>
-<option value="mistral-large">Mistral Large</option>
-<option value="deepseek-coder-v2-lite">Deepseek Coder V2 Lite</option>
-<option value="deepseek-coder-v2.5">Deepseek Coder V2.5</option>
-<option value="llava-1.5-7b-hf">LLaVa 1.5 7B (Vision Model)</option>
-<option value="qwen-2.5-coder-1.5b">Qwen 2.5 Coder 1.5B</option>
-<option value="qwen-2.5-coder-7b">Qwen 2.5 Coder 7B</option>
-<option value="qwen-2.5-7b">Qwen 2.5 7B</option>
-<option value="qwen-2.5-math-7b">Qwen 2.5 7B (Math)</option>
-<option value="qwen-2.5-14b">Qwen 2.5 14B</option>
-<option value="qwen-2.5-72b">Qwen 2.5 72B</option>
-<option value="qwen-2.5-math-72b">Qwen 2.5 72B (Math)</option>
-</select>
+  <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel" x-init="await populateSelector()" class='model-select'>
+  </select>
 </div>
 <div @popstate.window="
       if (home === 2) {
@@ -66,6 +62,13 @@
       if (home === -1) setTimeout(() =&gt; home = 0, 100);
     " x-show="home === 0" x-transition="">
 <h1 class="title megrim-regular">tinychat</h1>
+<template x-if="histories.length">
+  <button 
+    @click="if(confirm('Are you sure you want to clear all history?')) clearAllHistory();" 
+    class="clear-history-button">
+    <i class="fas fa-trash"></i> Clear All History
+  </button>
+</template>
 <div class="histories-container-container">
 <template x-if="histories.length">
 <div class="histories-start"></div>
@@ -151,16 +154,32 @@
 </div>
 
 <!-- Download Progress Section -->
-<template x-if="downloadProgress">
-<div class="download-progress message message-role-assistant">
-  <h2>Download Progress</h2>
-  <div class="download-progress-node">
-    <p><strong>Model:</strong> <span x-text="downloadProgress.repo_id + '@' + downloadProgress.repo_revision"></span></p>
-    <p><strong>Progress:</strong> <span x-text="`${downloadProgress.downloaded_bytes_display} / ${downloadProgress.total_bytes_display} (${downloadProgress.percentage}%)`"></span></p>
-    <p><strong>Speed:</strong> <span x-text="downloadProgress.overall_speed_display || 'N/A'"></span></p>
-    <p><strong>ETA:</strong> <span x-text="downloadProgress.overall_eta_display || 'N/A'"></span></p>
+<template x-if="downloadProgress && downloadProgress.length > 0">
+  <div class="download-progress message message-role-assistant">
+    <h2>Download Progress</h2>
+    <br>
+    <template x-for="(progress, index) in downloadProgress" :key="index">
+      <div class="download-progress-node">
+        <br>
+        <h3 x-text="`Download ${index + 1}`"></h3>
+        <p><strong>Model:</strong> <span x-text="progress.repo_id + '@' + progress.repo_revision"></span></p>
+        <p><strong>Status:</strong> <span x-text="progress.status"></span></p>
+        <div class="progress-bar-container">
+          <div class="progress-bar" 
+               :class="progress.isComplete ? 'complete' : 'in-progress'"
+               :style="`width: ${progress.percentage}%;`">
+          </div>
+        </div>
+        <template x-if="!progress.isComplete">
+          <div>
+            <p><strong>Progress:</strong> <span x-text="`${progress.downloaded_bytes_display} / ${progress.total_bytes_display} (${progress.percentage}%)`"></span></p>
+            <p><strong>Speed:</strong> <span x-text="progress.overall_speed_display || 'N/A'"></span></p>
+            <p><strong>ETA:</strong> <span x-text="progress.overall_eta_display || 'N/A'"></span></p>
+          </div>
+        </template>
+      </div>
+    </template>
   </div>
-</div>
 </template>
 
 

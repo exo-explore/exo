@@ -8,7 +8,7 @@ from exo.helpers import AsyncCallbackSystem
 
 class ShardDownloader(ABC):
   @abstractmethod
-  async def ensure_shard(self, shard: Shard) -> Path:
+  async def ensure_shard(self, shard: Shard, inference_engine_name: str) -> Path:
     """
         Ensures that the shard is downloaded.
         Does not allow multiple overlapping downloads at once.
@@ -17,6 +17,7 @@ class ShardDownloader(ABC):
 
         Args:
             shard (Shard): The shard to download.
+            inference_engine_name (str): The inference engine used on the node hosting the shard
         """
     pass
 
@@ -24,3 +25,12 @@ class ShardDownloader(ABC):
   @abstractmethod
   def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
     pass
+
+
+class NoopShardDownloader(ShardDownloader):
+  async def ensure_shard(self, shard: Shard, inference_engine_name: str) -> Path:
+    return Path("/tmp/noop_shard")
+
+  @property
+  def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
+    return AsyncCallbackSystem()

@@ -1,9 +1,10 @@
 __pycache__/
-.venv
+.venv*
 test_weights.npz
 .exo_used_ports
 .exo_node_id
 .idea
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -15,7 +16,6 @@ __pycache__/
 
 # Distribution / packaging
 /.Python
-/build/
 /develop-eggs/
 /dist/
 /downloads/
@@ -170,3 +170,4 @@ cython_debug/
 #.idea/
 
 **/*.xcodeproj/*
+.aider*
