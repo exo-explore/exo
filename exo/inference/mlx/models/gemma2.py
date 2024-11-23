@@ -4,7 +4,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from mlx_lm.models.base import create_attention_mask
-from mlx_lm.models.qwen2 import TransformerBlock, ModelArgs
+from mlx_lm.models.gemma2 import TransformerBlock, ModelArgs, RMSNorm
 
 from ...shard import Shard
 from .base import IdentityBlock
@@ -15,8 +15,6 @@ class ModelArgs(ModelArgs):
   shard: Shard = field(default_factory=lambda: Shard("", 0, 0, 0))
 
   def __post_init__(self):
-    super().__post_init__()  # Ensure parent initializations are respected
-
     if isinstance(self.shard, Shard):
       return
     if not isinstance(self.shard, dict):
@@ -25,23 +23,23 @@ class ModelArgs(ModelArgs):
     self.shard = Shard(**self.shard)
 
 
-class Qwen2Model(nn.Module):
+class GemmaModel(nn.Module):
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
     self.vocab_size = args.vocab_size
     self.num_hidden_layers = args.num_hidden_layers
     assert self.vocab_size > 0
-    if self.args.shard.is_first_layer():
+    if args.shard.is_first_layer() or args.shard.is_last_layer():
       self.embed_tokens = nn.Embedding(args.vocab_size, args.hidden_size)
     self.layers = []
     for i in range(self.num_hidden_layers):
-      if self.args.shard.start_layer <= i <= self.args.shard.end_layer:
+      if args.shard.start_layer <= i <= args.shard.end_layer:
         self.layers.append(TransformerBlock(args=args))
       else:
         self.layers.append(IdentityBlock())
-    if self.args.shard.is_last_layer():
-      self.norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+    if args.shard.is_last_layer():
+      self.norm = RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
 
   def __call__(
     self,
@@ -50,18 +48,19 @@ class Qwen2Model(nn.Module):
   ):
     if self.args.shard.is_first_layer():
       h = self.embed_tokens(inputs)
+      h = h * (self.args.hidden_size**0.5)
     else:
       h = inputs
 
     mask = None
-    if h.shape[1] > 1:
+    if h.ndim > 1 and h.shape[1] > 1:
       mask = create_attention_mask(h, cache)
 
     if cache is None:
       cache = [None]*len(self.layers)
 
     for layer, c in zip(self.layers, cache):
-      h = layer(h, mask, c)
+      h = layer(h, mask, cache=c)
 
     if self.args.shard.is_last_layer():
       h = self.norm(h)
@@ -73,10 +72,9 @@ class Model(nn.Module):
     super().__init__()
     self.args = args
     self.model_type = args.model_type
-    self.model = Qwen2Model(args)
-    if self.args.shard.is_last_layer():
-      if not args.tie_word_embeddings:
-        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
+    self.model = GemmaModel(args)
+    if args.shard.is_last_layer():
+      self.final_logit_softcapping = args.final_logit_softcapping
 
   def __call__(
     self,
@@ -85,10 +83,9 @@ class Model(nn.Module):
   ):
     out = self.model(inputs, cache)
     if self.args.shard.is_last_layer():
-      if self.args.tie_word_embeddings:
-        out = self.model.embed_tokens.as_linear(out)
-      else:
-        out = self.lm_head(out)
+      out = self.model.embed_tokens.as_linear(out)
+      out = mx.tanh(out / self.final_logit_softcapping)
+      out = out * self.final_logit_softcapping
     return out
 
   def sanitize(self, weights):
@@ -101,17 +98,10 @@ class Model(nn.Module):
         layer_num = int(key.split('.')[2])
         if self.args.shard.start_layer <= layer_num <= self.args.shard.end_layer:
           shard_state_dict[key] = value
-      elif self.args.shard.is_first_layer() and key.startswith('model.embed_tokens'):
-        shard_state_dict[key] = value
-      elif (self.args.shard.is_last_layer() and self.args.tie_word_embeddings) and key.startswith('model.embed_tokens'):
-        shard_state_dict[key] = value
-      elif (self.args.shard.is_last_layer() and not self.args.tie_word_embeddings) and key.startswith('lm_head'):
+      elif (self.args.shard.is_first_layer() or self.args.shard.is_last_layer()) and key.startswith('model.embed_tokens'):
         shard_state_dict[key] = value
       elif self.args.shard.is_last_layer() and (key.startswith('model.norm')):
         shard_state_dict[key] = value
-
-    if self.args.tie_word_embeddings:
-      shard_state_dict.pop("lm_head.weight", None)
 
     return shard_state_dict
 
@@ -121,7 +111,7 @@ class Model(nn.Module):
 
   @property
   def head_dim(self):
-    return self.args.hidden_size // self.args.num_attention_heads
+    return self.args.head_dim
 
   @property
   def n_kv_heads(self):
