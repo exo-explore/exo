@@ -247,6 +247,29 @@ jobs:
           prompt: "Keep responses concise. Who was the king of pop?"
           expected_output: "Michael Jackson"
 
+  measure_pip_sizes:
+    macos:
+      xcode: "15.4.0"
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies and measure sizes
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+            python ./extra/pipsize.py --json ./pipsize.json
+      - store_artifacts:
+          path: ./pipsize.json
+          destination: pip-sizes.json
+
+
 workflows:
   version: 2
   build_and_test:
@@ -257,3 +280,4 @@ workflows:
       - chatgpt_api_integration_test_tinygrad
       - chatgpt_api_integration_test_dummy
       - test_macos_m1
+      - measure_pip_sizes
