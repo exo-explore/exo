@@ -29,7 +29,8 @@ install_requires = [
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
   "torch==2.4.0",
   "accelerate==0.34.2",
-  "torchtune==0.4.0"
+  "torchtune==0.4.0",
+  "torchao==0.6.1"
 ]
 
 extras_require = {
