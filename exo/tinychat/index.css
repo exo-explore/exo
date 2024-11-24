@@ -584,3 +584,20 @@ main {
 .model-option:hover .model-delete-button {
     opacity: 1;
 }
+
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 20px;
+    color: var(--secondary-color-transparent);
+}
+
+.loading-container i {
+    font-size: 24px;
+}
+
+.loading-container span {
+    font-size: 14px;
+}

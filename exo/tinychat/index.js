@@ -88,32 +88,25 @@ document.addEventListener("alpine:init", () => {
     },
 
     async populateSelector() {
-      try {
-        const response = await fetch(`${window.location.origin}/modelpool`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+      const evtSource = new EventSource(`${window.location.origin}/modelpool`);
+      
+      evtSource.onmessage = (event) => {
+        if (event.data === "[DONE]") {
+          evtSource.close();
+          return;
         }
-
-        const data = await response.json();
         
-        // Update the models state with the full model pool data
-        Object.entries(data["model pool"]).forEach(([key, value]) => {
-          if (!this.models[key]) {
-            this.models[key] = value;
-          } else {
-            // Update existing model info while preserving reactivity
-            this.models[key].name = value.name;
-            this.models[key].downloaded = value.downloaded;
-            this.models[key].download_percentage = value.download_percentage;
-            this.models[key].total_size = value.total_size;
-            this.models[key].total_downloaded = value.total_downloaded;
-          }
-        });
-                
-      } catch (error) {
-        console.error("Error populating model selector:", error);
-        this.setError(error);
-      }
+        const modelData = JSON.parse(event.data);
+        this.models = {
+          ...this.models,
+          ...modelData
+        };
+      };
+      
+      evtSource.onerror = (error) => {
+        console.error('EventSource failed:', error);
+        evtSource.close();
+      };
     },
 
     async handleImageUpload(event) {
