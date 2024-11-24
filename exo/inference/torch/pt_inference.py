@@ -138,7 +138,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         config=model_config,
         shard=shard,
         device=self.device,
-        use_cache=True
+        use_cache=os.environ.get("TORCH_USE_CACHE") if os.environ.get("TORCH_USE_CACHE") else False
       )
     )
 
