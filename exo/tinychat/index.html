@@ -27,6 +27,13 @@
 <main x-data="state" x-init="console.log(endpoint)">
   <div class="sidebar">
     <h2 class="megrim-regular" style="margin-bottom: 20px;">Models</h2>
+    
+    <!-- Loading indicator -->
+    <div class="loading-container" x-show="Object.keys(models).length === 0">
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Loading models...</span>
+    </div>
+    
     <template x-for="(model, key) in models" :key="key">
         <div class="model-option" 
              :class="{ 'selected': cstate.selectedModel === key }"
