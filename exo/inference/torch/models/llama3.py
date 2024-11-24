@@ -364,8 +364,7 @@ class ShardedLlamaModel(nn.Module):
     if hidden_state is not None:
       print(f"hidden_state: {hidden_state} - {hidden_state.device}")
       model_output = self.model(
-        tokens=tokens,
-        hidden_state=hidden_state,
+        tokens=hidden_state,
         mask=curr_masks,
         input_pos=input_pos,
       )
