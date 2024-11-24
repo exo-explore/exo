@@ -91,6 +91,9 @@ class StandardNode(Node):
     if self.inference_engine.__class__.__name__ == 'MLXDynamicShardInferenceEngine':
       supported_engine_names.append('mlx')
       supported_engine_names.append('tinygrad')
+    elif self.get_inference_engine.__class__.__name__ == 'TorchDynamicShardInferenceEngine':
+      supported_engine_names.append('torch')
+      supported_engine_names.append('tinygrad')
     else:
       supported_engine_names.append('tinygrad')
     return supported_engine_names
