@@ -74,11 +74,9 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.shard = shard
-<<<<<<< HEAD
-  
+      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard)
+
   async def benchmark_tflops(self) -> DeviceFlops:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(self.executor, mlx_benchmark_tflops)
-=======
-      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
->>>>>>> main
+      
