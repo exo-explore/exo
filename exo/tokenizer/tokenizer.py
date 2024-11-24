@@ -83,6 +83,6 @@ class Tokenizer:
                                eos_token=self.eos_token)
 
 if __name__ == "__main__":
-    tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit")
+    tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/e42dbdf018e0e870064622c8404d807ab1568631")
     print(tokenizer.encode("Hello, world!"))
     print(tokenizer.decode(tokenizer.encode("Hello, world!")))
