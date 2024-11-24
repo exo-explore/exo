@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import atexit
 import signal
 import json
 import logging
@@ -193,6 +194,11 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   finally:
     node.on_token.deregister(callback_id)
 
+def clean_path(path):
+    """Clean and resolve path"""
+    if path.startswith("Optional("):
+        path = path.strip('Optional("').rstrip('")')
+    return os.path.expanduser(path)
 
 async def main():
   loop = asyncio.get_running_loop()
@@ -211,13 +217,21 @@ async def main():
     
   if not args.models_seed_dir is None:
     try:
-      await move_models_to_hf(args.models_seed_dir)
+      models_seed_dir = clean_path(args.models_seed_dir)
+      await move_models_to_hf(models_seed_dir)
     except Exception as e:
       print(f"Error moving models to .cache/huggingface: {e}")
 
+  def restore_cursor():
+    if platform.system() != "Windows":
+        os.system("tput cnorm")  # Show cursor
+
+  # Restore the cursor when the program exits
+  atexit.register(restore_cursor)
+
   # Use a more direct approach to handle signals
   def handle_exit():
-    asyncio.ensure_future(shutdown(signal.SIGTERM, loop))
+    asyncio.ensure_future(shutdown(signal.SIGTERM, loop, node.server))
 
   if platform.system() != "Windows":
     for s in [signal.SIGINT, signal.SIGTERM]:
@@ -244,7 +258,7 @@ def run():
   except KeyboardInterrupt:
     print("Received keyboard interrupt. Shutting down...")
   finally:
-    loop.run_until_complete(shutdown(signal.SIGTERM, loop))
+    loop.run_until_complete(shutdown(signal.SIGTERM, loop, node.server))
     loop.close()
 
 

@@ -13,11 +13,11 @@ install_requires = [
   "Jinja2==3.1.4",
   "netifaces==0.11.0",
   "numpy==2.0.0",
-  "nuitka==2.4.10",
+  "nuitka==2.5.1",
   "nvidia-ml-py==12.560.30",
   "pillow==10.4.0",
   "prometheus-client==0.20.0",
-  "protobuf==5.27.1",
+  "protobuf==5.28.1",
   "psutil==6.0.0",
   "pydantic==2.9.2",
   "requests==2.32.3",
@@ -26,7 +26,7 @@ install_requires = [
   "tqdm==4.66.4",
   "transformers==4.46.3",
   "uuid==1.30",
-  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
+  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
 ]
 
 extras_require = {
