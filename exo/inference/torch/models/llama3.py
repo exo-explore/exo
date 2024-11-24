@@ -101,6 +101,11 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     input_pos: Optional[torch.Tensor] = None,
   ) -> Union[torch.Tensor, List[torch.Tensor]]:
     # Determine the type of input and shape
+    if DEBUG >= 4:
+      print("forward called")
+      print(f"tokens: {tokens}")
+      print(f"mask: {mask}")
+
     if tokens.ndim == 3:
       h = tokens  # Use directly as hidden states
     else:
@@ -257,14 +262,14 @@ class ShardedLlamaModel(nn.Module):
     config: dict,
     shard: Shard,
     device: Optional[torch.device] = None,
-    max_new_tokens: int = 2048,
+    max_new_tokens: int = 10,
     use_cache: Optional[bool] = False
   ):
     super(ShardedLlamaModel, self).__init__()
 
     self.shard = shard
     self.config = config
-    self.dtype = get_torch_dtype(self.config["torch_dtype"]) if "torch_dtype" in self.config else torch.float
+    self.dtype = torch.float16
     self.device = device if device is not None else torch.device("cpu")
     self.max_new_tokens = max_new_tokens
     self.max_seq_len = self.config["max_seq_len"]
@@ -277,7 +282,8 @@ class ShardedLlamaModel(nn.Module):
     else:
       self.config.get("use_cache", False)
 
-    self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
+    with torch.no_grad():
+      self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
 
     print(f"model loaded: {self.model}\n")
     print(f"device: {self.device}\n")
@@ -304,7 +310,6 @@ class ShardedLlamaModel(nn.Module):
     # setup cache
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
-        print("setting up cache")
         self.model.setup_caches(
           bsz,
           self.dtype,
@@ -357,6 +362,7 @@ class ShardedLlamaModel(nn.Module):
       print(f"input_pos: {input_pos} - {input_pos.device}")
 
     if hidden_state is not None:
+      print(f"hidden_state: {hidden_state} - {hidden_state.device}")
       model_output = self.model(
         tokens=hidden_state,
         mask=curr_masks,

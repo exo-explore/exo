@@ -18,7 +18,7 @@ async def test_inference_engine():
   shard = Shard(
     model_id="llama-3.2-1b",
     start_layer=0,
-    end_layer=0,
+    end_layer=15,
     n_layers=16
   )
 
