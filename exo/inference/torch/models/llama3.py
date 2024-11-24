@@ -286,7 +286,7 @@ class ShardedLlamaModel(nn.Module):
     self,
     tokens: torch.Tensor,
     hidden_state: Optional[torch.Tensor] = None
-  ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+  ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
     """
     Generate logits and/or hidden_states from llama model
 

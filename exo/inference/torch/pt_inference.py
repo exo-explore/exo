@@ -109,16 +109,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         hidden_state=torch.tensor(input_data).to(self.device)
       )
 
-      if not shard.is_last_layer():
-        if model_hs is not None:
-          return model_hs.numpy(force=True)
-        else:
-          raise ValueError("model hidden state returned None")
+      if model_hs is not None:
+        return model_hs.numpy(force=True)
 
-      if model_logits is not None:
-        return model_logits.numpy(force=True)
-      else:
-        raise ValueError("model logits returned None")
+      return model_logits.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
 
