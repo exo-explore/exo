@@ -28,7 +28,8 @@ install_requires = [
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@232edcfd4f8b388807c64fb1817a7668ce27cbad",
   "torch==2.4.0",
-  "accelerate==0.34.2"
+  "accelerate==0.34.2",
+  "torchtune==0.4.0"
 ]
 
 extras_require = {
