@@ -3,19 +3,18 @@ TorchDynamicShardInferenceEngine
 Sharded inference engine using PyTorch based torchtune models
 """
 import os
-from typing import Optional, Tuple, Union, List
 import functools
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import asyncio
 import torch
-
-from torchtune.models import llama3
+from torchtune.generation import sample as tt_sample
 
 from exo.inference.inference_engine import InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 from exo.inference.shard import Shard
+from exo.inference.tokenizers import _resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
@@ -29,11 +28,12 @@ TEMP = 0.6
 TOP_K = 25
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
-  def __init__(self, shard_downloader: HFShardDownloader, model_id: str="llama"):
+  def __init__(self, shard_downloader: HFShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
-    self.model_id = model_id
-    self.supported_models = ["llama"]
+    self.request_id = None
+    self.executor = ThreadPoolExecutor(max_workers=1)
+    self.past_tokens = []
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -45,88 +45,105 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     else:
       self.device = torch.device("cpu")
 
-  async def infer_prompt(
-    self,
-    request_id: str,
-    shard: Shard,
-    prompt: str,
-    image_str: Optional[str] = None,
-    inference_state: Optional[str] = None
-  ) -> Tuple[np.ndarray, str, bool]:
+  async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     if DEBUG >= 4:
-      print("infer_prompt called")
-      print(f"prompt: {prompt}")
-      print(f"shard: {shard}")
-      print(f"inference_state: {inference_state}")
-    # ensure shard
+      print("encode called")
+      print(f"shard: {shard}\nprompt: {prompt}")
+
     await self.ensure_shard(shard)
 
-    # tokenize
-    prompt_encode = self.tokenizer.encode(prompt, add_bos=True, add_eos=True)
-    print(f"prompt_encode {prompt_encode}")
-    tokens = torch.tensor(
-      prompt_encode,
-      dtype=torch.int
-    )
-    print(f"tokens: {tokens}")
-    hidden_states = None
-
-    # generate
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as pool:
-      result = await loop.run_in_executor(
-        pool,
-        functools.partial(
-          self.sharded_model.generate,
-          tokens=tokens
-        )
+    tokens = await asyncio.get_event_loop().run_in_executor(
+      self.executor,
+      functools.partial(
+        self.tokenizer.encode,
+        prompt,
+        return_tensors="np"
       )
+    )
 
-      print(f"thread result: {result}")
+    if DEBUG >= 4:
+      print(f"tokens: {tokens}")
 
-      hidden_states, logits, finished = result[0], result[1], result[2]
+    self.past_tokens = tokens.tolist()
 
-    if hidden_states is not None:
-      return hidden_states.numpy(force=True), "", finished
-    else:
-      return logits.numpy(force=True), "", finished
+    return tokens
+
+  async def decode(self, shard: Shard, tokens: np.ndarray) -> str:
+    await self.ensure_shard(shard)
+    return await asyncio.get_running_loop().run_in_executor(
+      self.executor,
+      functools.partial(
+        self.tokenizer.decode,
+        tokens.tolist()
+      )
+    )
+
+  async def sample(self, x: np.ndarray, temp=TEMP, top_k=TOP_K) -> np.ndarray:
+    logits = x[:, -1]
+    def sample_wrapper():
+      return tt_sample(
+        torch.tensor(logits),
+        temperature=temp,
+        top_k=top_k
+      ).numpy(force=True)
+
+    return await asyncio.get_running_loop().run_in_executor(
+      self.executor,
+      functools.partial(sample_wrapper)
+    )
 
   async def infer_tensor(
     self,
     request_id: str,
     shard: Shard,
     input_data: np.ndarray,
-    inference_state: Optional[str] = None
-  ) -> Tuple[np.ndarray, str, bool]:
+  ) -> np.ndarray:
     # ensure shard
     await self.ensure_shard(shard)
 
-    return np.empty((1,1)), "", False
+    self.request_id = request_id if not self.request_id else self.request_id
+
+    def infer_wrapper():
+      model_hs, model_logits = self.sharded_model.generate(
+        tokens=torch.tensor(self.past_tokens).to(self.device),
+        hidden_state=torch.tensor(input_data).to(self.device)
+      )
+
+      if not shard.is_last_layer():
+        if model_hs is not None:
+          return model_hs.numpy(force=True)
+        else:
+          raise ValueError("model hidden state returned None")
+
+      if model_logits is not None:
+        return model_logits.numpy(force=True)
+      else:
+        raise ValueError("model logits returned None")
+
+    return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
       return
-    
+
     # download model safetensors and shard
-    model_path = await self.shard_downloader.ensure_shard(shard)
+    model_path = await self.shard_downloader.ensure_shard(
+      shard,
+      self.__class__.__name__
+    )
     model_config = load_model_config(model_path / "config.json")
 
-    self.tokenizer = llama3.llama3_tokenizer(
-      path=f"{model_path}/original/tokenizer.model"
-    )
+    self.tokenizer = await _resolve_tokenizer(model_path)
 
-    if self.model_id not in self.supported_models:
-      raise ValueError(
-        f"Model {self.model_id} not supported, only supported models are\n{self.supported_models}"
+    self.sharded_model = await asyncio.get_running_loop().run_in_executor(
+      self.executor,
+      functools.partial(
+        ShardedLlamaModel,
+        config=model_config,
+        shard=shard,
+        device=self.device,
+        use_cache=True
       )
-    
-    self.sharded_model = ShardedLlamaModel(
-      model_config,
-      shard,
-      self.tokenizer,
-      self.device,
-      None,
-      use_cache=True
     )
 
     # load sharded weights
@@ -136,4 +153,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       self.sharded_model
     )
 
-    print("shard ensured\n")
+    if DEBUG >= 4:
+      print("shard ensured\n")
+      print(f"model_path: {model_path}")
+      print(f"shard: {shard}")
+      print(f"model: {self.sharded_model}")

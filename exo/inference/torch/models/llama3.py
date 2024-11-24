@@ -15,6 +15,7 @@ from torchtune.modules.attention_utils import _MaskType
 
 from exo.inference.shard import Shard
 from exo.inference.torch.models.llm_utils import MultiLayerPreceptron, RMSNorm, get_torch_dtype
+from exo.helpers import DEBUG
 
 
 class ShardTransformerDecoder(ttm.TransformerDecoder):
@@ -70,9 +71,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     else:
       self.decoder_max_cache_seq_len = self.max_seq_len
 
-    print(f"decoder max: {self.decoder_max_cache_seq_len}")
     for layer in self.layers:
-      print(f"setting cache for {layer} if not none")
       if layer is not None:
         layer.setup_caches(
           batch_size,
@@ -257,20 +256,21 @@ class ShardedLlamaModel(nn.Module):
     self,
     config: dict,
     shard: Shard,
-    tokenizer: Any,
     device: Optional[torch.device] = None,
     max_new_tokens: int = 2048,
     use_cache: Optional[bool] = False
   ):
     super(ShardedLlamaModel, self).__init__()
 
-    self.tokenizer = tokenizer
     self.shard = shard
     self.config = config
     self.dtype = get_torch_dtype(self.config["torch_dtype"]) if "torch_dtype" in self.config else torch.float
     self.device = device if device is not None else torch.device("cpu")
     self.max_new_tokens = max_new_tokens
     self.max_seq_len = self.config["max_seq_len"]
+
+    # pad_id maually set as same in all llama models
+    self.pad_id = 128004 # from <|finetune_right_pad_id|>
 
     if use_cache:
       self.use_cache = use_cache
@@ -280,12 +280,13 @@ class ShardedLlamaModel(nn.Module):
     self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
 
     print(f"model loaded: {self.model}\n")
+    print(f"device: {self.device}\n")
 
   def generate(
     self,
     tokens: torch.Tensor,
     hidden_state: Optional[torch.Tensor] = None
-  ) -> Tuple[torch.Tensor, Optional[torch.Tensor], bool]:
+  ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
     """
     Generate logits and/or hidden_states from llama model
 
@@ -294,12 +295,13 @@ class ShardedLlamaModel(nn.Module):
       hidden_state (torch.Tensor, optional) - hidden state from last activated hidden layer, if any
     """
     if tokens.ndim == 1:
-      tokens = tokens.view(1, -1)
+      tokens = tokens.view(1, -1).to(device=self.device)
 
     bsz, tokens_length = tokens.size()
 
+    total_response_length = tokens_length + self.max_seq_len
+
     # setup cache
-    print(self.model)
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
         print("setting up cache")
@@ -312,14 +314,13 @@ class ShardedLlamaModel(nn.Module):
     if not self.shard.is_last_layer():
       self.model.output_hidden_states = [self.shard.end_layer]
 
-    total_response_length = tokens_length + self.max_seq_len
     resp_max_seq_len = total_response_length if not self.model.caches_are_enabled() else self.model.decoder_max_cache_seq_len
 
     # clone tokens
-    generated_tokens = tokens.clone()
+    generated_tokens = tokens.clone().to(device=self.device)
 
     # masking for proper attention
-    padding_masks = generated_tokens != self.tokenizer.pad_id
+    padding_masks = generated_tokens != self.pad_id
     if not padding_masks.all():
       padding_masks = torch.nn.functional.pad(padding_masks, (0, self.max_seq_len), value=True)
 
@@ -332,11 +333,15 @@ class ShardedLlamaModel(nn.Module):
           total_response_length,
           resp_max_seq_len if resp_max_seq_len is not None else total_response_length,
           dtype=torch.bool,
-          device=tokens.device,
+          device=self.device,
         )
       ).unsqueeze(0)
 
-      input_pos = torch.arange(0, total_response_length, device=generated_tokens.device).unsqueeze(0)
+      input_pos = torch.arange(
+        0,
+        total_response_length,
+        device=self.device
+      ).unsqueeze(0)
 
     if self.model.caches_are_enabled():
       curr_masks = masks[:, :tokens_length]
@@ -344,6 +349,12 @@ class ShardedLlamaModel(nn.Module):
       curr_masks = masks[:, :tokens_length, :tokens_length]
 
     input_pos = input_pos[:, :tokens_length].squeeze()
+
+    if DEBUG >= 4:
+      print("model_input")
+      print(f"tokens: {tokens} - {tokens.device}")
+      print(f"mask: {curr_masks} - {curr_masks.device}")
+      print(f"input_pos: {input_pos} - {input_pos.device}")
 
     if hidden_state is not None:
       model_output = self.model(
@@ -358,27 +369,8 @@ class ShardedLlamaModel(nn.Module):
         input_pos=input_pos,
       )
 
-    print(f"\nmodel_output: {model_output}")
-
-    # stop token
-    stop_tokens = None
-
-    stop_token_reached = torch.zeros(
-      bsz,
-      dtype=torch.bool,
-      device=tokens.device
-    )
-    stop_tokens = (
-      torch.tensor(
-        stop_tokens,
-        device=tokens.device,
-        dtype=tokens.dtype
-      )
-      if stop_tokens
-      else None
-    )
-
-    finished = False
+    if DEBUG >= 4:
+      print(f"model_output\n{model_output}")
 
     if isinstance(model_output, list):
       model_logits = model_output[1]
@@ -388,11 +380,4 @@ class ShardedLlamaModel(nn.Module):
       model_logits = model_output
       model_hs = None
 
-      if stop_tokens is not None:
-        stop_token_reached = ttg._generation.update_stop_tokens_tracker(
-          tokens, stop_tokens, stop_token_reached
-        )
-
-        finished = True if stop_token_reached.all() else False
-
-    return model_hs, model_logits, finished
+    return model_hs, model_logits
