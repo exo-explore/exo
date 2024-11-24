@@ -70,7 +70,9 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     else:
       self.decoder_max_cache_seq_len = self.max_seq_len
 
+    print(f"decoder max: {self.decoder_max_cache_seq_len}")
     for layer in self.layers:
+      print(f"setting cache for {layer} if not none")
       if layer is not None:
         layer.setup_caches(
           batch_size,
@@ -300,6 +302,7 @@ class ShardedLlamaModel(nn.Module):
     print(self.model)
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
+        print("setting up cache")
         self.model.setup_caches(
           bsz,
           self.dtype,

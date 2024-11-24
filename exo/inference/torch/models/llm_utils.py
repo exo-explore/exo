@@ -161,9 +161,9 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
       # paried_lmhead = False
 
   # get everything else except layers, embed_tokens and lm_head
-  if len(re.findall(r"model\.layers\..*", key)) == 0 and key != "model.embed_tokens.weight" and key != "lm_head.weight":
+  #if len(re.findall(r"model\.layers\..*", key)) == 0 and key != "model.embed_tokens.weight" and key != "lm_head.weight":
     # print(f"loading other weight: {key}")
-    remapped_state_dict[key] = value
+    #remapped_state_dict[key] = value
 
   # if paried_lmhead:
     # print(f"model.output.weight: {paried_embed_weight}")
@@ -172,8 +172,6 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   # print("\nRemapped state dict\n")
   # for rsdk in remapped_state_dict.keys():
   #   print(f"--  {rsdk}")
-  del state_dict
-  del full_state_dict
   model.load_state_dict(remapped_state_dict, strict=False)
 
   # if DEBUG >= 7:
