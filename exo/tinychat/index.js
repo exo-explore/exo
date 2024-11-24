@@ -36,6 +36,9 @@ document.addEventListener("alpine:init", () => {
 
     modelPoolInterval: null,
 
+    // Add models state alongside existing state
+    models: {},
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -93,34 +96,20 @@ document.addEventListener("alpine:init", () => {
 
         const data = await response.json();
         
-        const sel = document.querySelector('.model-select');
-        
-        // Only create options if they don't exist
-        if (sel.children.length === 0) {
-          Object.entries(data["model pool"]).forEach(([key, value]) => {
-            const opt = document.createElement("option");
-            opt.value = key;
-            opt.dataset.modelName = value.name;  // Store base name in dataset
-            opt.textContent = value.name;
-            sel.appendChild(opt);
-          });
-        }
-        
-        // Update existing options text
-        Array.from(sel.options).forEach(opt => {
-          const modelInfo = data["model pool"][opt.value];
-          if (modelInfo) {
-            let displayText = modelInfo.name;
-            if (modelInfo.download_percentage != null) {
-              if (modelInfo.downloaded) {
-                  displayText += ' (downloaded)';
-              } else {
-                  displayText += ` (${Math.round(modelInfo.download_percentage)}% downloaded)`;
-              }
-            }
-            opt.textContent = displayText;
+        // Update the models state with the full model pool data
+        Object.entries(data["model pool"]).forEach(([key, value]) => {
+          if (!this.models[key]) {
+            this.models[key] = value;
+          } else {
+            // Update existing model info while preserving reactivity
+            this.models[key].name = value.name;
+            this.models[key].downloaded = value.downloaded;
+            this.models[key].download_percentage = value.download_percentage;
+            this.models[key].total_size = value.total_size;
+            this.models[key].total_downloaded = value.total_downloaded;
           }
-      });
+        });
+                
       } catch (error) {
         console.error("Error populating model selector:", error);
         this.setError(error);
@@ -446,6 +435,54 @@ document.addEventListener("alpine:init", () => {
         }, 30 * 1000);
       }
     },
+
+    async deleteModel(modelName, model) {
+      const downloadedSize = model.total_downloaded || 0;
+      const sizeMessage = downloadedSize > 0 ? 
+        `This will free up ${this.formatBytes(downloadedSize)} of space.` :
+        'This will remove any partially downloaded files.';
+      
+      if (!confirm(`Are you sure you want to delete ${model.name}? ${sizeMessage}`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`${window.location.origin}/models/${modelName}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.detail || 'Failed to delete model');
+        }
+
+        // Update the model status in the UI
+        if (this.models[modelName]) {
+          this.models[modelName].downloaded = false;
+          this.models[modelName].download_percentage = 0;
+          this.models[modelName].total_downloaded = 0;
+        }
+
+        // If this was the selected model, switch to a different one
+        if (this.cstate.selectedModel === modelName) {
+          const availableModel = Object.keys(this.models).find(key => this.models[key].downloaded);
+          this.cstate.selectedModel = availableModel || 'llama-3.2-1b';
+        }
+
+        // Show success message
+        console.log(`Model deleted successfully from: ${data.path}`);
+
+        // Refresh the model list
+        await this.populateSelector();
+      } catch (error) {
+        console.error('Error deleting model:', error);
+        this.setError(error.message || 'Failed to delete model');
+      }
+    }
   }));
 });
 

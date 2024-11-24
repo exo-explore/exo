@@ -21,8 +21,8 @@ main {
 .home {
   width: 100%;
   height: 90%;
-
   margin-bottom: 10rem;
+  padding-top: 2rem;
 }
 
 .title {
@@ -129,8 +129,9 @@ main {
   flex-direction: column;
   gap: 1rem;
   align-items: center;
-  padding-top: 1rem;
+  padding-top: 4rem;
   padding-bottom: 11rem;
+  margin: 0 auto;
 }
 
 .message {
@@ -149,10 +150,17 @@ main {
   color: #000;
 }
 .download-progress {
-  margin-bottom: 12em;
+  position: fixed;
+  bottom: 11rem;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-left: 125px;
+  width: 100%;
+  max-width: 1200px;
   overflow-y: auto;
   min-height: 350px;
   padding: 2rem;
+  z-index: 998;
 }
 .message > pre {
   white-space: pre-wrap;
@@ -271,23 +279,24 @@ main {
 }
 
 .input-container {
-  position: absolute;
+  position: fixed;
   bottom: 0;
-
-  /* linear gradient from background-color to transparent on the top */
-  background: linear-gradient(
-    0deg,
-    var(--primary-bg-color) 55%,
-    transparent 100%
-  );
-
-  width: 100%;
+  left: 250px;
+  width: calc(100% - 250px);
   max-width: 1200px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   z-index: 999;
+  background: linear-gradient(
+    0deg,
+    var(--primary-bg-color) 55%,
+    transparent 100%
+  );
+  left: 50%;
+  transform: translateX(-50%);
+  margin-left: 125px;
 }
 
 .input-performance {
@@ -372,22 +381,7 @@ p {
 }
 
 .model-selector {
-  display: flex;
-  justify-content: center;
-  padding: 20px 0;
-}
-.model-selector select {
-  padding: 10px 20px;
-  font-size: 16px;
-  border: 1px solid #ccc;
-  border-radius: 5px;
-  background-color: #f8f8f8;
-  cursor: pointer;
-}
-.model-selector select:focus {
-  outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 2px rgba(0,123,255,.25);
+  display: none;
 }
 
 /* Image upload button styles */
@@ -481,4 +475,112 @@ p {
 
 .clear-history-button i {
   font-size: 14px;
+}
+
+/* Add new sidebar styles */
+.sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 250px;
+  background-color: var(--secondary-color);
+  padding: 20px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.model-option {
+  padding: 12px;
+  margin: 8px 0;
+  border-radius: 8px;
+  background-color: var(--primary-bg-color);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.model-option:hover {
+  transform: translateX(5px);
+}
+
+.model-option.selected {
+  border-left: 3px solid var(--primary-color);
+  background-color: var(--secondary-color-transparent);
+}
+
+.model-name {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.model-progress {
+  font-size: 0.9em;
+  color: var(--secondary-color-transparent);
+}
+
+/* Adjust main content to accommodate sidebar */
+main {
+  margin-left: 250px;
+  width: calc(100% - 250px);
+}
+
+/* Add styles for the back button */
+.back-button {
+  position: fixed;
+  top: 1rem;
+  left: calc(250px + 1rem); /* Sidebar width + padding */
+  background-color: var(--secondary-color);
+  color: var(--foreground-color);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 1000;
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  transform: translateX(-5px);
+  background-color: var(--secondary-color-transparent);
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-size {
+  font-size: 0.8em;
+  color: var(--secondary-color-transparent);
+  opacity: 0.8;
+}
+
+.model-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.model-delete-button {
+    background: none;
+    border: none;
+    color: var(--red-color);
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 0.7;
+}
+
+.model-delete-button:hover {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.model-option:hover .model-delete-button {
+    opacity: 1;
 }
