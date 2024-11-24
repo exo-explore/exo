@@ -310,7 +310,6 @@ class ShardedLlamaModel(nn.Module):
     # setup cache
     if not self.model.caches_are_enabled() and self.use_cache:
       with self.device:
-        print("setting up cache")
         self.model.setup_caches(
           bsz,
           self.dtype,
@@ -363,8 +362,10 @@ class ShardedLlamaModel(nn.Module):
       print(f"input_pos: {input_pos} - {input_pos.device}")
 
     if hidden_state is not None:
+      print(f"hidden_state: {hidden_state} - {hidden_state.device}")
       model_output = self.model(
-        tokens=hidden_state,
+        tokens=tokens,
+        hidden_state=hidden_state,
         mask=curr_masks,
         input_pos=input_pos,
       )
