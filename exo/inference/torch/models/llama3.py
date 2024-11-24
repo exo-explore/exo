@@ -277,10 +277,10 @@ class ShardedLlamaModel(nn.Module):
     # pad_id maually set as same in all llama models
     self.pad_id = 128004 # from <|finetune_right_pad_id|>
 
-    if use_cache:
+    if use_cache is not None:
       self.use_cache = use_cache
     else:
-      self.config.get("use_cache", False)
+      self.use_cache = self.config.get("use_cache", False)
 
     with torch.no_grad():
       self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
