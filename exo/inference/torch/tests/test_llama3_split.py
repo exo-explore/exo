@@ -110,11 +110,10 @@ if __name__ == "__main__":
 
   # Initialize LlamaModel with config and tokenizer
   shard_model_1 = ShardedLlamaModel(
-    config,
-    shard_1,
-    llama_tokenizer,
-    None,
-    MAX_NEW_TOKENS,
+    config=config,
+    shard=shard_1,
+    device=None,
+    max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )
   print(f"\nshard_model_1: {shard_model_1}")
@@ -122,11 +121,10 @@ if __name__ == "__main__":
   shard_1_hs, shard_1_tokens = test_generation_1(shard_model_1, prompt)
 
   shard_model_2 = ShardedLlamaModel(
-    config,
-    shard_2,
-    llama_tokenizer,
-    None,
-    MAX_NEW_TOKENS,
+    config=config,
+    shard=shard_2,
+    device=None,
+    max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )
   print(f"\nshard_model_2: {shard_model_2}")

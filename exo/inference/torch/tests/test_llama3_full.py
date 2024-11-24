@@ -114,11 +114,10 @@ if __name__ == "__main__":
   # device = torch.device("cuda")
   device = None
   shard_model_1 = ShardedLlamaModel(
-    config, 
-    shard_1, 
-    llama_tokenizer,
-    device,
-    MAX_NEW_TOKENS,
+    config=config,
+    shard=shard_1,
+    device=None,
+    max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )
   print(f"\nshard_model_1: {shard_model_1}")
