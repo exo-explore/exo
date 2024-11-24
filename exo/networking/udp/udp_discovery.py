@@ -89,13 +89,8 @@ class UDPDiscovery(Discovery):
           "type": "discovery",
           "node_id": self.node_id,
           "grpc_port": self.node_port,
-<<<<<<< HEAD
           "device_capabilities": await self.lazy_device_capabilities.caps.to_dict(),
           "priority": 1, # For now, every interface has the same priority. We can make this better by prioriting interfaces based on bandwidth, latency, and jitter e.g. prioritise Thunderbolt over WiFi.
-=======
-          "device_capabilities": self.device_capabilities.to_dict(),
-          "priority": 1,  # For now, every interface has the same priority. We can make this better by prioriting interfaces based on bandwidth, latency, and jitter e.g. prioritise Thunderbolt over WiFi.
->>>>>>> main
         })
         if DEBUG_DISCOVERY >= 3: print(f"Broadcasting presence at ({addr}): {message}")
 
