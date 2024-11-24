@@ -62,22 +62,29 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     await self.ensure_shard(shard)
 
     # tokenize
+    prompt_encode = self.tokenizer.encode(prompt, add_bos=True, add_eos=True)
+    print(f"prompt_encode {prompt_encode}")
     tokens = torch.tensor(
-      self.tokenizer.encode(prompt, add_bos=True, add_eos=True),
+      prompt_encode,
       dtype=torch.int
     )
+    print(f"tokens: {tokens}")
     hidden_states = None
 
     # generate
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor() as pool:
-      hidden_states, logits, finished = await loop.run_in_executor(
+      result = await loop.run_in_executor(
         pool,
         functools.partial(
           self.sharded_model.generate,
           tokens=tokens
         )
       )
+
+      print(f"thread result: {result}")
+
+      hidden_states, logits, finished = result[0], result[1], result[2]
 
     if hidden_states is not None:
       return hidden_states.numpy(force=True), "", finished
@@ -128,3 +135,5 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       shard,
       self.sharded_model
     )
+
+    print("shard ensured\n")
