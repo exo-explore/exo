@@ -20,6 +20,9 @@ commands:
           command: |
             source env/bin/activate
 
+            # Install jq
+            brew install jq
+
             # Set CLANG=1 for tinygrad only
             if [ "<<parameters.inference_engine>>" = "tinygrad" ]; then
               pip install llvmlite
@@ -84,11 +87,15 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "\"content\": \"<<parameters.expected_output>>\"" || ! echo "$response_2" | grep -q "\"content\": \"<<parameters.expected_output>>\""; then
+            # Extract content using jq and check if it contains expected output
+            content1=$(echo "$response_1" | jq -r '.choices[0].message.content')
+            content2=$(echo "$response_2" | jq -r '.choices[0].message.content')
+
+            if [[ "$content1" != *"<<parameters.expected_output>>"* ]] || [[ "$content2" != *"<<parameters.expected_output>>"* ]]; then
               echo "Test failed: Response does not match '<<parameters.expected_output>>'"
-              echo "Response 1: $response_1"
+              echo "Response 1 content: $content1"
               echo ""
-              echo "Response 2: $response_2"
+              echo "Response 2 content: $content2"
               echo "Output of first instance:"
               cat output1.log
               echo "Output of second instance:"
