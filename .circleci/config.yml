@@ -269,11 +269,68 @@ jobs:
           path: ./pipsize.json
           destination: pip-sizes.json
 
+  check_line_count:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      
+      - run:
+          name: Setup git for PR comparison
+          command: |
+            if [[ -n "$CIRCLE_PULL_REQUEST" ]]; then
+              PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d'/' -f1 | rev)
+              BASE_BRANCH=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+                "https://circleci.com/api/v2/project/github/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pipeline/$CIRCLE_WORKFLOW_ID" \
+                | jq -r '.target_branch')
+              
+              git clone -b $BASE_BRANCH --single-branch \
+                https://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git \
+                base_branch
+            fi
+      
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install tabulate
+      
+      - run:
+          name: Run line count check
+          command: |
+            if [[ -n "$CIRCLE_PULL_REQUEST" ]]; then
+              python extra/line_counter.py base_branch .
+            else
+              python extra/line_counter.py .
+            fi
+      
+      - store_artifacts:
+          path: line-count-snapshot.json
+          destination: line-count-snapshot.json
+      
+      - store_artifacts:
+          path: line-count-diff.json
+          destination: line-count-diff.json
+      
+      - run:
+          name: Create test results directory
+          command: |
+            mkdir -p test-results/line-count
+            cp line-count-*.json test-results/line-count/
+      
+      - store_test_results:
+          path: test-results
 
 workflows:
   version: 2
   build_and_test:
     jobs:
+      - check_line_count:
+          filters:
+            branches:
+              only: /.*/
+            tags:
+              only: /.*/
       - unit_test
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
