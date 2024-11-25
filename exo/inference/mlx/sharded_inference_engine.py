@@ -10,6 +10,7 @@ from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+
 def sample_logits(
   logits: mx.array,
   temp: float = 0.0,

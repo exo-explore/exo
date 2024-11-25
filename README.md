@@ -266,3 +266,38 @@ exo supports the following inference engines:
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+## FLUX Model Support
+
+exo now supports the FLUX model with the MLX backend. Follow the instructions below to use the FLUX model.
+
+### Example Usage of FLUX Model
+
+#### Device 1:
+
+```sh
+exo
+```
+
+#### Device 2:
+```sh
+exo
+```
+
+That's it! No configuration required - exo will automatically discover the other device(s).
+
+exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:52415
+
+For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:52415/v1/chat/completions. Examples with curl:
+
+#### FLUX Model:
+
+```sh
+curl http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "flux",
+     "messages": [{"role": "user", "content": "Generate an image of a futuristic cityscape with flying cars:"}],
+     "temperature": 0.7
+   }'
+```
