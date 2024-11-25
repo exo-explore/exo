@@ -178,8 +178,6 @@ class Model(nn.Module):
             self.first_stage_model = nn.Identity()            
 
     def __call__(self,x, step= 0, cfg_weight: float = 7.5,total_steps=50,conditioning=None,mask=None,residual=None,x_t_prev=None,is_finished=False,is_step_finished=False):
-        if self.shard.is_first_layer():
-            x = x.squeeze(0)
         t, t_prev = self.sampler.current_timestep(step=step, total_steps=total_steps)
         is_finished = False
         is_step_finished = False

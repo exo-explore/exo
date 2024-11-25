@@ -237,7 +237,7 @@ def get_all_ip_addresses():
     return ["localhost"]
 
 
-async def shutdown(signal, loop):
+async def shutdown(signal, loop, server):
   """Gracefully shutdown the server and close the asyncio loop."""
   print(f"Received exit signal {signal.name}...")
   print("Thank you for using exo.")
@@ -247,7 +247,6 @@ async def shutdown(signal, loop):
   print(f"Cancelling {len(server_tasks)} outstanding tasks")
   await asyncio.gather(*server_tasks, return_exceptions=True)
   await server.stop()
-  loop.stop()
 
 
 def is_frozen():
