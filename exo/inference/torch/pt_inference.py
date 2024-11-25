@@ -119,6 +119,12 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
 
   async def ensure_shard(self, shard: Shard):
+    if DEBUG >= 4:
+      print("shard ensured\n")
+      print(f"model_path: {model_path}")
+      print(f"shard: {shard}")
+      print(f"class shard: {self.shard}")
+
     if self.shard == shard:
       return
 
@@ -152,9 +158,3 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         self.sharded_model
       )
     )
-
-    if DEBUG >= 4:
-      print("shard ensured\n")
-      print(f"model_path: {model_path}")
-      print(f"shard: {shard}")
-      print(f"model: {self.sharded_model}")
