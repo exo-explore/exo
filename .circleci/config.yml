@@ -84,8 +84,8 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "<<parameters.expected_output>>" || ! echo "$response_2" | grep -q "<<parameters.expected_output>>"; then
-              echo "Test failed: Response does not contain '<<parameters.expected_output>>'"
+            if ! echo "$response_1" | grep -q "^<<parameters.expected_output>>$" || ! echo "$response_2" | grep -q "^<<parameters.expected_output>>$"; then
+              echo "Test failed: Response does not match '<<parameters.expected_output>>'"
               echo "Response 1: $response_1"
               echo ""
               echo "Response 2: $response_2"
@@ -95,7 +95,7 @@ commands:
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains '<<parameters.expected_output>>'"
+              echo "Test passed: Response from both nodes matches '<<parameters.expected_output>>'"
             fi
 
 jobs:
@@ -188,8 +188,8 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
-          prompt: "Keep responses concise. Who was the king of pop?"
-          expected_output: "Michael Jackson"
+          prompt: "Keep responses concise. Who was the king of pop? Properly capitalize and end your response with a period."
+          expected_output: "Michael Jackson."
 
   chatgpt_api_integration_test_dummy:
     macos:
@@ -244,8 +244,8 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: tinygrad
           model_id: llama-3.2-1b
-          prompt: "Keep responses concise. Who was the king of pop?"
-          expected_output: "Michael Jackson"
+          prompt: "Keep responses concise. Who was the king of pop? Properly capitalize and end your response with a period."
+          expected_output: "Michael Jackson."
 
   measure_pip_sizes:
     macos:
