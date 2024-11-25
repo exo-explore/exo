@@ -7,6 +7,8 @@ import pandas as pd
 import plotly.express as px
 from typing import List, Dict, Optional
 from pathlib import Path
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
 class AsyncCircleCIClient:
     def __init__(self, token: str, project_slug: str):
@@ -24,7 +26,7 @@ class AsyncCircleCIClient:
             response.raise_for_status()
             return await response.json()
 
-    async def get_recent_pipelines(self, session: aiohttp.ClientSession, limit: int = 50) -> List[Dict]:
+    async def get_recent_pipelines(self, session: aiohttp.ClientSession, limit: int = 100) -> List[Dict]:
         self.logger.info(f"Fetching {limit} recent pipelines...")
         url = f"{self.base_url}/project/{self.project_slug}/pipeline"
         params = {"limit": limit * 2}
@@ -111,39 +113,69 @@ class PackageSizeTracker:
                 return None
 
             jobs = await self.client.get_workflow_jobs(session, pipeline["id"])
+
+            # Get package size data
             size_job = next(
                 (j for j in jobs if j["name"] == "measure_pip_sizes" and j["status"] == "success"),
                 None
             )
 
-            if not size_job:
-                self.logger.debug(f"No measure_pip_sizes job found for pipeline {pipeline['id']}")
-                return None
-
-            artifacts = await self.client.get_artifacts(session, size_job["job_number"])
-            size_report = next(
-                (a for a in artifacts if a["path"].endswith("pip-sizes.json")),
+            # Get line count data
+            linecount_job = next(
+                (j for j in jobs if j["name"] == "check_line_count" and j["status"] == "success"),
                 None
             )
 
-            if not size_report:
-                self.logger.debug(f"No pip-sizes.json artifact found for job {size_job['job_number']}")
+            # Return None if no relevant jobs found
+            if not size_job and not linecount_job:
+                self.logger.debug(f"No relevant jobs found for pipeline {pipeline['id']}")
                 return None
 
-            json_data = await self.client.get_json(session, size_report["url"])
             data_point = {
                 "commit_hash": commit_info['commit_hash'],
                 "commit_url": commit_info['web_url'],
                 "timestamp": pipeline.get("created_at", pipeline.get("updated_at")),
-                "total_size_mb": json_data["total_size_mb"],
-                "packages": json_data["packages"]
             }
 
-            self.logger.info(
-                f"Processed pipeline {pipeline['id']}: "
-                f"commit {commit_info['commit_hash'][:7]}, "
-                f"size {json_data['total_size_mb']:.2f}MB"
-            )
+            # Process size data if available
+            if size_job:
+                size_artifacts = await self.client.get_artifacts(session, size_job["job_number"])
+                size_report = next(
+                    (a for a in size_artifacts if a["path"].endswith("pip-sizes.json")),
+                    None
+                )
+                if size_report:
+                    size_data = await self.client.get_json(session, size_report["url"])
+                    data_point.update({
+                        "total_size_mb": size_data["total_size_mb"],
+                        "packages": size_data["packages"]
+                    })
+                    self.logger.info(
+                        f"Processed size data for pipeline {pipeline['id']}: "
+                        f"commit {commit_info['commit_hash'][:7]}, "
+                        f"size {size_data['total_size_mb']:.2f}MB"
+                    )
+
+            # Process linecount data if available
+            if linecount_job:
+                linecount_artifacts = await self.client.get_artifacts(session, linecount_job["job_number"])
+                linecount_report = next(
+                    (a for a in linecount_artifacts if a["path"].endswith("line-count-snapshot.json")),
+                    None
+                )
+                if linecount_report:
+                    linecount_data = await self.client.get_json(session, linecount_report["url"])
+                    data_point.update({
+                        "total_lines": linecount_data["total_lines"],
+                        "total_files": linecount_data["total_files"],
+                        "files": linecount_data["files"]
+                    })
+                    self.logger.info(
+                        f"Processed line count data for pipeline {pipeline['id']}: "
+                        f"commit {commit_info['commit_hash'][:7]}, "
+                        f"lines {linecount_data['total_lines']:,}"
+                    )
+
             return data_point
 
         except Exception as e:
@@ -154,7 +186,7 @@ class PackageSizeTracker:
         self.logger.info("Starting data collection...")
         async with aiohttp.ClientSession(headers=self.client.headers) as session:
             # Get pipelines
-            pipelines = await self.client.get_recent_pipelines(session, 50)
+            pipelines = await self.client.get_recent_pipelines(session, 100)
 
             # Process all pipelines in parallel
             tasks = [self.process_pipeline(session, pipeline) for pipeline in pipelines]
@@ -171,108 +203,173 @@ class PackageSizeTracker:
             self.logger.error("No data to generate report from!")
             return None
 
-        df = pd.DataFrame(data)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df = df.sort_values('timestamp')
-        # commit_url is already in the data from process_pipeline
-
-        # Create trend plot with updated styling
-        fig = px.line(
-            df,
-            x='timestamp',
-            y='total_size_mb',
-            title='Package Size Trend',
-            markers=True,
-            hover_data={'commit_hash': True, 'timestamp': True, 'total_size_mb': ':.2f'},
-            custom_data=['commit_hash', 'commit_url']
-        )
-        fig.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Total Size (MB)",
-            hovermode='x unified',
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(size=12),
-            title_x=0.5,
-        )
-        fig.update_traces(
-            line=dict(width=2),
-            marker=dict(size=8),
-            hovertemplate="<br>".join([
-                "Commit: %{customdata[0]}",
-                "Size: %{y:.2f}MB",
-                "Date: %{x}",
-                "<extra>Click to view commit</extra>"
-            ])
-        )
-
-        # Add JavaScript for click handling
-        fig.update_layout(
-            clickmode='event',
-            annotations=[
-                dict(
-                    text="Click any point to view the commit on GitHub",
-                    xref="paper", yref="paper",
-                    x=0, y=1.05,
-                    showarrow=False
-                )
-            ]
-        )
+        # Create separate dataframes for each metric
+        df_size = pd.DataFrame([d for d in data if 'total_size_mb' in d])
+        df_lines = pd.DataFrame([d for d in data if 'total_lines' in d])
 
         # Ensure output directory exists
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save plot
-        plot_path = output_dir / "package_size_trend.html"
-        fig.write_html(
-            str(plot_path),
-            include_plotlyjs=True,
-            full_html=True,
-            post_script="""
-            const plot = document.getElementsByClassName('plotly-graph-div')[0];
-            plot.on('plotly_click', function(data) {
-                const point = data.points[0];
-                const commitUrl = point.customdata[1];
-                window.open(commitUrl, '_blank');
-            });
-            """
+        # Create a single figure with subplots
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=('Package Size Trend', 'Line Count Trend'),
+            vertical_spacing=0.2
         )
 
-        # Generate summary
-        latest = df.iloc[-1]
-        previous = df.iloc[-2] if len(df) > 1 else latest
-        size_change = latest['total_size_mb'] - previous['total_size_mb']
+        # Add package size trace if we have data
+        if not df_size.empty:
+            df_size['timestamp'] = pd.to_datetime(df_size['timestamp'])
+            df_size = df_size.sort_values('timestamp')
 
-        latest_data = {
-            'timestamp': latest['timestamp'].isoformat(),
-            'commit_hash': latest['commit_hash'],
-            'total_size_mb': latest['total_size_mb'],
-            'size_change_mb': size_change,
-            'packages': latest['packages']
-        }
+            fig.add_trace(
+                go.Scatter(
+                    x=df_size['timestamp'],
+                    y=df_size['total_size_mb'],
+                    mode='lines+markers',
+                    name='Package Size',
+                    customdata=df_size[['commit_hash', 'commit_url']].values,
+                    hovertemplate="<br>".join([
+                        "Size: %{y:.2f}MB",
+                        "Date: %{x}",
+                        "Commit: %{customdata[0]}",
+                        "<extra></extra>"
+                    ])
+                ),
+                row=1, col=1
+            )
+            fig.update_yaxes(title_text="Size (MB)", row=1, col=1)
 
-        with open(output_dir / 'latest_data.json', 'w') as f:
-            json.dump(latest_data, f, indent=2)
+        # Add line count trace if we have data
+        if not df_lines.empty:
+            df_lines['timestamp'] = pd.to_datetime(df_lines['timestamp'])
+            df_lines = df_lines.sort_values('timestamp')
 
-        self._print_summary(latest_data)
-        self.logger.info(f"Report generated in {output_dir}")
-        return str(plot_path)
+            fig.add_trace(
+                go.Scatter(
+                    x=df_lines['timestamp'],
+                    y=df_lines['total_lines'],
+                    mode='lines+markers',
+                    name='Line Count',
+                    customdata=df_lines[['commit_hash', 'commit_url']].values,
+                    hovertemplate="<br>".join([
+                        "Lines: %{y:,.0f}",
+                        "Date: %{x}",
+                        "Commit: %{customdata[0]}",
+                        "<extra></extra>"
+                    ])
+                ),
+                row=2, col=1
+            )
+            fig.update_yaxes(title_text="Total Lines", row=2, col=1)
+
+        # Update layout
+        fig.update_layout(
+            height=800,  # Taller to accommodate both plots
+            showlegend=False,
+            title_text="Package Metrics Dashboard",
+            title_x=0.5,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(size=12),
+            hovermode='x unified',
+            xaxis=dict(title_text="Date"),
+            xaxis2=dict(title_text="Date")
+        )
+
+        # Add click event handling
+        dashboard_html = f"""
+        <html>
+        <head>
+            <title>Package Metrics Dashboard</title>
+        </head>
+        <body>
+            <div id="dashboard">
+                {fig.to_html(include_plotlyjs=True, full_html=False)}
+            </div>
+            <script>
+                const plot = document.getElementById('dashboard').getElementsByClassName('plotly-graph-div')[0];
+                plot.on('plotly_click', function(data) {{
+                    const point = data.points[0];
+                    const commitUrl = point.customdata[1];
+                    window.open(commitUrl, '_blank');
+                }});
+            </script>
+        </body>
+        </html>
+        """
+
+        # Write the dashboard
+        dashboard_path = output_dir / "dashboard.html"
+        with open(dashboard_path, "w") as f:
+            f.write(dashboard_html)
+
+        # Generate summary with available metrics
+        latest_data = {}
+
+        if not df_size.empty:
+            latest = df_size.iloc[-1]
+            previous = df_size.iloc[-2] if len(df_size) > 1 else latest
+            size_change = latest['total_size_mb'] - previous['total_size_mb']
+            latest_data.update({
+                'timestamp': latest['timestamp'].isoformat(),
+                'commit_hash': latest['commit_hash'],
+                'commit_url': latest['commit_url'],
+                'total_size_mb': latest['total_size_mb'],
+                'size_change_mb': size_change,
+                'packages': latest.get('packages', [])
+            })
+
+        if not df_lines.empty:
+            latest = df_lines.iloc[-1]
+            previous = df_lines.iloc[-2] if len(df_lines) > 1 else latest
+            linecount_change = latest['total_lines'] - previous['total_lines']
+            if not latest_data:  # Only add timestamp and commit info if not already added
+                latest_data.update({
+                    'timestamp': latest['timestamp'].isoformat(),
+                    'commit_hash': latest['commit_hash'],
+                    'commit_url': latest['commit_url'],
+                })
+            latest_data.update({
+                'total_lines': latest['total_lines'],
+                'linecount_change': linecount_change
+            })
+
+        if latest_data:
+            with open(output_dir / 'latest_data.json', 'w') as f:
+                json.dump(latest_data, f, indent=2)
+
+            self._print_summary(latest_data)
+            self.logger.info(f"Report generated in {output_dir}")
+            return str(output_dir)
+
+        return None
 
     def _print_summary(self, latest_data: Dict):
         print("\n=== Package Size Summary ===")
         print(f"Timestamp: {latest_data['timestamp']}")
         print(f"Commit: {latest_data['commit_hash'][:7]}")
-        print(f"Total Size: {latest_data['total_size_mb']:.2f}MB")
 
-        change = latest_data['size_change_mb']
-        change_symbol = "↓" if change <= 0 else "↑"
-        print(f"Change: {change_symbol} {abs(change):.2f}MB")
+        if 'total_size_mb' in latest_data:
+            print(f"Total Size: {latest_data['total_size_mb']:.2f}MB")
+            change = latest_data['size_change_mb']
+            change_symbol = "↓" if change <= 0 else "↑"
+            print(f"Change: {change_symbol} {abs(change):.2f}MB")
 
-        print("\nTop 5 Largest Packages:")
-        sorted_packages = sorted(latest_data['packages'], key=lambda x: x['size_mb'], reverse=True)
-        for pkg in sorted_packages[:5]:
-            print(f"- {pkg['name']}: {pkg['size_mb']:.2f}MB")
+            if latest_data.get('packages'):
+                print("\nTop 5 Largest Packages:")
+                sorted_packages = sorted(latest_data['packages'], key=lambda x: x['size_mb'], reverse=True)
+                for pkg in sorted_packages[:5]:
+                    print(f"- {pkg['name']}: {pkg['size_mb']:.2f}MB")
+
+        if 'total_lines' in latest_data:
+            print("\nLine Count Stats:")
+            print(f"Total Lines: {latest_data['total_lines']:,}")
+            change = latest_data['linecount_change']
+            change_symbol = "↓" if change <= 0 else "↑"
+            print(f"Change: {change_symbol} {abs(change):,}")
+
         print("\n")
 
 async def main():
