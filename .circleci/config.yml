@@ -211,7 +211,7 @@ jobs:
             pip install .
       - run_chatgpt_api_test:
           inference_engine: dummy
-          model_id: dummy-model
+          model_id: dummy
           prompt: "Dummy prompt."
           expected_output: "dummy"
 
