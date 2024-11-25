@@ -9,7 +9,6 @@ from typing import List, Dict, Optional
 from pathlib import Path
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
 
 class AsyncCircleCIClient:
     def __init__(self, token: str, project_slug: str):
@@ -70,10 +69,6 @@ class AsyncCircleCIClient:
                 branch=branch
             )
             pipelines.extend(next_pipelines)
-
-        # Trim to limit if needed
-        if limit is not None:
-            pipelines = pipelines[:limit]
 
         return pipelines
 
@@ -197,7 +192,7 @@ class PackageSizeTracker:
                     benchmark_data = await self.client.get_json(session, benchmark_report["url"])
                     data_point.update({
                         "tokens_per_second": benchmark_data["tokens_per_second"],
-                        "time_to_first_token": benchmark_data["time_to_first_token"]
+                        "time_to_first_token": benchmark_data.get("time_to_first_token", 0)
                     })
                     self.logger.info(
                         f"Processed benchmark data for pipeline {pipeline['id']}: "
@@ -270,8 +265,6 @@ class PackageSizeTracker:
             pipelines = main_pipelines + circleci_pipelines
             # Sort pipelines by created_at date
             pipelines.sort(key=lambda x: x.get("created_at", x.get("updated_at")), reverse=True)
-            # Take the 20 most recent pipelines after combining
-            pipelines = pipelines[:20]
 
             self.logger.info(f"Found {len(pipelines)} recent pipelines")
 
@@ -302,7 +295,7 @@ class PackageSizeTracker:
         # Create a single figure with subplots
         fig = make_subplots(
             rows=3, cols=2,
-            subplot_titles=('Test Status', 'Package Size Trend', '', 'Line Count Trend', '', 'Tokens per Second'),
+            subplot_titles=('Test Status', 'Package Size', '', 'Line Count', '', 'Tokens per Second'),
             vertical_spacing=0.2,
             column_widths=[0.2, 0.8],
             specs=[[{"type": "indicator"}, {"type": "scatter"}],
@@ -487,6 +480,10 @@ class PackageSizeTracker:
                     gap: 20px;
                 }}
 
+                .chart-row-full {{
+                    grid-column: 2 / -1;
+                }}
+
                 .chart-box {{
                     background: white;
                     border-radius: 12px;
@@ -542,15 +539,15 @@ class PackageSizeTracker:
                 </div>
                 <div class="chart-row">
                     <div class="chart-box">
-                        <div class="chart-title">Package Size Trend</div>
+                        <div class="chart-title">Package Size</div>
                         <div id="size-chart"></div>
                     </div>
                     <div class="chart-box">
-                        <div class="chart-title">Line Count Trend</div>
+                        <div class="chart-title">Line Count</div>
                         <div id="lines-chart"></div>
                     </div>
                 </div>
-                <div class="chart-row">
+                <div class="chart-row chart-row-full">
                     <div class="chart-box">
                         <div class="chart-title">Tokens per Second</div>
                         <div id="tokens-chart"></div>
@@ -880,7 +877,8 @@ class PackageSizeTracker:
         if 'tokens_per_second' in latest_data:
             print("\nBenchmark Stats:")
             print(f"Tokens per Second: {latest_data['tokens_per_second']:.2f}")
-            print(f"Time to First Token: {latest_data['time_to_first_token']:.3f}s")
+            if 'time_to_first_token' in latest_data:
+                print(f"Time to First Token: {latest_data['time_to_first_token']:.3f}s")
 
         print("\n")
 
