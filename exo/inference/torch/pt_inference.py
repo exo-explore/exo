@@ -121,7 +121,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
   async def ensure_shard(self, shard: Shard):
     if DEBUG >= 4:
       print("shard ensured\n")
-      print(f"model_path: {model_path}")
       print(f"shard: {shard}")
       print(f"class shard: {self.shard}")
 
