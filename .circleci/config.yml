@@ -20,9 +20,6 @@ commands:
           command: |
             source env/bin/activate
 
-            # Install jq
-            brew install jq
-
             # Set CLANG=1 for tinygrad only
             if [ "<<parameters.inference_engine>>" = "tinygrad" ]; then
               pip install llvmlite
