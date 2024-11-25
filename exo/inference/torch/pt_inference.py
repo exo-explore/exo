@@ -126,6 +126,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     if self.shard == shard:
       return
+    
+    self.shard = shard
 
     # download model safetensors and shard
     model_path = await self.shard_downloader.ensure_shard(
