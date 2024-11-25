@@ -311,12 +311,12 @@ class PackageSizeTracker:
         if not df_size.empty:
             latest = df_size.iloc[-1]
             previous = df_size.iloc[-2] if len(df_size) > 1 else latest
-            size_change = latest['total_size_mb'] - previous['total_size_mb']
+            size_change = float(latest['total_size_mb'] - previous['total_size_mb'])
             latest_data.update({
                 'timestamp': latest['timestamp'].isoformat(),
                 'commit_hash': latest['commit_hash'],
                 'commit_url': latest['commit_url'],
-                'total_size_mb': latest['total_size_mb'],
+                'total_size_mb': float(latest['total_size_mb']),
                 'size_change_mb': size_change,
                 'packages': latest.get('packages', [])
             })
@@ -324,7 +324,7 @@ class PackageSizeTracker:
         if not df_lines.empty:
             latest = df_lines.iloc[-1]
             previous = df_lines.iloc[-2] if len(df_lines) > 1 else latest
-            linecount_change = latest['total_lines'] - previous['total_lines']
+            linecount_change = int(latest['total_lines'] - previous['total_lines'])
             if not latest_data:  # Only add timestamp and commit info if not already added
                 latest_data.update({
                     'timestamp': latest['timestamp'].isoformat(),
@@ -332,7 +332,7 @@ class PackageSizeTracker:
                     'commit_url': latest['commit_url'],
                 })
             latest_data.update({
-                'total_lines': latest['total_lines'],
+                'total_lines': int(latest['total_lines']),
                 'linecount_change': linecount_change
             })
 
