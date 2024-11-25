@@ -62,6 +62,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
+    self.shard_cache = {}
 
   async def sample(self, x: np.ndarray, temp=TEMPERATURE, top_p: float = 0.0) -> np.ndarray:
     logits = x[:, -1, :]
@@ -80,10 +81,18 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
-    return await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.model(Tensor(input_data), request_id).realize().numpy())
+    output_data: np.ndarray = np.array(await asyncio.gather(
+      *[asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.model(Tensor(input_data), request_id).realize().numpy())]
+    ))
+    return output_data
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
+      return
+
+    if shard in self.shard_cache:
+      self.model, self.tokenizer = self.shard_cache[shard]
+      self.shard = shard
       return
 
     model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
@@ -96,4 +105,5 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
       self.shard = shard
-      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard)
+      self.shard_cache[shard] = (self.model, self.tokenizer)

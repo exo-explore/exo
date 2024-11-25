@@ -10,6 +10,7 @@ from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+
 def sample_logits(
   logits: mx.array,
   temp: float = 0.0,
@@ -36,6 +37,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
+    self.shard_cache = {}
 
   async def sample(self, x, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
     y = mx.array(x)
@@ -55,11 +57,18 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
-    output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, self.model, mx.array(input_data), request_id))
+    output_data: np.ndarray = np.array(await asyncio.gather(
+      *[asyncio.get_running_loop().run_in_executor(self.executor, self.model, mx.array(input_data), request_id)]
+    ))
     return output_data
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
+      return
+
+    if shard in self.shard_cache:
+      self.model, self.tokenizer = self.shard_cache[shard]
+      self.shard = shard
       return
 
     model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
@@ -72,4 +81,5 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.shard = shard
-      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard)
+      self.shard_cache[shard] = (self.model, self.tokenizer)

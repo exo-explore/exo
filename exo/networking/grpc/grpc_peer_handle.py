@@ -96,12 +96,14 @@ class GRPCPeerHandle(PeerHandle):
       tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
       request_id=request_id,
     )
-    response = await self.stub.SendTensor(request)
+    response = await asyncio.gather(
+      self.stub.SendTensor(request)
+    )
 
-    if not response.tensor_data or not response.shape or not response.dtype:
+    if not response[0].tensor_data or not response[0].shape or not response[0].dtype:
       return None
 
-    return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
+    return np.frombuffer(response[0].tensor_data, dtype=np.dtype(response[0].dtype)).reshape(response[0].shape)
 
   async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
     request = node_service_pb2.GetInferenceResultRequest(request_id=request_id)
