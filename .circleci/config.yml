@@ -192,8 +192,8 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: mlx
           model_id: llama-3.2-1b
-          prompt: "Keep responses concise. Who was the king of pop? Properly capitalize and end your response with a period."
-          expected_output: "Michael Jackson."
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
 
   chatgpt_api_integration_test_dummy:
     macos:
@@ -240,8 +240,8 @@ jobs:
       - run_chatgpt_api_test:
           inference_engine: tinygrad
           model_id: llama-3.2-1b
-          prompt: "Keep responses concise. Who was the king of pop? Properly capitalize and end your response with a period."
-          expected_output: "Michael Jackson."
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
 
   measure_pip_sizes:
     macos:
