@@ -10,13 +10,13 @@ from exo.helpers import DEBUG
 
 class DummyTokenizer:
   def __init__(self):
-    self.eos_token_id = 0
+    self.eos_token_id = 69
 
   def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True):
-    return [1, 2, 3]
+    return "dummy_tokenized_prompt"
 
   def decode(self, tokens):
-    return "dummy"
+    return "dummy" * len(tokens)
 
 
 async def resolve_tokenizer(model_id: str):
