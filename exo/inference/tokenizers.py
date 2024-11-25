@@ -4,6 +4,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Union
 from transformers import AutoTokenizer, AutoProcessor
+import numpy as np
 from exo.download.hf.hf_helpers import get_local_snapshot_dir
 from exo.helpers import DEBUG
 
@@ -11,9 +12,13 @@ from exo.helpers import DEBUG
 class DummyTokenizer:
   def __init__(self):
     self.eos_token_id = 69
+    self.vocab_size = 1000
 
   def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True):
     return "dummy_tokenized_prompt"
+
+  def encode(self, text):
+    return np.random.randint(1, self.vocab_size, size=(1, len(text.split())))
 
   def decode(self, tokens):
     return "dummy" * len(tokens)
