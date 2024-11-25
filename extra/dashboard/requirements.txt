@@ -1,0 +1,4 @@
+plotly
+pandas
+requests
+aiohttp
