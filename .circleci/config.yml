@@ -274,7 +274,7 @@ jobs:
       - image: cimg/python:3.10
     steps:
       - checkout
-      
+
       - run:
           name: Setup git for PR comparison
           command: |
@@ -283,18 +283,18 @@ jobs:
               BASE_BRANCH=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
                 "https://circleci.com/api/v2/project/github/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pipeline/$CIRCLE_WORKFLOW_ID" \
                 | jq -r '.target_branch')
-              
+
               git clone -b $BASE_BRANCH --single-branch \
                 https://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git \
                 base_branch
             fi
-      
+
       - run:
           name: Install dependencies
           command: |
             python -m pip install --upgrade pip
             pip install tabulate
-      
+
       - run:
           name: Run line count check
           command: |
@@ -303,21 +303,21 @@ jobs:
             else
               python extra/line_counter.py .
             fi
-      
+
       - store_artifacts:
           path: line-count-snapshot.json
           destination: line-count-snapshot.json
-      
+
       - store_artifacts:
           path: line-count-diff.json
           destination: line-count-diff.json
-      
+
       - run:
           name: Create test results directory
           command: |
             mkdir -p test-results/line-count
             cp line-count-*.json test-results/line-count/
-      
+
       - store_test_results:
           path: test-results
 
