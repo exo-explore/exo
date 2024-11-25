@@ -215,14 +215,6 @@ jobs:
           prompt: "Dummy prompt."
           expected_output: "dummy"
 
-  test_macos_m1:
-    macos:
-      xcode: "16.0.0"
-    resource_class: m2pro.large
-    steps:
-      - checkout
-      - run: system_profiler SPHardwareDataType
-
   chatgpt_api_integration_test_tinygrad:
     macos:
       xcode: "16.0.0"
@@ -336,5 +328,4 @@ workflows:
       - chatgpt_api_integration_test_mlx
       - chatgpt_api_integration_test_tinygrad
       - chatgpt_api_integration_test_dummy
-      - test_macos_m1
       - measure_pip_sizes
