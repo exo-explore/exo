@@ -273,14 +273,10 @@ class ShardedLlamaModel(nn.Module):
     self.device = device if device is not None else torch.device("cpu")
     self.max_new_tokens = max_new_tokens
     self.max_seq_len = self.config["max_seq_len"]
+    self.use_cache = use_cache
 
     # pad_id maually set as same in all llama models
     self.pad_id = 128004 # from <|finetune_right_pad_id|>
-
-    if use_cache is not None:
-      self.use_cache = use_cache
-    else:
-      self.use_cache = self.config.get("use_cache", False)
 
     with torch.no_grad():
       self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)

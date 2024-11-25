@@ -143,10 +143,14 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     )
 
     # load sharded weights
-    load_model_weights_torchtune(
-      model_path,
-      shard,
-      self.sharded_model
+    await asyncio.get_running_loop().run_in_executor(
+      self.executor,
+      functools.partial(
+        load_model_weights_torchtune,
+        model_path,
+        shard,
+        self.sharded_model
+      )
     )
 
     if DEBUG >= 4:
