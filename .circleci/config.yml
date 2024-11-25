@@ -84,18 +84,22 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "<<parameters.expected_output>>" || ! echo "$response_2" | grep -q "<<parameters.expected_output>>"; then
-              echo "Test failed: Response does not contain '<<parameters.expected_output>>'"
-              echo "Response 1: $response_1"
+            # Extract content using jq and check if it contains expected output
+            content1=$(echo "$response_1" | jq -r '.choices[0].message.content')
+            content2=$(echo "$response_2" | jq -r '.choices[0].message.content')
+
+            if [[ "$content1" != *"<<parameters.expected_output>>"* ]] || [[ "$content2" != *"<<parameters.expected_output>>"* ]]; then
+              echo "Test failed: Response does not match '<<parameters.expected_output>>'"
+              echo "Response 1 content: $content1"
               echo ""
-              echo "Response 2: $response_2"
+              echo "Response 2 content: $content2"
               echo "Output of first instance:"
               cat output1.log
               echo "Output of second instance:"
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains '<<parameters.expected_output>>'"
+              echo "Test passed: Response from both nodes matches '<<parameters.expected_output>>'"
             fi
 
 jobs:
@@ -211,17 +215,9 @@ jobs:
             pip install .
       - run_chatgpt_api_test:
           inference_engine: dummy
-          model_id: dummy-model
+          model_id: dummy
           prompt: "Dummy prompt."
           expected_output: "dummy"
-
-  test_macos_m1:
-    macos:
-      xcode: "16.0.0"
-    resource_class: m2pro.large
-    steps:
-      - checkout
-      - run: system_profiler SPHardwareDataType
 
   chatgpt_api_integration_test_tinygrad:
     macos:
@@ -336,5 +332,4 @@ workflows:
       - chatgpt_api_integration_test_mlx
       - chatgpt_api_integration_test_tinygrad
       - chatgpt_api_integration_test_dummy
-      - test_macos_m1
       - measure_pip_sizes
