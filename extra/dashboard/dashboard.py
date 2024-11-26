@@ -10,7 +10,7 @@ from pathlib import Path
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import time
-import simpleaudio as sa
+import pygame.mixer
 from datetime import datetime
 
 class AsyncCircleCIClient:
@@ -108,19 +108,29 @@ class PackageSizeTracker:
         self.client = AsyncCircleCIClient(token, project_slug)
         self.logger = logging.getLogger("PackageSizeTracker")
         self.last_data_hash = None
-        self.notification_sound_path = Path(__file__).parent / "notification.wav"
         self.debug = debug
 
-        # Sound file paths - replace these with your actual sound files
+        # Initialize pygame mixer
+        pygame.mixer.init()
+
+        # Sound file paths - can use MP3 files with pygame
         sounds_dir = Path(__file__).parent / "sounds"
         self.sounds = {
-            'lines_up': sounds_dir / "lines_increased.wav",
-            'lines_down': sounds_dir / "lines_decreased.wav",
-            'tokens_up': sounds_dir / "tokens_increased.wav",
-            'tokens_down': sounds_dir / "tokens_decreased.wav",
-            'size_up': sounds_dir / "size_increased.wav",
-            'size_down': sounds_dir / "size_decreased.wav"
+            'lines_up': sounds_dir / "gta5_wasted.mp3",
+            'lines_down': sounds_dir / "pokemon_evolve.mp3",
+            'tokens_up': sounds_dir / "pokemon_evolve.mp3",
+            'tokens_down': sounds_dir / "gta5_wasted.mp3",
+            'size_up': sounds_dir / "gta5_wasted.mp3",
+            'size_down': sounds_dir / "pokemon_evolve.mp3"
         }
+
+    def test_sound_effects(self):
+        """Test all sound effects with a small delay between each"""
+        self.logger.info("Testing sound effects...")
+        for sound_key in self.sounds:
+            self.logger.info(f"Playing {sound_key}")
+            self._play_sound(sound_key)
+            time.sleep(1)  # Wait 1 second between sounds
 
     def setup_logging(self, debug: bool):
         level = logging.DEBUG if debug else logging.INFO
@@ -931,12 +941,14 @@ class PackageSizeTracker:
         ])))
 
     def _play_sound(self, sound_key: str):
-        """Play a specific notification sound"""
+        """Play a specific notification sound using pygame"""
         try:
             sound_path = self.sounds.get(sound_key)
             if sound_path and sound_path.exists():
-                wave_obj = sa.WaveObject.from_wave_file(str(sound_path))
-                wave_obj.play()
+                sound = pygame.mixer.Sound(str(sound_path))
+                sound.play()
+                # Wait for the sound to finish playing
+                pygame.time.wait(int(sound.get_length() * 1000))
             else:
                 self.logger.warning(f"Sound file not found: {sound_key} at {sound_path}")
         except Exception as e:
