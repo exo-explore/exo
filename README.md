@@ -182,10 +182,10 @@ curl http://localhost:52415/v1/chat/completions \
 #### Device 1 (MacOS):
 
 ```sh
-exo --inference-engine tinygrad
+exo
 ```
 
-Here we explicitly tell exo to use the **tinygrad** inference engine.
+Note: We don't need to explicitly tell exo to use the **tinygrad** inference engine. **MLX** and **tinygrad** are interoperable!
 
 #### Device 2 (Linux):
 ```sh
