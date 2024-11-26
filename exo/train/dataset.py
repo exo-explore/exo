@@ -2,63 +2,78 @@
 from pathlib import Path
 import numpy as np
 import json
+from functools import partial, reduce
+def compose(*funcs):    
+  return reduce(lambda f, g: lambda x: f(g(x)), funcs, lambda x : x)
 
-def make_batch(tokens):
+def batch_with_lengths(tokens, maxlen = None):
   lengths = [len(x) for x in tokens]
   batch_size = len(lengths)
-
-  # Check if any sequence is longer than 2048 tokens
-  if max(lengths) > 2048:
-    print("You've got sequences with over 2048 tokens in here! Split your data fool!")
+  if maxlen is None:
+    maxlen = max(lengths)
+  else:
+    lengths = [min(maxlen, l) for l in lengths]
 
   # Pad to the max length
-  batch_arr = np.zeros((batch_size, max(lengths)), np.int32)
+  batch_arr = np.zeros((batch_size, maxlen), np.int32)
 
   for j in range(batch_size):
     batch_arr[j, : lengths[j]] = tokens[j]
   batch = np.array(batch_arr)
   return batch[:, :-1], batch[:, 1:], np.array(lengths)
 
-def iterate_batches(dset, tokenizer, batch_size, train=False):
+def batch_chunk(batch_size):
+  return lambda d, i: d[i:i + batch_size]
+  
+
+def iterate_batches(dset, batch_size, train=False, uniform_length=True):
 # Shuffle indices
+  make_batch = lambda b: batch_with_lengths(b, maxlen=dset._maxlen if uniform_length else None)
+  chunk = batch_chunk(batch_size)
   while True:
     indices = np.arange(len(dset))
     if train:
       indices = np.random.permutation(indices)
+    batch = compose(make_batch, lambda i: [dset[k] for k in i], partial(chunk, indices))
 
     # Collect batches from dataset
     for i in range(0, len(indices) - batch_size + 1, batch_size):
-      # Encode batch
-      yield make_batch([tokenizer.encode(dset[indices[i + j]]) for j in range(batch_size)])
+      yield batch(i)
 
     if not train:
       break
 
 class Dataset:
-  """
-  Light-weight wrapper to hold lines from a jsonl file
-  """
-
-  def __init__(self, path: Path, key: str = "text"):
+  preprocess = lambda item: item
+  load = lambda line: line
+  def __init__(self, path: Path, preprocess=None, load=None, metrics={}):
     if not path.exists():
       self._data = None
     else:
+      if preprocess is not None:
+        self.preprocess = preprocess
+      if load is not None:
+        self.load = load
       with open(path, "r") as fid:
-        self._data = [json.loads(l) for l in fid]
-    self._key = key
+        self._data = [load(l) for l in fid]
+        self._maxlen = max([len(self.preprocess(x)) for x in self._data])
+        # Check if any sequence is longer than 2048 tokens
+        if self._maxlen > 2048:
+          print("You've got sequences with over 2048 tokens in here! Split your data fool!")
+
 
   def __getitem__(self, idx: int):
-    return self._data[idx][self._key]
+    return self.preprocess(self._data[idx])
 
   def __len__(self):
     return len(self._data)
 
 
-def load_dataset(data_path: str):
+def load_dataset(data_path: str, preprocess=None):
   def load_and_check(name):
     dataset_path = Path(data_path) / f"{name}.jsonl"
     try:
-      return Dataset(dataset_path)
+      return Dataset(dataset_path, preprocess=preprocess, load=json.loads)
     except Exception as e:
       print(f"Unable to build dataset {dataset_path} ({e})")
       raise
