@@ -46,11 +46,48 @@ document.addEventListener("alpine:init", () => {
       // Start polling for download progress
       this.startDownloadProgressPolling();
       
-      // Call populateSelector immediately after initialization
-      this.populateSelector();
-      this.modelPoolInterval = setInterval(() => {
-        this.populateSelector();
-      }, 5000);
+      // Start model polling with the new pattern
+      this.startModelPolling();
+    },
+
+    async startModelPolling() {
+      while (true) {
+        try {
+          await this.populateSelector();
+          // Wait 5 seconds before next poll
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        } catch (error) {
+          console.error('Model polling error:', error);
+          // If there's an error, wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
+    },
+
+    async populateSelector() {
+      return new Promise((resolve, reject) => {
+        const evtSource = new EventSource(`${window.location.origin}/modelpool`);
+        
+        evtSource.onmessage = (event) => {
+          if (event.data === "[DONE]") {
+            evtSource.close();
+            resolve();
+            return;
+          }
+          
+          const modelData = JSON.parse(event.data);
+          this.models = {
+            ...this.models,
+            ...modelData
+          };
+        };
+        
+        evtSource.onerror = (error) => {
+          console.error('EventSource failed:', error);
+          evtSource.close();
+          reject(error);
+        };
+      });
     },
 
     removeHistory(cstate) {
@@ -85,28 +122,6 @@ document.addEventListener("alpine:init", () => {
       if (h > 0) return `${h}h ${m}m ${s}s`;
       if (m > 0) return `${m}m ${s}s`;
       return `${s}s`;
-    },
-
-    async populateSelector() {
-      const evtSource = new EventSource(`${window.location.origin}/modelpool`);
-      
-      evtSource.onmessage = (event) => {
-        if (event.data === "[DONE]") {
-          evtSource.close();
-          return;
-        }
-        
-        const modelData = JSON.parse(event.data);
-        this.models = {
-          ...this.models,
-          ...modelData
-        };
-      };
-      
-      evtSource.onerror = (error) => {
-        console.error('EventSource failed:', error);
-        evtSource.close();
-      };
     },
 
     async handleImageUpload(event) {
