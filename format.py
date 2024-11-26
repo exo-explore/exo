@@ -21,7 +21,7 @@ def run_yapf(target):
 
 def main():
   if len(sys.argv) < 2:
-    print("Usage: python3 format.py <directory_or_file> e.g. python3 format.py ./exo")
+    print("Usage: uv run format.py <directory_or_file> e.g. uv run format.py src")
     sys.exit(1)
 
   target = sys.argv[1]

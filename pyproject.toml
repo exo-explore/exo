@@ -1,0 +1,58 @@
+[project]
+name = "exo"
+version = "0.0.1"
+description = "exo: Run your own AI cluster at home with everyday devices. Maintained by exo labs."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp==3.10.11",
+    "aiohttp_cors==0.7.0",
+    "aiofiles==24.1.0",
+    "grpcio==1.68.0",
+    "grpcio-tools==1.68.0",
+    "Jinja2==3.1.4",
+    "netifaces==0.11.0",
+    "numpy==2.0.0",
+    "nuitka==2.5.1",
+    "nvidia-ml-py==12.560.30",
+    "pillow==10.4.0",
+    "prometheus-client==0.20.0",
+    "protobuf==5.28.1",
+    "psutil==6.0.0",
+    "pydantic==2.9.2",
+    "requests==2.32.3",
+    "rich==13.7.1",
+    "tenacity==9.0.0",
+    "tqdm==4.66.4",
+    "transformers==4.46.3",
+    "uuid==1.30",
+    "mlx==0.20.0; sys_platform == 'darwin'",
+    "mlx-lm==0.19.3; sys_platform == 'darwin'",
+    "tinygrad",
+]
+
+[project.scripts]
+exo = "exo.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "mypy==1.11.0",
+    "pylint==3.2.6",
+    "ruff==0.5.5",
+    "yapf==0.40.2",
+]
+
+[tool.uv.sources]
+tinygrad = { git = "https://github.com/tinygrad/tinygrad", rev = "232edcfd4f8b388807c64fb1817a7668ce27cbad" }
+
+[tool.pylint.format]
+indent-string = '  '
+max-line-length = 200
+
+[tool.autopep8]
+max_line_length = 200
+indent_size = 2
