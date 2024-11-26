@@ -180,6 +180,7 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_get("/healthcheck", self.handle_healthcheck), {"*": cors_options})
     cors.add(self.app.router.add_post("/quit", self.handle_quit), {"*": cors_options})
     cors.add(self.app.router.add_delete("/models/{model_name}", self.handle_delete_model), {"*": cors_options})
+    cors.add(self.app.router.add_get("/initial_models", self.handle_get_initial_models), {"*": cors_options})
 
     if "__compiled__" not in globals():
       self.static_dir = Path(__file__).parent.parent/"tinychat"
@@ -477,6 +478,19 @@ class ChatGPTAPI:
         return web.json_response({
             "detail": f"Server error: {str(e)}"
         }, status=500)
+
+  async def handle_get_initial_models(self, request):
+    model_data = {}
+    for model_name, pretty in pretty_name.items():
+        model_data[model_name] = {
+            "name": pretty,
+            "downloaded": None,  # Initially unknown
+            "download_percentage": None,  # Change from 0 to null
+            "total_size": None,
+            "total_downloaded": None,
+            "loading": True  # Add loading state
+        }
+    return web.json_response(model_data)
 
   async def run(self, host: str = "0.0.0.0", port: int = 52415):
     runner = web.AppRunner(self.app)

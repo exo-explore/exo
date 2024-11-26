@@ -43,11 +43,27 @@ document.addEventListener("alpine:init", () => {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
 
+      // Get initial model list
+      this.fetchInitialModels();
+
       // Start polling for download progress
       this.startDownloadProgressPolling();
       
       // Start model polling with the new pattern
       this.startModelPolling();
+    },
+
+    async fetchInitialModels() {
+      try {
+        const response = await fetch(`${window.location.origin}/initial_models`);
+        if (response.ok) {
+          const initialModels = await response.json();
+          this.models = initialModels;
+          console.log('Initial models fetched:', initialModels);
+        }
+      } catch (error) {
+        console.error('Error fetching initial models:', error);
+      }
     },
 
     async startModelPolling() {
@@ -76,10 +92,16 @@ document.addEventListener("alpine:init", () => {
           }
           
           const modelData = JSON.parse(event.data);
-          this.models = {
-            ...this.models,
-            ...modelData
-          };
+          // Update existing model data while preserving other properties
+          Object.entries(modelData).forEach(([modelName, data]) => {
+            if (this.models[modelName]) {
+              this.models[modelName] = {
+                ...this.models[modelName],
+                ...data,
+                loading: false
+              };
+            }
+          });
         };
         
         evtSource.onerror = (error) => {
