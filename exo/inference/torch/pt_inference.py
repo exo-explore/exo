@@ -110,10 +110,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       )
 
       if model_hs is not None:
-        model_hs = model_hs.detach().cpu()
+        # model_hs = model_hs.detach().cpu()
         return model_hs.numpy(force=True)
 
-      model_logits = model_logits.detach().cpu()
+      # model_logits = model_logits.detach().cpu()
       return model_logits.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)

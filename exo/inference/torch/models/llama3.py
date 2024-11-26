@@ -132,13 +132,16 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
 
       # Process through each transformer layer
       with torch.no_grad():
-        h = layer(
-          h,
-          # mask=mask,
-          # encoder_input=encoder_input,
-          # encoder_mask=encoder_mask,
-          # input_pos=input_pos,
-        )
+        if self.layers[0].caches_are_enabled():
+            h = layer(
+            h,
+            mask=mask,
+            encoder_input=encoder_input,
+            encoder_mask=encoder_mask,
+            input_pos=input_pos,
+          )
+        else:
+          h = layer(h)
 
         if i in self.output_hidden_states:
           hidden.append(h)

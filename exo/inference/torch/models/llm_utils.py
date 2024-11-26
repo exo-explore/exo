@@ -169,9 +169,9 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
     # print(f"model.output.weight: {paried_embed_weight}")
     # remapped_state_dict["model.output.weight"] = paried_embed_weight
 
-  # print("\nRemapped state dict\n")
-  # for rsdk in remapped_state_dict.keys():
-  #   print(f"--  {rsdk}")
+  print("\nRemapped state dict\n")
+  for rsdk in remapped_state_dict.keys():
+    print(f"--  {rsdk}")
   model.load_state_dict(remapped_state_dict, strict=False)
 
   # if DEBUG >= 7:

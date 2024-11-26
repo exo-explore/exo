@@ -111,12 +111,11 @@ if __name__ == "__main__":
   llama_tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
 
   # Initialize LlamaModel with config and tokenizer
-  # device = torch.device("cuda")
-  device = None
+  device = torch.device("cuda")
   shard_model_1 = ShardedLlamaModel(
     config=config,
     shard=shard_1,
-    device=None,
+    device=device,
     max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )

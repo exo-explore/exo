@@ -112,7 +112,7 @@ if __name__ == "__main__":
   shard_model_1 = ShardedLlamaModel(
     config=config,
     shard=shard_1,
-    device=None,
+    device=torch.device("cuda"),
     max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )
@@ -123,7 +123,7 @@ if __name__ == "__main__":
   shard_model_2 = ShardedLlamaModel(
     config=config,
     shard=shard_2,
-    device=None,
+    device=torch.device("cuda"),
     max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )

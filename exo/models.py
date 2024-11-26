@@ -8,7 +8,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
-      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct"
+      "TorchDynamicShardInferenceEngine": "meta-llama/Llama-3.2-1B-Instruct"
     },
   },
   "llama-3.2-3b": {
