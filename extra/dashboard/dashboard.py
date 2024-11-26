@@ -955,48 +955,72 @@ class PackageSizeTracker:
             self.logger.error(f"Failed to play sound {sound_key}: {e}")
 
     def _check_metrics_changes(self, current_data: List[Dict], previous_data: List[Dict]):
-        """Check for specific metric changes and play appropriate sounds"""
-        if not previous_data:
-            return
+        # Sort data by timestamp in descending order (most recent first)
+        def sort_by_timestamp(data):
+            return sorted(
+                data,
+                key=lambda x: x.get('timestamp', ''),
+                reverse=True  # Most recent first
+            )
 
-        # Get latest data points
-        current = current_data[-1]
-        previous = previous_data[-1]
+        current_data = sort_by_timestamp(current_data)
+        previous_data = sort_by_timestamp(previous_data)
+
+        # Helper to find latest entry with a specific metric
+        def find_latest_with_metric(data: List[Dict], metric: str) -> Optional[Dict]:
+            return next((d for d in data if metric in d), None)
 
         # Check line count changes
-        if 'total_lines' in current and 'total_lines' in previous:
-            diff = current['total_lines'] - previous['total_lines']
+        current_lines = find_latest_with_metric(current_data, 'total_lines')
+        previous_lines = find_latest_with_metric(previous_data, 'total_lines')
+
+        if current_lines and previous_lines:
+            diff = current_lines['total_lines'] - previous_lines['total_lines']
+            self.logger.debug(f"Lines of code diff: {diff}")
             if diff > 0:
                 self.logger.info(f"Lines of code increased by {diff:,}")
                 self._play_sound('lines_up')
             elif diff < 0:
                 self.logger.info(f"Lines of code decreased by {abs(diff):,}")
                 self._play_sound('lines_down')
+        else:
+            self.logger.debug("No lines of code data found")
 
         # Check tokens per second changes
-        if 'tokens_per_second' in current and 'tokens_per_second' in previous:
-            diff = current['tokens_per_second'] - previous['tokens_per_second']
+        current_tokens = find_latest_with_metric(current_data, 'tokens_per_second')
+        previous_tokens = find_latest_with_metric(previous_data, 'tokens_per_second')
+
+        if current_tokens and previous_tokens:
+            diff = current_tokens['tokens_per_second'] - previous_tokens['tokens_per_second']
+            self.logger.debug(f"Tokens per second diff: {diff}")
             if diff > 0:
                 self.logger.info(f"Tokens per second increased by {diff:.2f}")
                 self._play_sound('tokens_up')
             elif diff < 0:
                 self.logger.info(f"Tokens per second decreased by {abs(diff):.2f}")
                 self._play_sound('tokens_down')
+        else:
+            self.logger.debug("No tokens per second data found")
 
         # Check package size changes
-        if 'total_size_mb' in current and 'total_size_mb' in previous:
-            diff = current['total_size_mb'] - previous['total_size_mb']
+        current_size = find_latest_with_metric(current_data, 'total_size_mb')
+        previous_size = find_latest_with_metric(previous_data, 'total_size_mb')
+
+        if current_size and previous_size:
+            diff = current_size['total_size_mb'] - previous_size['total_size_mb']
+            self.logger.debug(f"Package size diff: {diff:.2f}MB")
             if diff > 0:
                 self.logger.info(f"Package size increased by {diff:.2f}MB")
                 self._play_sound('size_up')
             elif diff < 0:
                 self.logger.info(f"Package size decreased by {abs(diff):.2f}MB")
                 self._play_sound('size_down')
+        else:
+            self.logger.debug("No package size data found")
 
-    async def run_dashboard(self, update_interval: int = 30):
+    async def run_dashboard(self, update_interval: int = 10):
         """Run the dashboard with periodic updates"""
         try:
-            # Force convert update_interval to float and log its type
             update_interval = float(update_interval)
             self.logger.debug(f"Update interval type: {type(update_interval)}, value: {update_interval}")
         except ValueError as e:
@@ -1009,7 +1033,6 @@ class PackageSizeTracker:
         while True:
             try:
                 start_time = time.time()
-                self.logger.debug(f"Start time type: {type(start_time)}, value: {start_time}")
 
                 # Collect new data
                 current_data = await self.collect_data()
@@ -1025,25 +1048,26 @@ class PackageSizeTracker:
                         f"Dashboard updated at {datetime.now().strftime('%H:%M:%S')}"
                     )
 
-                    # Check for metric changes and play appropriate sounds
-                    self._check_metrics_changes(current_data, previous_data)
+                    print("Curr:", len(current_data))
+                    print("Prev:", len(previous_data) if previous_data else "None")
+                    if previous_data:
+                        # Check for metric changes and play appropriate sounds
+                        self.logger.debug(f"Checking metrics changes between {len(current_data)} current and {len(previous_data)} previous data points")
+                        self._check_metrics_changes(current_data, previous_data)
 
                 # Update previous data
-                previous_data = current_data
+                previous_data = current_data.copy()  # Make a copy to prevent reference issues
 
-                # Calculate sleep time with explicit type conversion and logging
+                # Calculate sleep time
                 elapsed = float(time.time() - start_time)
-                self.logger.debug(f"Elapsed time type: {type(elapsed)}, value: {elapsed}")
-                sleep_time = max(0.0, float(update_interval) - elapsed)
-                self.logger.debug(f"Sleep time type: {type(sleep_time)}, value: {sleep_time}")
-
+                sleep_time = max(0.0, update_interval - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except Exception as e:
                 self.logger.error(f"Error in dashboard update loop: {e}", exc_info=True)
                 if self.debug:
                     raise
-                await asyncio.sleep(float(update_interval))
+                await asyncio.sleep(update_interval)
 
 async def main():
     token = os.getenv("CIRCLECI_TOKEN")
@@ -1052,11 +1076,11 @@ async def main():
 
     try:
         # Get update interval from environment or use default
-        update_interval = float(os.getenv("UPDATE_INTERVAL", "30"))
+        update_interval = float(os.getenv("UPDATE_INTERVAL", "10"))
         print(f"Update interval type: {type(update_interval)}, value: {update_interval}")  # Debug print
     except ValueError as e:
         print(f"Error converting UPDATE_INTERVAL to float: {os.getenv('UPDATE_INTERVAL')}")
-        update_interval = 30.0
+        update_interval = 10.0
 
     if not token or not project_slug:
         print("Error: Please set CIRCLECI_TOKEN and CIRCLECI_PROJECT_SLUG environment variables")
