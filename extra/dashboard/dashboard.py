@@ -124,9 +124,6 @@ class PackageSizeTracker:
             'size_down': sounds_dir / "pokemon_evolve.mp3"
         }
 
-        # Test all sound effects on startup
-        self.test_sound_effects()
-
     def test_sound_effects(self):
         """Test all sound effects with a small delay between each"""
         self.logger.info("Testing sound effects...")
