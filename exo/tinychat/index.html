@@ -49,7 +49,10 @@
             </div>
             <div class="model-info">
                 <div class="model-progress">
-                    <template x-if="model.download_percentage != null">
+                    <template x-if="model.loading">
+                        <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
+                    </template>
+                    <template x-if="!model.loading && model.download_percentage != null">
                         <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
                     </template>
                 </div>
