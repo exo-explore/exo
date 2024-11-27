@@ -218,6 +218,26 @@ def clean_path(path):
         path = path.strip('Optional("').rstrip('")')
     return os.path.expanduser(path)
 
+async def hold_outstanding(node: Node):
+  while True:
+    if node.outstanding_requests:
+      await asyncio.sleep(1)
+    else:
+      return      
+
+
+async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
+  losses = []
+  tokens = []
+  for batch in tqdm(iterate_batches(data, batch_size), total=len(data) // batch_size):
+    _, _, lengths = batch
+    losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch, train=train)))
+    tokens.append(np.sum(lengths))
+  total_tokens = np.sum(tokens)
+  total_loss = np.sum(losses) / total_tokens
+  
+  return total_loss, total_tokens
+
 async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, num_batches=-1):
   inference_class = inference_engine.__class__.__name__
   shard = build_base_shard(model_name, inference_class)
@@ -225,17 +245,12 @@ async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_na
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return
   tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  train, val, test = dataloader(lambda i: tokenizer.encode(i))
-  dataset = test
+  train, val, test = dataloader(tokenizer.encode)
   print(f"Evaluating {len(test)} examples with batch_size {batch_size}")
-  losses = []
-  tokens = []
-  for batch in tqdm(iterate_batches(test, batch_size), total=len(dataset) // batch_size):
-    _, _, lengths = batch
-    losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch)))
-    tokens.append(np.sum(lengths))
-  total_loss = np.sum(losses) / np.sum(tokens)
-  print(f"total | loss: {total_loss}, tokens: {np.sum(tokens)}")
+  loss, tokens = await run_iter(node, shard, False, test, batch_size)
+  print(f"total | {loss=}, {tokens=}")
+  print("Waiting for outstanding tasks")
+  await hold_outstanding(node)
 
 async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, iters, save_interval=0, checkpoint_dir=None):
   inference_class = inference_engine.__class__.__name__
@@ -244,25 +259,19 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return
   tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  train, val, test = dataloader(lambda i: tokenizer.encode(i))
-  print(f"Training on {len(train)} examples with batch_size {batch_size}")
+  train, val, test = dataloader(tokenizer.encode)
+  print(f"Training on {len(train)} examples with batch_size {batch_size} for {iters} epochs")
+  for i in tqdm(range(3)):
+    await asyncio.sleep(1)
   for epoch in range(iters):
-    losses = []
-    tokens = []
-    for batch in tqdm(iterate_batches(train, batch_size), total=len(train) // batch_size):
-      _, _, lengths = batch
-      losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch, train=True)))
-      tokens.append(np.sum(lengths))
-    total_loss = np.sum(losses) / np.sum(tokens)
-    print(f"epoch {iters}\t| loss: {total_loss}, tokens: {np.sum(tokens)}")
+    loss, tokens = await run_iter(node, shard, True, train, batch_size)
+    print(f"epoch {epoch + 1}/{iters}\t| {loss=}, {tokens=}")
+    if save_interval > 0 and epoch > 0 and (epoch % save_interval) == 0:
+      print("Hold up let's save a checkpoint")
+      await hold_outstanding(node)
+  await hold_outstanding(node)
 
-async def hold_outstanding(node: Node):
-  while True:
-    if node.outstanding_requests:
-      await asyncio.sleep(.1)
-    else:
-      return      
-
+  
 async def main():
   loop = asyncio.get_running_loop()
 
@@ -321,13 +330,12 @@ async def main():
       if not model_name:
         print("Error: This train ain't leaving the station without a model")
         return
-      await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters)
+      await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters, save_interval=args.save_every)
     
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
   
-  await hold_outstanding(node)
   if args.wait_for_peers > 0:
     print("Cooldown to allow peers to exit gracefully")
     for i in tqdm(range(50)):
