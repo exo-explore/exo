@@ -18,7 +18,7 @@ import mlx.core as mx
 import mlx.nn as nn
 from transformers import AutoProcessor
 
-from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
+from exo.tokenizer.tokenizer import Tokenizer
 
 from exo import DEBUG
 from exo.inference.tokenizers import resolve_tokenizer
@@ -174,7 +174,7 @@ async def load_shard(
   model_config={},
   adapter_path: Optional[str] = None,
   lazy: bool = False,
-) -> Tuple[nn.Module, TokenizerWrapper]:
+) -> Tuple[nn.Module, Tokenizer]:
   model = load_model_shard(model_path, shard, lazy, model_config)
 
   # TODO: figure out a generic solution

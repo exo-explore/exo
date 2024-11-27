@@ -3,6 +3,7 @@ import json
 import tiktoken
 from typing import List, Dict, Any, Tuple
 from jinja2 import Template
+from pprint import pprint
 
 
 class Tokenizer:
@@ -12,7 +13,7 @@ class Tokenizer:
             vocab = tokenizer_data["model"]["vocab"]
             merges = tokenizer_data["model"]["merges"]
             self.pattern = tokenizer_data["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"]
-            self.special_tokens = {token["content"]: token["id"] for token in tokenizer_data["added_tokens"]}
+            self.special_tokens = {token["content"]: int(token["id"]) for token in tokenizer_data["added_tokens"]}
 
         with open(os.path.join(model_path, 'tokenizer_config.json'), 'r',  encoding="utf-8") as f:
             tokenizer_config = json.load(f)
@@ -61,7 +62,7 @@ class Tokenizer:
     def decode(self, tokens: List[int]) -> str:
         return self.decode_chars(self.encoding.decode(tokens))
 
-    def encode(self, text: str, allow_special: bool = False) -> List[int]:
+    def encode(self, text: str, allow_special: bool = True) -> List[int]:
         allowed_special = set(self.special_tokens.keys()) if allow_special else set()
         return self.encoding.encode(
             self.encode_chars(text),
@@ -75,12 +76,15 @@ class Tokenizer:
 
         return bos_token_id, eos_token_id
 
-    def apply_chat_template(self, messages: List[Dict[str, Any]], add_generation_prompt: bool = True) -> str:
+    def apply_chat_template(self, messages: List[Dict[str, Any]], tokenize: bool = False, add_generation_prompt: bool = True) -> str:
         template = Template(self.chat_template)
-        return template.render(messages=messages, 
+        result = template.render(messages=messages, 
                                add_generation_prompt=add_generation_prompt, 
                                bos_token=self.bos_token,
                                eos_token=self.eos_token)
+        if tokenize:
+            return self.encode(result)
+        return result
 
 if __name__ == "__main__":
     tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/e42dbdf018e0e870064622c8404d807ab1568631")

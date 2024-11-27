@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoProcessor
 from exo.download.hf.hf_helpers import get_local_snapshot_dir
 from exo.helpers import DEBUG
 
+from exo.tokenizer.tokenizer import Tokenizer
 
 class DummyTokenizer:
   def __init__(self):
@@ -35,25 +36,29 @@ async def resolve_tokenizer(model_id: str):
 
 
 async def _resolve_tokenizer(model_id_or_local_path: Union[str, PathLike]):
-  try:
-    if DEBUG >= 4: print(f"Trying AutoProcessor for {model_id_or_local_path}")
-    processor = AutoProcessor.from_pretrained(model_id_or_local_path, use_fast=True if "Mistral-Large" in f"{model_id_or_local_path}" else False, trust_remote_code=True)
-    if not hasattr(processor, 'eos_token_id'):
-      processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
-    if not hasattr(processor, 'encode'):
-      processor.encode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).encode
-    if not hasattr(processor, 'decode'):
-      processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
-    return processor
-  except Exception as e:
-    if DEBUG >= 4: print(f"Failed to load processor for {model_id_or_local_path}. Error: {e}")
-    if DEBUG >= 4: print(traceback.format_exc())
+  # try:
+  #   if DEBUG >= 4: print(f"Trying AutoProcessor for {model_id_or_local_path}")
+  #   processor = AutoProcessor.from_pretrained(model_id_or_local_path, use_fast=True if "Mistral-Large" in f"{model_id_or_local_path}" else False, trust_remote_code=True)
+  #   if not hasattr(processor, 'eos_token_id'):
+  #     processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
+  #   if not hasattr(processor, 'encode'):
+  #     processor.encode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).encode
+  #   if not hasattr(processor, 'decode'):
+  #     processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
+  #   return processor
+  # except Exception as e:
+  #   if DEBUG >= 4: print(f"Failed to load processor for {model_id_or_local_path}. Error: {e}")
+  #   if DEBUG >= 4: print(traceback.format_exc())
 
-  try:
-    if DEBUG >= 4: print(f"Trying AutoTokenizer for {model_id_or_local_path}")
-    return AutoTokenizer.from_pretrained(model_id_or_local_path, trust_remote_code=True)
-  except Exception as e:
-    if DEBUG >= 4: print(f"Failed to load tokenizer for {model_id_or_local_path}. Falling back to tinygrad tokenizer. Error: {e}")
-    if DEBUG >= 4: print(traceback.format_exc())
+  # try:
+  #   if DEBUG >= 4: print(f"Trying AutoTokenizer for {model_id_or_local_path}")
+  #   return AutoTokenizer.from_pretrained(model_id_or_local_path, trust_remote_code=True)
+  # except Exception as e:
+  #   if DEBUG >= 4: print(f"Failed to load tokenizer for {model_id_or_local_path}. Falling back to tinygrad tokenizer. Error: {e}")
+  #   if DEBUG >= 4: print(traceback.format_exc())
 
-  raise ValueError(f"[TODO] Unsupported model: {model_id_or_local_path}")
+  # raise ValueError(f"[TODO] Unsupported model: {model_id_or_local_path}")
+  try:
+    return Tokenizer(model_id_or_local_path)
+  except Exception as e:
+    raise ValueError(f"Failed to load tokenizer for {model_id_or_local_path}. Error: {e}")
