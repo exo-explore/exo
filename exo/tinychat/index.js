@@ -59,7 +59,6 @@ document.addEventListener("alpine:init", () => {
         if (response.ok) {
           const initialModels = await response.json();
           this.models = initialModels;
-          console.log('Initial models fetched:', initialModels);
         }
       } catch (error) {
         console.error('Error fetching initial models:', error);
