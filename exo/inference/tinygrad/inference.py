@@ -128,4 +128,4 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
       self.shard = shard
-      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard)
+      self.model = model_shard
