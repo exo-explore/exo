@@ -360,6 +360,7 @@ class StandardNode(Node):
     return len(peers_added) > 0 or len(peers_removed) > 0 or len(peers_updated) > 0
 
   async def select_best_inference_engine(self):
+    if self.inference_engine.__class__.__name__ == 'DummyInferenceEngine': return
     supported_engines = self.get_supported_inference_engines()
     await self.broadcast_supported_engines(supported_engines)
     if len(self.get_topology_inference_engines()):
