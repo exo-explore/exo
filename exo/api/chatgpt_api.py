@@ -3,7 +3,6 @@ import time
 import asyncio
 import json
 from pathlib import Path
-from transformers import AutoTokenizer
 from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
@@ -14,9 +13,8 @@ import sys
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict, shutdown
-from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get_supported_models
+from exo.models import build_base_shard, model_cards, pretty_name, get_supported_models
 from typing import Callable, Optional
 
 class Message:
@@ -119,6 +117,7 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 def build_prompt(tokenizer, _messages: List[Message]):
   messages = remap_messages(_messages)
   prompt = tokenizer.apply_chat_template([m.to_dict() for m in messages], tokenize=False, add_generation_prompt=True)
+  print(prompt)
   for message in messages:
     if not isinstance(message.content, list):
       continue
@@ -228,7 +227,7 @@ class ChatGPTAPI:
     data = await request.json()
     shard = build_base_shard(self.default_model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    tokenizer = await self.node.inference_engine.get_tokenizer(shard)
     return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
 
   async def handle_get_download_progress(self, request):
@@ -257,8 +256,7 @@ class ChatGPTAPI:
         {"detail": f"Unsupported model: {chat_request.model} with inference engine {self.inference_engine_classname}. Supported models for this engine: {supported_models}"},
         status=400,
       )
-
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    tokenizer = await self.node.inference_engine.get_tokenizer(shard)
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
     prompt = build_prompt(tokenizer, chat_request.messages)
@@ -307,8 +305,7 @@ class ChatGPTAPI:
           self.prev_token_lens[_request_id] = max(prev_last_tokens_len, len(tokens))
           new_tokens = tokens[prev_last_tokens_len:]
           finish_reason = None
-          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer,
-                                                                                                                             AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
+          eos_token_id = tokenizer.eos_token_id
           if len(new_tokens) > 0 and new_tokens[-1] == eos_token_id:
             new_tokens = new_tokens[:-1]
             if is_finished:
@@ -354,7 +351,7 @@ class ChatGPTAPI:
         )
 
         finish_reason = "length"
-        eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if isinstance(getattr(tokenizer, "_tokenizer", None), AutoTokenizer) else tokenizer.eos_token_id
+        eos_token_id = tokenizer.eos_token_id
         if DEBUG >= 2: print(f"Checking if end of tokens result {tokens[-1]=} is {eos_token_id=}")
         if tokens[-1] == eos_token_id:
           tokens = tokens[:-1]
