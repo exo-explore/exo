@@ -104,9 +104,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.request_id = request_id if not self.request_id else self.request_id
 
     def infer_wrapper():
+      hidden_state = None
+      if input_data.ndim == 3:
+        hidden_state = torch.tensor(input_data).to(self.device)
+
       model_hs, model_logits = self.sharded_model.generate(
         tokens=torch.tensor(self.past_tokens).to(self.device),
-        hidden_state=torch.tensor(input_data).to(self.device)
+        hidden_state=hidden_state
       )
 
       if model_hs is not None:

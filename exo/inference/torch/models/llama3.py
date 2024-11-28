@@ -304,7 +304,7 @@ class ShardedLlamaModel(nn.Module):
 
     bsz, tokens_length = tokens.size()
 
-    total_response_length = tokens_length + self.max_seq_len
+    total_response_length = tokens_length + self.max_new_tokens
 
     # setup cache
     if not self.model.caches_are_enabled() and self.use_cache:
