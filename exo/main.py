@@ -172,7 +172,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   if not shard:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return
-  tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+  tokenizer = await node.inference_engine.get_tokenizer(shard)
   request_id = str(uuid.uuid4())
   callback_id = f"cli-wait-response-{request_id}"
   callback = node.on_token.register(callback_id)
