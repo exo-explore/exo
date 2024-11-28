@@ -27,7 +27,6 @@ class ManualDiscovery(Discovery):
     self._cached_peers: Dict[str, PeerConfig] = {}
     self._last_modified_time: Optional[float] = None
     self._file_executor = ThreadPoolExecutor(max_workers=1)
-    self._lock = asyncio.Lock()
 
   async def start(self) -> None:
     self.listen_task = asyncio.create_task(self.task_find_peers_from_config())
@@ -60,7 +59,8 @@ class ManualDiscovery(Discovery):
           if is_healthy:
             if DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is healthy.")
             new_known_peers[peer_id] = peer
-          elif DEBUG_DISCOVERY >= 2: print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is not healthy. Removing.")
+          elif DEBUG_DISCOVERY >= 2:
+            print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is not healthy. Removing.")
         except Exception as e:
           if DEBUG_DISCOVERY >= 2: print(f"Exception occured when attempting to add {peer_id=}: {e}")
       self.known_peers = new_known_peers
@@ -70,43 +70,32 @@ class ManualDiscovery(Discovery):
 
   async def _get_peers(self):
     try:
-      async with self._lock:
-        loop = asyncio.get_running_loop()
-        current_mtime = await loop.run_in_executor(
-          self._file_executor,
-          os.path.getmtime,
-          self.network_config_path
+      loop = asyncio.get_running_loop()
+      current_mtime = await loop.run_in_executor(self._file_executor, os.path.getmtime, self.network_config_path)
+
+      if (self._cached_peers is not None and self._last_modified_time is not None and current_mtime <= self._last_modified_time):
+        return self._cached_peers
+
+      topology = await loop.run_in_executor(self._file_executor, NetworkTopology.from_path, self.network_config_path)
+
+      if self.node_id not in topology.peers:
+        raise ValueError(
+          f"Node ID {self.node_id} not found in network config file "
+          f"{self.network_config_path}. Please run with `node_id` set to "
+          f"one of the keys in the config file: {[k for k, _ in topology.peers]}"
         )
 
-        if (self._cached_peers is not None and
-          self._last_modified_time is not None and
-          current_mtime <= self._last_modified_time):
-          return self._cached_peers
+      peers_in_network = topology.peers
+      peers_in_network.pop(self.node_id)
 
-        topology = await loop.run_in_executor(
-          self._file_executor,
-          NetworkTopology.from_path,
-          self.network_config_path
-        )
+      self._cached_peers = peers_in_network
+      self._last_modified_time = current_mtime
 
-        if self.node_id not in topology.peers:
-          raise ValueError(
-            f"Node ID {self.node_id} not found in network config file "
-            f"{self.network_config_path}. Please run with `node_id` set to "
-            f"one of the keys in the config file: {[k for k, _ in topology.peers]}"
-          )
-
-        peers_in_network = topology.peers
-        peers_in_network.pop(self.node_id)
-
-        self._cached_peers = peers_in_network
-        self._last_modified_time = current_mtime
-
-        return peers_in_network
+      return peers_in_network
 
     except Exception as e:
       if DEBUG_DISCOVERY >= 2:
         print(f"Error when loading network config file from {self.network_config_path}. "
-          f"Please update the config file in order to successfully discover peers. "
-          f"Exception: {e}")
+              f"Please update the config file in order to successfully discover peers. "
+              f"Exception: {e}")
       return self._cached_peers
