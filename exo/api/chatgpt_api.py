@@ -3,7 +3,6 @@ import time
 import asyncio
 import json
 from pathlib import Path
-from transformers import AutoTokenizer
 from typing import List, Literal, Union, Dict
 from aiohttp import web
 import aiohttp_cors
@@ -14,9 +13,8 @@ import sys
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict, shutdown
-from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get_supported_models
+from exo.models import build_base_shard, model_cards, pretty_name, get_supported_models
 from typing import Callable, Optional
 
 class Message:
@@ -229,7 +227,7 @@ class ChatGPTAPI:
     data = await request.json()
     shard = build_base_shard(self.default_model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    tokenizer = await self.node.inference_engine.get_tokenizer(shard)
     return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
 
   async def handle_get_download_progress(self, request):
@@ -258,8 +256,7 @@ class ChatGPTAPI:
         {"detail": f"Unsupported model: {chat_request.model} with inference engine {self.inference_engine_classname}. Supported models for this engine: {supported_models}"},
         status=400,
       )
-
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    tokenizer = await self.node.inference_engine.get_tokenizer(shard)
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
     prompt = build_prompt(tokenizer, chat_request.messages)

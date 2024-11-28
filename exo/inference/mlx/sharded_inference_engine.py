@@ -10,6 +10,8 @@ from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from exo.tokenizer.tokenizer import Tokenizer
+
 def sample_logits(
   logits: mx.array,
   temp: float = 0.0,
@@ -57,6 +59,10 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     await self.ensure_shard(shard)
     output_data: np.ndarray = np.array(await asyncio.get_running_loop().run_in_executor(self.executor, self.model, mx.array(input_data), request_id))
     return output_data
+  
+  async def get_tokenizer(self, shard: Shard) -> Tokenizer:
+    await self.ensure_shard(shard)
+    return self.tokenizer
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
