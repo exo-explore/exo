@@ -58,51 +58,12 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
-parser.add_argument("--add-local-model", type=str, nargs=2, metavar=('Model_name', 'Inference_engine'), help="Add local model: MODEL_NAME is the name of model, ENGINE_NAME is mlx/tinygrad/dummy")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
 
-exo_path, local_model_config = init_exo_env()
-
-if args.add_local_model:
-  model_name = args.add_local_model[0]
-  inference_engine = args.add_local_model[1].lower()
-  if inference_engine == "mlx" or inference_engine == "mlxdynamicshardinferenceengine":
-    inference_engine_name = "MLXDynamicShardInferenceEngine"
-  elif inference_engine == "tinygrad" or inference_engine == "tinygradshardinferenceengine":
-    inference_engine_name = "TinyGradShardInferenceEngine"
-  elif inference_engine == "dummy" or inference_engine == "dummyinferenceengine":
-    inference_engine_name = "DummyInferenceEngine"
-  else:
-    sys.exit(f"Invalid inference engine: {inference_engine}")
-  
-  config_file_path = Path(exo_path/model_name/'config.json')
-  with open(config_file_path, 'r') as file:
-      config = json.load(file)
-      config_n_layers = config['num_hidden_layers']
-  
-  new_model = f"{model_name}:{config_n_layers}:{inference_engine_name}:{str(exo_path)}/{model_name}\n"
-
-  with local_model_config.open('r') as file:
-      existing_content = file.read()
-      file.close()
-  if new_model in existing_content:
-      sys.exit(f"Model already: {model_name} with inference engine: {inference_engine_name}")
-  else:
-    with local_model_config.open('a') as file:
-      file.write(new_model)
-      file.close()
-    sys.exit(f"Add local model: {model_name} with inference engine: {inference_engine_name}")
-
-with local_model_config.open('r') as file:
-  all_model = file.read()
-  model_config_list = all_model.split('\n')[:-1]
-for model_config in model_config_list:
-  model_name, config_n_layers, inference_engine, model_path = model_config.split(':')
-  build_local_model_card(model_name, model_path, inference_engine, int(config_n_layers))
-print(f"Init local model card complete")
+exo_path = init_exo_env()
 
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
@@ -115,6 +76,17 @@ shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_
 
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
+
+for folder_path in Path(exo_path).iterdir():
+  if folder_path.is_dir():
+    model_path = folder_path
+    model_name = folder_path.name
+    config_file_path = Path(folder_path/'config.json')
+    with open(config_file_path, 'r') as file:
+      config = json.load(file)
+      config_n_layers = config['num_hidden_layers']
+    build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, int(config_n_layers))
+print(f"Init local model card complete")
 
 if args.node_port is None:
   args.node_port = find_available_port(args.node_host) 
