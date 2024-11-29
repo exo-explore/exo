@@ -66,7 +66,9 @@ The current recommended way to install exo is from source.
 
 ### Prerequisites
 
-- Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
+- [uv](https://docs.astral.sh/uv/) - An extremely fast Python package and project manager.  
+  - Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
+  - Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions. (`uv` is already specified Python>=3.12.0 and will install it for you)
 - For Linux with NVIDIA GPU support (Linux-only, skip if not using Linux or NVIDIA):
   - NVIDIA driver - verify with `nvidia-smi`
   - CUDA toolkit - install from [NVIDIA CUDA guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#cuda-cross-platform-installation), verify with `nvcc --version`
@@ -86,15 +88,14 @@ The current recommended way to install exo is from source.
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
-pip install -e .
-# alternatively, with venv
-source install.sh
+uv tool install -e .
 ```
 
 
 ### Troubleshooting
 
 - If running on Mac, MLX has an [install guide](https://ml-explore.github.io/mlx/build/html/install.html) with troubleshooting steps.
+- If `exo` does not work after running `uv tool install -e .` you may need to run `export PATH="$HOME/.local/bin:$PATH"` to update your path.
 
 ### Performance
 
@@ -230,16 +231,10 @@ TINYGRAD_DEBUG=2 exo
 
 ## Formatting
 
-We use [yapf](https://github.com/google/yapf) to format the code. To format the code, first install the formatting requirements:
-
-```sh
-pip3 install -e '.[formatting]'
-```
-
 Then run the formatting script:
 
 ```sh
-python3 format.py ./exo
+uv run format.py src
 ```
 
 ## Known Issues
