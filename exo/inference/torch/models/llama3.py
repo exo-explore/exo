@@ -96,8 +96,6 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     tokens: torch.Tensor,
     *,
     mask: Optional[_MaskType] = None,
-    encoder_input: Optional[torch.Tensor] = None,
-    encoder_mask: Optional[torch.Tensor] = None,
     input_pos: Optional[torch.Tensor] = None,
   ) -> Union[torch.Tensor, List[torch.Tensor]]:
     # Determine the type of input and shape
@@ -116,8 +114,6 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       self._validate_inputs(
         seq_len,
         mask=mask,
-        encoder_input=encoder_input,
-        encoder_mask=encoder_mask,
         input_pos=input_pos,
       )
 
@@ -128,24 +124,27 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     for i in range(self.shard.start_layer, self.shard.end_layer + 1):
       layer = self.layers[i]
 
-      print(f"\nhidden layer in H[{i}]\n{h}\nmask\n{mask}\ninput_pos\n{input_pos}\n{self.output_hidden_states}\n")
+      
+      if DEBUG >= 8:
+        print(f"\nhidden layer in H[{i}]\n{h}")
+        print(f"\nmask\n{mask}\ninput_pos\n{input_pos}")
+        print(f"\noutput_hidden_states\n{self.output_hidden_states}\n")
 
       # Process through each transformer layer
       with torch.no_grad():
-        if self.layers[0].caches_are_enabled():
-            h = layer(
+        if self.layers[self.shard.start_layer].caches_are_enabled():
+          h = layer(
             h,
             mask=mask,
-            encoder_input=encoder_input,
-            encoder_mask=encoder_mask,
             input_pos=input_pos,
           )
         else:
           h = layer(h)
 
-        if i in self.output_hidden_states:
-          hidden.append(h)
+      if i in self.output_hidden_states:
+        hidden.append(h)
 
+      if DEBUG >= 8:
         print(f"\nhidden layer out H[{i}]->H[{i + 1}]\n{h}\n")
 
     # Apply normalization
@@ -159,7 +158,10 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
 
     # Return list if hidden states are requested
     output = [hidden[-1], output] if hidden else output
-    print(f"\n\noutput {output}\n\n")
+    
+    if DEBUG >= 4:
+      print(f"\n\noutput {output}\n\n")
+    
     return output
 
 
@@ -289,7 +291,7 @@ class ShardedLlamaModel(nn.Module):
 
   def generate(
     self,
-    tokens: torch.Tensor,
+    tokens: Optional[torch.Tensor] = None,
     hidden_state: Optional[torch.Tensor] = None
   ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
     """
@@ -299,80 +301,82 @@ class ShardedLlamaModel(nn.Module):
       tokens (torch.Tensor) - tokens from prompt tokenization and generation
       hidden_state (torch.Tensor, optional) - hidden state from last activated hidden layer, if any
     """
-    if tokens.ndim == 1:
-      tokens = tokens.view(1, -1).to(device=self.device)
+    curr_masks = None
+    input_pos = None
 
-    bsz, tokens_length = tokens.size()
+    if tokens is not None:
+      if tokens.ndim == 1:
+        tokens = tokens.view(1, -1).to(device=self.device)
 
-    total_response_length = tokens_length + self.max_new_tokens
+      bsz, tokens_length = tokens.size()
 
-    # setup cache
-    if not self.model.caches_are_enabled() and self.use_cache:
-      with self.device:
-        self.model.setup_caches(
-          bsz,
-          self.dtype,
-          decoder_max_seq_len=tokens.numel() + self.max_new_tokens
-        )
+      # using self.max_seq_len will take up alot of VRAM
+      total_response_length = tokens_length + self.max_seq_len
 
-    if not self.shard.is_last_layer():
-      self.model.output_hidden_states = [self.shard.end_layer]
+      # setup cache
+      if not self.model.caches_are_enabled() and self.use_cache:
+        with self.device:
+          self.model.setup_caches(
+            bsz,
+            self.dtype,
+            decoder_max_seq_len=tokens.numel() + self.max_seq_len
+          )
 
-    resp_max_seq_len = total_response_length if not self.model.caches_are_enabled() else self.model.decoder_max_cache_seq_len
+      if not self.shard.is_last_layer():
+        self.model.output_hidden_states = [self.shard.end_layer]
 
-    # clone tokens
-    generated_tokens = tokens.clone().to(device=self.device)
+      resp_max_seq_len = total_response_length if not self.model.caches_are_enabled() else self.model.decoder_max_cache_seq_len
 
-    # masking for proper attention
-    padding_masks = generated_tokens != self.pad_id
-    if not padding_masks.all():
-      padding_masks = torch.nn.functional.pad(padding_masks, (0, self.max_seq_len), value=True)
+      # clone tokens
+      generated_tokens = tokens.clone().to(device=self.device)
 
-      masks = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=resp_max_seq_len)
+      # masking for proper attention
+      padding_masks = generated_tokens != self.pad_id
+      if not padding_masks.all():
+        padding_masks = torch.nn.functional.pad(padding_masks, (0, self.max_seq_len), value=True)
 
-      input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
-    else:
-      masks = torch.tril(
-        torch.ones(
+        masks = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=resp_max_seq_len)
+
+        input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
+      else:
+        masks = torch.tril(
+          torch.ones(
+            total_response_length,
+            resp_max_seq_len if resp_max_seq_len is not None else total_response_length,
+            dtype=torch.bool,
+            device=self.device,
+          )
+        ).unsqueeze(0)
+
+        input_pos = torch.arange(
+          0,
           total_response_length,
-          resp_max_seq_len if resp_max_seq_len is not None else total_response_length,
-          dtype=torch.bool,
-          device=self.device,
-        )
-      ).unsqueeze(0)
+          device=self.device
+        ).unsqueeze(0)
 
-      input_pos = torch.arange(
-        0,
-        total_response_length,
-        device=self.device
-      ).unsqueeze(0)
+      if self.model.caches_are_enabled():
+        curr_masks = masks[:, :tokens_length]
+      else:
+        curr_masks = masks[:, :tokens_length, :tokens_length]
 
-    if self.model.caches_are_enabled():
-      curr_masks = masks[:, :tokens_length]
-    else:
-      curr_masks = masks[:, :tokens_length, :tokens_length]
-
-    input_pos = input_pos[:, :tokens_length].squeeze()
+      input_pos = input_pos[:, :tokens_length].squeeze()
 
     if DEBUG >= 4:
       print("model_input")
-      print(f"tokens: {tokens} - {tokens.device}")
-      print(f"mask: {curr_masks} - {curr_masks.device}")
-      print(f"input_pos: {input_pos} - {input_pos.device}")
+      if tokens is not None:
+        print(f"tokens: {tokens} - {tokens.device}")
+        print(f"mask: {curr_masks} - {curr_masks.device}")
+        print(f"input_pos: {input_pos} - {input_pos.device}")
+      
+      if hidden_state is not None:
+        print(f"hidden_state: {hidden_state} - {hidden_state.device}")
+      
 
-    if hidden_state is not None:
-      print(f"hidden_state: {hidden_state} - {hidden_state.device}")
-      model_output = self.model(
-        tokens=hidden_state,
-        mask=curr_masks,
-        input_pos=input_pos,
-      )
-    else:
-      model_output = self.model(
-        tokens=tokens,
-        mask=curr_masks,
-        input_pos=input_pos,
-      )
+    model_output = self.model(
+      tokens=hidden_state if hidden_state is not None else tokens,
+      mask=curr_masks,
+      input_pos=input_pos,
+    )
 
     if DEBUG >= 4:
       print(f"model_output\n{model_output}")

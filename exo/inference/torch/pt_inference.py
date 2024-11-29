@@ -10,6 +10,7 @@ import numpy as np
 import asyncio
 import torch
 from torchtune.generation import sample as tt_sample
+from torchtune.models import llama3
 
 from exo.inference.inference_engine import InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -33,7 +34,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.shard_downloader = shard_downloader
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
-    self.past_tokens = []
+    self.past_tokens = None
+    self.use_llama_tokenizer = os.environ.get("USE_LLAMA_TOKENIZER", False)
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -56,15 +58,15 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       self.executor,
       functools.partial(
         self.tokenizer.encode,
-        prompt,
-        return_tensors="np"
+        prompt
       )
     )
 
+    if isinstance(tokens, list):
+      tokens = torch.tensor(tokens).to(device=self.device)
+
     if DEBUG >= 4:
       print(f"tokens: {tokens}")
-
-    self.past_tokens = tokens.tolist()
 
     return tokens
 
@@ -99,17 +101,29 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     input_data: np.ndarray,
   ) -> np.ndarray:
     # ensure shard
+    if DEBUG >= 4:
+      print("infer_tensor called")
+      print(f"shard: {shard}")
+      print(f"input_data: {input_data}")
+      print(f"self.past_tokens: {self.past_tokens}")
     await self.ensure_shard(shard)
 
     self.request_id = request_id if not self.request_id else self.request_id
 
-    def infer_wrapper():
-      hidden_state = None
-      if input_data.ndim == 3:
-        hidden_state = torch.tensor(input_data).to(self.device)
+    hidden_state = None
+    if input_data.shape == (1, 1):
+      input_data = torch.tensor(input_data).to(self.device)
 
+      if self.past_tokens is not None:
+        self.past_tokens = torch.cat((self.past_tokens, input_data), dim=-1).to(self.device)
+      else:
+        self.past_tokens = input_data.clone()
+    elif input_data.ndim == 3:
+      hidden_state = torch.tensor(input_data).to(self.device)
+
+    def infer_wrapper():
       model_hs, model_logits = self.sharded_model.generate(
-        tokens=torch.tensor(self.past_tokens).to(self.device),
+        tokens=self.past_tokens if hidden_state is not None else None,
         hidden_state=hidden_state
       )
 
@@ -118,7 +132,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         return model_hs.numpy(force=True)
 
       # model_logits = model_logits.detach().cpu()
-      return model_logits.numpy(force=True)
+      token = self.sample(model_logits, TEMP, TOP_K)
+      return token.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
 
@@ -140,7 +155,12 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     )
     model_config = load_model_config(model_path / "config.json")
 
-    self.tokenizer = await _resolve_tokenizer(model_path)
+    # self.tokenizer = await _resolve_tokenizer(model_path)
+    if self.use_llama_tokenizer:
+      llama_tokenizer_path = f"{model_path}/original/tokenizer.model"
+      self.tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
+    else:
+      self.tokenizer = await _resolve_tokenizer(model_path)
 
     self.sharded_model = await asyncio.get_running_loop().run_in_executor(
       self.executor,
@@ -149,7 +169,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         config=model_config,
         shard=shard,
         device=self.device,
-        use_cache=os.environ.get("TORCH_USE_CACHE") if os.environ.get("TORCH_USE_CACHE") else False
+        use_cache=False
       )
     )
 

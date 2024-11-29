@@ -66,6 +66,12 @@ def load_model_config(model_config_path: Path) -> dict:
       "hidden_act": base_config.get("hidden_act", "silu")
     }
 
+    # the current max_position_embeddings requires a lot VRAM
+    # as it is over 13,000. Will require some logic to test if it
+    # exo can fit in the larger seq len
+    if model_config.get("rope_scaling", None) is not None:
+      model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
+
   return model_config
 
 
@@ -169,15 +175,16 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
     # print(f"model.output.weight: {paried_embed_weight}")
     # remapped_state_dict["model.output.weight"] = paried_embed_weight
 
-  print("\nRemapped state dict\n")
-  for rsdk in remapped_state_dict.keys():
-    print(f"--  {rsdk}")
+  if DEBUG >= 4:
+    print("\nRemapped state dict\n")
+    for rsdk in remapped_state_dict.keys():
+      print(f"--  {rsdk}")
   model.load_state_dict(remapped_state_dict, strict=False)
 
   # if DEBUG >= 7:
   # print("\n--- checking weights ----\n")
   # print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
-  check_weights(model, remapped_state_dict)
+  # check_weights(model, remapped_state_dict)
 
 
 class MultiLayerPreceptron(nn.Module):

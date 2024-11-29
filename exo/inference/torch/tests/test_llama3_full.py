@@ -24,7 +24,7 @@ from exo.inference.torch.models.llm_utils import (
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 TEMP = 0.6
 TOP_K = 25
-MAX_NEW_TOKENS = 10
+MAX_NEW_TOKENS = 2
 
 def main(model, prompt: str, device: torch.device=torch.device("cpu")):
   # Tokenize input text
@@ -38,17 +38,33 @@ def main(model, prompt: str, device: torch.device=torch.device("cpu")):
 
   tokenizer_out = llama_tokenizer({"messages": messages}, inference=True)
   print(f"tokenizer_out: {tokenizer_out}")
-  tokens = torch.tensor(tokenizer_out["tokens"], dtype=torch.int, device=device)
-
-  _, logits = model.generate(tokens=tokens)
-
-  tokens = ttg.sample(logits=logits[:, -1].clone(), temperature=TEMP, top_k=TOP_K)
+  tokens = torch.tensor([tokenizer_out["tokens"]], dtype=torch.int, device=device)
+  generated_tokens = tokens.clone()
 
   print(f"tokens: {tokens}")
 
-  generated_tokens = tokens.clone().tolist()
-  print(f"generated_tokens: {generated_tokens}")
-  print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens[0])}\n\n\n")
+  for i in range(MAX_NEW_TOKENS):
+    print(f"gen #{i}")
+    _, logits = model.generate(tokens=tokens)
+
+    tokens = ttg.sample(logits=logits[:, -1].clone(), temperature=TEMP, top_k=TOP_K)
+
+    print(f"tokens: {tokens}")
+
+    if tokens.item() in llama_tokenizer.stop_tokens or tokens.item() == llama_tokenizer.eos_id:
+      print("stop token hit!")
+      break
+
+    generated_tokens = torch.cat([generated_tokens, tokens], dim=-1)
+    print(f"generated_tokens: {generated_tokens}")
+
+    tokens = generated_tokens.clone()
+
+    
+
+   
+  
+  print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens.tolist()[0])}\n\n\n")
 
 
 def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu")):
@@ -86,7 +102,8 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
 
 if __name__ == "__main__":
   # prompt = "hello"
-  prompt = "What is the capital of france?"
+  prompt = "In a single word only, What is the capital of france?"
+  # prompt = "In a single word only, what is the last name of the current president of the USA?"
 
   # Get the path to the model files from the Hugging Face cache
   cache_dir = Path(snapshot_download(MODEL_NAME))
@@ -123,5 +140,5 @@ if __name__ == "__main__":
 
   load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
 
-  # main(shard_model_1, prompt, device)
-  normal_full(shard_model_1, prompt, device)
+  main(shard_model_1, prompt, device)
+  # normal_full(shard_model_1, prompt, device)
