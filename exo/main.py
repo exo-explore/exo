@@ -55,8 +55,10 @@ parser.add_argument("--inference-engine", type=str, default=None, help="Inferenc
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
+parser.add_argument("--default-temp", type=float, help="Default token sampling temperature", default=0.0)
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -88,6 +90,9 @@ if DEBUG >= 0:
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
+# Convert node-id-filter to list if provided
+allowed_node_ids = args.node_id_filter.split(',') if args.node_id_filter else None
+
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(
     args.node_id,
@@ -95,7 +100,8 @@ if args.discovery_module == "udp":
     args.listen_port,
     args.broadcast_port,
     lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
-    discovery_timeout=args.discovery_timeout
+    discovery_timeout=args.discovery_timeout,
+    allowed_node_ids=allowed_node_ids
   )
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(
@@ -104,7 +110,8 @@ elif args.discovery_module == "tailscale":
     lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
     discovery_timeout=args.discovery_timeout,
     tailscale_api_key=args.tailscale_api_key,
-    tailnet=args.tailnet_name
+    tailnet=args.tailnet_name,
+    allowed_node_ids=allowed_node_ids
   )
 elif args.discovery_module == "manual":
   if not args.discovery_config_path:
@@ -119,7 +126,8 @@ node = StandardNode(
   partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
   max_generate_tokens=args.max_generate_tokens,
   topology_viz=topology_viz,
-  shard_downloader=shard_downloader
+  shard_downloader=shard_downloader,
+  default_sample_temperature=args.default_temp
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
