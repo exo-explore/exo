@@ -28,6 +28,7 @@ class StandardNode(Node):
     lazy_device_capabilities: LazyDeviceCapabilities,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
+    default_sample_temperature: float = 0.0,
     topology_viz: Optional[TopologyViz] = None,
     shard_downloader: Optional[HFShardDownloader] = None,
   ):
@@ -44,6 +45,7 @@ class StandardNode(Node):
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
+    self.default_sample_temperature = default_sample_temperature
     self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
@@ -113,7 +115,7 @@ class StandardNode(Node):
       self.buffered_token_output[request_id] = ([], False)
     is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
     if shard.is_last_layer() and not is_finished:
-      token = await self.inference_engine.sample(result)
+      token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
       await self.inference_engine.ensure_shard(shard)
       self.buffered_token_output[request_id][0].append(token.item())
       if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
@@ -361,6 +363,7 @@ class StandardNode(Node):
     return len(peers_added) > 0 or len(peers_removed) > 0 or len(peers_updated) > 0
 
   async def select_best_inference_engine(self):
+    if self.inference_engine.__class__.__name__ == 'DummyInferenceEngine': return
     supported_engines = self.get_supported_inference_engines()
     await self.broadcast_supported_engines(supported_engines)
     if len(self.get_topology_inference_engines()):

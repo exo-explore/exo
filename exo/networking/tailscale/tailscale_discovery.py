@@ -21,6 +21,7 @@ class TailscaleDiscovery(Discovery):
     update_interval: int = 15,
     tailscale_api_key: str = None,
     tailnet: str = None,
+    allowed_node_ids: List[str] = None,
   ):
     self.node_id = node_id
     self.node_port = node_port
@@ -34,6 +35,7 @@ class TailscaleDiscovery(Discovery):
     self.cleanup_task = None
     self.tailscale_api_key = tailscale_api_key
     self.tailnet = tailnet
+    self.allowed_node_ids = allowed_node_ids
     self._device_id = None
     self.update_task = None
 
@@ -81,6 +83,10 @@ class TailscaleDiscovery(Discovery):
           peer_id, peer_port, device_capabilities = await get_device_attributes(device.device_id, self.tailscale_api_key)
           if not peer_id:
             if DEBUG_DISCOVERY >= 4: print(f"{device.device_id} does not have exo node attributes. skipping.")
+            continue
+
+          if self.allowed_node_ids and peer_id not in self.allowed_node_ids:
+            if DEBUG_DISCOVERY >= 2: print(f"Ignoring peer {peer_id} as it's not in the allowed node IDs list")
             continue
 
           if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
