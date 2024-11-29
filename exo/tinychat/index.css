@@ -516,6 +516,14 @@ p {
 .model-progress {
   font-size: 0.9em;
   color: var(--secondary-color-transparent);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.model-progress i {
+  font-size: 0.9em;
+  color: var(--primary-color);
 }
 
 /* Adjust main content to accommodate sidebar */
