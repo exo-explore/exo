@@ -80,14 +80,24 @@ def create_animation_mp4(
     font = ImageFont.load_default()
     promptfont = ImageFont.load_default()
 
-  # Process first two frames
-  for i in range(1, 3):
-    base_img = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", f"image{i}.png"))
-    draw = ImageDraw.Draw(base_img)
+  # Process first frame
+  base_img = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", "image1.png"))
+  draw = ImageDraw.Draw(base_img)
+  draw_centered_text_rounded(draw, device_name, font, device_coords)
+  frames.extend([crop_image(base_img)] * 30)  # 1 second at 30fps
+
+  # Process second frame with typing animation
+  base_img2 = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", "image2.png"))
+  for i in range(len(prompt_text) + 1):
+    current_frame = base_img2.copy()
+    draw = ImageDraw.Draw(current_frame)
     draw_centered_text_rounded(draw, device_name, font, device_coords)
-    if i == 2:
-      draw_left_aligned_text_rounded(draw, prompt_text, promptfont, prompt_coords)
-    frames.extend([crop_image(base_img)] * 30)  # 1 second at 30fps
+    if i > 0:  # Only draw if we have at least one character
+      draw_left_aligned_text_rounded(draw, prompt_text[:i], promptfont, prompt_coords)
+    frames.extend([crop_image(current_frame)] * 2)  # 2 frames per character for smooth typing
+  
+  # Hold the complete prompt for a moment
+  frames.extend([frames[-1]] * 30)  # Hold for 1 second
 
   # Create blur sequence
   replacement_img = Image.open(replacement_image_path)
@@ -126,14 +136,26 @@ def create_animation_mp4(
 
   frames.extend([crop_image(final_base)] * 30)  # 1 second at 30fps
 
-  # Convert frames to video
+  # Convert frames to video using H.264 codec
   if frames:
     first_frame = np.array(frames[0])
     height, width = first_frame.shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    out = cv2.VideoWriter(
+      output_path,
+      fourcc,
+      fps,
+      (width, height),
+      isColor=True
+    )
+
+    if not out.isOpened():
+      print("Error: VideoWriter failed to open")
+      return
 
     for frame in frames:
-      out.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
+      frame_array = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
+      out.write(frame_array)
+    
     out.release()
     print(f"Video saved successfully to {output_path}")
