@@ -11,7 +11,6 @@ class Tokenizer:
         with open(os.path.join(model_path, 'tokenizer.json'), 'r',  encoding="utf-8") as f:
             tokenizer_data = json.load(f)
             vocab = tokenizer_data["model"]["vocab"]
-            merges = tokenizer_data["model"]["merges"]
             self.pattern = tokenizer_data["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"]
             self.special_tokens = {token["content"]: int(token["id"]) for token in tokenizer_data["added_tokens"]}
 
@@ -23,27 +22,14 @@ class Tokenizer:
 
         self.bos_token_id, self.eos_token_id = self.get_bos_and_eos_ids()
         
-        self.mergeable_ranks = self.get_base_tokens(vocab)
-        
-        merges = [tuple(merge_str.split()) for merge_str in merges]
-
-        for merge in merges:
-            first, second = merge
-            first = bytes(first, "utf-8")
-            second = bytes(second, "utf-8")
-            combined = first + second
-            self.mergeable_ranks[combined] = self.mergeable_ranks.get(combined, len(self.mergeable_ranks)) # TODO: This is a hack, investigate why there are way more merges than vocab size
+        self.vocab = {bytes(k, "utf-8"): v for k, v in vocab.items()} # convert str keys to bytes
 
         self.encoding = tiktoken.Encoding(
             name="custom_encoding",
             pat_str=self.pattern,
-            mergeable_ranks=self.mergeable_ranks,
+            mergeable_ranks=self.vocab,
             special_tokens=self.special_tokens
         )
-
-    def get_base_tokens(self, vocab: Dict[str, int]) -> Dict[bytes, int]:
-        base_tokens = list(vocab.items())[:256]
-        return {bytes(k, "utf-8"): v for k, v in base_tokens} 
     
     def decode_chars(self, text: str) -> str:
         decoding_map = {'Ġ': ' ', 'ĉ': '\t', 'Ċ': '\n'}
@@ -95,6 +81,6 @@ class Tokenizer:
         )
 
 if __name__ == "__main__":
-    tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/e42dbdf018e0e870064622c8404d807ab1568631")
+    tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx/snapshots/5f60ee33ba169428b5bc249b05b5b99f827d2e5e")
     print(tokenizer.encode("Hello, world!"))
     print(tokenizer.decode(tokenizer.encode("Hello, world!")))
