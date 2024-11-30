@@ -267,7 +267,6 @@ class ShardedLlamaModel(nn.Module):
     config: dict,
     shard: Shard,
     device: Optional[torch.device] = None,
-    max_new_tokens: int = 10,
     use_cache: Optional[bool] = False
   ):
     super(ShardedLlamaModel, self).__init__()
@@ -276,7 +275,6 @@ class ShardedLlamaModel(nn.Module):
     self.config = config
     self.dtype = torch.float16
     self.device = device if device is not None else torch.device("cpu")
-    self.max_new_tokens = max_new_tokens
     self.max_seq_len = self.config["max_seq_len"]
     self.use_cache = use_cache
 
@@ -301,6 +299,11 @@ class ShardedLlamaModel(nn.Module):
       tokens (torch.Tensor) - tokens from prompt tokenization and generation
       hidden_state (torch.Tensor, optional) - hidden state from last activated hidden layer, if any
     """
+    if DEBUG >= 4:
+      print("generate called")
+      print(f"tokens: {tokens}")
+      print(f"hidden_state: {hidden_state}")
+
     curr_masks = None
     input_pos = None
 

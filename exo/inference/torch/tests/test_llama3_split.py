@@ -96,7 +96,6 @@ if __name__ == "__main__":
     config=config,
     shard=shard_1,
     device=device,
-    max_new_tokens=MAX_NEW_TOKENS,
     use_cache=False
   )
 
@@ -106,7 +105,6 @@ if __name__ == "__main__":
     config=config,
     shard=shard_2,
     device=device,
-    max_new_tokens=MAX_NEW_TOKENS,
     use_cache=False
   )
 

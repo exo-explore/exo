@@ -11,6 +11,7 @@ import torchtune.generation as ttg
 from torchtune.models import llama3
 from torchtune.data import Message
 
+from transformers import AutoTokenizer
 
 from exo.inference.torch.models.llama3 import ShardedLlamaModel
 from exo.inference.shard import Shard
@@ -28,17 +29,29 @@ MAX_NEW_TOKENS = 2
 
 def main(model, prompt: str, device: torch.device=torch.device("cpu")):
   # Tokenize input text
-  messages = []
-  messages.extend([
-    Message(role="system", content="You are a helpful and creative AI assistant."),
-    Message(role="user", content=prompt),
-    # Empty assistant message to kick-start generation
-    Message(role="assistant", content=""),
-  ])
+  # messages = []
+  # messages.extend([
+  #   Message(role="system", content="You are a helpful and creative AI assistant."),
+  #   Message(role="user", content=prompt),
+  #   # Empty assistant message to kick-start generation
+  #   Message(role="assistant", content=""),
+  # ])
+  messages = [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": prompt}
+  ]
 
-  tokenizer_out = llama_tokenizer({"messages": messages}, inference=True)
-  print(f"tokenizer_out: {tokenizer_out}")
-  tokens = torch.tensor([tokenizer_out["tokens"]], dtype=torch.int, device=device)
+  text = llama_tokenizer.apply_chat_template(
+      messages,
+      tokenize=False,
+      add_generation_prompt=True
+  )
+  tok_out = llama_tokenizer([text], return_tensors="pt")
+  tokens = tok_out.input_ids.to(device=device)
+
+  # tokenizer_out = llama_tokenizer({"messages": messages}, inference=True)
+  # print(f"tokenizer_out: {tokenizer_out}")
+  # tokens = torch.tensor([tokenizer_out["tokens"]], dtype=torch.int, device=device)
   generated_tokens = tokens.clone()
 
   print(f"tokens: {tokens}")
@@ -51,7 +64,7 @@ def main(model, prompt: str, device: torch.device=torch.device("cpu")):
 
     print(f"tokens: {tokens}")
 
-    if tokens.item() in llama_tokenizer.stop_tokens or tokens.item() == llama_tokenizer.eos_id:
+    if tokens.item() == llama_tokenizer.eos_token_id:
       print("stop token hit!")
       break
 
@@ -59,10 +72,6 @@ def main(model, prompt: str, device: torch.device=torch.device("cpu")):
     print(f"generated_tokens: {generated_tokens}")
 
     tokens = generated_tokens.clone()
-
-    
-
-   
   
   print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens.tolist()[0])}\n\n\n")
 
@@ -99,7 +108,6 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
 
   print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens[0])}\n\n\n")
 
-
 if __name__ == "__main__":
   # prompt = "hello"
   prompt = "In a single word only, What is the capital of france?"
@@ -124,8 +132,9 @@ if __name__ == "__main__":
   )
 
   # Initialize tokenizer
-  llama_tokenizer_path = f"{cache_dir}/original/tokenizer.model"
-  llama_tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
+  # llama_tokenizer_path = f"{cache_dir}/original/tokenizer.model"
+  # llama_tokenizer = llama3.llama3_tokenizer(path=llama_tokenizer_path)
+  llama_tokenizer = AutoTokenizer.from_pretrained(cache_dir)
 
   # Initialize LlamaModel with config and tokenizer
   device = torch.device("cuda")
@@ -133,7 +142,6 @@ if __name__ == "__main__":
     config=config,
     shard=shard_1,
     device=device,
-    max_new_tokens=MAX_NEW_TOKENS,
     use_cache=True
   )
   print(f"\nshard_model_1: {shard_model_1}")
