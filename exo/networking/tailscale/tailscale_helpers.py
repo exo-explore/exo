@@ -40,7 +40,7 @@ async def get_device_id() -> str:
 
 
 async def update_device_attributes(device_id: str, api_key: str, node_id: str, node_port: int, device_capabilities: DeviceCapabilities):
-  async with aiohttp.ClientSession() as session:
+  async with aiohttp.ClientSession(trust_env=True) as session:
     base_url = f"https://api.tailscale.com/api/v2/device/{device_id}/attributes"
     headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
 
@@ -62,7 +62,7 @@ async def update_device_attributes(device_id: str, api_key: str, node_id: str, n
 
 
 async def get_device_attributes(device_id: str, api_key: str) -> Tuple[str, int, DeviceCapabilities]:
-  async with aiohttp.ClientSession() as session:
+  async with aiohttp.ClientSession(trust_env=True) as session:
     url = f"https://api.tailscale.com/api/v2/device/{device_id}/attributes"
     headers = {'Authorization': f'Bearer {api_key}'}
     async with session.get(url, headers=headers) as response:
@@ -108,7 +108,7 @@ def sanitize_attribute(value: str) -> str:
 
 
 async def get_tailscale_devices(api_key: str, tailnet: str) -> Dict[str, Device]:
-  async with aiohttp.ClientSession() as session:
+  async with aiohttp.ClientSession(trust_env=True) as session:
     url = f"https://api.tailscale.com/api/v2/tailnet/{tailnet}/devices"
     headers = {"Authorization": f"Bearer {api_key}"}
 

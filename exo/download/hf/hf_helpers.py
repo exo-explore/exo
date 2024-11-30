@@ -237,7 +237,7 @@ async def resolve_revision_to_commit_hash(repo_id: str, revision: str) -> str:
       return commit_hash
 
   # Fetch the commit hash for the given revision
-  async with aiohttp.ClientSession() as session:
+  async with aiohttp.ClientSession(trust_env=True) as session:
     api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/revision/{revision}"
     headers = await get_auth_headers()
     async with session.get(api_url, headers=headers) as response:
@@ -282,7 +282,7 @@ async def download_repo_files(
   await aios.makedirs(cached_file_list_dir, exist_ok=True)
   cached_file_list_path = cached_file_list_dir/"fetch_file_list.json"
 
-  async with aiohttp.ClientSession() as session:
+  async with aiohttp.ClientSession(trust_env=True) as session:
     # Check if we have a cached file list
     if await aios.path.exists(cached_file_list_path):
       async with aiofiles.open(cached_file_list_path, 'r') as f:
