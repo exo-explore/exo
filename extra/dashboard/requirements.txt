@@ -1,0 +1,5 @@
+plotly
+pandas
+requests
+aiohttp
+pygame
