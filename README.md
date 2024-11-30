@@ -67,10 +67,10 @@ The current recommended way to install exo is from source.
 ### Prerequisites
 
 - Python>=3.12.0 is required because of [issues with asyncio](https://github.com/exo-explore/exo/issues/5) in previous versions.
-- Linux (with NVIDIA card):
-  - NVIDIA driver (test with `nvidia-smi`)
-  - CUDA (https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#cuda-cross-platform-installation) (test with `nvcc --version`)
-  - cuDNN (https://developer.nvidia.com/cudnn-downloads) (test with [link](https://docs.nvidia.com/deeplearning/cudnn/latest/installation/linux.html#verifying-the-install-on-linux:~:text=at%20a%20time.-,Verifying%20the%20Install%20on%20Linux,Test%20passed!,-Upgrading%20From%20Older))
+- For Linux with NVIDIA GPU support (Linux-only, skip if not using Linux or NVIDIA):
+  - NVIDIA driver - verify with `nvidia-smi`
+  - CUDA toolkit - install from [NVIDIA CUDA guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#cuda-cross-platform-installation), verify with `nvcc --version`
+  - cuDNN library - download from [NVIDIA cuDNN page](https://developer.nvidia.com/cudnn-downloads), verify installation by following [these steps](https://docs.nvidia.com/deeplearning/cudnn/latest/installation/linux.html#verifying-the-install-on-linux:~:text=at%20a%20time.-,Verifying%20the%20Install%20on%20Linux,Test%20passed!,-Upgrading%20From%20Older)
 
 ### Hardware Requirements
 
@@ -182,10 +182,10 @@ curl http://localhost:52415/v1/chat/completions \
 #### Device 1 (MacOS):
 
 ```sh
-exo --inference-engine tinygrad
+exo
 ```
 
-Here we explicitly tell exo to use the **tinygrad** inference engine.
+Note: We don't need to explicitly tell exo to use the **tinygrad** inference engine. **MLX** and **tinygrad** are interoperable!
 
 #### Device 2 (Linux):
 ```sh
