@@ -90,19 +90,16 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     if DEBUG >= 4:
       print("sample called")
       print(f"x: {x}")
+      print(f"temp: {temp}")
+      print(f"top_k: {top_k}")
 
     logits = torch.tensor(x).to(self.device)
     def sample_wrapper():
       tokens = tt_sample(
         logits,
-        temperature=temp,
-        top_k=top_k
-      )
-
-      if self.past_tokens is not None:
-        self.past_tokens = torch.cat([self.past_tokens, tokens], dim=-1).to(self.device)
-      else:
-        self.past_tokens = tokens.clone()
+        temperature=TEMP if TEMP > temp else temp,
+        top_k=TOP_K if TOP_K > top_k else top_k
+      ) 
 
       return tokens.numpy(force=True)
 
@@ -130,8 +127,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     hidden_state = None
     if input_data.ndim == 3:
       hidden_state = torch.tensor(input_data).to(self.device)
-    else:
-      input_data = torch.tensor(input_data).to(self.device)
+    elif input_data.ndim == 2:
+      input_tensor = torch.tensor(input_data).to(self.device)
+
+      if self.past_tokens is not None:
+        self.past_tokens = torch.cat([self.past_tokens, input_tensor], dim=-1).to(self.device)
+      else:
+        self.past_tokens = input_tensor.clone()
 
     def infer_wrapper():
       if DEBUG >= 4:
@@ -145,7 +147,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         )
       else:
         model_hs, model_logits = self.sharded_model.generate(
-          tokens=self.past_tokens if self.past_tokens is not None else input_data
+          tokens=self.past_tokens
         )
 
       if model_hs is not None:
