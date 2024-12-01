@@ -94,7 +94,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   # remap to work with our model
   remapped_state_dict = {}
 
-  if "llama" in shard.model_id:
+  if "llama" in shard.model_id or "Llama" in shard.model_id:
     for key, value in full_state_dict.items():
       # load layer by shard
       for layer_num in range(shard.start_layer, shard.end_layer + 1):

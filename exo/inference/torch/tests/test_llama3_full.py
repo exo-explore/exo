@@ -22,10 +22,10 @@ from exo.inference.torch.models.llm_utils import (
 )
 
 
-MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
-TEMP = 0.6
+MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
+TEMP = 0.0
 TOP_K = 25
-MAX_NEW_TOKENS = 2
+MAX_NEW_TOKENS = 40
 
 def main(model, prompt: str, device: torch.device=torch.device("cpu")):
   # Tokenize input text
@@ -111,6 +111,7 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
 if __name__ == "__main__":
   # prompt = "hello"
   prompt = "In a single word only, What is the capital of france?"
+  # prompt = "Tell me a short 4 line haiku"
   # prompt = "In a single word only, what is the last name of the current president of the USA?"
 
   # Get the path to the model files from the Hugging Face cache
