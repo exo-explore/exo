@@ -97,8 +97,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     def sample_wrapper():
       tokens = tt_sample(
         logits,
-        temperature=TEMP if TEMP > temp else temp,
-        top_k=TOP_K if TOP_K > top_k else top_k
+        temperature=temp,
+        top_k=top_k
       ) 
 
       return tokens.numpy(force=True)
