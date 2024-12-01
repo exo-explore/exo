@@ -34,6 +34,7 @@ inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
+  "torch": "TorchDynamicShardInferenceEngine"
 }
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
@@ -49,6 +50,10 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
 
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  elif inference_engine_name == "torch":
+    from exo.inference.torch.pt_inference import TorchDynamicShardInferenceEngine
+
+    return TorchDynamicShardInferenceEngine(shard_downloader)
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()

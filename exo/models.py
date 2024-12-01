@@ -8,8 +8,8 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct"
     },
-    "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Llama-3.2-1B-Instruct", start_layer=0, end_layer=0, n_layers=16),
   },
   "llama-3.2-3b": {
     "layers": 28,
@@ -17,7 +17,6 @@ model_cards = {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
     },
-    "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Llama-3.2-3B-Instruct", start_layer=0, end_layer=0, n_layers=28),
   },
   "llama-3.1-8b": {
     "layers": 32,
@@ -25,7 +24,6 @@ model_cards = {
        "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated",
     },
-    "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Meta-Llama-3.1-8B-Instruct", start_layer=0, end_layer=0, n_layers=32),
   },
   "llama-3.1-70b": {
     "layers": 80,
@@ -33,7 +31,6 @@ model_cards = {
        "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-70B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "NousResearch/Meta-Llama-3.1-70B-Instruct",
     },
-    "TorchDynamicShardInferenceEngine": Shard(model_id="unsloth/Meta-Llama-3.1-70B-Instruct", start_layer=0, end_layer=0, n_layers=80),
   },
   "llama-3.1-70b-bf16": {
     "layers": 80,
@@ -48,7 +45,6 @@ model_cards = {
        "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R",
     },
-    "TorchDynamicShardInferenceEngine": Shard(model_id="NousResearch/Meta-Llama-3-8B-Instruct", start_layer=0, end_layer=0, n_layers=32),
   },
   "llama-3-70b": {
     "layers": 80,
