@@ -5,34 +5,15 @@ Utility methods used by LLMs
 import re
 import json
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchtune.modules as ttm
-from torchtune.models.convert_weights import hf_to_tune
-import math
 
 from safetensors.torch import load_file as load_safetensors
 
-from transformers import LogitsProcessorList, TopKLogitsWarper, TopPLogitsWarper, TemperatureLogitsWarper
-from transformers.cache_utils import Cache, DynamicCache
-
 from exo.helpers import DEBUG
 from exo.inference.shard import Shard
-
-
-def get_torch_dtype(dtype_str: str) -> torch.dtype:
-  """
-  Get dtype from setting in model's config.json
-  """
-  if dtype_str == "bfloat16":
-    return torch.bfloat16
-  elif dtype_str == "float16":
-    return torch.float16
-  else:
-    return torch.float16
 
 
 def load_model_config(model_config_path: Path) -> dict:
@@ -66,9 +47,6 @@ def load_model_config(model_config_path: Path) -> dict:
       "hidden_act": base_config.get("hidden_act", "silu")
     }
 
-    # the current max_position_embeddings requires a lot VRAM
-    # as it is over 13,000. Will require some logic to test if it
-    # exo can fit in the larger seq len
     if model_config.get("rope_scaling", None) is not None:
       model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
 
@@ -82,7 +60,6 @@ def check_weights(model, state_dict):
   model_state_dict = model.state_dict()
   for name, param in model_state_dict.items():
     if name in state_dict:
-      # print(f"\nchecking {name}\n")
       loaded_param = state_dict[name]
       if param.shape != loaded_param.shape:
         print(f"Shape mismatch for {name}: expected {param.shape}, got {loaded_param.shape}")
@@ -104,10 +81,8 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
     raise FileNotFoundError("No safetensors files found in the cache directory.")
 
   # Load weights from each found safetensors file
-  paried_lmhead = True
-  shard_layer_range = list(range(shard.start_layer, shard.end_layer))
-
-  full_state_dict = None
+  
+  full_state_dict = {}
   for safetensor_file in safetensors_files:
     state_dict = load_safetensors(safetensor_file)
 
@@ -118,74 +93,71 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
 
   # remap to work with our model
   remapped_state_dict = {}
-  paried_embed_weight = None
-  for key, value in full_state_dict.items():
-    # load layer by shard
-    for layer_num in range(shard.start_layer, shard.end_layer + 1):
-      # change input layer norm to sa_norm for torchtune
-      re_iln = re.findall(rf"model.layers\.{layer_num}\.(input_layernorm)\.weight", key)
-      if len(re_iln) != 0:
-        new_key = f"model.layers.{layer_num}.sa_norm.weight"
-        # print(f"{key} == {new_key}")
-        remapped_state_dict[new_key] = value
 
-      # change post attention layernorm to mlp_norm for torchtune
-      re_pal = re.findall(rf"model.layers\.{layer_num}\.(post_attention_layernorm)\.weight", key)
-      if len(re_pal) != 0:
-        new_key = f"model.layers.{layer_num}.mlp_norm.weight"
-        # print(f"{key} == {new_key}")
-        remapped_state_dict[new_key] = value
-
-      # change self_attn to attn
-      # along with changing o_proj to output_proj
-      re_attn = re.findall(rf"model\.layers\.{layer_num}.(\w+)\.(\w+)\.(\w+)", key)
-      if len(re_attn) != 0 and re_attn[0][0] == "self_attn":
-        if re_attn[0][1] == "o_proj":
-          new_key = f"model.layers.{layer_num}.attn.output_proj.weight"
-          # print(f"{key} == {new_key}")
+  if "llama" in shard.model_id:
+    for key, value in full_state_dict.items():
+      # load layer by shard
+      for layer_num in range(shard.start_layer, shard.end_layer + 1):
+        # change input layer norm to sa_norm for torchtune
+        re_iln = re.findall(rf"model.layers\.{layer_num}\.(input_layernorm)\.weight", key)
+        if len(re_iln) != 0:
+          new_key = f"model.layers.{layer_num}.sa_norm.weight"
           remapped_state_dict[new_key] = value
-        else:
-          new_key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
-          # print(f"{key} == {new_key}")
+          if DEBUG >= 8:
+            print(f"{key} == {new_key}")
+
+        # change post attention layernorm to mlp_norm for torchtune
+        re_pal = re.findall(rf"model.layers\.{layer_num}\.(post_attention_layernorm)\.weight", key)
+        if len(re_pal) != 0:
+          new_key = f"model.layers.{layer_num}.mlp_norm.weight"
           remapped_state_dict[new_key] = value
-        
-      # set mlp weights
-      re_mlp = re.findall(rf"model\.layers\.{layer_num}.mlp.(\w+)\.(\w+)", key)
-      if len(re_mlp) != 0:
-        new_key = f"model.layers.{layer_num}.mlp.{re_mlp[0][0]}.{re_mlp[0][1]}"
-        # print(f"load mlp {key}")
-        remapped_state_dict[new_key] = value
+          if DEBUG >= 8:
+            print(f"{key} == {new_key}")
 
-    # saving embed for paired weights
-    if key == "model.embed_tokens.weight":
-      # paried_embed_weight = value
-      # change name for torchtune
-      # print("model.embed_tokens.weight == model.tok_embeddings.weight")
-      remapped_state_dict["model.tok_embeddings.weight"] = value
+        # change self_attn to attn
+        # along with changing o_proj to output_proj
+        re_attn = re.findall(rf"model\.layers\.{layer_num}.(\w+)\.(\w+)\.(\w+)", key)
+        if len(re_attn) != 0 and re_attn[0][0] == "self_attn":
+          if re_attn[0][1] == "o_proj":
+            new_key = f"model.layers.{layer_num}.attn.output_proj.weight"
+            remapped_state_dict[new_key] = value
+          else:
+            new_key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
+            remapped_state_dict[new_key] = value
+          if DEBUG >= 8:
+            print(f"{key} == {new_key}")
 
-    # elif key == "lm_head.weight":
-      # paried_lmhead = False
+        # set mlp weights
+        re_mlp = re.findall(rf"model\.layers\.{layer_num}.mlp.(\w+)\.(\w+)", key)
+        if len(re_mlp) != 0:
+          new_key = f"model.layers.{layer_num}.mlp.{re_mlp[0][0]}.{re_mlp[0][1]}"
+          remapped_state_dict[new_key] = value
+          if DEBUG >= 8:
+            print(f"{key} == {new_key}")
 
-  # get everything else except layers, embed_tokens and lm_head
-  #if len(re.findall(r"model\.layers\..*", key)) == 0 and key != "model.embed_tokens.weight" and key != "lm_head.weight":
-    # print(f"loading other weight: {key}")
-    #remapped_state_dict[key] = value
+      # saving embed for paired weights
+      if key == "model.embed_tokens.weight":
+        remapped_state_dict["model.tok_embeddings.weight"] = value
+        if DEBUG >= 8:
+          print("model.embed_tokens.weight == model.tok_embeddings.weight")
+  else:
+    print(f"{shard.model_id} not supported for sharding, loading weights normally")
 
-  # if paried_lmhead:
-    # print(f"model.output.weight: {paried_embed_weight}")
-    # remapped_state_dict["model.output.weight"] = paried_embed_weight
+  if not remapped_state_dict:
+    model.load_state_dict(full_state_dict, strict=True)
+  else:
+    if DEBUG >= 8:
+      print("\nRemapped state dict\n")
+      for rsdk in remapped_state_dict.keys():
+        print(f"--  {rsdk}")
+  
+    # load new weight map
+    model.load_state_dict(remapped_state_dict, strict=False)
 
-  if DEBUG >= 4:
-    print("\nRemapped state dict\n")
-    for rsdk in remapped_state_dict.keys():
-      print(f"--  {rsdk}")
-  model.load_state_dict(remapped_state_dict, strict=False)
-
-  # if DEBUG >= 7:
-  # print("\n--- checking weights ----\n")
-  # print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
-  # check_weights(model, remapped_state_dict)
-
+    if DEBUG >= 8:
+      print("\n--- checking weights ----\n")
+      print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
+      check_weights(model, remapped_state_dict)
 
 class MultiLayerPreceptron(nn.Module):
   def __init__(self, input_dim, hidden_dim, activation="silu", use_bias=False):

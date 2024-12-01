@@ -51,7 +51,7 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
 
     return TinygradDynamicShardInferenceEngine(shard_downloader)
   elif inference_engine_name == "torch":
-    from exo.inference.torch.pt_inference import TorchDynamicShardInferenceEngine
+    from exo.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
 
     return TorchDynamicShardInferenceEngine(shard_downloader)
   elif inference_engine_name == "dummy":

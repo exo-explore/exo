@@ -10,7 +10,6 @@ import numpy as np
 import asyncio
 import torch
 from torchtune.generation import sample as tt_sample
-from torchtune.models import llama3
 
 from exo.inference.inference_engine import InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -58,12 +57,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       self.executor,
       functools.partial(
         self.tokenizer.encode,
-        prompt
+        prompt,
+        return_tensors="np"
       )
     )
-
-    if isinstance(tokens, list):
-      tokens = torch.tensor([tokens]).to(device=self.device)
 
     if DEBUG >= 4:
       print(f"tokens: {tokens}")
