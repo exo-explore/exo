@@ -13,7 +13,7 @@ import signal
 import sys
 from exo import DEBUG, VERSION
 from exo.download.download_progress import RepoProgressEvent
-from exo.helpers import PrefixDict, shutdown
+from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get_supported_models
@@ -184,7 +184,7 @@ class ChatGPTAPI:
       self.static_dir = Path(__file__).parent.parent/"tinychat"
       self.app.router.add_get("/", self.handle_root)
       self.app.router.add_static("/", self.static_dir, name="static")
-      self.app.router.add_static('/images/', self.static_dir / 'images', name='static_images')
+      self.app.router.add_static('/images/', get_exo_images_dir(), name='static_images')
 
     self.app.middlewares.append(self.timeout_middleware)
     self.app.middlewares.append(self.log_request)
@@ -416,9 +416,10 @@ class ChatGPTAPI:
 
           elif isinstance(result, np.ndarray):
             im = Image.fromarray(np.array(result))
+            images_folder = get_exo_images_dir()
             # Save the image to a file
             image_filename = f"{_request_id}.png"
-            image_path = self.static_dir / "images" / image_filename
+            image_path = images_folder / image_filename
             im.save(image_path)
             image_url = request.app.router['static_images'].url_for(filename=image_filename)
             base_url = f"{request.scheme}://{request.host}"
