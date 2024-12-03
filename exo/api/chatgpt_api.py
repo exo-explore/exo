@@ -419,12 +419,11 @@ class ChatGPTAPI:
       if model_name not in model_cards: return web.json_response({"error": f"Invalid model: {model_name}. Supported models: {list(model_cards.keys())}"}, status=400)
       shard = build_base_shard(model_name, self.inference_engine_classname)
       if not shard: return web.json_response({"error": f"Could not build shard for model {model_name}"}, status=400)
-
-      await self.node.inference_engine.ensure_shard(shard)
+      asyncio.create_task(self.node.inference_engine.ensure_shard(shard))
 
       return web.json_response({
         "status": "success",
-        "message": f"Download triggered for model: {model_name}"
+        "message": f"Download started for model: {model_name}"
       })
     except Exception as e:
       if DEBUG >= 2: traceback.print_exc()
