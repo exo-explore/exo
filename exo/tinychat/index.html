@@ -52,17 +52,27 @@
                     <template x-if="model.loading">
                         <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
                     </template>
-                    <template x-if="!model.loading && model.download_percentage != null">
-                        <span>
-                            <!-- Check if there's an active download for this model -->
-                            <template x-if="downloadProgress?.some(p => 
-                                p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
-                            )">
-                                <i class="fas fa-circle-notch fa-spin"></i>
-                            </template>
-                            <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
-                        </span>
-                    </template>
+                    <div class="model-progress-info">
+                        <template x-if="!model.loading && model.download_percentage != null">
+                            <span>
+                                <!-- Check if there's an active download for this model -->
+                                <template x-if="downloadProgress?.some(p => 
+                                    p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
+                                )">
+                                    <i class="fas fa-circle-notch fa-spin"></i>
+                                </template>
+                                <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
+                            </span>
+                        </template>
+                        <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
+                            <button 
+                                @click.stop="handleDownload(key)"
+                                class="model-download-button">
+                                <i class="fas fa-download"></i>
+                                <span x-text="(model.download_percentage > 0 && model.download_percentage < 100) ? 'Continue Downloading' : 'Download'"></span>
+                            </button>
+                        </template>
+                    </div>
                 </div>
                 <template x-if="model.total_size">
                     <div class="model-size" x-text="model.total_downloaded ? 
