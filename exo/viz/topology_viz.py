@@ -242,11 +242,18 @@ class TopologyViz:
             if info_y + j != y or info_x + k != x:
               visualization[info_y + j][info_x + k] = char
 
-      # Draw line to next node
+      # Draw line to next node and add connection description
       next_i = (i+1) % num_partitions
       next_angle = 2*math.pi*next_i/num_partitions
       next_x = int(center_x + radius_x*math.cos(next_angle))
       next_y = int(center_y + radius_y*math.sin(next_angle))
+
+      # Get connection descriptions
+      conn1 = self.topology.peer_graph.get(partition.node_id, set())
+      conn2 = self.topology.peer_graph.get(self.partitions[next_i].node_id, set())
+      description1 = next((c.description for c in conn1 if c.to_id == self.partitions[next_i].node_id), "")
+      description2 = next((c.description for c in conn2 if c.to_id == partition.node_id), "")
+      connection_description = f"{description1}/{description2}" if description1 != description2 else description1
 
       # Simple line drawing
       steps = max(abs(next_x - x), abs(next_y - y))
@@ -255,6 +262,13 @@ class TopologyViz:
         line_y = int(y + (next_y-y)*step/steps)
         if 0 <= line_y < 48 and 0 <= line_x < 100:
           visualization[line_y][line_x] = "-"
+
+      # Add connection description near the midpoint of the line
+      mid_x = (x + next_x) // 2
+      mid_y = (y + next_y) // 2
+      for j, char in enumerate(connection_description):
+        if 0 <= mid_y < 48 and 0 <= mid_x + j < 100:
+          visualization[mid_y][mid_x + j] = char
 
     # Convert to string
     return "\n".join("".join(str(char) for char in row) for row in visualization)
