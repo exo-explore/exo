@@ -276,27 +276,46 @@
 <i class="fas fa-times"></i>
 </button>
 </div>
-<textarea :disabled="generating" :placeholder="generating ? 'Generating...' : 'Say something'" @input="
-            home = (home === 0) ? 1 : home
-            if (cstate.messages.length === 0 &amp;&amp; $el.value === '') home = -1;
+<textarea 
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
+    :placeholder="
+        generating ? 'Generating...' : 
+        (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete)) ? 'Download in progress...' :
+        'Say something'
+    "
+    @input="
+        home = (home === 0) ? 1 : home
+        if (cstate.messages.length === 0 && $el.value === '') home = -1;
 
-            if ($el.value !== '') {
-              const messages = [...cstate.messages];
-              messages.push({ role: 'user', content: $el.value });
-              // updateTotalTokens(messages);
-            } else {
-              if (cstate.messages.length === 0) total_tokens = 0;
-              // else updateTotalTokens(cstate.messages);
-            }
-          " @keydown.enter="await handleEnter($event)" @keydown.escape.window="$focus.focus($el)" autofocus="" class="input-form" id="input-form" rows="1" x-autosize="" x-effect="
-            console.log(generating);
-            if (!generating) $nextTick(() =&gt; {
-              $el.focus();
-              setTimeout(() =&gt; $refs.messages.scrollTo({ top: $refs.messages.scrollHeight, behavior: 'smooth' }), 100);
-            });
-          " x-ref="inputForm"></textarea>
-<button :disabled="generating" @click="await handleSend()" class="input-button">
-<i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
+        if ($el.value !== '') {
+            const messages = [...cstate.messages];
+            messages.push({ role: 'user', content: $el.value });
+            // updateTotalTokens(messages);
+        } else {
+            if (cstate.messages.length === 0) total_tokens = 0;
+            // else updateTotalTokens(cstate.messages);
+        }
+    "
+    @keydown.enter="await handleEnter($event)"
+    @keydown.escape.window="$focus.focus($el)"
+    autofocus=""
+    class="input-form"
+    id="input-form"
+    rows="1"
+    x-autosize=""
+    x-effect="
+        console.log(generating);
+        if (!generating) $nextTick(() => {
+            $el.focus();
+            setTimeout(() => $refs.messages.scrollTo({ top: $refs.messages.scrollHeight, behavior: 'smooth' }), 100);
+        });
+    "
+    x-ref="inputForm"></textarea>
+<button 
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
+    @click="await handleSend()" 
+    class="input-button">
+    <i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
 </button>
 </div>
 </div>
