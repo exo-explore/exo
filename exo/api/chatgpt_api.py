@@ -237,14 +237,7 @@ class ChatGPTAPI:
             if model_name in model_cards:
                 model_info = model_cards[model_name]
                 
-                required_engines = list(dict.fromkeys(
-                    [engine_name for engine_list in self.node.topology_inference_engines_pool 
-                     for engine_name in engine_list 
-                     if engine_name is not None] + 
-                    [self.inference_engine_classname]
-                ))
-                
-                if all(map(lambda engine: engine in model_info["repo"], required_engines)):
+                if self.inference_engine_classname in model_info.get("repo", {}):
                     shard = build_base_shard(model_name, self.inference_engine_classname)
                     if shard:
                         downloader = HFShardDownloader(quick_check=True)
