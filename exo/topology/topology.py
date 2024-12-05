@@ -1,5 +1,5 @@
 from .device_capabilities import DeviceCapabilities
-from typing import Dict, Set, Optional, NamedTuple
+from typing import Dict, Set, Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -39,19 +39,6 @@ class Topology:
       self.peer_graph[from_id] = set()
     conn = PeerConnection(from_id, to_id, description)
     self.peer_graph[from_id].add(conn)
-
-  def get_neighbors(self, node_id: str) -> Set[str]:
-    # Convert PeerConnection objects back to just destination IDs
-    return {conn.to_id for conn in self.peer_graph.get(node_id, set())}
-
-  def all_edges(self):
-    edges = []
-    for node_id, connections in self.peer_graph.items():
-      for conn in connections:
-        # Only include each edge once by checking if reverse already exists
-        if not any(e[0] == conn.to_id and e[1] == conn.from_id for e in edges):
-          edges.append((conn.from_id, conn.to_id, conn.description))
-    return edges
 
   def merge(self, other: "Topology"):
     for node_id, capabilities in other.nodes.items():
