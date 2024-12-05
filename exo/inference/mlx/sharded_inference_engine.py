@@ -1,15 +1,16 @@
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.sample_utils import top_p_sampling
 from ..inference_engine import InferenceEngine
 from .stateful_model import StatefulModel
-from .sharded_utils import load_shard, get_image_from_str
+from .sharded_utils import load_shard
 from ..shard import Shard
 from typing import Dict, Optional, Tuple
 from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+
 def sample_logits(
   logits: mx.array,
   temp: float = 0.0,

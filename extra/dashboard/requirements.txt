@@ -2,4 +2,4 @@ plotly
 pandas
 requests
 aiohttp
-simpleaudio
+pygame

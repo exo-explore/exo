@@ -10,7 +10,7 @@ from pathlib import Path
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import time
-import simpleaudio as sa
+import pygame.mixer
 from datetime import datetime
 
 class AsyncCircleCIClient:
@@ -39,15 +39,7 @@ class AsyncCircleCIClient:
     ):
         """
         Get recent pipelines for a project with pagination support
-
-        Args:
-            session: aiohttp client session
-            org_slug: Organization slug
-            page_token: Token for pagination
-            limit: Maximum number of pipelines to return
-            branch: Specific branch to fetch pipelines from
         """
-
         params = {
             "branch": branch,
             "page-token": page_token
@@ -62,13 +54,17 @@ class AsyncCircleCIClient:
 
         next_page_token = data.get("next_page_token")
 
+        # If we have a limit, check if we need more pages
+        if limit and len(pipelines) >= limit:
+            return pipelines
+
         # If there are more pages and we haven't hit the limit, recursively get them
-        if next_page_token and (limit is None or len(pipelines) < limit):
+        if next_page_token:
             next_pipelines = await self.get_recent_pipelines(
                 session,
                 org_slug,
                 page_token=next_page_token,
-                limit=limit,
+                limit=limit - len(pipelines) if limit else None,  # Adjust limit for next page
                 branch=branch
             )
             pipelines.extend(next_pipelines)
@@ -108,19 +104,29 @@ class PackageSizeTracker:
         self.client = AsyncCircleCIClient(token, project_slug)
         self.logger = logging.getLogger("PackageSizeTracker")
         self.last_data_hash = None
-        self.notification_sound_path = Path(__file__).parent / "notification.wav"
         self.debug = debug
 
-        # Sound file paths - replace these with your actual sound files
+        # Initialize pygame mixer
+        pygame.mixer.init()
+
+        # Sound file paths - can use MP3 files with pygame
         sounds_dir = Path(__file__).parent / "sounds"
         self.sounds = {
-            'lines_up': sounds_dir / "lines_increased.wav",
-            'lines_down': sounds_dir / "lines_decreased.wav",
-            'tokens_up': sounds_dir / "tokens_increased.wav",
-            'tokens_down': sounds_dir / "tokens_decreased.wav",
-            'size_up': sounds_dir / "size_increased.wav",
-            'size_down': sounds_dir / "size_decreased.wav"
+            'lines_up': sounds_dir / "gta5_wasted.mp3",
+            'lines_down': sounds_dir / "pokemon_evolve.mp3",
+            'tokens_up': sounds_dir / "pokemon_evolve.mp3",
+            'tokens_down': sounds_dir / "gta5_wasted.mp3",
+            'size_up': sounds_dir / "gta5_wasted.mp3",
+            'size_down': sounds_dir / "pokemon_evolve.mp3"
         }
+
+    def test_sound_effects(self):
+        """Test all sound effects with a small delay between each"""
+        self.logger.info("Testing sound effects...")
+        for sound_key in self.sounds:
+            self.logger.info(f"Playing {sound_key}")
+            self._play_sound(sound_key)
+            time.sleep(1)  # Wait 1 second between sounds
 
     def setup_logging(self, debug: bool):
         level = logging.DEBUG if debug else logging.INFO
@@ -274,16 +280,57 @@ class PackageSizeTracker:
             self.logger.error(f"Error processing pipeline {pipeline['id']}: {str(e)}")
             return None
 
+    async def process_pipeline_batch(
+        self,
+        session: aiohttp.ClientSession,
+        pipelines: List[Dict],
+        batch_size: int = 5
+    ) -> List[Dict]:
+        """
+        Process a batch of pipelines with rate limiting.
+
+        Args:
+            session: aiohttp client session
+            pipelines: List of pipelines to process
+            batch_size: Number of pipelines to process in parallel
+
+        Returns:
+            List of processed pipeline data points
+        """
+        data_points = []
+
+        for i in range(0, len(pipelines), batch_size):
+            batch = pipelines[i:i + batch_size]
+
+            # Process batch in parallel
+            tasks = [self.process_pipeline(session, pipeline) for pipeline in batch]
+            batch_results = await asyncio.gather(*tasks)
+
+            # Filter out None results
+            batch_data = [r for r in batch_results if r is not None]
+            data_points.extend(batch_data)
+
+            # Add delay between batches if there are more to process
+            if i + batch_size < len(pipelines):
+                await asyncio.sleep(1)  # 1 second delay between batches
+
+        return data_points
+
     async def collect_data(self) -> List[Dict]:
         self.logger.info("Starting data collection...")
         async with aiohttp.ClientSession(headers=self.client.headers) as session:
-            # Get pipelines from both main and circleci branches
+            # Get pipelines from main branch
             main_pipelines = await self.client.get_recent_pipelines(
                 session,
                 org_slug=self.client.project_slug,
                 limit=20,
                 branch="main"
             )
+
+            # Add delay between branch requests
+            await asyncio.sleep(2)
+
+            # Get pipelines from circleci branch
             circleci_pipelines = await self.client.get_recent_pipelines(
                 session,
                 org_slug=self.client.project_slug,
@@ -291,18 +338,27 @@ class PackageSizeTracker:
                 branch="circleci"
             )
 
+            # Combine pipelines and sort by created_at date
             pipelines = main_pipelines + circleci_pipelines
-            # Sort pipelines by created_at date
-            pipelines.sort(key=lambda x: x.get("created_at", x.get("updated_at")), reverse=True)
+            pipelines.sort(
+                key=lambda x: datetime.fromisoformat(
+                    x.get("created_at", x.get("updated_at")).replace('Z', '+00:00')
+                ),
+                reverse=True  # Most recent first
+            )
 
             self.logger.info(f"Found {len(pipelines)} recent pipelines")
 
-            # Process all pipelines in parallel
-            tasks = [self.process_pipeline(session, pipeline) for pipeline in pipelines]
-            results = await asyncio.gather(*tasks)
+            # Process pipelines in batches
+            data_points = await self.process_pipeline_batch(session, pipelines)
 
-            # Filter out None results
-            data_points = [r for r in results if r is not None]
+            # Sort by timestamp
+            data_points.sort(
+                key=lambda x: datetime.fromisoformat(
+                    x.get("timestamp").replace('Z', '+00:00')
+                ),
+                reverse=True  # Most recent first
+            )
 
         return data_points
 
@@ -931,60 +987,86 @@ class PackageSizeTracker:
         ])))
 
     def _play_sound(self, sound_key: str):
-        """Play a specific notification sound"""
+        """Play a specific notification sound using pygame"""
         try:
             sound_path = self.sounds.get(sound_key)
             if sound_path and sound_path.exists():
-                wave_obj = sa.WaveObject.from_wave_file(str(sound_path))
-                wave_obj.play()
+                sound = pygame.mixer.Sound(str(sound_path))
+                sound.play()
+                # Wait for the sound to finish playing
+                pygame.time.wait(int(sound.get_length() * 1000))
             else:
                 self.logger.warning(f"Sound file not found: {sound_key} at {sound_path}")
         except Exception as e:
             self.logger.error(f"Failed to play sound {sound_key}: {e}")
 
     def _check_metrics_changes(self, current_data: List[Dict], previous_data: List[Dict]):
-        """Check for specific metric changes and play appropriate sounds"""
-        if not previous_data:
-            return
+        # Sort data by timestamp in descending order (most recent first)
+        def sort_by_timestamp(data):
+            return sorted(
+                data,
+                key=lambda x: x.get('timestamp', ''),
+                reverse=True  # Most recent first
+            )
 
-        # Get latest data points
-        current = current_data[-1]
-        previous = previous_data[-1]
+        current_data = sort_by_timestamp(current_data)
+        previous_data = sort_by_timestamp(previous_data)
+
+        # Helper to find latest entry with a specific metric
+        def find_latest_with_metric(data: List[Dict], metric: str) -> Optional[Dict]:
+            return next((d for d in data if metric in d), None)
 
         # Check line count changes
-        if 'total_lines' in current and 'total_lines' in previous:
-            diff = current['total_lines'] - previous['total_lines']
+        current_lines = find_latest_with_metric(current_data, 'total_lines')
+        previous_lines = find_latest_with_metric(previous_data, 'total_lines')
+
+        if current_lines and previous_lines:
+            diff = current_lines['total_lines'] - previous_lines['total_lines']
+            self.logger.debug(f"Lines of code diff: {diff}")
             if diff > 0:
                 self.logger.info(f"Lines of code increased by {diff:,}")
                 self._play_sound('lines_up')
             elif diff < 0:
                 self.logger.info(f"Lines of code decreased by {abs(diff):,}")
                 self._play_sound('lines_down')
+        else:
+            self.logger.debug("No lines of code data found")
 
         # Check tokens per second changes
-        if 'tokens_per_second' in current and 'tokens_per_second' in previous:
-            diff = current['tokens_per_second'] - previous['tokens_per_second']
+        current_tokens = find_latest_with_metric(current_data, 'tokens_per_second')
+        previous_tokens = find_latest_with_metric(previous_data, 'tokens_per_second')
+
+        if current_tokens and previous_tokens:
+            diff = current_tokens['tokens_per_second'] - previous_tokens['tokens_per_second']
+            self.logger.debug(f"Tokens per second diff: {diff}")
             if diff > 0:
                 self.logger.info(f"Tokens per second increased by {diff:.2f}")
                 self._play_sound('tokens_up')
             elif diff < 0:
                 self.logger.info(f"Tokens per second decreased by {abs(diff):.2f}")
                 self._play_sound('tokens_down')
+        else:
+            self.logger.debug("No tokens per second data found")
 
         # Check package size changes
-        if 'total_size_mb' in current and 'total_size_mb' in previous:
-            diff = current['total_size_mb'] - previous['total_size_mb']
+        current_size = find_latest_with_metric(current_data, 'total_size_mb')
+        previous_size = find_latest_with_metric(previous_data, 'total_size_mb')
+
+        if current_size and previous_size:
+            diff = current_size['total_size_mb'] - previous_size['total_size_mb']
+            self.logger.debug(f"Package size diff: {diff:.2f}MB")
             if diff > 0:
                 self.logger.info(f"Package size increased by {diff:.2f}MB")
                 self._play_sound('size_up')
             elif diff < 0:
                 self.logger.info(f"Package size decreased by {abs(diff):.2f}MB")
                 self._play_sound('size_down')
+        else:
+            self.logger.debug("No package size data found")
 
-    async def run_dashboard(self, update_interval: int = 30):
+    async def run_dashboard(self, update_interval: int = 10):
         """Run the dashboard with periodic updates"""
         try:
-            # Force convert update_interval to float and log its type
             update_interval = float(update_interval)
             self.logger.debug(f"Update interval type: {type(update_interval)}, value: {update_interval}")
         except ValueError as e:
@@ -997,7 +1079,6 @@ class PackageSizeTracker:
         while True:
             try:
                 start_time = time.time()
-                self.logger.debug(f"Start time type: {type(start_time)}, value: {start_time}")
 
                 # Collect new data
                 current_data = await self.collect_data()
@@ -1013,25 +1094,26 @@ class PackageSizeTracker:
                         f"Dashboard updated at {datetime.now().strftime('%H:%M:%S')}"
                     )
 
-                    # Check for metric changes and play appropriate sounds
-                    self._check_metrics_changes(current_data, previous_data)
+                    print("Curr:", len(current_data))
+                    print("Prev:", len(previous_data) if previous_data else "None")
+                    if previous_data:
+                        # Check for metric changes and play appropriate sounds
+                        self.logger.debug(f"Checking metrics changes between {len(current_data)} current and {len(previous_data)} previous data points")
+                        self._check_metrics_changes(current_data, previous_data)
 
                 # Update previous data
-                previous_data = current_data
+                previous_data = current_data.copy()  # Make a copy to prevent reference issues
 
-                # Calculate sleep time with explicit type conversion and logging
+                # Calculate sleep time
                 elapsed = float(time.time() - start_time)
-                self.logger.debug(f"Elapsed time type: {type(elapsed)}, value: {elapsed}")
-                sleep_time = max(0.0, float(update_interval) - elapsed)
-                self.logger.debug(f"Sleep time type: {type(sleep_time)}, value: {sleep_time}")
-
+                sleep_time = max(0.0, update_interval - elapsed)
                 await asyncio.sleep(sleep_time)
 
             except Exception as e:
                 self.logger.error(f"Error in dashboard update loop: {e}", exc_info=True)
                 if self.debug:
                     raise
-                await asyncio.sleep(float(update_interval))
+                await asyncio.sleep(update_interval)
 
 async def main():
     token = os.getenv("CIRCLECI_TOKEN")
@@ -1040,11 +1122,11 @@ async def main():
 
     try:
         # Get update interval from environment or use default
-        update_interval = float(os.getenv("UPDATE_INTERVAL", "30"))
+        update_interval = float(os.getenv("UPDATE_INTERVAL", "10"))
         print(f"Update interval type: {type(update_interval)}, value: {update_interval}")  # Debug print
     except ValueError as e:
         print(f"Error converting UPDATE_INTERVAL to float: {os.getenv('UPDATE_INTERVAL')}")
-        update_interval = 30.0
+        update_interval = 10.0
 
     if not token or not project_slug:
         print("Error: Please set CIRCLECI_TOKEN and CIRCLECI_PROJECT_SLUG environment variables")
