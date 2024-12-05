@@ -410,7 +410,7 @@ class StandardNode(Node):
       try:
         other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0)
         if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
-        next_topology.merge(other_topology)
+        next_topology.merge(self.id, other_topology)
       except Exception as e:
         print(f"Error collecting topology from {peer.id()}: {e}")
         traceback.print_exc()

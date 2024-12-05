@@ -21,7 +21,6 @@ class PeerConnection:
 class Topology:
   def __init__(self):
     self.nodes: Dict[str, DeviceCapabilities] = {}
-    # Store PeerConnection objects in the adjacency lists
     self.peer_graph: Dict[str, Set[PeerConnection]] = {}
     self.active_node_id: Optional[str] = None
 
@@ -40,12 +39,14 @@ class Topology:
     conn = PeerConnection(from_id, to_id, description)
     self.peer_graph[from_id].add(conn)
 
-  def merge(self, other: "Topology"):
+  def merge(self, origin_node_id: str, other: "Topology"):
     for node_id, capabilities in other.nodes.items():
-      self.update_node(node_id, capabilities)
+      if node_id != origin_node_id:
+        self.update_node(node_id, capabilities)
     for node_id, connections in other.peer_graph.items():
       for conn in connections:
-        self.add_edge(conn.from_id, conn.to_id, conn.description)
+        if conn.from_id != origin_node_id:
+          self.add_edge(conn.from_id, conn.to_id, conn.description)
 
   def __str__(self):
     nodes_str = ", ".join(f"{node_id}: {cap}" for node_id, cap in self.nodes.items())
