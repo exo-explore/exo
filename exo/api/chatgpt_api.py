@@ -20,6 +20,9 @@ from exo.models import build_base_shard, model_cards, get_repo, pretty_name, get
 from typing import Callable, Optional
 from PIL import Image
 import numpy as np
+import base64
+from io import BytesIO
+import mlx.core as mx
 
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
@@ -383,6 +386,7 @@ class ChatGPTAPI:
     stream = data.get("stream", False)
     model = data.get("model", "")
     prompt = data.get("prompt", "")
+    image_url = data.get("image_url", "")
     print(f"model: {model}, prompt: {prompt}, stream: {stream}")
     shard = build_base_shard(model, self.inference_engine_classname)
     print(f"shard: {shard}")
@@ -393,7 +397,11 @@ class ChatGPTAPI:
     callback_id = f"chatgpt-api-wait-response-{request_id}"
     callback = self.node.on_token.register(callback_id)
     try:
-      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id))), timeout=self.response_timeout)
+      if image_url != "" and image_url != None:
+        img = self.base64_decode(image_url)
+      else:
+        img = None
+      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id, inference_state={"image": img}))), timeout=self.response_timeout)
 
 
       response = web.StreamResponse(status=200, reason='OK', headers={'Content-Type': 'application/octet-stream',"Cache-Control": "no-cache",})
@@ -454,3 +462,19 @@ class ChatGPTAPI:
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
+
+  def base64_decode(self, base64_string):
+    #decode and reshape image
+    if base64_string.startswith('data:image'):
+        base64_string = base64_string.split(',')[1]
+    image_data = base64.b64decode(base64_string)
+    img = Image.open(BytesIO(image_data))
+    W, H = (dim - dim % 64 for dim in (img.width, img.height))
+    if W != img.width or H != img.height:
+        print(f"Warning: image shape is not divisible by 64, downsampling to {W}x{H}")
+        img = img.resize((W, H), Image.NEAREST)  # use desired downsampling filter
+    img = mx.array(np.array(img))
+    img = (img[:, :, :3].astype(mx.float32) / 255) * 2 - 1
+    img = img[None]
+    return img
+  

@@ -1,5 +1,6 @@
 # Adapted from https://github.com/ml-explore/mlx-examples/blob/main/stable_diffusion/stable_diffusion/clip.py
 
+import math
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -99,13 +100,15 @@ class CLIPTextModel(nn.Module):
         super().__init__()
 
         self.shard = shard
-        
+        self.layers_range = range(self.shard.start_layer*2, self.shard.end_layer*2+2) 
         if self.shard.is_first_layer():
             self.token_embedding = nn.Embedding(config.vocab_size, config.model_dims)
             self.position_embedding = nn.Embedding(config.max_length, config.model_dims)
         self.layers = []
-        for i in range(config.num_layers):
-            if self.shard.start_layer <= i <= self.shard.end_layer:
+        for i in range(math.ceil(config.num_layers/2)):
+            if  2*i in self.layers_range:
+                self.layers.append(CLIPEncoderLayer(config.model_dims, config.num_heads, config.hidden_act))
+            if 2*i+1 in self.layers_range and 2*i+1 < config.num_layers:
                 self.layers.append(CLIPEncoderLayer(config.model_dims, config.num_heads, config.hidden_act))
             else:
                 self.layers.append(IdentityBlock())
@@ -136,22 +139,18 @@ class CLIPTextModel(nn.Module):
             # Compute the features from the transformer
             mask = self._get_mask(N, x.dtype)
         
-        hidden_states = []
         for l in self.layers:
             x = l(x, mask)
-            hidden_states.append(x)
         # Apply the final layernorm and return
         
         if self.shard.is_last_layer():
             x = self.final_layer_norm(x)
-            last_hidden_state = x
-
+        
        
 
         return x, mask
     def sanitize(self, weights):
         sanitized_weights = {}
-        
         for key, value in weights.items():
             if "position_ids" in key:
                 continue
@@ -180,13 +179,13 @@ class CLIPTextModel(nn.Module):
             
             if key.startswith("layers."):
                 layer_num = int(key.split(".")[1])
-                if layer_num < self.shard.start_layer or layer_num > self.shard.end_layer:
+                if layer_num not in self.layers_range:
                     continue
-            if not self.shard.start_layer == 0 and "embedding" in key:
+            if not self.shard.is_first_layer() and "embedding" in key:
                 continue
-            if not self.shard.end_layer == 22 and key.startswith("final_layer_norm"):
+            if not self.shard.is_last_layer() and key.startswith("final_layer_norm"):
                 continue
-            if not self.shard.end_layer == 22 and key.startswith("text_projection"):
+            if not self.shard.is_last_layer() and key.startswith("text_projection"):
                 continue
             sanitized_weights[key] = value
         return sanitized_weights

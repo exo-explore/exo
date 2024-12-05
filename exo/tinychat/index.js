@@ -243,6 +243,7 @@ document.addEventListener("alpine:init", () => {
             body: JSON.stringify({
               "model": 'stable-diffusion-2-1-base',
               "prompt": apiMessages[apiMessages.length - 1].content,
+              "image_url": this.imageUrl
             }),
           });
       

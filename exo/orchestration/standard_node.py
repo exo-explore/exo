@@ -190,7 +190,7 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=}")
     if not shard.is_first_layer():
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
-      resp = await self.forward_prompt(shard, prompt, request_id, 0)
+      resp = await self.forward_prompt(shard, prompt, request_id, 0, inference_state)
       return None
     else:
       result,inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
@@ -268,6 +268,7 @@ class StandardNode(Node):
     prompt: str,
     request_id: str,
     target_index: int,
+    inference_state: Optional[dict] = None,
   ) -> None:
     if DEBUG >= 1: print(f"target partition index: {target_index}")
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
@@ -280,7 +281,7 @@ class StandardNode(Node):
       if not target_peer:
         raise ValueError(f"Peer for {target_index} not found")
       if DEBUG >= 1: print(f"Sending prompt to {target_peer.id()}: {prompt}")
-      await target_peer.send_prompt(next_shard, prompt, request_id=request_id)
+      await target_peer.send_prompt(next_shard, prompt, request_id=request_id, inference_state=inference_state)
   
   async def forward_tensor(
     self,
