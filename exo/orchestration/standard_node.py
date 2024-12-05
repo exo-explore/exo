@@ -56,7 +56,7 @@ class StandardNode(Node):
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)
-    await self.collect_topology()
+    await self.collect_topology(set())
     if DEBUG >= 2: print(f"Collected topology: {self.topology}")
     asyncio.create_task(self.periodic_topology_collection(1.0))
 
@@ -374,8 +374,8 @@ class StandardNode(Node):
       try:
         did_peers_change = await self.update_peers()
         if DEBUG >= 2: print(f"{did_peers_change=}")
+        await self.collect_topology(set())
         if did_peers_change:
-          await self.collect_topology()
           await self.select_best_inference_engine()
       except Exception as e:
         print(f"Error collecting topology: {e}")
@@ -386,7 +386,7 @@ class StandardNode(Node):
       return None, False
     return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
 
-  async def collect_topology(self, visited: set[str] = set(), max_depth: int = 4) -> Topology:
+  async def collect_topology(self, visited: set[str], max_depth: int = 4) -> Topology:
     next_topology = Topology()
     next_topology.update_node(self.id, self.device_capabilities)
 
