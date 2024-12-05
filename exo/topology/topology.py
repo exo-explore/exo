@@ -34,18 +34,11 @@ class Topology:
   def all_nodes(self):
     return self.nodes.items()
 
-  def add_edge(self, node1_id: str, node2_id: str, description: Optional[str] = None):
-    if node1_id not in self.peer_graph:
-      self.peer_graph[node1_id] = set()
-    if node2_id not in self.peer_graph:
-      self.peer_graph[node2_id] = set()
-
-    # Create bidirectional connections with the same description
-    conn1 = PeerConnection(node1_id, node2_id, description)
-    conn2 = PeerConnection(node2_id, node1_id, description)
-
-    self.peer_graph[node1_id].add(conn1)
-    self.peer_graph[node2_id].add(conn2)
+  def add_edge(self, from_id: str, to_id: str, description: Optional[str] = None):
+    if from_id not in self.peer_graph:
+      self.peer_graph[from_id] = set()
+    conn = PeerConnection(from_id, to_id, description)
+    self.peer_graph[from_id].add(conn)
 
   def get_neighbors(self, node_id: str) -> Set[str]:
     # Convert PeerConnection objects back to just destination IDs
