@@ -16,7 +16,7 @@ from .losses import length_masked_ce_loss
 from collections import OrderedDict
 import asyncio
 
-Tensor.no_grad = False
+Tensor.no_grad = True 
 # default settings
 TEMPERATURE = int(os.getenv("TEMPERATURE", 0.85))
 TOP_K = 25
