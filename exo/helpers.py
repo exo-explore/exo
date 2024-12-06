@@ -246,7 +246,27 @@ def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   if ifname.startswith('lo'):
     return (6, "Loopback")
 
-  # Thunderbolt/10GbE detection
+  # On macOS, use networksetup to accurately identify interface types
+  if psutil.MACOS:
+    try:
+      import subprocess
+      result = subprocess.run(['networksetup', '-listallhardwareports'], capture_output=True, text=True)
+      output = result.stdout
+
+      # Find the hardware port info for this interface
+      for block in output.split('\n\n'):
+        if f'Device: {ifname}' in block:
+          if 'Ethernet' in block or 'LAN' in block:
+            return (4, "Ethernet")
+          elif 'Wi-Fi' in block or 'Airport' in block:
+            return (3, "WiFi")
+          elif 'Thunderbolt' in block:
+            return (5, "Thunderbolt/10GbE")
+    except Exception as e:
+      if DEBUG >= 2:
+        print(f"Error detecting macOS interface type: {e}")
+
+  # Traditional detection for non-macOS systems or fallback
   if ifname.startswith(('tb', 'nx', 'ten')):
     return (5, "Thunderbolt/10GbE")
 
