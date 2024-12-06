@@ -38,7 +38,8 @@ message ExampleRequest {
   Tensor example = 2;
   Tensor target = 3;
   Tensor length = 4;
-  optional string request_id = 5;
+  bool train = 5;
+  optional string request_id = 6;
 }
   
 message GetInferenceResultRequest {
