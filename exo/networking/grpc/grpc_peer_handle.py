@@ -107,7 +107,7 @@ class GRPCPeerHandle(PeerHandle):
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
   
-  async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, request_id: Optional[str] = None) -> Optional[np.array]:
+  async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, train: bool, request_id: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.ExampleRequest(
       shard=node_service_pb2.Shard(
         model_id=shard.model_id,
@@ -118,6 +118,7 @@ class GRPCPeerHandle(PeerHandle):
       example=node_service_pb2.Tensor(tensor_data=example.tobytes(), shape=example.shape, dtype=str(example.dtype)),
       target=node_service_pb2.Tensor(tensor_data=target.tobytes(), shape=target.shape, dtype=str(target.dtype)),
       length=node_service_pb2.Tensor(tensor_data=length.tobytes(), shape=length.shape, dtype=str(length.dtype)),
+      train = train,
       request_id=request_id,
     )
     response = await self.stub.SendExample(request)

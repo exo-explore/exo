@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 from collections import OrderedDict
 
 import mlx.core as mx
@@ -29,9 +29,9 @@ class StatefulModel(nn.Module):
 
     self.caches[request_id] = cache
 
-  def __call__(self, x, request_id: str, use_cache: bool = True):
+  def __call__(self, x, request_id: Optional[str] = None, use_cache: bool = True):
     #print(f"StatefulModel in <- {x}")
-    if use_cache:
+    if use_cache and request_id is not None:
       if request_id not in self.caches:
         self.init_cache(request_id)
       else:

@@ -1,6 +1,6 @@
 from tinygrad import Tensor, Variable 
 from collections import OrderedDict
-from typing import List
+from typing import List, Optional
 
 def create_kv_cache(x: Tensor, max_context: int, n_kv_heads: int, head_dim: int):
   cache_kv = Tensor.zeros(2, x.shape[0], max_context, n_kv_heads, head_dim, dtype=x.dtype).contiguous().realize()
@@ -30,10 +30,10 @@ class StatefulModel:
 
     self.states[request_id] = ModelState(cache)
 
-  def __call__(self, x: Tensor, request_id: str, use_cache: bool = True): 
+  def __call__(self, x: Tensor, request_id: Optional[str] = None, use_cache: bool = True): 
     h = self.model.embed(x)
     #print(f"StatefulModel in <- {h}")
-    if use_cache:
+    if use_cache and request_id is not None:
       if request_id not in self.states:
         self.init_cache(h, request_id)
       else:

@@ -80,9 +80,10 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     example = np.frombuffer(request.example.tensor_data, dtype=np.dtype(request.example.dtype)).reshape(request.example.shape)
     target = np.frombuffer(request.target.tensor_data, dtype=np.dtype(request.target.dtype)).reshape(request.target.shape)
     length = np.frombuffer(request.length.tensor_data, dtype=np.dtype(request.length.dtype)).reshape(request.length.shape)
+    train = request.train
     request_id = request.request_id
 
-    result = await self.node.process_example(shard, example, target, length, request_id)
+    result = await self.node.process_example(shard, example, target, length, train, request_id)
     if DEBUG >= 5: print(f"SendTensor tensor {shard=} {example=} {target=} {length=} {request_id=} result: {result}")
     tensor_data = result.tobytes()
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype))

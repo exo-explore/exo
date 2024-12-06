@@ -14,7 +14,7 @@ import numpy as np
 from functools import partial
 from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
-from exo.train.dataset import load_dataset, iterate_batches
+from exo.train.dataset import load_dataset, iterate_batches, compose
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.manual.network_topology_config import NetworkTopology
 from exo.orchestration.standard_node import StandardNode
@@ -40,7 +40,7 @@ parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
 parser.add_argument("command", nargs="?", choices=["run", "eval", "train"], help="Command to run")
 parser.add_argument("model_name", nargs="?", help="Model name to run")
 parser.add_argument("--default-model", type=str, default=None, help="Default model")
-parser.add_argument("--iters", type=int, default=600, help="Training iterations")
+parser.add_argument("--iters", type=int, default=100, help="Training iterations")
 parser.add_argument("--data", type=str, default="exo/train/data/lora", help="Directory where training data lives")
 parser.add_argument("--batch-size", type=int, default=1, help="Minibatch size.")
 parser.add_argument("--node-id", type=str, default=None, help="Node ID")
@@ -223,7 +223,7 @@ async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_na
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return
   tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  train, val, test = dataloader(tokenizer)
+  train, val, test = dataloader(lambda i: tokenizer.encode(i))
   dataset = test
   print(f"Evaluating {len(dataset)} examples with batch_size {batch_size}")
   losses = []
@@ -242,14 +242,14 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
     return
   tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  train, val, test = dataloader(tokenizer)
-  print(f"Training on {len(train)} examples with batch_size {batch_size}")
+  train, val, test = dataloader(lambda i: tokenizer.encode(i))
+  print(f"Training on {len(val)} examples with batch_size {batch_size}")
   for epoch in range(iters):
     losses = []
     tokens = []
-    for batch in tqdm(iterate_batches(train, batch_size), total=len(dataset) // batch_size):
+    for batch in tqdm(iterate_batches(train, batch_size), total=len(train) // batch_size):
       _, _, lengths = batch
-      losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch)))
+      losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch, train=True)))
       tokens.append(np.sum(lengths))
   total_loss = np.sum(losses) / np.sum(tokens)
   print(f"total | loss: {total_loss}, tokens: {np.sum(tokens)}")
@@ -301,7 +301,8 @@ async def main():
     await run_model_cli(node, inference_engine, model_name, args.prompt)
   elif args.command == "eval" or args.command == 'train':
     model_name = args.model_name
-    dataloader = lambda tok: load_dataset(args.data, preprocess=lambda i: tok.encode(i["text"]))
+    dataloader = lambda tok: load_dataset(args.data, preprocess=lambda item: tok(item)
+                                                   , loadline=lambda line: json.loads(line).get("text",""))
     if args.command == 'eval':
       if not model_name:
         print("Error: Much like a human, I can't evaluate anything without a model")
