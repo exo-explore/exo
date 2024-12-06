@@ -130,7 +130,6 @@ jobs:
 
   chatgpt_api_tests:
     runs-on:
-      group: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'Default Larger Runners' || 'Default' }}
       labels: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
     strategy:
       matrix:
