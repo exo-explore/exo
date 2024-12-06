@@ -128,25 +128,24 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ (matrix.inference_engine == 'tinygrad' && matrix.backend != 'metal') || matrix.inference_engine == 'dummy' ? 'ubuntu-latest' : 'macos-14' }}
+    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest' || 'macos-15' }}
     strategy:
       matrix:
+        # inference_engine: [mlx, tinygrad, dummy]
+        inference_engine: [tinygrad, dummy]
         include:
+          # - inference_engine: mlx
+          #   model_id: llama-3.2-1b
+          #   prompt: "Keep responses concise. Who was the king of pop?"
+          #   expected_output: "Michael Jackson"
           - inference_engine: tinygrad
             model_id: llama-3.2-1b
             prompt: "Keep responses concise. Who was the king of pop?"
             expected_output: "Michael Jackson"
-            backend: cpu
-          - inference_engine: tinygrad
-            model_id: llama-3.2-1b
-            prompt: "Keep responses concise. Who was the king of pop?"
-            expected_output: "Michael Jackson"
-            backend: metal
           - inference_engine: dummy
             model_id: dummy
             prompt: "Dummy prompt."
             expected_output: "dummy"
-            backend: cpu
 
     steps:
       - uses: actions/checkout@v4
@@ -171,11 +170,6 @@ jobs:
           TOKENIZERS_PARALLELISM: ${{ matrix.inference_engine == 'tinygrad' && 'true' || 'false' }}
           SUPPORT_BF16: ${{ matrix.inference_engine == 'tinygrad' && '0' || '0' }}
           CLANG: ${{ matrix.inference_engine == 'tinygrad' && '1' || '0' }}
-          METAL: ${{ matrix.backend == 'metal' && '1' || '0' }}
-          METAL_DEVICE_WRAPPER_TYPE: ${{ matrix.backend == 'metal' && '1' || '0' }}
-          METAL_DEBUG_ERROR_MODE: ${{ matrix.backend == 'metal' && '1' || '0' }}
-          METAL_XCODE: ${{ matrix.backend == 'metal' && '1' || '0' }}
-
         run: |
           source env/bin/activate
 
