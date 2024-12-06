@@ -82,10 +82,11 @@ for folder_path in Path(exo_path).iterdir():
     model_path = folder_path
     model_name = folder_path.name
     config_file_path = Path(folder_path/'config.json')
-    with open(config_file_path, 'r') as file:
-      config = json.load(file)
-      config_n_layers = config['num_hidden_layers']
-    build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, int(config_n_layers))
+    if config_file_path.is_file():
+      with open(config_file_path, 'r') as file:
+        config = json.load(file)
+        config_n_layers = config['num_hidden_layers']
+        build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, int(config_n_layers))
 print(f"Init local model card complete")
 
 if args.node_port is None:
