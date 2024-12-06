@@ -25,8 +25,8 @@ jobs:
 
       - name: Create Python directories
         run: |
-          sudo mkdir -p /Users/runner/hostedtoolcache
-          sudo chown -R $USER:staff /Users/runner/hostedtoolcache
+          mkdir -p ${{ github.workspace }}/pythontools
+          echo "RUNNER_TOOL_CACHE=${{ github.workspace }}/pythontools" >> $GITHUB_ENV
 
       - name: Set up Python
         uses: actions/setup-python@v5
