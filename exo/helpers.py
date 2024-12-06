@@ -236,7 +236,43 @@ def get_all_ip_addresses_and_interfaces():
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
     return [("localhost", "lo")]
 
-def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
+async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
+  try:
+    proc = await asyncio.create_subprocess_exec('networksetup', '-listallhardwareports',
+      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    output, _ = await proc.communicate()
+    output = output.decode('utf-8')
+
+    # Parse the output into blocks
+    blocks = output.split('\n\n')
+    for block in blocks:
+      lines = block.strip().split('\n')
+      if len(lines) < 2:
+        continue
+
+      # Get the Hardware Port and Device lines
+      hw_port = lines[0].split(': ', 1)[1] if ': ' in lines[0] else ''
+      device = lines[1].split(': ', 1)[1] if ': ' in lines[1] else ''
+
+      if device == ifname:
+        # Thunderbolt interfaces
+        if 'Thunderbolt' in hw_port:
+          return (5, "Thunderbolt/10GbE")
+
+        # Ethernet adapters
+        if 'Ethernet Adapter' in hw_port:
+          return (4, "Ethernet")
+
+        # WiFi
+        if hw_port == 'Wi-Fi':
+          return (3, "WiFi")
+
+  except Exception as e:
+    if DEBUG >= 2: print(f"Error detecting macOS interface type: {e}")
+
+  return None
+
+async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   # Local container/virtual interfaces
   if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
     'bridge' in ifname):
@@ -246,25 +282,10 @@ def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   if ifname.startswith('lo'):
     return (6, "Loopback")
 
-  # On macOS, use networksetup to accurately identify interface types
+  # On macOS, try to get interface type using networksetup
   if psutil.MACOS:
-    try:
-      import subprocess
-      result = subprocess.run(['networksetup', '-listallhardwareports'], capture_output=True, text=True)
-      output = result.stdout
-
-      # Find the hardware port info for this interface
-      for block in output.split('\n\n'):
-        if f'Device: {ifname}' in block:
-          if 'Ethernet' in block or 'LAN' in block:
-            return (4, "Ethernet")
-          elif 'Wi-Fi' in block or 'Airport' in block:
-            return (3, "WiFi")
-          elif 'Thunderbolt' in block:
-            return (5, "Thunderbolt/10GbE")
-    except Exception as e:
-      if DEBUG >= 2:
-        print(f"Error detecting macOS interface type: {e}")
+    macos_type = await get_macos_interface_type(ifname)
+    if macos_type is not None: return macos_type
 
   # Traditional detection for non-macOS systems or fallback
   if ifname.startswith(('tb', 'nx', 'ten')):
