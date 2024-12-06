@@ -75,7 +75,7 @@ jobs:
           python3 ./test/test_model_helpers.py
 
   discovery_integration_test:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -113,7 +113,7 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: macos-15
+    runs-on: ${{ matrix.inference_engine == 'tinygrad' && 'ubuntu-latest' || 'macos-15' }}
     strategy:
       matrix:
         inference_engine: [mlx, tinygrad, dummy]
