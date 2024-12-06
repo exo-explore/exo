@@ -50,7 +50,9 @@ jobs:
             line-count-diff.json
 
   unit_test:
-    runs-on: macos-15
+    runs-on:
+      group: Default
+      labels: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -128,7 +130,9 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
+    runs-on:
+      group: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'Default Larger Runners' || 'Default' }}
+      labels: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
     strategy:
       matrix:
         # inference_engine: [mlx, tinygrad, dummy]
@@ -273,7 +277,9 @@ jobs:
           fi
 
   measure_pip_sizes:
-    runs-on: macos-15
+    runs-on:
+      group: Default
+      labels: macos-15
     steps:
       - uses: actions/checkout@v4
 
