@@ -25,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python${PYTHON_VERSION} -m venv env
+          echo "python${PYTHON_VERSION} -m venv env" | bash
           source env/bin/activate
           pip install --upgrade pip
           pip install .
