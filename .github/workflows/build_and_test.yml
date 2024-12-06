@@ -31,7 +31,7 @@ jobs:
           cache-dependency-path: |
             setup.py
             pyproject.toml
-          user-cache-path: ${{ github.workspace }}/.cache/python
+          cache-dependency-path: ${{ github.workspace }}/.cache/python
 
       - name: Install dependencies
         run: |
