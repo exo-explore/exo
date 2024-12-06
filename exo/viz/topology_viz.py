@@ -253,7 +253,7 @@ class TopologyViz:
       conn2 = self.topology.peer_graph.get(self.partitions[next_i].node_id, set())
       description1 = next((c.description for c in conn1 if c.to_id == self.partitions[next_i].node_id), "")
       description2 = next((c.description for c in conn2 if c.to_id == partition.node_id), "")
-      connection_description = f"{description1}/{description2}" if description1 != description2 else description1
+      connection_description = f"{description1}/{description2}"
 
       # Simple line drawing
       steps = max(abs(next_x - x), abs(next_y - y))

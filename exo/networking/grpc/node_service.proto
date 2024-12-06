@@ -66,9 +66,9 @@ message PeerConnections {
 }
 
 message DeviceFlops {
-  float fp32 = 1;
-  float fp16 = 2;
-  float int8 = 3;
+  double fp32 = 1;
+  double fp16 = 2;
+  double int8 = 3;
 }
 
 message DeviceCapabilities {

@@ -85,7 +85,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
   async def CollectTopology(self, request, context):
     max_depth = request.max_depth
     visited = set(request.visited)
-    topology = await self.node.collect_topology(visited, max_depth)
+    topology = self.node.current_topology
     nodes = {
       node_id:
         node_service_pb2.DeviceCapabilities(
