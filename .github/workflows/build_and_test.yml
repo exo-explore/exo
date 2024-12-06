@@ -23,6 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'  # Enable pip caching
+          cache-dependency-path: |
+            setup.py
+            pyproject.toml
+          user-cache-path: ${{ github.workspace }}/.cache/python
+
       - name: Install dependencies
         run: |
           python -m venv env
