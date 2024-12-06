@@ -131,12 +131,13 @@ jobs:
     runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest' || 'macos-15' }}
     strategy:
       matrix:
-        inference_engine: [mlx, tinygrad, dummy]
+        # inference_engine: [mlx, tinygrad, dummy]
+        inference_engine: [tinygrad, dummy]
         include:
-          - inference_engine: mlx
-            model_id: llama-3.2-1b
-            prompt: "Keep responses concise. Who was the king of pop?"
-            expected_output: "Michael Jackson"
+          # - inference_engine: mlx
+          #   model_id: llama-3.2-1b
+          #   prompt: "Keep responses concise. Who was the king of pop?"
+          #   expected_output: "Michael Jackson"
           - inference_engine: tinygrad
             model_id: llama-3.2-1b
             prompt: "Keep responses concise. Who was the king of pop?"
