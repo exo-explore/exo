@@ -44,3 +44,6 @@ class NoopShardDownloader(ShardDownloader):
   @property
   def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
     return AsyncCallbackSystem()
+
+  async def get_shard_download_status(self) -> Optional[Dict[str, float]]:
+    return None
