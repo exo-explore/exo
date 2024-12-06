@@ -16,6 +16,13 @@ class ModelState:
     self.cache = cache
     self.start = start
 
+def make_prompt_state(model, shard, x):
+  cache = [create_kv_cache(x, model.layers[i].attention.max_context, model.layers[i].attention.n_kv_heads, model.layers[i].attention.head_dim) for i in range(shard.start_layer, shard.end_layer + 1)]
+
+  return ModelState(cache)
+
+  
+
 class StatefulModel:
   def __init__(self, model, max_states: int = 2):
     super().__init__()
@@ -24,11 +31,10 @@ class StatefulModel:
     self.states = OrderedDict()
  
   def init_cache(self, x: Tensor, request_id: str):
-    cache = [create_kv_cache(x, self.model.layers[i].attention.max_context, self.model.layers[i].attention.n_kv_heads, self.model.layers[i].attention.head_dim) for i in range(self.model.shard.start_layer, self.model.shard.end_layer + 1)]
     if len(self.states) >= self.max_states:
       self.states.popitem(last=False)
 
-    self.states[request_id] = ModelState(cache)
+    self.states[request_id] = make_prompt_state(self.model, self.model.shard)
 
   def __call__(self, x: Tensor, request_id: Optional[str] = None, use_cache: bool = True): 
     h = self.model.embed(x)

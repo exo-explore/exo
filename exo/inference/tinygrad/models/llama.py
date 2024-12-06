@@ -230,7 +230,7 @@ class Transformer:
       return self.forward_jit(x, Variable("start_pos", 1, self.max_context).bind(start_pos), cache=cache)
     return self.forward_base(x, start_pos, cache=cache)
 
-  def __call__(self, tokens: Tensor, start_pos: Variable, cache: Optional[List[Tensor]] = None):
+  def __call__(self, x: Tensor, start_pos: Variable, cache: Optional[List[Tensor]] = None):
     # TODO: better way to handle the first call v.s. the rest?
     h = self.embed(x)
     return self.forward(h, start_pos, cache=cache)
