@@ -116,7 +116,7 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ matrix.inference_engine == 'tinygrad' && 'ubuntu-latest' || 'macos-15' }}
+    runs-on: ${{ matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy' ? 'ubuntu-latest' : 'macos-15' }}
     strategy:
       matrix:
         inference_engine: [mlx, tinygrad, dummy]
@@ -179,8 +179,20 @@ jobs:
           # Remember to kill the tail processes at the end
           trap 'kill $TAIL1 $TAIL2' EXIT
 
-          # Wait for discovery
+          # Wait for discovery and verify peer connections
           sleep 10
+          if ! grep -q "Peer statuses: {.*'node2': 'is_connected=True, health_check=True" output1.log || \
+             grep -q "Failed to connect peers:" output1.log || \
+             ! grep -q "Peer statuses: {.*'node1': 'is_connected=True, health_check=True" output2.log || \
+             grep -q "Failed to connect peers:" output2.log; then
+            echo "Test failed: Nodes did not discover each other properly"
+            echo "Output of first instance:"
+            cat output1.log
+            echo "Output of second instance:"
+            cat output2.log
+            exit 1
+          fi
+          echo "Peer discovery successful"
 
           # Function to check if processes are still running
           check_processes() {
