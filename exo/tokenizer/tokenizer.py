@@ -1,17 +1,55 @@
 import os
 import json
+import re
 import tiktoken
 from typing import List, Dict, Any, Tuple
 from jinja2 import Template
 from datetime import datetime
 
+class PreTokenizer:
+    def __init__(self, pre_tokenizers: List[Dict[str, Any]]):
+        self.patterns = []
+        for pretokenizer in pre_tokenizers:
+            if pretokenizer["type"] == "Split":
+                current_pattern = pretokenizer["pattern"]["Regex"]
+                self.patterns.append(current_pattern)
+
+
+    def pre_tokenize(self, text: str) -> List[str]:
+        if not self.patterns:
+            return [text]
+        
+        mega_pattern = "|".join(self.patterns)
+
+        tokens = re.findall(mega_pattern, text)
+
+        return tokens
+        
+        # Start with the text as a single token
+        tokens = [text]
+        result = []
+        
+        for pattern in self.patterns:
+            result = []
+            for token in tokens:
+                # Find all matches of the pattern (keeps the matches instead of splitting)
+                matches = re.findall(pattern, token)
+                if matches:
+                    result.extend(matches)
+            
+            # Update tokens for next pattern
+            tokens = result if result else tokens
+        
+        # Filter out empty strings and whitespace-only tokens
+        return [token for token in tokens if token and not token.isspace()]
 
 class Tokenizer:
     def __init__(self, model_path: str):
         with open(os.path.join(model_path, 'tokenizer.json'), 'r',  encoding="utf-8") as f:
             tokenizer_data = json.load(f)
             vocab = tokenizer_data["model"]["vocab"]
-            self.pattern = tokenizer_data["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"]
+            # self.pattern = tokenizer_data["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"]
+            self.patterns = [pretokenizer["pattern"]["Regex"] for pretokenizer in tokenizer_data["pre_tokenizer"]["pretokenizers"] if pretokenizer["type"] == "Split"]
             self.special_tokens = {token["content"]: int(token["id"]) for token in tokenizer_data["added_tokens"]}
 
         with open(os.path.join(model_path, 'tokenizer_config.json'), 'r',  encoding="utf-8") as f:
@@ -26,7 +64,7 @@ class Tokenizer:
 
         self.encoding = tiktoken.Encoding(
             name="custom_encoding",
-            pat_str=self.pattern,
+            pat_str="|".join(self.patterns),
             mergeable_ranks=self.vocab,
             special_tokens=self.special_tokens
         )
@@ -82,5 +120,18 @@ class Tokenizer:
 
 if __name__ == "__main__":
     tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx/snapshots/5f60ee33ba169428b5bc249b05b5b99f827d2e5e")
+    with open(os.path.join("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx/snapshots/5f60ee33ba169428b5bc249b05b5b99f827d2e5e", 'tokenizer.json'), 'r',  encoding="utf-8") as f:
+        tokenizer_data = json.load(f)
+        pre_tokenizer = PreTokenizer(tokenizer_data["pre_tokenizer"]["pretokenizers"])
+        print(pre_tokenizer.pre_tokenize("Hello, world!"))
+
+    
+    # pre_tokenized_text = pre_tokenizer.pre_tokenize("Hello, world!")
+    # encoded_text = []
+    # for text in pre_tokenized_text:
+    #     encoded_text.extend(tokenizer.encode(text))
+
+    # print(encoded_text)
+
     print(tokenizer.encode("Hello, world!"))
-    print(tokenizer.decode(tokenizer.encode("Hello, world!")))
+    # print(tokenizer.decode(tokenizer.encode("Hello, world!")))
