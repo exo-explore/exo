@@ -9,6 +9,8 @@ on:
 
 env:
   PYTHON_VERSION: "3.12"
+  TOKENIZERS_PARALLELISM: "false"
+  PYTHONPATH: "."
 
 jobs:
   check_line_count:
@@ -49,6 +51,7 @@ jobs:
 
   unit_test:
     runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -57,20 +60,29 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # - name: Cache python packages
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ${{ env.Python3_ROOT_DIR }}/lib/python3.12/site-packages
+      #     key: testing-packages-${{ hashFiles('**/setup.py') }}
+
       - name: Install dependencies
         run: |
           python -m venv env
           source env/bin/activate
           pip install --upgrade pip
+          pip install llvmlite
           pip install .
+
+      - name: Basic import test
+        run: |
+          source env/bin/activate
+          python -c "from tinygrad.tensor import Tensor; print(Tensor([1,2,3,4,5]))"
 
       - name: Run tests
         run: |
           source env/bin/activate
-          # set TEMPERATURE to 0 for deterministic sampling
-          echo "Running inference engine tests..."
-          METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
-          echo "Running tokenizer tests..."
+          METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=1 METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
           python3 ./test/test_tokenizers.py
           python3 ./test/test_model_helpers.py
 
