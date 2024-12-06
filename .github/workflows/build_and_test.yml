@@ -29,6 +29,8 @@ jobs:
           which python3.12 || echo "python3.12 not in PATH"
           # Add common Python installation locations to PATH
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          # Install jq using homebrew (since this is macOS)
+          brew install jq || brew upgrade jq
           # Now try to create the venv with explicit python3.12
           python3.12 -m venv env || {
             echo "Failed to find python3.12. Checking installation locations:"
@@ -52,7 +54,7 @@ jobs:
           trap 'kill $TAIL1' EXIT
 
           for i in {1..100}; do
-            nodes=$(curl http://localhost:52415/topology | $(which jq) \".nodes | length\")
+            nodes=$(curl http://localhost:52415/topology | jq ".nodes | length")
             if [ "$nodes" -eq "${{ strategy.job-total }}" ]; then
               break
             fi
