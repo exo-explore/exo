@@ -1,19 +1,15 @@
 version: 2.1
 
-orbs:
-  python: circleci/python@2
-
 jobs:
-  local_test:
-    resource_class: exo/hardware
+  hello:
+    docker:
+      - image: cimg/base:stable
     steps:
       - run:
-          name: Test vars
-          command: |
-            echo "CIRCLE_NODE_INDEX: ${CIRCLE_NODE_INDEX}, CIRCLE_NODE_TOTAL: ${CIRCLE_NODE_TOTAL}, CIRCLE_PIPELINE_ID: ${CIRCLE_PIPELINE_ID}, CIRCLE_WORKFLOW_ID: ${CIRCLE_WORKFLOW_ID}, CIRCLE_WORKFLOW_JOB_ID: ${CIRCLE_WORKFLOW_JOB_ID}"
-      
+          name: Hello World
+          command: echo "Hello, World!"
+
 workflows:
-  version: 2
-  build_and_test:
+  hello-workflow:
     jobs:
-      - local_test
+      - hello
