@@ -46,7 +46,7 @@ jobs:
           source env/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           echo "${ALL_NODE_IDS}"
-          DEBUG_DISCOVERY=7 DEBUG=7 exo --max-generate-tokens=100 --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
+          exo --max-generate-tokens=100 --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
           PID1=$!
           tail -f output1.log &
           TAIL1=$!
