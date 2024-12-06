@@ -57,6 +57,8 @@ class Tokenizer:
             self.chat_template = tokenizer_config["chat_template"]
             self.bos_token = tokenizer_config["bos_token"]
             self.eos_token = tokenizer_config["eos_token"]
+            self.add_bos_token = bool(tokenizer_config.get("add_bos_token", False))
+            self.add_eos_token = bool(tokenizer_config.get("add_eos_token", False))
 
         self.bos_token_id, self.eos_token_id = self.get_bos_and_eos_ids()
         
@@ -88,8 +90,13 @@ class Tokenizer:
 
     def encode(self, text: str, allow_special: bool = True) -> List[int]:
         allowed_special = set(self.special_tokens.keys()) if allow_special else set()
+        preprocessed_text = self.encode_chars(text)
+        if self.add_bos_token:
+            preprocessed_text = self.bos_token + preprocessed_text
+        if self.add_eos_token:
+            preprocessed_text = preprocessed_text + self.eos_token
         return self.encoding.encode(
-            self.encode_chars(text),
+            preprocessed_text,
             allowed_special=allowed_special,
             disallowed_special=set()
         )
@@ -117,6 +124,19 @@ class Tokenizer:
             eos_token=self.eos_token,
             **kwargs
         )
+    
+class PostProcessor:
+    def __init__(self, tokenizer_config: Dict[str, Any]):
+        self.add_bos_token = bool(tokenizer_config["add_bos_token"])
+        self.add_eos_token = bool(tokenizer_config["add_eos_token"])
+
+    
+    def post_process(self, tokens: List[int]) -> List[int]:
+        if self.add_bos_token:
+            tokens.insert(0, self.bos_token_id)
+        if self.add_eos_token:
+            tokens.append(self.eos_token_id)
+        return tokens
 
 if __name__ == "__main__":
     tokenizer = Tokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx/snapshots/5f60ee33ba169428b5bc249b05b5b99f827d2e5e")
@@ -125,13 +145,10 @@ if __name__ == "__main__":
         pre_tokenizer = PreTokenizer(tokenizer_data["pre_tokenizer"]["pretokenizers"])
         print(pre_tokenizer.pre_tokenize("Hello, world!"))
 
+    with open(os.path.join("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx/snapshots/5f60ee33ba169428b5bc249b05b5b99f827d2e5e", 'tokenizer_config.json'), 'r',  encoding="utf-8") as f:
+        tokenizer_config = json.load(f)
+        post_processor = PostProcessor(tokenizer_config)
+
     
-    # pre_tokenized_text = pre_tokenizer.pre_tokenize("Hello, world!")
-    # encoded_text = []
-    # for text in pre_tokenized_text:
-    #     encoded_text.extend(tokenizer.encode(text))
-
-    # print(encoded_text)
-
-    print(tokenizer.encode("Hello, world!"))
+    print(post_processor.post_process(tokenizer.encode("Hello, world!")))
     # print(tokenizer.decode(tokenizer.encode("Hello, world!")))
