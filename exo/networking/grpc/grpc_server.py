@@ -96,7 +96,15 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         )
       for node_id, cap in topology.nodes.items()
     }
-    peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
+    peer_graph = {
+      node_id: node_service_pb2.PeerConnections(
+        connections=[
+          node_service_pb2.PeerConnection(to_id=conn.to_id, description=conn.description)
+          for conn in connections
+        ]
+      )
+      for node_id, connections in topology.peer_graph.items()
+    }
     if DEBUG >= 5: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
     return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 

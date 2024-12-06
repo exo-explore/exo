@@ -15,7 +15,7 @@ class TailscaleDiscovery(Discovery):
     node_id: str,
     node_port: int,
     lazy_device_capabilities: LazyDeviceCapabilities,
-    create_peer_handle: Callable[[str, str, DeviceCapabilities], PeerHandle],
+    create_peer_handle: Callable[[str, str, str, DeviceCapabilities], PeerHandle],
     discovery_interval: int = 5,
     discovery_timeout: int = 30,
     update_interval: int = 15,
@@ -90,7 +90,7 @@ class TailscaleDiscovery(Discovery):
             continue
 
           if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
-            new_peer_handle = self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", device_capabilities)
+            new_peer_handle = self.create_peer_handle(peer_id, f"{peer_host}:{peer_port}", "TS", device_capabilities)
             if not await new_peer_handle.health_check():
               if DEBUG >= 1: print(f"Peer {peer_id} at {peer_host}:{peer_port} is not healthy. Skipping.")
               continue

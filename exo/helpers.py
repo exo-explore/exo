@@ -222,7 +222,7 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
     return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
 
 
-def get_all_ip_addresses():
+def get_all_ip_addresses_and_interfaces():
   try:
     ip_addresses = []
     for interface in netifaces.interfaces():
@@ -230,12 +230,40 @@ def get_all_ip_addresses():
       if netifaces.AF_INET in ifaddresses:
         for link in ifaddresses[netifaces.AF_INET]:
           ip = link['addr']
-          ip_addresses.append(ip)
+          ip_addresses.append((ip, interface))
     return list(set(ip_addresses))
   except:
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
-    return ["localhost"]
+    return [("localhost", "lo")]
 
+def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
+  # Local container/virtual interfaces
+  if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
+    'bridge' in ifname):
+    return (7, "Container Virtual")
+
+  # Loopback interface
+  if ifname.startswith('lo'):
+    return (6, "Loopback")
+
+  # Thunderbolt/10GbE detection
+  if ifname.startswith(('tb', 'nx', 'ten')):
+    return (5, "Thunderbolt/10GbE")
+
+  # Regular ethernet detection
+  if ifname.startswith(('eth', 'en')) and not ifname.startswith(('en1', 'en0')):
+    return (4, "Ethernet")
+
+  # WiFi detection
+  if ifname.startswith(('wlan', 'wifi', 'wl')) or ifname in ['en0', 'en1']:
+    return (3, "WiFi")
+
+  # Non-local virtual interfaces (VPNs, tunnels)
+  if ifname.startswith(('tun', 'tap', 'vtun', 'utun', 'gif', 'stf', 'awdl', 'llw')):
+    return (1, "External Virtual")
+
+  # Other physical interfaces
+  return (2, "Other")
 
 async def shutdown(signal, loop, server):
   """Gracefully shutdown the server and close the asyncio loop."""
