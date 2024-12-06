@@ -328,6 +328,14 @@ jobs:
       - store_test_results:
           path: test-results
 
+  local_test:
+    resource_class: exo/hardware
+    steps:
+      - run:
+          name: Test vars
+          command: |
+            echo "CIRCLE_NODE_INDEX: ${CIRCLE_NODE_INDEX}, CIRCLE_NODE_TOTAL: ${CIRCLE_NODE_TOTAL}, CIRCLE_PIPELINE_ID: ${CIRCLE_PIPELINE_ID}, CIRCLE_WORKFLOW_ID: ${CIRCLE_WORKFLOW_ID}, CIRCLE_WORKFLOW_JOB_ID: ${CIRCLE_WORKFLOW_JOB_ID}"
+      
 workflows:
   version: 2
   build_and_test:
