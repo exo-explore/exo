@@ -16,8 +16,8 @@ jobs:
   check_local_runner:
     strategy:
       matrix:
-        cpu: [M3, M4]
-    runs-on: [self-hosted, macOS, ${{ matrix.cpu }}]
+        cpu: ['M3', 'M4']
+    runs-on: ['self-hosted', 'macOS', '${{ matrix.cpu }}']
     steps:
       - name: Test
         run: |
