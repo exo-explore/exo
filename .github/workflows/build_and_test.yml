@@ -176,8 +176,73 @@ jobs:
           # Remember to kill the tail processes at the end
           trap 'kill $TAIL1 $TAIL2' EXIT
 
-          # Rest of the test script remains the same as in your CircleCI config
-          # ... (Copy the remaining test logic from the CircleCI config)
+          # Wait for discovery
+          sleep 10
+
+          # Function to check if processes are still running
+          check_processes() {
+            if ! kill -0 $PID1 2>/dev/null; then
+              echo "First instance (PID $PID1) died unexpectedly. Log output:"
+              cat output1.log
+              exit 1
+            fi
+            if ! kill -0 $PID2 2>/dev/null; then
+              echo "Second instance (PID $PID2) died unexpectedly. Log output:"
+              cat output2.log
+              exit 1
+            fi
+          }
+
+          # Check processes before proceeding
+          check_processes
+
+          echo "Sending request to first instance..."
+          response_1=$(curl -s http://localhost:8000/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "${{ matrix.model_id }}",
+              "messages": [{"role": "user", "content": "${{ matrix.prompt }}"}],
+              "temperature": 0.7
+            }')
+          echo "Response 1: $response_1"
+
+          # Check processes after first response
+          check_processes
+
+          echo "Sending request to second instance..."
+          response_2=$(curl -s http://localhost:8001/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "${{ matrix.model_id }}",
+              "messages": [{"role": "user", "content": "${{ matrix.prompt }}"}],
+              "temperature": 0.7
+            }')
+          echo "Response 2: $response_2"
+
+          # Check processes after second response
+          check_processes
+
+          # Stop both instances
+          kill $PID1 $PID2
+
+          echo ""
+          # Extract content using jq and check if it contains expected output
+          content1=$(echo "$response_1" | jq -r '.choices[0].message.content')
+          content2=$(echo "$response_2" | jq -r '.choices[0].message.content')
+
+          if [[ "$content1" != *"${{ matrix.expected_output }}"* ]] || [[ "$content2" != *"${{ matrix.expected_output }}"* ]]; then
+            echo "Test failed: Response does not match '${{ matrix.expected_output }}'"
+            echo "Response 1 content: $content1"
+            echo ""
+            echo "Response 2 content: $content2"
+            echo "Output of first instance:"
+            cat output1.log
+            echo "Output of second instance:"
+            cat output2.log
+            exit 1
+          else
+            echo "Test passed: Response from both nodes matches '${{ matrix.expected_output }}'"
+          fi
 
   measure_pip_sizes:
     runs-on: macos-15
