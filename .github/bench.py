@@ -88,13 +88,13 @@ async def main() -> None:
     prompt_essay = "write an essay about cats"
 
     # Measure performance for the basic prompt
-    print("Measuring performance for the basic prompt...")
+    print("Measuring performance for the basic prompt...", flush=True)
     results_basic = await measure_performance(api_endpoint, prompt_basic)
-    print("Basic prompt performance metrics:")
+    print("Basic prompt performance metrics:", flush=True)
     print(json.dumps(results_basic, indent=4))
 
     # Measure performance for the essay prompt, which depends on the first measurement
-    print("\nMeasuring performance for the essay prompt...")
+    print("\nMeasuring performance for the essay prompt...", flush=True)
     results = await measure_performance(api_endpoint, prompt_essay)
 
     # Save metrics from the "universe and everything" prompt
@@ -103,13 +103,13 @@ async def main() -> None:
     try:
         with open(metrics_file, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=4)
-        print(f"Performance metrics saved to {metrics_file}")
+        print(f"Performance metrics saved to {metrics_file}", flush=True)
     except IOError as e:
-        print(f"Failed to save metrics: {e}")
+        print(f"Failed to save metrics: {e}", flush=True)
 
     # Optionally print the metrics for visibility
-    print("Performance metrics:")
-    print(json.dumps(results, indent=4))
+    print("Performance metrics:", flush=True)
+    print(json.dumps(results, indent=4), flush=True)
 
 
 if __name__ == "__main__":
