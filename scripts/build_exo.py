@@ -14,8 +14,8 @@ def run():
         "--follow-imports",
         "--standalone",
         "--output-filename=exo",
-        "--onefile",
-        "--python-flag=no_site"
+        "--python-flag=no_site",
+        "--onefile"
     ]
 
     if sys.platform == "darwin": 
@@ -24,8 +24,6 @@ def run():
             "--macos-app-mode=gui",
             "--macos-app-version=0.0.1",
             "--macos-signed-app-name=com.exolabs.exo",
-            "--macos-sign-identity=auto",
-            "--macos-sign-notarization",
             "--include-distribution-meta=mlx",
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",
