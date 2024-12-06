@@ -128,7 +128,7 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest' || 'macos-15' }}
+    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
     strategy:
       matrix:
         # inference_engine: [mlx, tinygrad, dummy]
@@ -168,7 +168,7 @@ jobs:
       - name: Run ChatGPT API test
         env:
           TOKENIZERS_PARALLELISM: ${{ matrix.inference_engine == 'tinygrad' && 'true' || 'false' }}
-          SUPPORT_BF16: ${{ matrix.inference_engine == 'tinygrad' && '1' || '0' }}
+          SUPPORT_BF16: ${{ matrix.inference_engine == 'tinygrad' && '0' || '0' }}
           CLANG: ${{ matrix.inference_engine == 'tinygrad' && '1' || '0' }}
         run: |
           source env/bin/activate
