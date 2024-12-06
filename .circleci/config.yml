@@ -2,8 +2,8 @@ version: 2.1
 
 jobs:
   hello:
-    docker:
-      - image: cimg/base:stable
+    machine: true
+    resource_class: exo/hardware
     steps:
       - run:
           name: Hello World
