@@ -153,6 +153,7 @@ class ChatGPTAPI:
   def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None, default_model: Optional[str] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
+    print(self.inference_engine_classname)
     self.response_timeout = response_timeout
     self.on_chat_completion_request = on_chat_completion_request
     self.app = web.Application(client_max_size=100*1024*1024)  # 100MB to support image upload

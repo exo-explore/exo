@@ -30,13 +30,18 @@ class StatefulModel:
 
     self.states[request_id] = ModelState(cache)
 
-  def __call__(self, x: Tensor, request_id: str): 
+  def __call__(self, x: Tensor, request_id: str, use_cache: bool = True): 
     h = self.model.embed(x)
-    if request_id not in self.states:
-      self.init_cache(h, request_id)
+    #print(f"StatefulModel in <- {h}")
+    if use_cache:
+      if request_id not in self.states:
+        self.init_cache(h, request_id)
+      else:
+        self.states.move_to_end(request_id)
+      out = self.model.forward(h, self.states[request_id].start, cache=self.states[request_id].cache)
+      self.states[request_id].start += h.shape[1]
     else:
-      self.states.move_to_end(request_id)
-    out = self.model.forward(h, self.states[request_id].start, cache=self.states[request_id].cache)
-    self.states[request_id].start += h.shape[1]
+      out = self.model.forward(h, 0)
+    #print(f"StatefulModel out -> {out}")
     return out
 
