@@ -41,7 +41,7 @@ jobs:
 
       - name: Run exo
         run: |
-          ALL_NODE_IDS=$(for i in $(seq 0 ${{ strategy.job-total }} -1); do echo -n "${GITHUB_JOB}_${i},"; done | sed 's/,$//')
+          ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${GITHUB_JOB}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${GITHUB_JOB}_${{ strategy.job-index }}"
           DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id="${MY_NODE_ID}" --filter-node-ids="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
           PID1=$!
@@ -51,7 +51,7 @@ jobs:
           trap 'kill $TAIL1' EXIT
 
           for i in {1..100}; do
-            nodes=$(curl http://localhost:52415/topology | jq .nodes | length)
+            nodes=$(curl http://localhost:52415/topology | jq '.nodes | length')
             if [ "$nodes" -eq "${{ strategy.job-total }}" ]; then
               break
             fi
