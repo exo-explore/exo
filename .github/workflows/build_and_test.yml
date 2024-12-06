@@ -129,9 +129,9 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on:
+    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
       # group: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'Default Larger Runners' || 'Default' }}
-      group: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
+      # group: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest-large' || 'macos-15' }}
     strategy:
       matrix:
         # inference_engine: [mlx, tinygrad, dummy]
