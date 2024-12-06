@@ -44,11 +44,6 @@ class NodeServiceStub(object):
                 request_serializer=node__service__pb2.TensorRequest.SerializeToString,
                 response_deserializer=node__service__pb2.Tensor.FromString,
                 _registered_method=True)
-        self.SendLoss = channel.unary_unary(
-                '/node_service.NodeService/SendLoss',
-                request_serializer=node__service__pb2.TensorRequest.SerializeToString,
-                response_deserializer=node__service__pb2.Empty.FromString,
-                _registered_method=True)
         self.SendExample = channel.unary_unary(
                 '/node_service.NodeService/SendExample',
                 request_serializer=node__service__pb2.ExampleRequest.SerializeToString,
@@ -91,12 +86,6 @@ class NodeServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def SendTensor(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def SendLoss(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -150,11 +139,6 @@ def add_NodeServiceServicer_to_server(servicer, server):
                     servicer.SendTensor,
                     request_deserializer=node__service__pb2.TensorRequest.FromString,
                     response_serializer=node__service__pb2.Tensor.SerializeToString,
-            ),
-            'SendLoss': grpc.unary_unary_rpc_method_handler(
-                    servicer.SendLoss,
-                    request_deserializer=node__service__pb2.TensorRequest.FromString,
-                    response_serializer=node__service__pb2.Empty.SerializeToString,
             ),
             'SendExample': grpc.unary_unary_rpc_method_handler(
                     servicer.SendExample,
@@ -241,33 +225,6 @@ class NodeService(object):
             '/node_service.NodeService/SendTensor',
             node__service__pb2.TensorRequest.SerializeToString,
             node__service__pb2.Tensor.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def SendLoss(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/node_service.NodeService/SendLoss',
-            node__service__pb2.TensorRequest.SerializeToString,
-            node__service__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

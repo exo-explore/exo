@@ -5,7 +5,6 @@ package node_service;
 service NodeService {
   rpc SendPrompt (PromptRequest) returns (Tensor) {}
   rpc SendTensor (TensorRequest) returns (Tensor) {}
-  rpc SendLoss (TensorRequest) returns (Empty) {}
   rpc SendExample (ExampleRequest) returns (Tensor) {}
   rpc GetInferenceResult (GetInferenceResultRequest) returns (InferenceResult) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
@@ -40,6 +39,11 @@ message ExampleRequest {
   Tensor length = 4;
   bool train = 5;
   optional string request_id = 6;
+}
+
+message LossRequest {
+  Tensor loss = 1;
+  Tensor grads = 2;
 }
   
 message GetInferenceResultRequest {
