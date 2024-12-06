@@ -52,7 +52,7 @@ jobs:
           trap 'kill $TAIL1' EXIT
 
           for i in {1..100}; do
-            nodes=$(curl http://localhost:52415/topology | $(which jq) ".nodes | length")
+            nodes=$(curl http://localhost:52415/topology | $(which jq) \".nodes | length\")
             if [ "$nodes" -eq "${{ strategy.job-total }}" ]; then
               break
             fi
