@@ -167,8 +167,6 @@ jobs:
       - name: Run ChatGPT API test
         env:
           TOKENIZERS_PARALLELISM: ${{ matrix.inference_engine == 'tinygrad' && 'true' || 'false' }}
-          SUPPORT_BF16: ${{ matrix.inference_engine == 'tinygrad' && '0' || '' }}
-          CLANG: ${{ matrix.inference_engine == 'tinygrad' && '1' || '' }}
         run: |
           source env/bin/activate
 
