@@ -92,6 +92,7 @@ model_cards = {
 }
 
 pretty_name = {
+  "llama-3.3-70b": "Llama 3.3 70B",
   "llama-3.2-1b": "Llama 3.2 1B",
   "llama-3.2-3b": "Llama 3.2 3B",
   "llama-3.1-8b": "Llama 3.1 8B",
