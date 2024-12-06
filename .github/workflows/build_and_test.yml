@@ -29,8 +29,6 @@ jobs:
           which python3.12 || echo "python3.12 not in PATH"
           # Add common Python installation locations to PATH
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
-          # Install jq using homebrew (since this is macOS)
-          brew install jq || brew upgrade jq
           # Now try to create the venv with explicit python3.12
           python3.12 -m venv env || {
             echo "Failed to find python3.12. Checking installation locations:"
@@ -46,6 +44,7 @@ jobs:
           ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${GITHUB_JOB}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${GITHUB_JOB}_${{ strategy.job-index }}"
           source env/bin/activate
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
           PID1=$!
           tail -f output1.log &
