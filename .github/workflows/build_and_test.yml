@@ -51,7 +51,6 @@ jobs:
 
   unit_test:
     runs-on:
-      group: Default
       labels: macos-15
     timeout-minutes: 20
     steps:
@@ -278,7 +277,6 @@ jobs:
 
   measure_pip_sizes:
     runs-on:
-      group: Default
       labels: macos-15
     steps:
       - uses: actions/checkout@v4
