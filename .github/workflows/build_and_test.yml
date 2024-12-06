@@ -23,15 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check user
-        run: |
-          whoami
-
-      - name: Create Python directories
-        run: |
-          mkdir -p ${{ github.workspace }}/pythontools
-          echo "RUNNER_TOOL_CACHE=${{ github.workspace }}/pythontools" >> $GITHUB_ENV
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
