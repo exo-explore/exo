@@ -87,21 +87,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     if DEBUG >= 5: print(f"SendTensor tensor {shard=} {example=} {target=} {length=} {request_id=} result: {result}")
     tensor_data = result.tobytes()
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype))
-
-  async def SendLoss(self, request, context):
-    shard = Shard(
-      model_id=request.shard.model_id,
-      start_layer=request.shard.start_layer,
-      end_layer=request.shard.end_layer,
-      n_layers=request.shard.n_layers,
-    )
-    loss = np.frombuffer(request.loss.tensor_data, dtype=np.dtype(request.loss.dtype)).reshape(request.loss.shape)
-    request_id = request.request_id
-
-    if shard.is_first_layer():
-      asyncself.node.backward_loss(shard, loss, request_id)
-    if DEBUG >= 5: print(f"SendTensor tensor {shard=} {example=} {target=} {length=} {request_id=} result: {result}")
-    return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
     
   async def CollectTopology(self, request, context):
     max_depth = request.max_depth

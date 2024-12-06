@@ -12,3 +12,14 @@ def length_masked_ce_loss(model, inputs, targets, lengths):
   loss = ce.sum() / length_mask.sum()
   return loss
 
+#Naive intermediate layer loss, where we replace the targets with gradients and just multiply the output by the gradients to derive the loss. This is naive and may warrant some further iteration, but will do the job for now
+def back_gradient_loss(model, inputs, gradients, shard_proportion):
+  out = model(inputs)
+  logits = out[:, -1, :]
+  loss = (logits * gradients).mean()
+  return loss
+
+loss_fns = {
+  "back_gradient": back_gradient_loss,
+  "length_masked_ce": length_masked_ce_loss,
+}
