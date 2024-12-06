@@ -10,6 +10,10 @@ import sys
 import time
 import traceback
 import uuid
+import numpy as np
+from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio
+from exo.train.dataset import load_dataset, iterate_batches
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.manual.network_topology_config import NetworkTopology
 from exo.orchestration.standard_node import StandardNode
@@ -32,9 +36,12 @@ from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_writ
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
-parser.add_argument("command", nargs="?", choices=["run"], help="Command to run")
+parser.add_argument("command", nargs="?", choices=["run", "eval", "train"], help="Command to run")
 parser.add_argument("model_name", nargs="?", help="Model name to run")
 parser.add_argument("--default-model", type=str, default=None, help="Default model")
+parser.add_argument("--iters", type=int, default=600, help="Training iterations")
+parser.add_argument("--data", type=str, default="exo/train/data/lora", help="Directory where training data lives")
+parser.add_argument("--batch-size", type=int, default=1, help="Minibatch size.")
 parser.add_argument("--node-id", type=str, default=None, help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=None, help="Node port")
@@ -208,6 +215,46 @@ def clean_path(path):
         path = path.strip('Optional("').rstrip('")')
     return os.path.expanduser(path)
 
+async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataset, batch_size, num_batches=-1):
+  inference_class = inference_engine.__class__.__name__
+  shard = build_base_shard(model_name, inference_class)
+  if not shard:
+    print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+    return
+  tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+  all_losses = []
+  ntokens = 0
+
+  print(f"Evaluating {len(dataset)} examples with batch_size {batch_size}")
+  losses = []
+  tokens = []
+  for batch in tqdm(iterate_batches(dataset, tokenizer, batch_size), total=len(dataset) // batch_size):
+    _, _, lengths = batch
+    losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch)))
+    tokens.append(np.sum(lengths))
+  total_loss = np.sum(losses) / np.sum(tokens)
+  print(f"total | loss: {total_loss}, tokens: {np.sum(tokens)}")
+
+async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataset, batch_size, iters):
+  inference_class = inference_engine.__class__.__name__
+  shard = build_base_shard(model_name, inference_class)
+  if not shard:
+    print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+    return
+  tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+  all_losses = []
+  ntokens = 0
+
+  print(f"Training on {len(dataset)} examples with batch_size {batch_size}")
+  losses = []
+  tokens = []
+  for batch in tqdm(iterate_batches(dataset, tokenizer, batch_size), total=len(dataset) // batch_size):
+    _, _, lengths = batch
+    losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch)))
+    tokens.append(np.sum(lengths))
+  total_loss = np.sum(losses) / np.sum(tokens)
+  print(f"total | loss: {total_loss}, tokens: {np.sum(tokens)}")
+
 async def main():
   loop = asyncio.get_running_loop()
 
@@ -253,9 +300,28 @@ async def main():
       print("Error: Model name is required when using 'run' command or --run-model")
       return
     await run_model_cli(node, inference_engine, model_name, args.prompt)
+  elif args.command == "eval" or args.command == 'train':
+    data_path = args.data
+    train, val, test = load_dataset(data_path)
+    model_name = args.model_name
+    if args.command == 'eval':
+      if not model_name:
+        print("Error: Much like a human, I can't evaluate anything without a model")
+        return
+      await eval_model_cli(node, inference_engine, model_name, test, args.batch_size)
+    else:
+      if not model_name:
+        print("Error: This train ain't leaving the station without a model")
+        return
+      await train_model_cli(node, inference_engine, model_name, test, args.batch_size, args.iters)
+    
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
+  if args.wait_for_peers > 0:
+    print("Cooldown to allow peers to exit gracefully")
+    for i in tqdm(range(50)):
+      await asyncio.sleep(.1)
 
 
 def run():
@@ -263,6 +329,7 @@ def run():
   asyncio.set_event_loop(loop)
   try:
     loop.run_until_complete(main())
+      
   except KeyboardInterrupt:
     print("Received keyboard interrupt. Shutting down...")
   finally:

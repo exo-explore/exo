@@ -29,14 +29,18 @@ class StatefulModel(nn.Module):
 
     self.caches[request_id] = cache
 
-  def __call__(self, x, request_id: str):
-    if request_id not in self.caches:
-      self.init_cache(request_id)
+  def __call__(self, x, request_id: str, use_cache: bool = True):
+    #print(f"StatefulModel in <- {x}")
+    if use_cache:
+      if request_id not in self.caches:
+        self.init_cache(request_id)
+      else:
+        self.caches.move_to_end(request_id)
+
+      cache = self.caches[request_id]
+      y = self.model(x, cache=cache)
     else:
-      self.caches.move_to_end(request_id)
-
-    cache = self.caches[request_id]
-
-    y = self.model(x, cache=cache)
+      y = self.model(x)
+    #print(f"StatefulModel out -> {y}")
     return y
     
