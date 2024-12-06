@@ -240,11 +240,11 @@ def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   # Local container/virtual interfaces
   if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
     'bridge' in ifname):
-    return (7, "Container Virtual")
+    return (6, "Container Virtual")
 
   # Loopback interface
   if ifname.startswith('lo'):
-    return (6, "Loopback")
+    return (7, "Loopback")
 
   # Thunderbolt/10GbE detection
   if ifname.startswith(('tb', 'nx', 'ten')):
