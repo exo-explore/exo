@@ -116,7 +116,7 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy' ? 'ubuntu-latest' : 'macos-15' }}
+    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest' || 'macos-15' }}
     strategy:
       matrix:
         inference_engine: [mlx, tinygrad, dummy]
