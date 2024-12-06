@@ -100,7 +100,10 @@ jobs:
           PID2=$!
           sleep 10
           kill $PID1 $PID2
-          if grep -q "Peer statuses: {\\'node2\\': \\'is_connected=True, health_check=True" output1.log && ! grep -q "Failed to connect peers:" output1.log && grep -q "Peer statuses: {\\'node1\\': \\'is_connected=True, health_check=True" output2.log && ! grep -q "Failed to connect peers:" output2.log; then
+          if grep -q "Peer statuses: {.*'node2': 'is_connected=True, health_check=True" output1.log && \
+             ! grep -q "Failed to connect peers:" output1.log && \
+             grep -q "Peer statuses: {.*'node1': 'is_connected=True, health_check=True" output2.log && \
+             ! grep -q "Failed to connect peers:" output2.log; then
             echo "Test passed: Both instances discovered each other"
             exit 0
           else
