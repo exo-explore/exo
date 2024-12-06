@@ -247,7 +247,7 @@ def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
     return (6, "Loopback")
 
   # On macOS, use networksetup to accurately identify interface types
-  if platform.system() == 'Darwin':
+  if psutil.MACOS:
     try:
       import subprocess
       result = subprocess.run(['networksetup', '-listallhardwareports'], capture_output=True, text=True)
