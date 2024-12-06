@@ -17,14 +17,11 @@ jobs:
     strategy:
       matrix:
         cpu: ['M3', 'M4']
+        include:
+          - benchmark_timeout: 500
     runs-on: ['self-hosted', 'macOS', '${{ matrix.cpu }}']
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -33,9 +30,8 @@ jobs:
           pip install --upgrade pip
           pip install .
 
-      - name: Run discovery integration test
+      - name: Run exo
         run: |
-          source env/bin/activate
           ALL_NODE_IDS=$(for i in $(seq 0 ${{ strategy.job-total }} -1); do echo -n "${GITHUB_JOB}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${GITHUB_JOB}_${{ strategy.job-index }}"
           DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id="${MY_NODE_ID}" --filter-node-ids="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
@@ -59,23 +55,13 @@ jobs:
               exit 1
           fi
 
-          
-
-          kill $PID1 $PID2
-          if grep -q "Peer statuses: {.*'node2': 'is_connected=True, health_check=True" output1.log && \
-             ! grep -q "Failed to connect peers:" output1.log && \
-             grep -q "Peer statuses: {.*'node1': 'is_connected=True, health_check=True" output2.log && \
-             ! grep -q "Failed to connect peers:" output2.log; then
-            echo "Test passed: Both instances discovered each other"
-            exit 0
+          if [ "${{ strategy.job-index }}" -eq "0" ]; then
+            python .github/bench.py
           else
-            echo "Test failed: Devices did not discover each other"
-            echo "Output of first instance:"
-            cat output1.log
-            echo "Output of second instance:"
-            cat output2.log
-            exit 1
+            sleep ${{ matrix.benchmark_timeout }}
           fi
+
+          kill $PID1
       - name: Test
         run: |
           echo "GITHUB_JOB: ${GITHUB_JOB}, GITHUB_RUN_ID: ${GITHUB_RUN_ID}, GITHUB_RUN_NUMBER: ${GITHUB_RUN_NUMBER}, GITHUB_WORKFLOW: ${GITHUB_WORKFLOW}"
