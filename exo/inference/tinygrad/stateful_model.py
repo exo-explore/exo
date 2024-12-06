@@ -16,7 +16,7 @@ class ModelState:
     self.cache = cache
     self.start = start
 
-def make_prompt_state(model, shard, x):
+def make_prompt_state(x, model, shard):
   cache = [create_kv_cache(x, model.layers[i].attention.max_context, model.layers[i].attention.n_kv_heads, model.layers[i].attention.head_dim) for i in range(shard.start_layer, shard.end_layer + 1)]
 
   return ModelState(cache)
