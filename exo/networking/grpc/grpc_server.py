@@ -83,10 +83,14 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     train = request.train
     request_id = request.request_id
 
-    result = await self.node.process_example(shard, example, target, length, train, request_id)
-    if DEBUG >= 5: print(f"SendTensor tensor {shard=} {example=} {target=} {length=} {request_id=} result: {result}")
-    tensor_data = result.tobytes()
-    return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype))
+    if train and not shard.is_first_layer():
+      loss, grad = await self.node.process_example(shard, example, target, length, train, request_id)
+      tensor_data = grad.tobytes()
+      grad_tensor = node_service_pb2.Tensor(tensor_data=tensor_data, shape=grad.shape, dtype=str(grad.dtype))
+      return node_service_pb2.Loss(loss=loss, grads=grad_tensor)
+    else:
+      loss = await self.node.process_example(shard, example, target, length, train, request_id)
+      return node_service_pb2.Loss(loss=loss, grads=None)
     
   async def CollectTopology(self, request, context):
     max_depth = request.max_depth
