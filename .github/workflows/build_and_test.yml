@@ -23,6 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check user
+        run: |
+          whoami
+
       - name: Create Python directories
         run: |
           mkdir -p ${{ github.workspace }}/pythontools
