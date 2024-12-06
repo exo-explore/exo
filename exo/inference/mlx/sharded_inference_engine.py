@@ -44,7 +44,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.caches = OrderedDict()
     self.session = {}
 
-  async def poll_cache(self, request_id: str, max_caches=2):
+  async def poll_state(self, request_id: str, max_caches=2):
     if request_id in self.caches:
       self.caches.move_to_end(request_id)
     else:
@@ -52,7 +52,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       if len(self.caches) > max_caches:
         self.caches.popitem(last=False)
       self.caches[request_id] = newcache
-    return self.caches[request_id]
+    return {"cache": self.caches[request_id]}
 
   async def sample(self, x, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
     y = mx.array(x)
@@ -80,13 +80,10 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
-    #print(f"infer_tensor in <- {input_data}")
     loop = asyncio.get_running_loop()
-    cache = await self.poll_cache(request_id)
+    state = await self.poll_state(request_id)
     x = mx.array(input_data).astype(mx.int64) if self.shard.is_first_layer() else mx.array(input_data)
-    #print(f"Infer Tensor: {x=}")
-    output_data: np.ndarray = np.array(await loop.run_in_executor(self.executor, lambda: self.model(x, cache=cache)))
-    #print(f"infer_tensor out -> {output_data}")
+    output_data: np.ndarray = np.array(await loop.run_in_executor(self.executor, lambda: self.model(x, **state)))
     return output_data
 
   async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss: str = "length_masked_ce"):
