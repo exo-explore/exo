@@ -260,7 +260,7 @@ async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
           return (5, "Thunderbolt/10GbE")
 
         # Ethernet adapters
-        if 'Ethernet Adapter' in hw_port:
+        if 'Ethernet' in hw_port:
           return (4, "Ethernet")
 
         # WiFi
