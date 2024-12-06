@@ -3,6 +3,13 @@ from typing import Optional, List
 
 model_cards = {
   ### llama
+  "llama-3.3-70b": {
+    "layers": 80,
+    "repo": {
+       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.3-70B-Instruct-4bit",
+       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.3-70B-Instruct",
+    },
+  },
   "llama-3.2-1b": {
     "layers": 16,
     "repo": {
