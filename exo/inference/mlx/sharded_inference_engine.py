@@ -99,7 +99,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     l = mx.array(lengths)
     score = await loop.run_in_executor(self.executor, self.session['loss'], self.model, x, y, l)
     #print(f"evaluate out -> {score}")
-    return np.array(score)
+    return score
 
   async def ensure_train(self, shard: Shard, loss: str, opt=optim.SGD, lr=1e-5, trainable_layers=['input_layernorm', 'gate_proj']):
     await self.ensure_shard(shard)
@@ -134,7 +134,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     layers = [{k: v["weight"] for k,v in l.items() if 'weight' in v} for l in gradients if l]
     #print(layers[0])
 
-    return np.array(score).reshape(1, -1), np.array(layers[0]['input_layernorm'])
+    return score, np.array(layers[0]['input_layernorm'])
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:

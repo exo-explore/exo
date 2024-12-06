@@ -47,7 +47,7 @@ class NodeServiceStub(object):
         self.SendExample = channel.unary_unary(
                 '/node_service.NodeService/SendExample',
                 request_serializer=node__service__pb2.ExampleRequest.SerializeToString,
-                response_deserializer=node__service__pb2.Tensor.FromString,
+                response_deserializer=node__service__pb2.Loss.FromString,
                 _registered_method=True)
         self.GetInferenceResult = channel.unary_unary(
                 '/node_service.NodeService/GetInferenceResult',
@@ -143,7 +143,7 @@ def add_NodeServiceServicer_to_server(servicer, server):
             'SendExample': grpc.unary_unary_rpc_method_handler(
                     servicer.SendExample,
                     request_deserializer=node__service__pb2.ExampleRequest.FromString,
-                    response_serializer=node__service__pb2.Tensor.SerializeToString,
+                    response_serializer=node__service__pb2.Loss.SerializeToString,
             ),
             'GetInferenceResult': grpc.unary_unary_rpc_method_handler(
                     servicer.GetInferenceResult,
@@ -251,7 +251,7 @@ class NodeService(object):
             target,
             '/node_service.NodeService/SendExample',
             node__service__pb2.ExampleRequest.SerializeToString,
-            node__service__pb2.Tensor.FromString,
+            node__service__pb2.Loss.FromString,
             options,
             channel_credentials,
             insecure,
