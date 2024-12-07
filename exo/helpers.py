@@ -10,6 +10,7 @@ import uuid
 import netifaces
 from pathlib import Path
 import tempfile
+import json
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -238,39 +239,34 @@ def get_all_ip_addresses_and_interfaces():
 
 async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
   try:
-    proc = await asyncio.create_subprocess_exec('networksetup', '-listallhardwareports',
+    proc = await asyncio.create_subprocess_exec('system_profiler', 'SPNetworkDataType', '-json',
       stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     output, _ = await proc.communicate()
-    output = output.decode('utf-8')
+    data = json.loads(output.decode('utf-8'))
 
-    # Parse the output into blocks
-    blocks = output.split('\n\n')
-    for block in blocks:
-      lines = block.strip().split('\n')
-      if len(lines) < 2:
-        continue
+    for interface in data.get('SPNetworkDataType', []):
+      if interface.get('interface') == ifname:
+        hardware = interface.get('hardware', '').lower()
+        type_name = interface.get('type', '').lower()
+        name = interface.get('_name', '').lower()
 
-      # Get the Hardware Port and Device lines
-      hw_port = lines[0].split(': ', 1)[1] if ': ' in lines[0] else ''
-      device = lines[1].split(': ', 1)[1] if ': ' in lines[1] else ''
-
-      if device == ifname:
         # Thunderbolt interfaces
-        if 'Thunderbolt' in hw_port:
-          return (5, "Thunderbolt/10GbE")
+        if 'thunderbolt' in name:
+          return (5, "Thunderbolt")
 
         # Ethernet adapters
-        if 'Ethernet' in hw_port:
+        if hardware == 'ethernet' or type_name == 'ethernet':
+          if 'usb' in name:
+            return (4, "Ethernet [USB]")
           return (4, "Ethernet")
-        if 'USB' in hw_port:
-          if 'en' in ifname:
-            return (4, "Ethernet (USB Adapter)")
-          else:
-            return (4, "USB")
 
-        # WiFi
-        if hw_port == 'Wi-Fi':
+        # WiFi/AirPort
+        if hardware == 'airport' or type_name == 'airport' or 'wi-fi' in name:
           return (3, "WiFi")
+
+        # VPN interfaces
+        if type_name == 'vpn':
+          return (1, "External Virtual")
 
   except Exception as e:
     if DEBUG >= 2: print(f"Error detecting macOS interface type: {e}")
@@ -294,7 +290,7 @@ async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
 
   # Traditional detection for non-macOS systems or fallback
   if ifname.startswith(('tb', 'nx', 'ten')):
-    return (5, "Thunderbolt/10GbE")
+    return (5, "Thunderbolt")
 
   # Regular ethernet detection
   if ifname.startswith(('eth', 'en')) and not ifname.startswith(('en1', 'en0')):
