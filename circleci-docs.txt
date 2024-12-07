@@ -1,0 +1,2248 @@
+0
+1
+2
+3
+4
+8
+15
+16
+20
+24
+30
+32
+60
+150
+200
+Docs
+Go to Application
+CircleCI.comAcademyBlogCommunitySupport
+About CircleCI icon
+About CircleCI
+Getting started icon
+Getting started
+First steps
+Sign up and try
+Join teammates on CircleCI
+Create a project
+Quickstart guide
+Hello world
+YAML configuration intro
+In-app configuration editor
+Migration
+Introduction to CircleCI migration
+Migrate from AWS
+Migrate from Azure DevOps
+Migrate from Buildkite
+Migrate from GitHub Actions
+Migrate from GitLab
+Migrate from Jenkins
+Migrate from TeamCity
+Migrate from Travis CI
+Tutorials
+Node quickstart
+Python quickstart
+Go quickstart
+Configuration tutorial
+Use the Slack orb to set up notifications
+Reference
+Configuration reference
+FAQ
+Reference icon
+Concepts
+Reusable configuration reference
+Project values and variables
+API v2 reference
+API v1 reference
+Self-hosted runner API
+Optimization reference
+Insights metrics glossary
+Config policy reference
+Webhooks reference
+Frequently asked questions
+Troubleshoot
+Orchestrate and trigger icon
+Orchestrate and trigger
+Execute jobs on managed compute resources icon
+Execute jobs on managed compute resources
+Execute jobs on self-hosted runners icon
+Execute jobs on self-hosted runners
+Test icon
+Test
+Deploy icon
+Deploy
+Release icon
+Release
+Optimize icon
+Optimize
+Project Insights icon
+Project Insights
+Package and re-use config with orbs icon
+Package and re-use config with orbs
+Manage roles, permissions, and authentication icon
+Manage roles, permissions, and authentication
+Manage security and secrets icon
+Manage security and secrets
+Manage config policies icon
+Manage config policies
+Integration icon
+Integration
+Developer toolkit icon
+Developer toolkit
+Server administration v4.7 icon
+Server administration v4.7
+Server administration v4.6 icon
+Server administration v4.6
+Server administration v4.5 icon
+Server administration v4.5
+Server administration v4.4 icon
+Server administration v4.4
+Server administration v4.3 icon
+Server administration v4.3
+Server administration v4.2 icon
+Server administration v4.2
+Server administration v4.1 icon
+Server administration v4.1
+Plans and pricing icon
+Plans and pricing
+Contributing to CircleCI docs icon
+Contributing to CircleCI docs
+2 days ago
+Cloud
+Server v4.x
+Server v3.x
+Helpful Resources
+6 config optimization tips
+Intro to dynamic config
+Using dynamic config
+Validate your config using local CLI
+How to trigger a single job
+On This Page
+version
+setup
+orbs
+commands
+parameters
+executors
+jobs
+&lt;job_name&gt;
+type
+environment
+parallelism
+Executor docker / machine / macos
+docker
+Docker registry authentication
+AWS authentication
+Use OIDC
+Use environment variables
+machine
+Available Linux machine images
+Available Linux machine images on server
+Available Linux GPU machine images
+Available Android machine images
+Available Windows machine images
+Available Windows machine images on server
+Available Windows GPU machine image
+macos
+branches - DEPRECATED
+resource_class
+Self-hosted runner
+Docker execution environment
+x86
+Arm
+LinuxVM execution environment
+macOS execution environment
+macOS execution environment on server
+Windows execution environment
+GPU execution environment (Linux)
+GPU execution-environment (Windows)
+Arm VM execution-environment
+steps
+run
+Default shell options
+Background commands
+Shorthand syntax
+The when attribute
+Ending a job from within a step
+The when step
+checkout
+setup_remote_docker
+save_cache
+restore_cache
+deploy - DEPRECATED
+store_artifacts
+store_test_results
+persist_to_workspace
+attach_workspace
+add_ssh_keys
+Using pipeline values
+circleci_ip_ranges
+workflows
+&lt;workflow_name&gt;
+triggers
+schedule
+cron
+filters
+branches
+Using when in workflows
+requires
+name
+context
+Expression-based job filters
+tags
+matrix
+Excluding sets of parameters from a matrix
+Dependencies and matrix jobs
+pre-steps and post-steps
+Logic statements
+Logic statement examples
+Example full configuration
+This document is a reference for the CircleCI 2.x configuration keys that are used in the .circleci/config.yml file.
+You can see a complete config.yml in our full example.
+Key Required Type Description
+Y
+String
+2, 2.0, or 2.1 See the Reusable configuration page for an overview of 2.1 keys available to simplify your .circleci/config.yml file, reuse, and parameterized jobs.
+The version field is intended to be used in order to issue warnings for deprecation or breaking changes.
+N
+Boolean
+Designates the config.yaml for use of CircleCI’s dynamic configuration feature.
+The setup field enables you to conditionally trigger configurations from outside the primary .circleci parent directory, update pipeline parameters, or generate customized configurations.
+The orbs key is supported in version: 2.1 configuration
+Map
+A map of user-selected names to either: orb references (strings) or orb definitions (maps). Orb definitions must be the orb-relevant subset of 2.1 config. See the Creating Orbs documentation for details.
+A map of strings to executor definitions. See the
+section below.
+A map of command names to command definitions. See the
+The following example uses the node orb that exists in the certified circleci namespace. Refer to the Node orb page in the Orb Registry for more examples and information.
+version: 2.1
+orbs:
+node: circleci/node@x.y
+jobs:
+install-node-example:
+docker:
+- image: cimg/base:stable
+steps:
+- checkout
+- node/install:
+install-yarn: true
+node-version: '16.13'
+- run: node --version
+workflows:
+test_my_app:
+- install-node-example
+Documentation is available for orbs in the following sections:
+Using Orbs
+Authoring Orbs.
+Public orbs are listed in the Orb Registry.
+The commands key is supported in version: 2.1 configuration
+A command defines a sequence of steps as a map to be executed in a job, enabling you to reuse a single command definition across multiple jobs. For more information see the Reusable Config Reference Guide.
+Sequence
+A sequence of steps run inside the calling job of the command.
+A map of parameter keys. See the Parameter Syntax section of the Reusing Config document for details.
+description
+A string that describes the purpose of the command.
+Example:
+commands:
+sayhello:
+description: "A very simple command for demonstration purposes"
+parameters:
+to:
+type: string
+default: "Hello World"
+- run: echo &lt;&lt; parameters.to &gt;&gt;
+The pipeline parameters key is supported in version: 2.1 configuration
+Pipeline parameters declared for use in the configuration. See Pipeline Values and Parameters for usage details.
+A map of parameter keys. Supports string, boolean, integer and enum types. See Parameter Syntax for details.
+The executors key is supported in version: 2.1 configuration
+Executors define the execution environment in which the steps of a job will be run, allowing you to reuse a single executor definition across multiple jobs.
+Y (1)
+List
+Options for Docker executor
+Amount of CPU and RAM allocated to each container in a job.
+Options for machine executor
+Options for macOS executor
+windows
+Windows executor currently working with orbs. Check out the orb.
+shell
+Shell to use for execution command in all steps. Can be overridden by shell in each step (default: See Default Shell Options)
+working_directory
+In which directory to run the steps. Will be interpreted as an absolute path.
+A map of environment variable names and values.
+(1) One executor type should be specified per job. If more than one is set you will receive an error.
+executors:
+my-executor:
+- image: cimg/ruby:3.0.3-browsers
+my-job:
+executor: my-executor
+- run: echo "Hello executor!"
+See the Using Parameters in Executors section of the Reusing config page for examples of parameterized executors.
+A Workflow is comprised of one or more uniquely named jobs. Jobs are specified in the jobs map, see Sample config.yml for two examples of a job map. The name of the job is the key in the map, and the value is a map describing the job.
+Jobs have a maximum runtime of 1 (Free), 3 (Performance), or 5 (Scale) hours depending on pricing plan. If your jobs are timing out, consider a larger
+and/or parallelism. Additionally, you can upgrade your pricing plan or run some of your jobs concurrently using workflows.
+Each job consists of the job’s name as a key and a map as a value. A name should be case insensitive unique within a current jobs list. The value map has the following attributes:
+Job type, can be build, release or approval. If not specified, defaults to build.
+Options for the Docker executor
+Options for the machine executor
+Options for the macOS executor
+Parameters for making a job explicitly configurable in a workflow.
+A list of steps to be performed
+In which directory to run the steps. Will be interpreted as an absolute path. Default: ~/project (where project is a literal string, not the name of your specific project). Processes run during the job can use the $CIRCLE_WORKING_DIRECTORY environment variable to refer to this directory. Note: Paths written in your YAML configuration file will not be expanded; if your store_test_results.path is $CIRCLE_WORKING_DIRECTORY/tests, then CircleCI will attempt to store the test subdirectory of the directory literally named $CIRCLE_WORKING_DIRECTORY, dollar sign $ and all. working_directory will be created automatically if it doesn’t exist.
+Integer
+Number of parallel instances of this job to run (default: 1)
+This key is deprecated. Use workflows filtering to control which jobs run for which branches.
+Configure a job type. Options are release, approval, build (default). If a type is not specified, the job defaults to a build type.
+Jobs with the release type are used to connect your pipeline configuration to a release in the CircleCI releases UI. For full details, see the Releases overview page.
+The approval type is used to configure a manual approval step. No job configuration is required or allowed for an approval type job. The approval type is most commonly configured within a workflow rather than under the top-level jobs key. Only approval type jobs can have their type configured under workflows. See type under workflows section for full details.
+A map of environment variable names and values. For more information on defining and using environment variables, and the order of precedence governing the various ways they can be set, see the Environment variables page.
+This feature is used to optimize test steps. If parallelism is set to N &gt; 1, then N independent executors will be set up and each will run the steps of that job in parallel.
+You can use the CircleCI CLI to split your test suite across parallel containers so the job completes in a shorter time.
+Read more about splitting tests across parallel execution environments on the Parallelism and test splitting page.
+Refer to the Use the CircleCI CLI to split tests how-to guide.
+Follow the Test splitting tutorial.
+build:
+- image: cimg/base:2022.09
+environment:
+FOO: bar
+parallelism: 3
+resource_class: large
+working_directory: ~/my-app
+- run: go list ./... | circleci tests run --command "xargs gotestsum --junitfile junit.xml --format testname --" --split-by=timings --timings-type=name
+Job-level parameters can be used when calling a
+job
+in a
+workflow
+.
+Reserved parameter-names:
+See Parameter Syntax for definition details.
+CircleCI offers several execution environments in which to run your jobs. To specify an execution environment choose an executor, then specify and image and a resource class. An executor defines the underlying technology, environment, and operating system in which to run a job.
+Set up your jobs to run using the docker (Linux), machine (LinuxVM, Windows, GPU, Arm), or macos executor, then specify an image with the tools and packages you need, and a resource class.
+Learn more about execution environments and executors in the Introduction to Execution Environments.
+Configured by docker key which takes a list of maps:
+image
+The name of a custom Docker image to use. The first image listed under a job defines the job’s own primary container image where all steps will run.
+name defines the hostname for the container (the default is localhost), which is used for reaching secondary (service) containers. By default, all services are exposed directly on localhost. This field is useful if you would rather have a different hostname instead of localhost, for example, if you are starting multiple versions of the same service.
+entrypoint
+String or List
+The command used as executable when launching the container. entrypoint overrides the image’s
+ENTRYPOINT
+command
+The command used as PID 1 (or arguments for entrypoint) when launching the container. command overrides the image’s COMMAND. It will be used as arguments to the image ENTRYPOINT if it has one, or as the executable if the image has no ENTRYPOINT.
+user
+Which user to run commands as within the Docker container
+A map of environment variable names and values. The environment settings apply to the entrypoint/command run by the Docker container, not the job steps.
+auth
+Authentication for registries using standard docker login credentials
+aws_auth
+Authentication for AWS Elastic Container Registry (ECR)
+For a primary container, (the first container in the list) if neither command nor entrypoint is specified in the configuration, then any ENTRYPOINT and COMMAND in the image are ignored. This is because the primary container is typically only used for running the steps and not for its ENTRYPOINT, and an ENTRYPOINT may consume significant resources or exit prematurely. A custom image may disable this behavior and force the ENTRYPOINT to run.
+You can specify image versions using tags or digest. You can use any public images from any public Docker registry (defaults to Docker Hub). Learn more about specifying images on the Using the Docker Execution Environment page.
+Some registries, Docker Hub, for example, may rate limit anonymous Docker pulls. We recommend that you authenticate to pull private and public images. The username and password can be specified in the auth field. See Using Docker Authenticated Pulls for details.
+- image: buildpack-deps:trusty # primary container
+auth:
+username: mydockerhub-user
+password: $DOCKERHUB_PASSWORD # context / project UI env-var reference
+ENV: CI
+- image: mongo:2.6.8
+command: [--smallfiles]
+- image: postgres:14.2
+POSTGRES_USER: user
+- image: redis@sha256:54057dd7e125ca41afe526a877e8bd35ec2cdd33b9217e022ed37bdcf7d09673
+- image: acme-private/private-image:321
+Using an image hosted on AWS ECR
+requires authentication using AWS credentials.
+Authenticate using OpenID Connect (OIDC) using the oidc_role_arn field, as follows:
+job_name:
+- image: &lt;your-image-arn&gt;
+aws_auth:
+oidc_role_arn: &lt;your-iam-role-arn&gt;
+For steps to get set up with OIDC to pull images from AWS ECR, see the Pull and image from AWS ECR with OIDC page.
+By default, CircleCI uses the AWS credentials you provide by setting the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY project environment variables. It is also possible to set the credentials by using the aws_auth field as in the following example:
+- image: account-id.dkr.ecr.us-east-1.amazonaws.com/org/repo:0.1
+aws_access_key_id: AKIAQWERVA # can specify string literal values
+aws_secret_access_key: $ECR_AWS_SECRET_ACCESS_KEY # or project UI envar reference
+CircleCI cloud The use of machine: true is deprecated. You must specify an image to use.
+The machine executor is configured using the machine key, which takes a map:
+The virtual machine image to use. View available images. Note: This key is not supported for Linux VMs on installations of CircleCI server. For information about customizing machine executor images on CircleCI installed on your servers, see our Machine provisioner documentation.
+docker_layer_caching
+Set this to true to enable Docker layer caching.
+build: # name of your job
+machine: # executor type
+image: ubuntu-2004:current # recommended linux image - includes Ubuntu 20.04, docker 19.03.13, docker-compose 1.27.4
+# Commands run in a Linux virtual machine environment
+Specifying an image in your configuration file is strongly recommended. CircleCI supports multiple Linux machine images that can be specified in the image field. For a full list of supported image tags, refer to the following pages in the Developer Hub:
+Ubuntu-2004
+Ubuntu-2204
+More information on the software available in each image can be found in our Discuss forum
+The machine executor supports Docker Layer Caching, which is useful when you are building Docker images during your job or Workflow.
+If you are using CircleCI server, contact your system administrator for details of available Linux machine images.
+When using the Linux GPU executor, the available images are:
+linux-cuda-11:default v11.4, v11.6, v11.8 (default), Docker v20.10.24
+linux-cuda-12:default v12.0, v12.1 (default), Docker v20.10.24
+CircleCI supports running jobs on Android for testing and deploying Android applications.
+To use the Android image directly with the machine executor, add the following to your job:
+machine:
+image: android:2022.09.1
+The Android image can also be accessed using the Android orb.
+For examples, refer to the Using Android Images with the Machine Executor page.
+Specifying an image in your configuration file is strongly recommended. CircleCI supports multiple Windows machine images that can be specified in the image field.
+For a full list of supported images, refer to one of the following:
+windows-server-2022-gui
+windows-server-2019
+More information on what software is available in each image can be found in our Discuss forum
+Alternatively, use the Windows orb to manage your Windows execution environment. For examples, see the Using the Windows Execution Environment page.
+If you are using CircleCI server, contact your system administrator for details of available Windows machine images.
+When using the Windows GPU executor, the available image is:
+windows-server-2019-cuda
+Example
+image: windows-server-2019-cuda:current
+CircleCI supports running jobs on macOS
+, to allow you to build, test, and deploy apps for macOS, iOS
+, tvOS
+and watchOS
+. To run a job in a macOS virtual machine, add the macos key to the top-level configuration for your job and specify the version of Xcode you would like to use.
+xcode
+The version of Xcode that is installed on the virtual machine, see the Supported Xcode Versions section of the Testing iOS document for the complete list.
+Example: Use a macOS virtual machine with Xcode version 14.2.0:
+macos:
+xcode: "14.2.0"
+The resource_class feature allows you to configure CPU and RAM resources for each job. Resource classes are available for each execution environment, as described in the tables below.
+We implement soft concurrency limits for each resource class to ensure our system remains stable for all customers. If you are on a Performance or Custom Plan and experience queuing for certain resource classes, it is possible you are hitting these limits. Contact CircleCI support
+to request a raise on these limits for your account.
+If you do not specify a resource class, CircleCI will use a default value that is subject to change. It is best practice to specify a resource class as opposed to relying on a default.
+Java, Erlang and any other languages that introspect the /proc directory for information about CPU count may require additional configuration to prevent them from slowing down when using the CircleCI resource class feature. Programs with this issue may request 32 CPU cores and run slower than they would when requesting one core. Users of languages with this issue should pin their CPU count to their guaranteed CPU resources.
+If you want to confirm how much memory you have been allocated, you can check the cgroup memory hierarchy limit with grep hierarchical_memory_limit /sys/fs/cgroup/memory/memory.stat.
+Use the resource_class key to configure a self-hosted runner instance.
+For example:
+machine: true
+resource_class: &lt;my-namespace&gt;/&lt;my-runner&gt;
+resource_class: xlarge
+... // other config
+For credit and access information, see the Resource classes page. Resource class access is dependent on your Plan.
+Class vCPUs RAM Cloud Server
+small
+2GB
+medium
+4GB
+medium+
+6GB
+large
+8GB
+xlarge
+16GB
+2xlarge
+32GB
+2xlarge+
+40GB
+Arm on Docker For pricing information, and a list of CircleCI Docker convenience images that support Arm resource classes, see the Resource classes page.
+Arm on Docker For credit and access information see the Resource classes page. Resource class access is dependent on your Plan
+To find out which CircleCI Docker convenience images support Arm resource classes, you can refer to Docker hub
+:
+Select the image (for example, cimg/python).
+Select the tags tab.
+View what is supported under OS/ARCH for the latest tags. For example, cimg/python has linux/amd64 and linux/arm64, which means Arm is supported.
+arm.medium
+8 GB
+arm.large
+16 GB
+arm.xlarge
+32 GB
+arm.2xlarge
+64 GB
+Class vCPUs RAM Disk Size Cloud Server
+7.5 GB
+150GB
+15 GB
+image: ubuntu-2004:202010-01 # recommended linux image
+macos.m1.medium.gen1
+4 @ 3.2 GHz
+macos.m1.large.gen1
+8 @ 3.2 GHz
+12GB
+m2pro.medium
+4 @ 3.49 GHz
+m2pro.large
+8 @ 3.49 GHz
+We have deprecated support for all Intel-based macOS resources.
+The macos.x86.medium.gen2 resource class was deprecated on June 28, 2024.
+See our announcement
+for more details.
+xcode: "15.4.0"
+resource_class: m2pro.medium
+If you are working on CircleCI server v3.1 and up, you can access the macOS execution environment using self-hosted runner.
+windows.medium (default)
+15GB
+200 GB
+windows.large
+30GB
+windows.xlarge
+60GB
+windows.2xlarge
+128GB
+Using server? Check with your systems administrator whether you have access to the Windows execution environment.
+resource_class: 'windows.medium'
+image: 'windows-server-2022-gui:current'
+shell: 'powershell.exe -ExecutionPolicy Bypass'
+# Commands are run in a Windows virtual machine environment
+- run: Write-Host 'Hello, Windows'
+Class vCPUs RAM GPUs GPU model GPU Memory (GiB) Disk Size (GiB) Cloud Server
+gpu.nvidia.small
+NVIDIA Tesla P4
+gpu.nvidia.small.gen2
+NVIDIA A10G
+gpu.nvidia.small.multi
+NVIDIA Tesla T4
+gpu.nvidia.medium.multi
+gpu.nvidia.medium
+gpu.nvidia.large
+NVIDIA Tesla V100
+image: linux-cuda-12:default
+resource_class: gpu.nvidia.medium
+- run: nvidia-smi
+- run: docker run --gpus all nvidia/cuda:9.0-base nvidia-smi
+See the Available Linux GPU images section for the full list of available images.
+windows.gpu.nvidia.medium
+win: circleci/windows@5.0.0
+executor: win/server-2019-cuda
+- run: '&"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"'
+(2) This resource requires review by our support team. Open a support ticket
+if you would like to request access.
+arm.medium (default)
+100 GB
+64GB
+Using server? Check with your systems administrator whether you have access to the Arm execution environment.
+image: ubuntu-2004:202101-01
+resource_class: arm.medium
+- run: uname -a
+- run: echo "Hello, Arm!"
+The steps setting in a job should be a list of single key/value pairs, the key of which indicates the step type. The value may be either a configuration map or a string (depending on what that type of step requires). For example, using a map:
+working_directory: ~/canary-python
+- run:
+name: Running tests
+command: make test
+Here run is a step type. The name attribute is used by the UI for display purposes. The command attribute is specific for run step and defines command to execute.
+Some steps may implement a shorthand semantic. For example, run may be also be called like this:
+- run: make test
+In its short form, the run step allows us to directly specify which command to execute as a string value. In this case step itself provides default suitable values for other attributes (name here will have the same value as command, for example).
+Another shorthand, which is possible for some steps, is to use the step name as a string instead of a key/value pair:
+In this case, the checkout step will check out project source code into the job’s
+In general all steps can be described as:
+&lt;step_type&gt;
+Map or String
+A configuration map for the step or some string whose semantics are defined by the step.
+Each built-in step is described in detail below.
+Used for invoking all command-line programs, taking either a map of configuration values, or, when called in its short-form, a string that will be used as both the command and name. Run commands are executed using non-login shells by default, so you must explicitly source any dotfiles as part of the command.
+the run step replaces the deprecated deploy step. If your job has a parallelism of 1, the deprecated deploy step can be swapped out directly for the run step. If your job has parallelism &gt; 1, see Migrate from deploy to run.
+Command to run via the shell
+Title of the step to be shown in the CircleCI UI (default: full command)
+Shell to use for execution command (default: See Default Shell Options)
+Additional environmental variables, locally scoped to command
+background
+Whether or not this step should run in the background (default: false)
+In which directory to run this step. Will be interpreted relative to the
+of the job). (default: .)
+no_output_timeout
+Elapsed time the command can run without output. The string is a decimal with unit suffix, such as "20m", "1.25h", "5s". The default is 10 minutes and the maximum is governed by the maximum time a job is allowed to run.
+when
+Specify when to enable or disable the step. Takes the following values: always, on_success, on_fail (default: on_success)
+Each run declaration represents a new shell. It is possible to specify a multi-line command, each line of which will be run in the same shell:
+command: |
+echo Running test
+mkdir -p /tmp/test-results
+make test
+You can also configure commands to run in the background if you do not want to wait for the step to complete before moving on to subsequent run steps.
+For jobs that run on Linux, the default value of the shell option is /bin/bash -eo pipefail if /bin/bash is present in the build container. Otherwise it is /bin/sh -eo pipefail. The default shell is not a login shell (--login or -l are not specified). Hence, the shell will not source your ~/.bash_profile, ~/.bash_login, ~/.profile files.
+For jobs that run on macOS, the default shell is /bin/bash --login -eo pipefail. The shell is a non-interactive login shell. The shell will execute /etc/profile/ followed by ~/.bash_profile before every step.
+For more information about which files are executed when Bash is invocated, see the
+INVOCATION
+section of the
+bash
+manpage
+Descriptions of the -eo pipefail options are provided below.
+-e
+Exit immediately if a pipeline (which may consist of a single simple command), a subshell command enclosed in parentheses, or one of the commands executed as part of a command list enclosed by braces exits with a non-zero status.
+So if in the previous example mkdir failed to create a directory and returned a non-zero status, then command execution would be terminated, and the whole step would be marked as failed. If you desire the opposite behaviour, you need to add set +e in your command or override the default shell in your configuration map of run. For example:
+set +e
+shell: /bin/sh
+-o pipefail
+If pipefail is enabled, the pipeline’s return status is the value of the last (rightmost) command to exit with a non-zero status, or zero if all commands exit successfully. The shell waits for all commands in the pipeline to terminate before returning a value.
+- run: make test | tee test-output.log
+If make test fails, the -o pipefail option will cause the whole step to fail. Without -o pipefail, the step will always run successfully because the result of the whole pipeline is determined by the last command (tee test-output.log), which will always return a zero status.
+If make test fails the rest of pipeline will be executed.
+If you want to avoid this behaviour, you can specify set +o pipefail in the command or override the whole shell (see example above).
+In general, we recommend using the default options (-eo pipefail) because they show errors in intermediate commands and simplify debugging job failures. For convenience, the UI displays the used shell and all active options for each run step.
+For more information, see the Using Shell Scripts document.
+The background attribute enables you to configure commands to run in the background. Job execution will immediately proceed to the next step rather than waiting for return of a command with the background attribute set to true. The following example shows the configuration for running the X virtual framebuffer in the background which is commonly required to run Selenium tests:
+name: Running X virtual framebuffer
+command: Xvfb :99 -screen 0 1280x1024x24
+background: true
+run has a very convenient shorthand syntax:
+# shorthanded command can also have multiple lines
+- run: |
+In this case, command and name become the string value of run, and the rest of the config map for that run have their default values.
+By default, CircleCI will execute job steps one at a time, in the order that they are defined in config.yml, until a step fails (returns a non-zero exit code). After a command fails, no further job steps will be executed.
+Adding the when attribute to a job step allows you to override this default behaviour, and selectively run or skip steps depending on the status of the job.
+The default value of on_success means that the step will run only if all of the previous steps have been successful (returned exit code 0).
+A value of always means that the step will run regardless of the exit status of previous steps. This is useful if you have a task that you want to run regardless of whether the previous steps are successful or not. For example, you might have a job step that needs to upload logs or code-coverage data somewhere.
+A value of on_fail means that the step will run only if one of the preceding steps has failed (returns a non-zero exit code). It is common to use on_fail if you want to store some diagnostic data to help debug test failures, or to run custom notifications about the failure, such as sending emails or triggering alerts.
+Some steps, such as store_artifacts and store_test_results will always run, even if a step has failed (returned a non-zero exit code) previously. The when attribute, store_artifacts and store_test_results are not run if the job has been killed by a cancel request or has reached the runtime timeout limit.
+name: Upload CodeCov.io Data
+command: bash &lt;(curl -s https://codecov.io/bash) -F unittests
+when: always # Uploads code coverage results, pass or fail
+A job can exit without failing by using run: circleci-agent step halt. However, if a step within the job is already failing then the job will continue to fail. This can be useful in situations where jobs need to conditionally execute.
+Here is an example where halt is used to avoid running a job on the develop branch:
+run: |
+if [ "$CIRCLE_BRANCH" = "develop" ]; then
+circleci-agent step halt
+fi
+The when and unless steps are supported in version: 2.1 configuration
+A conditional step consists of a step with the key when or unless. Under the when key are the subkeys condition and steps. The purpose of the when step is customizing commands and job configuration to run on custom conditions (determined at config-compile time) that are checked before a workflow runs. See the Conditional Steps section of the reusable configuration reference for more details.
+condition
+Logic
+A logic statement
+A list of steps to execute when the condition is true
+jobs: # conditional steps may also be defined in `commands:`
+job_with_optional_custom_checkout:
+custom_checkout:
+default: ""
+image: ubuntu-2004:202107-02
+- when:
+condition: &lt;&lt;parameters.custom_checkout&gt;&gt;
+- run: echo "my custom checkout"
+- unless:
+build-test-deploy:
+- job_with_optional_custom_checkout:
+custom_checkout: "any non-empty string is truthy"
+- job_with_optional_custom_checkout
+Blobless clones
+To help improve the overall performance of code checkouts from Git source code hosts, a "blobless" strategy is being rolled out. This reduces the amount of data fetched from the remote, by asking the remote to filter out objects that are not attached to the current commit.
+While this improves performance in most cases, if a downstream step requires those objects to exist for scanning or comparisons, it can cause failures. To work around these potential problems, a fetch directly after a checkout will ensure the required data is available:
+- run: git fetch
+A special step used to check out source code to the configured path (defaults to the working_directory). The reason this is a special step is because it is more of a helper function designed to simplify the process of checking out code. If you require doing git over HTTPS you should not use this step as it configures git to checkout over SSH.
+path
+Checkout directory. Will be interpreted relative to the
+If path already exists and is:
+A git repository - step will not clone whole repository, instead will fetch origin
+NOT a git repository - step will fail.
+In the case of checkout, the step type is just a string with no additional attributes:
+The checkout command automatically adds the required authenticity keys for interacting with GitHub and Bitbucket over SSH, which is detailed further in our integration guide — this guide will also be helpful if you wish to implement a custom checkout command.
+CircleCI does not check out submodules. If your project requires submodules, add run steps with appropriate commands as shown in the following example:
+- run: git submodule sync
+- run: git submodule update --init
+The checkout step will configure Git to skip automatic garbage collection. If you are caching your .git directory with
+and would like to use garbage collection to reduce its size, you may wish to use a
+step with command git gc before doing so.
+Allows Docker commands to be run locally. See Running Docker commands for details.
+- image: cimg/base:2022.06
+# ... steps for building/testing app ...
+- setup_remote_docker:
+version: default
+boolean
+Set this to true to enable Docker Layer Caching in the Remote Docker Environment (default: false)
+Version string of Docker you would like to use (default: 24.0.9). View the list of supported Docker versions here.
+setup_remote_docker is not compatible with the machine executor. See Docker Layer Caching in Machine Executor for information on how to enable DLC with the machine executor.
+The version key is not currently supported on CircleCI server. Contact your system administrator for information about the Docker version installed in your remote Docker environment. If you are on server 4.x, you can find the default AWS AMI here.
+Generates and stores a cache of a file or directory of files such as dependencies or source code in our object storage. Later jobs can restore this cache. Learn more on the Caching Dependencies page.
+Cache retention can be customized on the CircleCI web app
+by navigating to Plan Usage Controls.
+paths
+List of directories which should be added to the cache
+key
+Unique identifier for this cache
+Title of the step to be shown in the CircleCI UI (default: "Saving Cache")
+The cache for a specific key is immutable and cannot be changed once written.
+If the cache for the given key already exists it will not be modified, and job execution will proceed to the next step.
+When storing a new cache, the key value may contain special, templated, values for your convenience:
+Template Description
+{{ .Branch }}
+The VCS branch currently being built.
+{{ .BuildNum }}
+The CircleCI build number for this build.
+{{ .Revision }}
+The VCS revision currently being built.
+{{ .CheckoutKey }}
+The SSH key used to checkout the repository.
+{{ .Environment.variableName }}
+The environment variable variableName (supports any environment variable exported by CircleCI or added to a specific context--not any arbitrary environment variable).
+{{ checksum "filename" }}
+A base64 encoded SHA256 hash of the given filename’s contents. This should be a file committed in your repository and may also be referenced as a path that is absolute or relative from the current working directory. Good candidates are dependency manifests, such as package-lock.json, pom.xml or project.clj. It is important that this file does not change between restore_cache and save_cache, otherwise the cache will be saved under a cache key different than the one used at restore_cache time.
+{{ epoch }}
+The current time in seconds since the UNIX epoch.
+{{ arch }}
+The OS and CPU information. Useful when caching compiled binaries that depend on OS and CPU architecture, for example, darwin amd64 versus linux i386/32-bit.
+During step execution, the templates above will be replaced by runtime values and use the resultant string as the key.
+Template examples:
+myapp-{{ checksum "package-lock.json" }} - cache will be regenerated every time something is changed in package-lock.json file, different branches of this project will generate the same cache key.
+myapp-{{ .Branch }}-{{ checksum "package-lock.json" }} - same as the previous one, but each branch will generate separate cache
+myapp-{{ epoch }} - every run of a job will generate a separate cache
+While choosing suitable templates for your cache key, keep in mind that cache saving is not a free operation, because it will take some time to upload the cache to our storage. Best practice is to have a key that generates a new cache only if something actually changed and avoid generating a new one every time a job is run.
+Given the immutability of caches, it might be helpful to start all your cache keys with a version prefix v1-.... That way you will be able to regenerate all your caches just by incrementing the version in this prefix.
+- save_cache:
+key: v1-myapp-{{ arch }}-{{ checksum "project.clj" }}
+paths:
+- /home/ubuntu/.m2
+key: v1-{{ checksum "yarn.lock" }}
+- node_modules/workspace-a
+- node_modules/workspace-c
+Wildcards are not currently supported in save_cache paths. Visit the Ideas board
+and vote for this feature if it would be useful for you or your organization.
+In some instances, a workaround for this is to save a particular workspace to cache:
+Restores a previously saved cache based on a key. Cache needs to have been saved first for this key using the
+step. Learn more in the caching documentation.
+Single cache key to restore
+keys
+List of cache keys to lookup for a cache to restore. Only first existing key will be restored.
+Title of the step to be shown in the CircleCI UI (default: "Restoring Cache")
+(1) at least one attribute has to be present. If key and keys are both given, key will be checked first, and then keys.
+A key is searched against existing keys as a prefix.
+When there are multiple matches, the most recent match will be used, even if there is a more precise match.
+key: v1-myapp-cache
+- ~/d1
+key: v1-myapp-cache-new
+- ~/d2
+- run: rm -f ~/d1 ~/d2
+- restore_cache:
+In this case cache v1-myapp-cache-new will be restored because it’s the most recent match with v1-myapp-cache prefix even if the first key (v1-myapp-cache) has exact match.
+For more information on key formatting, see the key section of
+step.
+When CircleCI encounters a list of keys, the cache will be restored from the first one matching an existing cache. Most probably you would want to have a more specific key to be first (for example, cache for exact version of package-lock.json file) and more generic keys after (for example, any cache for this project). If no key has a cache that exists, the step will be skipped with a warning.
+A path is not required here because the cache will be restored to the location from which it was originally saved.
+keys:
+- v1-myapp-{{ arch }}-{{ checksum "project.clj" }}
+# if cache for exact version of `project.clj` is not present then load any most recent one
+- v1-myapp-
+# ... Steps building and testing your application ...
+# cache will be saved only once for each version of `project.clj`
+- /foo
+See
+for current processes. If you have parallelism &gt; 1 in your job, see the Migrate from deploy to run guide.
+Step to store artifacts (for example logs, binaries, etc) to be available in the web app or through the API. See the Uploading Artifacts page for more information.
+Directory in the primary container to save as job artifacts
+destination
+Prefix added to the artifact paths in the artifacts API (default: the directory of the file specified in path)
+There can be multiple store_artifacts steps in a job. Using a unique prefix for each step prevents them from overwriting files.
+Artifact storage retention can be customized on the CircleCI web app
+name: Build the Jekyll site
+command: bundle exec jekyll build --source jekyll --destination jekyll/_site/docs/
+- store_artifacts:
+path: jekyll/_site/docs/
+destination: circleci-docs
+Special step used to upload and store test results for a build. Test results are visible on the CircleCI web application under each build’s Test Summary section. Storing test results is useful for timing analysis of your test suites. For more information on storing test results, see the Collecting Test Data page.
+It is also possible to store test results as build artifacts. For steps, refer to the
+step section.
+Path (absolute, or relative to your working_directory) to directory containing JUnit XML test metadata files, or to a single test file.
+Directory structure:
+test-results
+├── jest
+│ └── results.xml
+├── mocha
+└── rspec
+└── results.xml
+config.yml syntax:
+- store_test_results:
+path: test-results
+Special step used to persist a temporary file to be used by another job in the workflow. For more information on using workspaces, see the Using Workspaces to Share Data Between Jobs page.
+persist_to_workspace adopts the storage settings from the storage customization controls on the CircleCI web app. If no custom setting is provided, persist_to_workspace defaults to 15 days.
+Workspace storage retention can be customized on the CircleCI web app
+root
+Either an absolute path or a path relative to working_directory
+Glob identifying file(s), or a non-glob path to a directory to add to the shared workspace. Interpreted as relative to the workspace root. Must not be the workspace root itself.
+The root key is a directory on the container which is taken to be the root directory of the workspace. The path values are all relative to the root.
+Example for root Key
+For example, the following step syntax persists the specified paths from /tmp/dir into the workspace, relative to the directory /tmp/dir.
+- persist_to_workspace:
+root: /tmp/dir
+- foo/bar
+- baz
+After this step completes, the following directories are added to the workspace:
+/tmp/dir/foo/bar
+/tmp/dir/baz
+Example for paths Key
+root: /tmp/workspace
+- target/application.jar
+- build/*
+The paths list uses Glob from Go, and the pattern matches filepath.Match
+pattern:
+{ term }
+term:
+'*' matches any sequence of non-Separator characters
+'?' matches any single non-Separator character
+'[' [ '^' ] { character-range }
+']' character class (must be non-empty)
+c matches character c (c != '*', '?', '\\', '[')
+'\\' c matches character c
+character-range:
+c matches character c (c != '\\', '-', ']')
+lo '-' hi matches character c for lo &lt;= c &lt;= hi
+The Go documentation states that the pattern may describe hierarchical names such as /usr/*/bin/ed (assuming the Separator is '/').
+Everything must be relative to the work space root directory.
+Special step used to attach the workflow’s workspace to the current container. The full contents of the workspace are downloaded and copied into the directory the workspace is being attached at. For more information on using workspaces, see the Using workspaces page.
+at
+Directory to attach the workspace to.
+- attach_workspace:
+at: /tmp/workspace
+The lifetime of artifacts, workspaces, and caches can be customized on the CircleCI web app
+by navigating to Plan Usage Controls. Here you can control the storage retention periods for these objects. If no storage period is set, the default storage retention period of artifacts is 30 days, while the default storage retention period of workspaces and caches is 15 days.
+Special step that adds SSH keys from a project’s settings to a container. Also configures SSH to use these keys. For more information on SSH keys see the Create additional GitHub SSH keys page.
+Using server? only MD5 fingerprints are supported. In CircleCI in Project Settings SSH keys Additional SSH keys the MD5 fingerprint will be visible. SHA256 support is planned for an upcoming server release.
+fingerprints
+List of fingerprints corresponding to the keys to be added (default: all keys added)
+- add_ssh_keys:
+fingerprints:
+- "b7:35:a6:4e:9b:0d:6d:d4:78:1e:9a:97:2a:66:6b:be"
+- "SHA256:NPj4IcXxqQEKGXOghi/QbG2sohoNfvZ30JwCcdSSNM0"
+Even though CircleCI uses ssh-agent to sign all added SSH keys, you must use the add_ssh_keys key to actually add keys to a container.
+Pipeline values are available to all pipeline configurations and can be used without previous declaration. For a list of pipeline values, see the Pipeline values and parameters page.
+- image: cimg/node:17.2.0
+IMAGETAG: latest
+working_directory: ~/main
+- run: echo "This is pipeline ID &lt;&lt; pipeline.id &gt;&gt;"
+A paid account on a Performance or Scale Plan is required to access IP ranges.
+Enables jobs to go through a set of well-defined IP address ranges. See IP ranges for details.
+circleci_ip_ranges: true # opts the job into the IP ranges feature
+- image: curlimages/curl
+- run: echo “Hello World”
+build-workflow:
+- build
+Used for orchestrating all jobs. Each workflow consists of the workflow name as a key and a map as a value. A name should be unique within the current config.yml. The top-level keys for the Workflows configuration are version and jobs. For more information, see the Using Workflows to Orchestrate Jobs page.
+The workflows version key is not required for version: 2.1 configuration
+The Workflows version field is used to issue warnings for deprecation or breaking changes.
+Y if config version is 2
+Should currently be 2
+A unique name for your workflow.
+Specifies which triggers will cause this workflow to be executed. Default behavior is to trigger the workflow when pushing to a branch.
+Array
+Should currently be schedule.
+nightly:
+triggers:
+- schedule:
+cron: "0 0 * * *"
+filters:
+branches:
+only:
+- main
+- beta
+- test
+Scheduled workflows are not available for projects integrated through the GitHub App, GitLab or Bitbucket Data Center.
+The scheduled workflows feature is set to be deprecated. Using scheduled pipelines rather than scheduled workflows offers several benefits. Visit the scheduled pipelines migration guide to find out how to migrate existing scheduled workflows to scheduled pipelines. If you would like to set up scheduled pipelines from scratch, visit the Scheduled pipelines page.
+A workflow may have a schedule indicating it runs at a certain time, for example a nightly build that runs every day at 12am UTC:
+The cron key is defined using POSIX crontab syntax.
+See the crontab man page
+Trigger filters can have the key branches.
+A map defining rules for execution on specific branches
+The branches key controls whether the current branch should have a schedule trigger created for it, where current branch is the branch containing the config.yml file with the trigger stanza. That is, a push on the main branch will only schedule a workflow for the main branch.
+Branches can have the keys only and ignore which each map to a single string naming a branch. You may also use regular expressions to match against branches by enclosing them with `/’s, or map to a list of such strings. Regular expressions must match the entire string.
+Any branches that match only will run the job.
+Any branches that match ignore will not run the job.
+If neither only nor ignore are specified then all branches will run the job. If both only and ignore are specified, the only is used and ignore will have no effect.
+commit:
+- deploy
+- /^release\/.*/
+- coverage
+only 1
+String, or List of Strings
+Either a single branch specifier, or a list of branch specifiers
+ignore 1
+1: One of either only or ignore branch filters must be specified. If both are present, only is used.
+Using when or unless under workflows is supported in version: 2.1 configuration. Workflows are always run unless there is a when or unless filter that prevents the workflow from being run. If you want a workflow to run in every pipeline, do not add a when or unless filter.
+You may use a when clause (the inverse clause unless is also supported) under a workflow declaration with a logic statement to determine whether or not to run that workflow.
+The example configuration below uses a pipeline parameter, run_integration_tests to drive the integration_tests workflow.
+run_integration_tests:
+type: boolean
+default: false
+integration_tests:
+when: &lt;&lt; pipeline.parameters.run_integration_tests &gt;&gt;
+- mytestjob
+...
+This example prevents the workflow integration_tests from running unless the tests are invoked explicitly when the pipeline is triggered with the following in the POST body:
+{
+"parameters": {
+"run_integration_tests": true
+}
+Refer to the Workflows for more examples and conceptual information.
+A job can have the keys requires, name, context, type, and filters.
+A list of jobs to run with their dependencies
+A job name that exists in your config.yml.
+Jobs are run concurrently by default, so you must explicitly require any dependencies by their job name if you need some jobs to run sequentially.
+A list of jobs that must succeed for the job to start. Note: When jobs in the current workflow that are listed as dependencies are not executed (due to a filter function for example), their requirement as a dependency for other jobs will be ignored by the requires option. However, if all dependencies of a job are filtered, then that job will not be executed either.
+The name key can be used to invoke reusable jobs across any number of workflows. Using the name key ensures numbers are not appended to your job name (for example, sayhello-1 , sayhello-2, etc.). The name you assign to the name key needs to be unique, otherwise the numbers will still be appended to the job name.
+A replacement for the job name. Useful when calling a job multiple times. If you want to invoke the same job multiple times, and a job requires one of the duplicate jobs, this key is required. (2.1 only)
+Jobs may be configured to use global environment variables set for an organization, see the Contexts document for adding a context in the application settings.
+String/List
+The name of the context(s). The initial default name is org-global. Each context name must be unique. If using CircleCI server, only a single context per workflow is supported. Note: A maximum of 100 unique contexts across all workflows is allowed.
+A job may have a type of approval indicating it must be manually approved before downstream jobs may proceed. For more information see the Using workflows to orchestrate jobs page.
+Jobs run in the dependency order until the workflow processes a job with the type: approval key followed by a job on which it depends, for example:
+my-workflow:
+- test:
+requires:
+- hold:
+type: approval
+- deploy:
+- hold
+An approval job can have any name. In the example above the approval job is named hold. The name you choose for an approval job should not be used to define a job in the main configuration. An approval job only exists as a workflow orchestration devise.
+Filter job execution within a workflow based on the following:
+Branch
+Tag
+Expression-based condition
+Job filters can have the keys branches or tags.
+Workflows will ignore job-level branching. If you use job-level branching and later add workflows, you must remove the branching at the job level and instead declare it in the workflows section of your config.yml.
+A map or string to define rules for job execution. Branch and tag filters require a map. Expression-based filters require a string.
+The following is an example of how the CircleCI documentation project uses a regular expression to filter running a job in a workflow only on a specific branch:
+# ...
+build-deploy:
+- js_build
+- build_server_pdfs: # &lt;&lt; the job to conditionally run based on the filter-by-branch-name.
+only: /server\/.*/ # the job build_server_pdfs will only run when the branch being built starts with server/
+You can read more about using regular expressions in your config in the Using workflows to schedule jobs page.
+Expression-based job filters allow you to conditionally run jobs based on the following:
+Pipeline values
+Pipeline parameters
+An expression-based job filter is a rule that is evaluated against pipeline values and parameters to decide whether a job should run.
+Using expression-based job filters is one way to optimize your pipelines to lower costs, decrease time to feedback, or run specific jobs based on the context of the source of change.
+deploy:
+- init-service
+- build-service-image:
+- dry-run-service:
+filters: pipeline.git.branch != "main" and pipeline.git.branch != "canary"
+- publish-service:
+- build-service-image
+- test-service
+filters: pipeline.git.branch == "main" or pipeline.git.tag starts-with "release"
+- deploy-service:
+context:
+- org-global
+- publish-service
+filters: pipeline.git.branch == "main" and pipeline.git.commit.subject starts-with "DEPLOY:"
+Examples
+Only run the job on the project’s main branch:
+filters: pipeline.git.branch == "main"
+Only run the job on the project’s main branch, or branches starting with integration-test:
+filters: pipeline.git.branch == "main" or pipeline.git.branch starts-with "integration-test"
+Only run the job on the main branch, and disallow use with pipelines triggered with unversioned configuration:
+filters: pipeline.git.branch == "main" and not (pipeline.config_source starts-with "api")
+Use pipeline parameters and the pipeline value pipeline.git.branch to run a job only on specific branches or when triggered via the API with a pipeline parameter set to true:
+run-storybook-tests:
+# jobs configuration ommitted for brevity
+- setup
+- storybook-tests:
+filters: |
+pipeline.parameters.run-storybook-tests
+or pipeline.git.branch == "dry-run-deploy"
+or pipeline.git.branch starts-with "deploy"
+You can use the API to trigger a pipeline with a pipeline parameter set to true:
+curl -X POST https://circleci.com/api/v2/project/circleci/&lt;org-id&gt;/&lt;project-id&gt;/pipeline/run \
+--header "Circle-Token: $CIRCLE_TOKEN" \
+--header "content-type: application/json" \
+--data {
+"definition_id": "&lt;pipeline-definition-id&gt;",
+"config": {"branch": "&lt;your-branch-name&gt;"},
+"checkout": {"branch": "&lt;your-branch-name&gt;"},
+"parameters": {"run-storybook-tests": "true"}
+Operators
+The operators you can use for expression-based job filters are described in the following table. You can also group sub-expressions with parentheses (, ). as in the examples above.
+Operator type Operators Description
+Logical
+and, or
+These are short-circuiting boolean operators.
+Equality
+==, !=
+String, numeric, and boolean equality. If the operands are of different types then == will evaluate false, and != will evaluate true.
+starts-with
+String prefix equality, "hello world" starts-with "hello" evaluates as true. It is an error to use a non-string type as an operand.
+Numeric comparison
+&gt;=, &gt;, ⇐, &lt;
+Numeric comparisons. It is an error to use a non-numeric type as an operand.
+Negation
+not
+Boolean negation.
+Note that not has very high precedence and so binds very tightly. Use sub-expressions to apply not to more complex expressions. For example, with foo being true and bar being false:
+not foo and bar evaluates to false
+not (foo and bar) evaluates to true
+The branches filter can have the keys only and ignore, which map to a single string naming a branch. You may also use regular expressions to match against branches by enclosing them with slashes, or map to a list of such strings. Regular expressions must match the entire string.
+If neither only nor ignore are specified then all branches will run the job.
+If both only and ignore are specified the only is considered before ignore.
+A map defining rules for execution on specific branches.
+only
+String, or list of strings
+Either a single branch specifier, or a list of branch specifiers.
+ignore
+dev_stage_pre-prod:
+- test_dev:
+filters: # using regex filters requires the entire branch to match
+only: # only branches matching the below regex filters will run
+- dev
+- /user-.*/
+- test_stage:
+only: stage
+- test_pre-prod:
+only: /pre-prod(?:-.+)?$/
+CircleCI does not run workflows for tags unless you explicitly specify tag filters. Additionally, if a job requires any other jobs (directly or indirectly), you must specify tag filters for those jobs.
+Tags can have the keys only and ignore. You may also use regular expressions to match against tags by enclosing them with slashes, or map to a list of such strings. Regular expressions must match the entire string. Both lightweight and annotated tags are supported.
+Any tags that match only will run the job.
+Any tags that match ignore will not run the job.
+If neither only nor ignore are specified then the job is skipped for all tags.
+A map defining rules for execution on specific tags
+Either a single tag specifier, or a list of tag specifiers
+For more information, see the Executing workflows for a git tag section of the Workflows page.
+untagged-build:
+tagged-build:
+- build:
+tags:
+only: /^v.*/
+The matrix key is supported in version: 2.1 configuration
+The matrix stanza allows you to run a parameterized job multiple times with different arguments. For more information see the how-to guide on Using Matrix Jobs. In order to use the matrix stanza, you must use parameterized jobs.
+A map of parameter names to every value the job should be called with
+exclude
+A list of argument maps that should be excluded from the matrix
+alias
+An alias for the matrix, usable from another job’s requires stanza. Defaults to the name of the job being executed
+The following is a basic example of using matrix jobs.
+workflow:
+matrix:
+version: ["0.1", "0.2", "0.3"]
+platform: ["macos", "windows", "linux"]
+This expands to 9 different build jobs, and could be equivalently written as:
+name: build-macos-0.1
+version: 0.1
+platform: macos
+name: build-macos-0.2
+version: 0.2
+name: build-macos-0.3
+version: 0.3
+name: build-windows-0.1
+platform: windows
+- ...
+Sometimes you may wish to run a job with every combination of arguments except some value or values. You can use an exclude stanza to achieve this:
+a: [1, 2, 3]
+b: [4, 5, 6]
+exclude:
+- a: 3
+b: 5
+The matrix above would expand into 8 jobs: every combination of the parameters a and b, excluding {a: 3, b: 5}
+To require an entire matrix (every job within the matrix), use its alias. The alias defaults to the name of the job being invoked.
+version: ["0.1", "0.2"]
+- another-job:
+This means that another-job will require both deploy jobs in the matrix to finish before it runs.
+Additionally, matrix jobs expose their parameter values via &lt;&lt; matrix.* &gt;&gt; which can be used to generate more complex workflows. For example, here is a deploy matrix where each job waits for its respective build job in another matrix.
+name: build-v&lt;&lt; matrix.version &gt;&gt;
+name: deploy-v&lt;&lt; matrix.version &gt;&gt;
+- build-v&lt;&lt; matrix.version &gt;&gt;
+This workflow will expand to:
+name: build-v0.1
+name: build-v0.2
+name: deploy-v0.1
+- build-v0.1
+name: deploy-v0.2
+- build-v0.2
+Pre-steps and post-steps are supported in version: 2.1 configuration
+Every job invocation in a workflow may optionally accept two special arguments: pre-steps and post-steps.
+Steps under pre-steps are executed before any of the other steps in the job. The steps under post-steps are executed after all of the other steps.
+Pre and post steps allow you to execute steps in a given job without modifying the job. This is useful, for example, to run custom setup steps before job execution.
+bar:
+command: echo "building"
+command: echo "testing"
+- bar:
+pre-steps: # steps to run before steps defined in the job bar
+command: echo "install custom dependency"
+post-steps: # steps to run after steps defined in the job bar
+command: echo "upload artifact to s3"
+Certain dynamic configuration features accept logic statements as arguments. Logic statements are evaluated to boolean values at configuration compilation time, that is, before the workflow is run. The group of logic statements includes:
+Type Arguments true if Example
+YAML literal
+None
+is truthy
+true/42/"a string"
+YAML alias
+resolves to a truthy value
+*my-alias
+Pipeline Value
+&lt;&lt; pipeline.git.branch &gt;&gt;
+Pipeline Parameter
+&lt;&lt; pipeline.parameters.my-parameter &gt;&gt;
+and
+N logic statements
+all arguments are truthy
+and: [ true, true, false ]
+or
+any argument is truthy
+or: [ false, true, false ]
+1 logic statement
+the argument is not truthy
+not: true
+equal
+N values
+all arguments evaluate to equal values
+equal: [ 42, &lt;&lt; pipeline.number &gt;&gt;]
+matches
+pattern and value
+value matches the pattern
+matches: { pattern: "^feature-.$", value: &lt;&lt; pipeline.git.branch &gt;&gt; }+
+The following logic values are considered falsy:
+false
+null
+NaN
+empty strings ("")
+statements with no arguments
+All other values are truthy. Also note that using logic with an empty list will cause a validation error.
+Logic statements always evaluate to a boolean value at the top level, and coerce as necessary. They can be nested in an arbitrary fashion, according to their argument specifications, and to a maximum depth of 100 levels.
+matches uses Java regular expressions
+for its pattern. A full match pattern must be provided, prefix matching is not an option. Though, it is recommended to enclose a pattern in ^ and $ to avoid accidental partial matches.
+When using logic statements at the workflow level, do not include the condition: key (the condition key is only needed for job level logic statements).
+when:
+or:
+- equal: [ main, &lt;&lt; pipeline.git.branch &gt;&gt; ]
+- equal: [ staging, &lt;&lt; pipeline.git.branch &gt;&gt; ]
+and:
+- not:
+matches:
+pattern: "^main$"
+value: &lt;&lt; pipeline.git.branch &gt;&gt;
+- or:
+- equal: [ canary, &lt;&lt; pipeline.git.tag &gt;&gt; ]
+- &lt;&lt; pipeline.parameters.deploy-canary &gt;&gt;
+linux-13:
+- image: cimg/node:13.13
+macos: &macos-executor
+xcode: 14.2.0
+test:
+os:
+type: executor
+node-version:
+executor: &lt;&lt; parameters.os &gt;&gt;
+condition:
+equal: [ *macos-executor, &lt;&lt; parameters.os &gt;&gt; ]
+- run: echo &lt;&lt; parameters.node-version &gt;&gt;
+- run: echo 0
+all-tests:
+os: macos
+node-version: "13.13.0"
+Using Docker? Authenticating Docker pulls from image registries is recommended when using the Docker execution environment. Authenticated pulls allow access to private Docker images, and may also grant higher rate limits, depending on your registry provider. For further information see Using Docker authenticated pulls.
+- image: ubuntu:14.04
+command: [mongod, --smallfiles]
+# some containers require setting environment variables
+- image: rabbitmq:3.5.4
+TEST_REPORTS: /tmp/test-reports
+working_directory: ~/my-project
+command: echo 127.0.0.1 devhost | sudo tee -a /etc/hosts
+# Create Postgres users and database
+# Note the YAML heredoc '|' for nicer formatting
+sudo -u root createuser -h localhost --superuser ubuntu &&
+sudo createdb -h localhost test_db
+- v1-my-project-{{ checksum "project.clj" }}
+- v1-my-project-
+SSH_TARGET: "localhost"
+TEST_ENV: "linux"
+set -xu
+mkdir -p ${TEST_REPORTS}
+run-tests.sh
+cp out/tests/*.xml ${TEST_REPORTS}
+mkdir -p /tmp/artifacts
+create_jars.sh &lt;&lt; pipeline.number &gt;&gt;
+cp *.jar /tmp/artifacts
+key: v1-my-project-{{ checksum "project.clj" }}
+- ~/.m2
+# Save artifacts
+path: /tmp/artifacts
+destination: build
+# Upload test results
+path: /tmp/test-reports
+deploy-stage:
+working_directory: /tmp/my-project
+name: Deploy if tests pass and branch is Staging
+command: ansible-playbook site.yml -i staging
+deploy-prod:
+name: Deploy if tests pass and branch is Main
+command: ansible-playbook site.yml -i production
+ignore:
+- develop
+- /feature-.*/
+- deploy-stage:
+only: staging
+- deploy-prod:
+only: main
+Suggest an edit to this page
+Make a contribution
+Learn how to contribute
+Still need help?
+Ask the CircleCI community
+Join the research community
+Visit our Support site
+Terms of UsePrivacy PolicyCookie PolicySecurity
+© 2024 Circle Internet Services, Inc., All Rights Reserved.
+Configuration reference - CircleCI
+2 days ago11 min read
+Introduction
+Concurrency
+Configuration
+Contexts
+Data persistence
+Artifacts
+Caches
+Workspaces
+Docker layer caching
+Dynamic configuration
+Execution environments
+Images
+Jobs
+Orbs
+Parallelism
+Pipelines
+Projects
+Resource class
+Steps
+User roles
+GitHub App, GitLab and Bitbucket Data Center users
+GitHub OAuth app and Bitbucket Cloud users
+Workflows
+See also
+This guide introduces some basic concepts to help you understand how CircleCI manages your CI/CD pipelines.
+In CircleCI, concurrency refers to utilizing multiple containers to run multiple jobs at the same time. To keep the system stable for all CircleCI customers, we implement different soft concurrency limits on each of the resource classes for different executors. If you experience queueing on your jobs, you may be hitting these limits. Customers on annual plans can request an increase to those limits at no extra charge.
+See the Concurrency page for more information.
+CircleCI believes in configuration as code. Your entire CI/CD process is orchestrated through a single file called config.yml. The config.yml file is located in a folder called .circleci at the root of your project that defines the entire pipeline.
+Example of a directory setup using CircleCI:
+├── .circleci
+│ ├── config.yml
+├── README
+└── all-other-project-files-and-folders
+Your CircleCI configuration can be adapted to fit many different needs of your project. The following terms, sorted in order of granularity and dependence, describe the components of most common CircleCI projects:
+Pipeline: Represents the entirety of your configuration.
+Workflows: Responsible for orchestrating multiple jobs.
+Jobs: Responsible for running a series of steps that perform commands.
+Steps: Run commands (such as installing dependencies or running tests) and shell scripts to do the work required for your project.
+The following illustration uses an example Java application
+to show the various configuration elements:
+configuration elements
+CircleCI configurations use YAML. See the Introduction to YAML configurations page for basic guidance. For a full overview of what is possible in a configuration file, see the Configuration reference page.
+Contexts provide a mechanism for securing and sharing environment variables across projects. The environment variables are defined as name/value pairs and are injected at runtime. After a context has been created, you can use the context key in the workflows section of a project’s .circleci/config.yml file to give any job(s) access to the environment variables associated with the context.
+Contexts Overview
+See the Using contexts page for more information.
+Persist data to move data between jobs and speed up your build. There are three main methods for persisting data in CircleCI: artifacts, caches, and workspaces.
+workflow illustration
+Note the following distinctions between artifacts, caches and workspaces:
+Type Lifetime Use Example
+Months
+Preserve long-term artifacts.
+Available in the Artifacts tab of the Job page under the tmp/circle-artifacts.&lt;hash&gt;/container or similar directory.
+Store non-vital data that may help the job run faster, for example npm or Gem packages.
+The save_cache job step with a path to a list of directories to add and a key to uniquely identify the cache (for example, the branch, build number, or revision). Restore the cache with restore_cache and the appropriate key.
+Duration of workflow
+Attach the workspace in a downstream container with the attach_workspace: step.
+The attach_workspace copies and recreates the entire workspace content when it runs.
+Artifacts persist data after a workflow is completed and may be used for longer-term storage of the outputs of your build process.
+build1:
+- image: cimg/base:2023.03
+- persist_to_workspace: # Persist the specified paths (workspace/echo-output)
+# into the workspace for use in downstream job. Must be an absolute path,
+# or relative path from working_directory. This is a directory on the container which is
+# taken to be the root directory of the workspace.
+root: workspace
+# Must be relative path from root
+- echo-output
+build2:
+image: ubuntu-2204:2024.01.2
+# Must be absolute path or relative path from working_directory
+build3:
+- store_artifacts: # See circleci.com/docs/artifacts/ for more details.
+path: /tmp/artifact-1
+destination: artifact-file
+- build1
+- build2:
+- build3:
+- build2
+See the Storing build artifacts page for more information.
+A cache stores a file or directory of files such as dependencies or source code in object storage. To speed up the build, each job may contain special steps for caching dependencies from previous jobs.
+If you need to clear your cache, refer to the Caching dependencies page for more information.
+docker: # Each job requires specifying an executor
+# (either docker, macos, or machine), see
+# circleci.com/docs/executor-intro/ for a comparison
+# and more examples.
+- image: cimg/ruby:2.4-node
+- image: cimg/postgres:9.4.12
+- save_cache: # Caches dependencies with a cache key
+# template for an environment variable,
+# see circleci.com/docs/caching/
+key: v1-repo-{{ .Environment.CIRCLE_SHA1 }}
+- ~/circleci-demo-workflows
+- restore_cache: # Restores the cached dependency.
+For more information see the Caching dependencies and Caching strategies pages.
+Workspaces are a workflow-aware storage mechanism. A workspace stores data unique to the job, which may be needed in downstream jobs. Each workflow has a temporary workspace associated with it. The workspace can be used to pass along unique data built during a job to other jobs in the same workflow.
+See the Using workspaces page for more information.
+Docker layer caching (DLC) caches the individual layers of Docker images built during your CircleCI jobs. Any unchanged layers are used on subsequent runs, rather than rebuilding the image each time.
+In the .circle/config.yml snippet below, the build_elixir job builds an image using the ubuntu-2004:202104-01 Dockerfile. Adding docker_layer_caching: true below the machine executor key ensures CircleCI saves each Docker image layer as the Elixir image is built.
+build_elixir:
+image: ubuntu-2004:202104-01
+docker_layer_caching: true
+name: build Elixir image
+command: docker build -t circleci/elixir:example .
+- build_elixir
+On subsequent commits, if the Dockerfile has not changed, DLC pulls each Docker image layer from cache during the build Elixir image step and the image builds significantly faster.
+See the Docker layer caching page for more information.
+Instead of manually creating your configuration for each CircleCI project, you can generate this configuration dynamically, based on specific pipeline parameters or file paths. This is especially helpful where your team is working on a monorepo (or a single repository). Dynamic configuration allows you to trigger builds from specific parts of your project, rather than rebuilding everything each time.
+See the Dynamic configuration page for more information.
+Each separate job defined within your configuration runs in a unique execution environment, known as executors. An executor can be a Docker container, or a virtual machine running Linux, Windows, or macOS. In some of these instances, you can set up an environment using GPU, or Arm. CircleCI also provides a machine-based and container-based self-hosted runner solution.
+Illustration of a CircleCI job
+An image is a packaged system that includes instructions for creating a running container or virtual machine, and you can define an image for each executor. CircleCI provides a range of images for use with the Docker executor, called convenience images (details in the images section).
+build1: # job name
+docker: # Specifies the primary container image,
+- image: cimg/base:2022.04-20.04
+- image: postgres:14.2 # Specifies the database image
+# for the secondary or service container run in a common
+# network where ports exposed on the primary container are
+# available on localhost.
+environment: # Specifies the POSTGRES_USER authentication
+# environment variable, see circleci.com/docs/env-vars/
+# for instructions about using environment variables.
+#...
+machine: # Specifies a machine image that uses
+# an Ubuntu version 20.04 image with Docker 20.10.12
+# and docker compose 1.29.2, follow CircleCI Discuss Announcements
+# for new image releases.
+image: ubuntu-2004:current
+macos: # Specifies a macOS virtual machine with Xcode version 12.5.1
+xcode: "12.5.1"
+- build3
+The primary container is defined by the first image listed in .circleci/config.yml file. This is where commands are executed. The Docker executor spins up a container with a Docker image. The machine executor spins up a complete Ubuntu virtual machine image. Further images can be added to spin up secondary/service containers.
+For added security when using the Docker executor and running Docker commands, the setup_remote_docker key can be used to spin up another Docker container in which to run these commands. For more information see the Running Docker commands page.
+For more information, see the Execution environments overview page.
+An image is a packaged system that includes instructions for creating a running container. The primary container is defined by the first image listed in a .circleci/config.yml file. This is where commands are executed for jobs, using the Docker or machine executor.
+The Docker executor spins up a container with a Docker image. CircleCI maintains convenience images for popular languages on Docker Hub.
+The machine executor spins up a complete Ubuntu virtual machine image, giving you full access to OS resources and complete control over the job environment. For more information, see the Using machine page.
+# an Ubuntu version 22.04 image
+See the Images page for more information.
+Jobs are the building blocks of your configuration. Jobs are collections of steps, which run commands/scripts as required. Each job must declare an executor that is either docker, machine, windows, or macos. For docker you must specify an image to use for the primary container. For macos you must specify an Xcode version. For windows you must use the Windows orb.
+See the Jobs and steps page for more information.
+Orbs are reusable snippets of code that help automate repeated processes, accelerate project setup, and help you to integrate with third-party tools.
+The illustration in the Configuration section showing an example Java configuration could be simplified using orbs. The following illustration demonstrates a simplified configuration with the Maven orb. Here, the orb sets up a default executor that can execute steps with Maven and run a common job (maven/test).
+Configuration using Maven orb
+See Using orbs for details on how to use orbs in your configuration and an introduction to orb design. Visit the Orbs registry to search for orbs to help simplify your configuration.
+The more tests your project involves, the longer it takes for them to complete on a single machine. Using test splitting and parallelism, you can spread your tests across a specified number of separate executors.
+Test suites are conventionally defined at the job level in your .circleci/config.yml file. The parallelism key specifies how many independent executors will be set up to run the steps of a job. and you can use the circleci tests commands to split your test suite to run across your parallel executors.
+To run a job’s steps in parallel, set the parallelism key to a value greater than 1.
+- image: cimg/go:1.18.1
+parallelism: 4
+Executor types with parallelism
+See Test splitting and parallelism page for more information.
+A CircleCI pipeline is the full set of processes you run when you trigger work on your projects. Pipelines encompass your workflows, which in turn coordinate your jobs. This is all defined in your project configuration file.
+Pipelines represent methods for interacting with your configuration:
+Trigger a pipeline through the API with the trigger a pipeline
+endpoint.
+Use pipeline parameters to trigger conditional workflows.
+Use version 2.1 configuration, which provides access to:
+Reusable configuration elements, including executors, commands and jobs.
+Packaged reusable configuration, known as orbs.
+Improved configuration validation error messages.
+Option to enable auto-cancel, within Advanced project settings in the web app to terminate workflows when new pipelines are triggered on non-default branches.
+It is important to carefully consider the impact of enabling the auto-cancel feature, for example, if you have configured automated deployment jobs on non-default branches.
+See the Pipelines overview page for more information.
+For GitHub OAuth app and Bitbucket Cloud accounts, a project in CircleCI is tied to, and shares the name of the associated code repository in your VCS.
+For GitHub App, GitLab SaaS and self-managed and Bitbucket Data Center users, a project in CircleCI is standalone. You name your project and then connect your code (in your GitHub, GitLab or Bitbucket Data Center repository) to that project.
+Project names must meet the following requirements:
+Begin with a letter
+3-40 characters long
+Contain only letters, numbers, spaces, or the following characters " - _ . : ! & + [ ] " ;
+A standalone project can have:
+One or more configurations (pipeline definitions), including, but not limited to, a .circleci/config.yml file in the repository associated with the project.
+One or more triggers (events from a source of change), including, but not limited to, a VCS. A trigger determines which configuration it should use to start a pipeline.
+Select Projects in the CircleCI web app sidebar to enter the projects dashboard. On the dashboard, you can set up and follow any project you have access to. There are two options:
+Set Up or Create any project that you are the owner of in your VCS.
+Follow any project in your organization to gain access to its pipelines and to subscribe to email notifications for the project’s status.
+Project dashboard
+A resource class is a configuration option that allows you to control available compute resources (CPU and RAM) for your jobs. When you specify an execution environment for a job, a default resource class value for the environment will be set unless you define the resource class in your configuration. It is best practice to define the resource class, as opposed to relying on a default.
+The example below shows how to define a resource class in the Docker execution environment.
+- image: cimg/node:current
+# resource class declaration
+Examples for all execution environments are available on the following pages:
+Using the Docker execution environment
+Using the LinuxVM execution environment
+Using the macOS execution environment
+Using the Windows execution environment
+Using the GPU execution environment
+Using the Arm VM execution environment
+Pricing and plans information for the various resource classes can be found on the Resource classes product page.
+The resource_class key is also used to configure a self-hosted runner instance.
+Steps are collections of the executable commands required to complete your job. For example, the
+step (which is a built-in step available across all CircleCI projects) checks out the source code for a job over SSH. The run step allows you to run custom commands, such as executing the command make test, using a non-login shell by default. Commands can also be defined outside the job declaration, making them reusable across your configuration.
+- image: cimg/base:2024.02
+- checkout # Special step to checkout your source code
+- run: # Run step to execute commands, see
+# circleci.com/docs/configuration-reference/#run
+command: make test # executable command run in
+# non-login shell with /bin/bash -eo pipefail option
+# by default.
+CircleCI roles are set up differently depending on how you integrate your code.
+To find out if you authorized through the GitHub OAuth app or the CircleCI GitHub App, see the GitHub App integration page.
+Roles are set at the organization and project level and are separate to permissions and roles set in the version control system in which your code is stored. The available roles are:
+Admin
+Contributor
+Viewer
+For an overview of organization and project role permissions, see the Roles and permissions overview page.
+See the Manage roles and permissions page for steps to add, remove, and change org and project level roles. You can also manages roles and permissions in groups.
+CircleCI has various user roles with permissions inherited from VCS accounts.
+The Organization Administrator is a permission level inherited from your VCS:
+GitHub: Owner and following at least one project building on CircleCI.
+Bitbucket: Admin and following at least one project building on CircleCI.
+The Project Administrator is the user who adds a GitHub or Bitbucket repository to CircleCI as a Project.
+A User is an individual user within an organization, inherited from your VCS.
+A CircleCI user is anyone who can log in to the CircleCI platform with a username and password. Users must be added to an org in the VCS to view or follow associated CircleCI projects. Users may not view project data that is stored in environment variables.
+Workflows orchestrate jobs. A workflow defines a list of jobs and their run order. It is possible to run jobs concurrently, sequentially, on a schedule, or with a manual gate using an approval job.
+Workflows illustration cloud
+The following configuration example shows a workflow called build_and_test in which the job build1 runs and then jobs build2 and build3 run concurrently:
+name: Precompile assets
+command: bundle exec rake assets:precompile
+build_and_test: # name of your workflow
+- build1 # wait for build1 job to complete successfully before starting
+# see circleci.com/docs/workflows/ for more examples.
+# run build2 and build3 concurrently to save time.
+See the Using workflows page for more information.
+Follow our quickstart guide to walk through setting up a working pipeline.
+Concepts - CircleCI
+Reusable Config Reference Guide
+1 week ago12 min read
+Notes on reusable configuration
+Using the parameters declaration
+Parameter syntax
+Parameter types
+Enum
+Executor
+Environment variable name
+Authoring reusable commands
+The commands key
+Invoking reusable commands
+Invoking other commands in a command
+Special keys
+Commands usage examples
+Authoring reusable executors
+The executors key
+Invoking reusable executors
+Example of using an executor declared in config.yml with matrix jobs.
+Using executors defined in an orb
+Overriding keys when invoking an executor
+Authoring parameterized jobs
+Jobs defined in an orb
+Using parameters in executors
+Example build configuration using a parameterized executor
+The scope of parameters
+Invoking the same job multiple times
+Using pre and post steps
+Defining pre and post steps
+Defining conditional steps
+The unless step
+Writing inline orbs
+This guide describes how to get started with reusable commands, jobs, executors and orbs. This guide also covers the use of parameters for creating parameterized reusable elements.
+Install the CircleCI CLI so that you have access to the circleci config process command (optional). This command lets you see the expanded configuration with all reusable keys processed. Follow the Using the CircleCI CLI documentation for installation instructions and tips.
+CircleCI reusable configuration elements require a version: 2.1 .circleci/config.yml file.
+Command, job, executor, and parameter names must start with a letter and can only contain lowercase letters (a-z), digits (0-9), underscores (_) and hyphens (-).
+Parameters are declared by name under a job, command, or executor. Pipeline parameters are defined at the top level of a project configuration. See the Pipeline Values and Parameters guide for more information.
+The immediate children of the parameters key are a set of keys in a map.
+In the following example, a command named greeting is designed with a single parameter named to. The to parameter is used within the steps to echo Hello back to the user.
+commands: # a reusable command with parameters
+greeting:
+default: "world"
+- run: echo "Hello &lt;&lt;parameters.to&gt;&gt;"
+- greeting:
+to: "My-Name"
+- my-job
+A parameter can have the following keys as immediate children:
+Key Name Description Default value
+description Optional. Used to generate documentation for your orb. N/A
+type Required. See Parameter Types in the section below for details. N/A
+default The default value for the parameter. Required for pipeline parameters. For all other parameters, if not present, the parameter is implied to be required. N/A
+This section describes the types of parameters and their usage.
+The parameter types supported by orbs are:
+string
+integer
+enum
+executor
+environment variable name
+The parameter types supported by pipeline parameters are:
+Basic string parameters are described below:
+copy-markdown:
+destination:
+description: destination directory
+default: docs
+- run: cp *.md &lt;&lt; parameters.destination &gt;&gt;
+Strings must be enclosed in quotes if they would otherwise represent another type (such as boolean or number) or if they contain characters that have special meaning in YAML, particularly for the colon character. In all other instances, quotes are optional.
+Empty strings are treated as a falsy value in evaluation of when clauses, and all other strings are treated as truthy. Using an unquoted string value that YAML interprets as a boolean will result in a type error.
+Boolean parameters are useful for conditionals:
+npm-install:
+clean:
+description: Perform a clean install
+condition: &lt;&lt; parameters.clean &gt;&gt;
+- run: npm clean-install
+not: &lt;&lt; parameters.clean &gt;&gt;
+- run: npm install
+Boolean parameter evaluation is based on the values specified in YAML 1.1
+True: y yes true on
+False: n no false off
+Capitalized and uppercase versions of the above values are also valid.
+Boolean values may be returned as a ‘1’ for True and ‘0’ for False.
+Use the parameter type integer to pass a numeric integer value.
+The following example uses the integer type to populate the value of parallelism in a job:
+p:
+type: integer
+default: 1
+parallelism: &lt;&lt; parameters.p &gt;&gt;
+- image: cimg/base:2023.11
+p: 2
+The enum parameter may be a list of any values. Use the enum parameter type when you want to enforce that the value must be one from a specific set of string values.
+The following example uses the enum parameter to declare the target operating system for a binary:
+list-files:
+default: "linux"
+description: The target Operating System for the heroku binary. Must be one of "linux", "darwin", "win32".
+type: enum
+enum: ["linux", "darwin", "win32"]
+The following enum type declaration is invalid because the default is not declared in the enum list.
+default: "windows" #invalid declaration of default that does not appear in the comma-separated enum list
+enum: ["darwin", "linux"]
+Use an executor parameter type to allow the invoker of a job to decide what executor it will run on.
+xenial:
+some-value:
+default: foo
+SOME_VAR: &lt;&lt; parameters.some-value &gt;&gt;
+- image: ubuntu:xenial
+bionic:
+- image: ubuntu:bionic
+e:
+executor: &lt;&lt; parameters.e &gt;&gt;
+- run: some-tests
+e: bionic
+name: xenial
+some-value: foobar
+Steps are used when you have a job or command that needs to mix predefined and user-defined steps. When passed in to a command or job invocation, the steps passed as parameters are always defined as a sequence, even if only one step is provided.
+run-tests:
+after-deps:
+description: "Steps that will be executed after dependencies are installed, but before tests are run"
+type: steps
+default: []
+- run: make deps
+- steps: &lt;&lt; parameters.after-deps &gt;&gt;
+The following example demonstrates that steps passed as parameters are given as the value of a steps declaration under the job’s steps.
+- run-tests:
+- run: echo "The dependencies are installed"
+- run: echo "And now I'm going to run the tests"
+The above will resolve to the following:
+The environment variable name (env_var_name) parameter is a string that must match a POSIX_NAME regular expression (for example, there can be no spaces or special characters). The env_var_name parameter is a more meaningful parameter type that enables CircleCI to check that the string that has been passed can be used as an environment variable name. For more information on environment variables, see the guide to Environment Variables.
+The example below shows you how to use the env_var_name parameter type for deploying to AWS S3 with a reusable build job. This example uses the AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables with the access-key and secret-key parameters. If you have a deploy job that runs the s3cmd, it is possible to create a reusable command that uses the needed authentication, but deploys to a custom bucket.
+Original config.yml file:
+- image: ubuntu:latest
+s3cmd --access_key ${FOO_BAR} \
+--secret_key ${BIN_BAZ} \
+ls s3://some/where
+New config.yml file:
+access-key:
+type: env_var_name
+default: AWS_ACCESS_KEY
+secret-key:
+default: AWS_SECRET_KEY
+command:
+s3cmd --access_key ${&lt;&lt; parameters.access-key &gt;&gt;} \\
+--secret_key ${&lt;&lt; parameters.secret-key &gt;&gt;} \\
+&lt;&lt; parameters.command &gt;&gt;
+access-key: FOO_BAR
+secret-key: BIN_BAZ
+command: ls s3://some/where
+Commands are declared under the commands key of a .circleci/config.yml file. The following example defines a command called sayhello, which accepts a string parameter to:
+default: "World"
+- run: echo Hello &lt;&lt; parameters.to &gt;&gt;
+A command defines a sequence of steps as a map to be executed in a job, enabling you to reuse a single command definition across multiple jobs.
+steps Y Sequence A sequence of steps that run inside the job that calls the command.
+parameters N Map A map of parameter keys. See the Parameter Syntax section for details.
+description N String A string that describes the purpose of the command. Used for generating documentation.
+Reusable commands are invoked with specific parameters as steps inside a job. When using a command, the steps of that command are inserted at the location where the command is invoked. Commands may only be used as part of the sequence under steps in a job.
+The following example uses the same command from the previous example – sayhello – and invokes it in the job myjob, passing it a value for the to parameter:
+myjob:
+- image: "cimg/base:stable"
+- sayhello: # invoke command "sayhello"
+to: "Lev"
+Commands can use other commands in the scope of execution. For instance, if a command is declared inside an orb it can use other commands in that orb. It can also use commands defined in other orbs that you have imported (for example some-orb/some-command).
+CircleCI has several special keys available to all circleci.com customers and available by default in CircleCI server installations. Examples of these keys are:
+It is possible to override the special keys with a custom command.
+The following is an example of part of the aws-s3 orb where a command called sync is defined:
+sync:
+description: Syncs directories and S3 prefixes.
+arguments:
+description: |
+Optional additional arguments to pass to the `aws sync` command (e.g., `--acl public-read`). Note: if passing a multi-line value to this parameter, include `\` characters after each line, so the Bash shell can correctly interpret the entire command.
+aws-access-key-id:
+default: AWS_ACCESS_KEY_ID
+description: aws access key id override
+aws-region:
+default: AWS_REGION
+description: aws region override
+aws-secret-access-key:
+default: AWS_SECRET_ACCESS_KEY
+description: aws secret access key override
+from:
+description: A local *directory* path to sync with S3
+description: A URI to an S3 bucket, i.e. 's3://the-name-my-bucket'
+- aws-cli/setup:
+aws-access-key-id: &lt;&lt; parameters.aws-access-key-id &gt;&gt;
+aws-region: &lt;&lt; parameters.aws-region &gt;&gt;
+aws-secret-access-key: &lt;&lt; parameters.aws-secret-access-key &gt;&gt;
+aws s3 sync \
+&lt;&lt;parameters.from&gt;&gt; &lt;&lt;parameters.to&gt;&gt; &lt;&lt;parameters.arguments&gt;&gt;
+name: S3 Sync
+To invoke this sync command in your 2.1 .circleci/config.yml file, see the following example:
+aws-s3: circleci/aws-s3@4.1.0
+deploy2s3:
+- image: cimg/base:2023.06
+- aws-s3/sync:
+from: .
+to: "s3://mybucket_uri"
+- deploy2s3
+Defining a build job:
+aws-cli: circleci/aws-cli@5.1.1
+executor: aws-cli/default
+- run: mkdir bucket && echo "lorum ipsum" &gt; bucket/build_asset.txt
+from: bucket
+to: "s3://my-s3-bucket-name/prefix"
+- aws-s3/copy:
+from: bucket/build_asset.txt
+to: "s3://my-s3-bucket-name"
+arguments: --dryrun
+Executors define the environment in which the steps of a job will be run. When declaring a job in CircleCI configuration, you define the type of execution environment (docker, machine, macos. etc.) to run in, as well as any other parameters for that environment, including: environment variables to populate, which shell to use, what size resource_class to use, etc.
+Executor declarations outside of jobs can be used by all jobs in the scope of that declaration, allowing you to reuse a single executor definition across multiple jobs.
+An executor definition includes one or more of the following keys:
+docker or machine or macos
+In the following example my-executor is used for running the job my-job.
+- image: cimg/ruby:2.5.1-browsers
+- run: echo outside the executor
+Executors define the environment in which the steps of a job will be run, allowing you to reuse a single executor definition across multiple jobs.
+docker Y (1) List Options for docker executor.
+resource_class N String Amount of CPU and RAM allocated to each container in a job.
+machine Y (1) Map Options for machine executor.
+macos Y (1) Map Options for macOS executor.
+shell N String Shell to use for execution command in all steps. Can be overridden by shell in each step.
+working_directory N String The directory in which to run the steps.
+environment N Map A map of environment variable names and values.
+The following example passes my-executor as the value of a name key under executor – this method is primarily employed when passing parameters to executor invocations:
+- image: cimg/ruby:3.2.2
+executor:
+name: my-executor
+It is also possible to allow an orb to define the executor used by all of its commands. This allows users to execute the commands of that orb in the execution environment defined by the orb’s author.
+The following example declares a Docker executor with a node image, node-docker. The tag portion of the image string is parameterized with a version parameter. A version parameter is also included in the test job so that it can be passed through the job into the executor when the job is called from a workflow.
+When calling the test job in the matrix-tests workflow, matrix jobs are used to run the job multiple times, concurrently, each with a different set of parameters. The Node application is tested against many versions of Node.js:
+node-docker: # declares a reusable executor
+version:
+description: "version tag"
+default: "lts"
+- image: cimg/node:&lt;&lt;parameters.version&gt;&gt;
+name: node-docker
+version: &lt;&lt;parameters.version&gt;&gt;
+- run: echo "how are ya?"
+matrix-tests:
+- 13.11.0
+- 12.16.0
+- 10.19.0
+You can also refer to executors from other orbs. Users of an orb can invoke its executors. For example, foo-orb could define the bar executor:
+# Yaml from foo-orb
+RUN_TESTS: foobar
+baz-orb could define the bar executor too:
+# Yaml from baz-orb
+You may use either executor from your configuration file with:
+# config.yml
+foo-orb: somenamespace/foo@1
+baz-orb: someothernamespace/baz@3.3.1
+some-job:
+executor: foo-orb/bar # prefixed executor
+some-other-job:
+executor: baz-orb/bar # prefixed executor
+Note: The foo-orb/bar and baz-orb/bar are different executors. They both have the local name bar relative to their orbs, but they are independent executors defined in different orbs.
+When invoking an executor in a job, any keys in the job itself will override those of the executor invoked. For example, if your job declares a docker stanza, it will be used, in its entirety, instead of the one in your executor.
+The environment variable maps are additive. If an executor has one of the same environment variables as the job, the value in the job will be used. See the Environment Variables guide for more information.
+node:
+- image: cimg/node:lts
+ENV: ci
+# The test executor below will be overwritten by the more explicit "docker" executor. Any env vars will be added.
+executor: node
+- run: echo "Node will not be installed."
+The above config would resolve to the following:
+ENV: ci # From executor.
+It is possible to invoke the same job more than once in the workflows stanza of .circleci/config.yml, passing any necessary parameters as subkeys to the job. See the Parameters syntax section above for details of syntax usage.
+Example of defining and invoking a parameterized job in a config.yml:
+sayhello: # defines a parameterized job
+description: A job that does very little other than demonstrate what a parameterized job looks like
+saywhat:
+description: "To whom shall we say hello?"
+- run: echo "Hello &lt;&lt; parameters.saywhat &gt;&gt;"
+- sayhello: # invokes the parameterized job
+saywhat: Everyone
+When invoking the same job multiple times with parameters across any number of workflows, the build name will be changed (i.e. sayhello-1, sayhello-2, etc.). To ensure build numbers are not appended, utilize the name key. The name you assign needs to be unique, otherwise the numbers will still be appended to the job name. As an example:
+- sayhello:
+name: build-sayhello
+name: deploy-sayhello
+saywhat: All
+If a job is declared inside an orb it can use commands in that orb or the global commands. It is not possible to call commands outside the scope of declaration of the job.
+hello-orb
+# partial yaml from hello-orb
+- saywhat:
+saywhat: "&lt;&lt; parameters.saywhat &gt;&gt;"
+- run: echo "&lt;&lt; parameters.saywhat &gt;&gt;"
+Config leveraging hello-orb
+hello-orb: somenamespace/hello-orb@volatile
+- hello-orb/sayhello:
+To use parameters in executors, define the parameters under the given executor. When you invoke the executor, pass the keys of the parameters as a map of keys under the executor: declaration, each of which has the value of the parameter to pass in.
+Parameters in executors can be of the type string, enum, or boolean. Default values can be provided with the optional default key.
+python:
+tag:
+default: latest
+myspecialvar:
+- image: cimg/python:&lt;&lt; parameters.tag &gt;&gt;
+MYPRECIOUS: &lt;&lt; parameters.myspecialvar &gt;&gt;
+name: python
+tag: "2.7"
+myspecialvar: "myspecialvalue"
+The above would resolve to the following:
+steps: []
+- image: cimg/python:2.7
+MYPRECIOUS: "myspecialvalue"
+Parameters are in-scope only within the job or command that defined them. If you want a job or command to pass its parameters to a command it invokes, they must be passed explicitly.
+- say:
+# Since the command "say" doesn't define a default
+# value for the "saywhat" parameter, it must be
+# passed in manually
+saywhat: &lt;&lt; parameters.saywhat &gt;&gt;
+say:
+A single configuration may invoke a job multiple times. At configuration processing time during build ingestion, CircleCI will auto-generate names if none are provided or you may name the duplicate jobs explicitly with the name key.
+You must explicitly name repeat jobs when a repeat job should be upstream of another job in a workflow. For example, if a job is used under the requires key of a job invocation in a workflow, you will need to explicitly name it.
+- loadsay
+# This doesn't need an explicit name as it has no downstream dependencies
+# This needs an explicit name for saygoodbye to require it as a job dependency
+name: SayHelloChad
+saywhat: Chad
+# Uses explicitly defined "sayhello"
+- saygoodbye:
+- SayHelloChad
+Every job invocation may optionally accept two special arguments: pre-steps and post-steps. Steps under pre-steps are executed before any of the other steps in the job. The steps under post-steps are executed after all of the other steps.
+Pre and post steps allow you to execute steps in a given job without modifying the job. This is useful, for example, in running custom setup steps before job execution.
+The keys pre-steps and post-steps in jobs are available in configuration version 2.1 and later.
+The following example defines pre-steps and post-steps in the bar job of the build workflow:
+pre-steps:
+post-steps:
+Conditional steps are available in configuration version 2.1 and later.
+Conditional steps run only if a condition is met at config-compile time, before a workflow runs. This means, for example, that you may not use a condition to check an environment variable, as those are not injected until your steps are running in the shell of your execution environment.
+Conditional steps may be located anywhere a regular step could and may only use parameter values as inputs.
+For example, an orb could define a command that runs a set of steps if invoked with myorb/foo: { dostuff: true }, but not myorb/foo: { dostuff: false }.
+Furthermore, an orb author could define conditional steps in the steps key of a Job or a Command.
+# Inside config.yml
+preinstall-foo:
+- run: echo "preinstall is &lt;&lt; parameters.preinstall-foo &gt;&gt;"
+condition: &lt;&lt; parameters.preinstall-foo &gt;&gt;
+- run: echo "preinstall"
+- run: echo "don't preinstall"
+- myjob:
+preinstall-foo: false
+preinstall-foo: true
+- myjob # The empty string is falsy
+Under the when key are the subkeys condition and steps. The subkey steps are run only if the condition evaluates to a truthy value.
+condition Y Logic A logic statement
+steps Y Sequence A list of steps to execute when the condition is truthy.
+Under the unless key are the subkeys condition and steps. The subkey steps are run only if the condition evaluates to a falsy value.
+steps Y Sequence A list of steps to execute when the condition is falsy.
+When defining reusable configuration elements directly within your config, you can also wrap those elements within an inline orb. You may find inline orbs useful for development or for name-spacing elements that share names in a local config.
+To write an inline orb, place the orb elements under that orb’s key in the orbs declaration section of the configuration. For example, if you want to import one orb to use inside another inline orb, the config could look like the example shown below, in which the inline orb my-orb imports the node orb:
+my-orb:
+node: circleci/node@3.0
+my_command:
+- run: echo "Run my tests"
+my_job:
+executor: node/default # Node orb executor
+- my_command
+main:
+- my-orb/my_job
+Refer to Sample Configurations for some sample configurations that you can use in your own CircleCI configuration.
+Refer to Database Examples for database examples you can use in your CircleCI configuration.
+Reusable Config Reference Guide - CircleCI
+3 months ago6 min read
+Built-in environment variables
+This page is a reference for all built-in values available for use in your CircleCI projects.
+The following built-in environment variables are available for CircleCI projects. A few environment variables are available for GitHub OAuth and Bitbucket Cloud projects that have been deprecated for GitLab, GitHub App and Bitbucket Data Center support. If you must continue to use those as environment variables in your GitLab pipelines, refer to the workaround described after the list below.
+Environment variables are scoped at the job level. They can be used within the context of a job but do not exist at a pipeline level, therefore they cannot be used for any logic at the pipeline or workflow level.
+You cannot use a built-in environment variable to define another environment variable. Instead, you must use a run step to export the new environment variables using BASH_ENV. For more details, see Setting an Environment Variable in a Shell Command.
+Variable VCS Type Value Cloud Server
+CI
+GitHub, Bitbucket, GitLab
+true (represents whether the current environment is a CI environment)
+CIRCLECI
+true (represents whether the current environment is a CircleCI environment)
+CIRCLE_BRANCH
+The name of the Git branch currently being built.
+CIRCLE_BUILD_NUM
+The number of the current job. Job numbers are unique for each job.
+CIRCLE_BUILD_URL
+The URL for the current job on CircleCI.
+CIRCLE_JOB
+The name of the current job.
+CIRCLE_NODE_INDEX
+For jobs that run with parallelism enabled, this is the index of the current parallel run. The value ranges from 0 to (CIRCLE_NODE_TOTAL - 1)
+CIRCLE_NODE_TOTAL
+For jobs that run with parallelism enabled, this is the number of parallel runs. This is equivalent to the value of parallelism in your config file.
+CIRCLE_OIDC_TOKEN
+An OpenID Connect token signed by CircleCI which includes details about the current job.
+CIRCLE_OIDC_TOKEN_V2
+CIRCLE_ORGANIZATION_ID
+A unique identifier for the CircleCI organization.
+CIRCLE_PIPELINE_ID
+A unique identifier for the current pipeline.
+CIRCLE_PR_NUMBER
+GitHub OAuth, Bitbucket Cloud
+The number of the associated GitHub or Bitbucket pull request. Only available on forked PRs.
+CIRCLE_PR_REPONAME
+The name of the GitHub or Bitbucket repository where the pull request was created. Only available on forked PRs.
+CIRCLE_PR_USERNAME
+The GitHub or Bitbucket username of the user who created the pull request. Only available on forked PRs.
+CIRCLE_PREVIOUS_BUILD_NUM
+The largest job number in a given branch that is less than the current job number. Note: The variable is not always set, and is not deterministic. It is also not set on runner executors. This variable is likely to be deprecated, and CircleCI recommends users to avoid using it.
+CIRCLE_PROJECT_ID
+A unique identifier for the current project.
+CIRCLE_PROJECT_REPONAME
+GitHub, GitLab, Bitbucket
+The name of the repository of the current project.
+CIRCLE_PROJECT_USERNAME
+The GitHub or Bitbucket username of the current project.
+CIRCLE_PULL_REQUEST
+The URL of the associated pull request. If there are multiple associated pull requests, one URL is randomly chosen.
+CIRCLE_PULL_REQUESTS
+Comma-separated list of URLs of the current build’s associated pull requests.
+CIRCLE_REPOSITORY_URL
+The URL of your GitHub or Bitbucket repository.
+CIRCLE_SHA1
+The SHA1 hash of the last commit of the current build.
+CIRCLE_TAG
+The name of the git tag, if the current build is tagged. For more information, see the Git tag job execution section of the Workflows page.
+CIRCLE_USERNAME
+The GitHub or Bitbucket username of the user who triggered the pipeline (only if the user has a CircleCI account).
+CIRCLE_WORKFLOW_ID
+A unique identifier for the workflow instance of the current job. This identifier is the same for every job in a given workflow instance.
+CIRCLE_WORKFLOW_JOB_ID
+A unique identifier for the current job.
+CIRCLE_WORKFLOW_WORKSPACE_ID
+An identifier for the workspace of the current job. This identifier is the same for every job in a given workflow.
+CIRCLE_WORKING_DIRECTORY
+The value of the working_directory key of the current job.
+CIRCLE_INTERNAL_TASK_DATA
+Internal. A directory where internal data related to the job is stored. We do not document the contents of this directory; the data schema is subject to change.
+If you must use the environment variables that are deprecated for GitLab SaaS in your GitLab pipelines, you can recreate this functionality using pipeline values in your configuration file. The following example shows how to set an environment variable CIRCLE_PROJECT_REPONAME using the
+key and populating it with the pipeline.trigger_parameters.gitlab.repo_name value:
+- image: cimg/node:17.0
+CIRCLE_PROJECT_REPONAME: &lt;&lt; pipeline.trigger_parameters.gitlab.repo_name &gt;&gt;
+- run: echo $CIRCLE_PROJECT_REPONAME
+Pipeline values are available to all pipeline configurations and can be used without previous declaration. Pipeline values are scoped at the pipeline level. They are interpolated at compilation time, not workflow/job runtime.
+For GitHub users, refer to the GitHub App integration or GitHub OAuth app integration guides to check which integration type applies to you.
+Variable Source Type Value Cloud Server
+pipeline.id
+A globally unique id
+representing for the pipeline.
+pipeline.number
+A project unique integer id for the pipeline.
+pipeline.project.git_url
+The URL where the current project is hosted. For example, https://github.com/circleci/circleci-docs.
+pipeline.project.type
+The lower-case name of the VCS provider, for example, github, bitbucket.
+pipeline.git.tag
+The name of the git tag that was pushed to trigger the pipeline. If the pipeline was not triggered by a tag, then this is the empty string.
+pipeline.git.branch
+The name of the git branch that was pushed to trigger the pipeline.
+pipeline.git.branch.is_default
+Whether the branch the pipeline was triggered on is the default branch.
+(&gt;= v4.7)
+pipeline.git.revision
+The long (40-character) git SHA that is being built.
+pipeline.git.base_revision
+The long (40-character) git SHA of the build prior to the one being built. Note: While in most cases pipeline.git.base_revision will be the SHA of the pipeline that ran before your currently running pipeline, there are some caveats. When the build is the first build for a branch, the variable will not be present. In addition, if the build was triggered via the API, the variable will not be present.
+pipeline.trigger_source
+The source that triggers the pipeline, current values are webhook, api, scheduled_pipeline.
+pipeline.schedule.name
+The name of the schedule if it is a scheduled pipeline. Value will be empty string if the pipeline is triggered by other sources.
+pipeline.schedule.id
+The unique id of the schedule if it is a scheduled pipeline. Value will be empty string if the pipeline is triggered by other sources.
+pipeline.trigger_parameters.circleci.trigger_type
+GitHub App, GitLab
+pipeline.trigger_parameters.circleci.event_time
+Timestamp CircleCI received the event
+pipeline.trigger_parameters.circleci.event_type
+GitLab: push, merge request
+GitHub App: push
+pipeline.trigger_parameters.gitlab.type
+GitLab
+See GitLab documentation for webhooks
+and webhook events
+pipeline.trigger_parameters.gitlab.ref
+pipeline.trigger_parameters.github_app.ref
+GitHub App
+See GitHub documentation for webhook events and payloads
+pipeline.trigger_parameters.gitlab.checkout_sha
+pipeline.trigger_parameters.github_app.checkout_sha
+pipeline.trigger_parameters.gitlab.user_id
+pipeline.trigger_parameters.github_app.user_id
+pipeline.trigger_parameters.gitlab.user_name
+pipeline.trigger_parameters.github_app.user_name
+pipeline.trigger_parameters.gitlab.user_username
+pipeline.trigger_parameters.github_app.user_username
+pipeline.trigger_parameters.gitlab.user_avatar
+pipeline.trigger_parameters.github_app.user_avatar
+pipeline.trigger_parameters.gitlab.repo_name
+pipeline.trigger_parameters.github_app.repo_name
+pipeline.trigger_parameters.gitlab.repo_url
+pipeline.trigger_parameters.github_app.repo_url
+pipeline.trigger_parameters.gitlab.web_url
+pipeline.trigger_parameters.github_app.web_url
+pipeline.trigger_parameters.gitlab.commit_sha
+pipeline.trigger_parameters.github_app.commit_sha
+pipeline.trigger_parameters.gitlab.commit_title
+pipeline.trigger_parameters.github_app.commit_title
+pipeline.trigger_parameters.gitlab.commit_message
+pipeline.trigger_parameters.github_app.commit_message
+pipeline.trigger_parameters.gitlab.commit_timestamp
+pipeline.trigger_parameters.github_app.commit_timestamp
+pipeline.trigger_parameters.gitlab.commit_author_name
+pipeline.trigger_parameters.github_app.commit_author_name
+pipeline.trigger_parameters.gitlab.commit_author_email
+pipeline.trigger_parameters.gitlab.total_commits_count
+pipeline.trigger_parameters.github_app.total_commits_count
+pipeline.trigger_parameters.gitlab.branch
+pipeline.trigger_parameters.github_app.branch
+pipeline.trigger_parameters.gitlab.default_branch
+pipeline.trigger_parameters.gitlab.x_gitlab_event_id
+pipeline.trigger_parameters.gitlab.is_fork_merge_request
+pipeline.trigger_parameters.webhook.body
+Inbound webhook
+The body of the payload that was sent with a custom webhook.
+- image: cimg/node:20.3.0
+CIRCLE_COMPARE_URL: &lt;&lt; pipeline.project.git_url &gt;&gt;/compare/&lt;&lt; pipeline.git.base_revision &gt;&gt;..&lt;&lt;pipeline.git.revision&gt;&gt;
+- run: echo $CIRCLE_COMPARE_URL
+When using the above method to set the variables in the environment key, note that if the pipeline variable is empty it will be set to &lt;nil&gt;. If you need an empty string instead, set the variable in a shell command.
+Project values and variables - CircleCI
+Overview
+Self-hosted runner overview
+Self-hosted runner concepts
+Container runner
+Container runner installation
+Container runner performance benchmarks
+Container runner reference
+Machine runner 3.0
+Install on Linux
+Install on macOS
+Install on Windows
+Install on Docker
+Manual install on Linux and macOS
+Manual install on Windows
+Migrate from launch agent to machine runner 3.0 on Linux
+Migrate from launch agent to machine runner 3.0 on macOS
+Migrate from launch agent to machine runner 3.0 on Windows
+Machine runner 3.0 configuration reference
+Machine runner
+Linux installation
+Windows installation
+macOS installation
+Docker installation
+Machine runner configuration reference
+How-to Guides
+Upgrade machine runner on server
+Self-hosted runner FAQ
+Troubleshoot self-hosted runner
+Scaling self-hosted runner
+CircleCI’s self-hosted runner overview
+4 months ago3 min read
+Launch agent 1.1 deprecated
+CircleCI’s self-hosted runner operation
+CircleCI runner use cases
+Choosing a runner execution environment
+Available self-hosted runner platforms
+Limitations
+Use CircleCI’s self-hosted runner to run jobs on your own infrastructure. With runner, you can build and test on a wide variety of architectures, and gain additional control over the build environment.
+Self-hosted runner installation options are as follows:
+Install in a Kubernetes cluster, using a container runner
+Install in a machine execution environment using a machine runner
+The diagrams below illustrate how CircleCI’s container and machine runners extend our existing systems.
+CircleCI’s container runner architecture
+Figure 1. Container runner architecture
+Launch agent 1.1 has been deprecated. Machine Runner 3.0 is the recommended replacement. Launch agent 1.1 will cease to be supported as of July 31, 2024.
+Once a self-hosted runner is installed, the runner polls circleci.com for work, runs jobs, and returns status, logs, and artifacts to CircleCI.
+CircleCI self-hosted runner is designed to meet the needs of two main use cases, as follows:
+Privileged access and controls: Some customers need to be able to run jobs on-premises or on limited-access infrastructure due to strict isolation requirements. Self-hosted runner enables the following:
+IP restrictions. Self-hosted runners can have static IP addresses that you can control.
+Identity Access Management (IAM) permissions. If you set up self-hosted runners in AWS, they can be assigned IAM permissions.
+Ability to monitor the operating system.
+Ability to connect to private networks.
+Unique compute requirements: Use self-hosted runners to run your jobs in an environment or architecture that CircleCI does not offer as a resource class.
+CircleCI offers two types of self-hosted runners: container and machine.
+Container runner is installed in a Kubernetes cluster. Using Kubernetes enables you to run containerized jobs on self-hosted compute, similar to how jobs use the native Docker executor to run on CircleCI’s cloud platform. Container runner allows you to run hundreds of jobs at once, scaling pods effectively to meet compute demands. Container runner is a complement to the machine runner, not a replacement.
+CircleCI’s self-hosted runner has historically executed each job using a one-to-one mapping between the CI job and a machine environment (virtual or physical). Each machine runner would have the self-hosted runner binary installed on it. Running jobs in this manner sacrifices several benefits of a container-based solution that are afforded on CircleCI’s cloud platform when using the Docker executor:
+The ability to seamlessly use custom Docker images during job execution.
+Access to a consistent, clean, containerized build environment with every job.
+After installation of the container-agent, the container runner will claim your containerized jobs, schedule them within an ephemeral pod, and execute the work within a container-based execution environment.
+Container runner allows you to use CircleCI’s convenience images as well as custom Docker images.
+Refer to the Container runner performance benchmarks page for a look at container runner performance.
+Machine runner is installed either in a virtual machine, or natively, on a physical machine. Each machine runner job executes in the same environment (virtual or physical) where the self-hosted runner binary is installed. CircleCI’s machine runner can be installed on Linux, Windows, or macOS. Machine runner should be used if you are not running containerized CI jobs. Visit the Docker to machine page for more examples on when to use a machine execution environment.
+If you do not use Kubernetes but still want to run your CI job in a container on a self-hosted runner, you can install the machine runner in Docker.
+Machine runner is not compatible with CircleCI’s convenience images or custom Docker images.
+To get started with CircleCI’s self-hosted runners:
+Provide your own platform for your self-hosted runners (see the following Available self-hosted runner platforms section for supported platforms).
+You will need at least one credit on your account to use runners. Runner execution itself does not require credits but one credit is required in case your jobs use storage or networking. For more information, see the Persisting data overview.
+For container runner installation, visit the Container runner installation page.
+For machine runner, visit the installation guide for your desired platform:
+Linux
+macOS
+Windows
+Docker
+Supported level platforms ensure that CircleCI’s self-hosted runners are both built and tested on their respective systems.
+Using a supported platform, you get the following:
+Documentation and best practices.
+Support. CircleCI customer engineers will assist you to resolve issues within the usual Advanced Service Level Agreements (SLAs)
+Supported self-hosted runners are available on the following platforms:
+Container and machine self-hosted runners:
+Ubuntu 18.04 or later (x86_64, ARM64)
+Container runners:
+Kubernetes (x86_64, ARM64)
+Machine runners:
+macOS X 11.2+ (Intel, Apple M1)
+Windows Server 2019, 2016 (x86_64)
+Linux distributions - RHEL8, SUSE, Debian, etc (x86_64, ARM64, s390x, ppc64le)
+CircleCI sometimes offers a preview level platform when a new platform for self-hosted runner is in active development. If there is a platform in a preview level, this section will be updated with information and limitations for that platform.
+Almost all standard CircleCI features are available for use with self-hosted runner jobs, however, a few features are not yet supported.
+The following built-in environment variables are not populated within runner executors:
+All deprecated cloud environment variables
+For limitations relating to container runner, visit the Container runner page.
+Runner Concepts
+Container runner reference guide
+Machine runner reference guide
+Self-hosted runner change log
+CircleCI’s self-hosted runner overview - CircleCI
+Self-hosted runner Concepts
+10 months ago2 min read
+Namespaces and resource classes
+Task-agent
+Container-agent
+Machine runner 3
+Launch-agent
+Self-hosted runner concurrency
+Public repositories
+Self-hosted runners require both a namespace and a resource class.
+A namespace is a unique identifier claimed by a CircleCI organization. Each CircleCI organization can claim one unique and immutable namespace. Typically, the namespace chosen is the lowercase representation of your organization’s name on your VCS (this is suggested).
+A resource class is a label to match your CircleCI job with a type of runner that is identified to process that job. The first part of the resource class is your organization’s namespace. For example, a CircleCI resource class could be circleci/documentation. Resources classes are created when you go through the process of installing self-hosted runners.
+Resource classes help you identify a pool of self-hosted runners, which allow you to set up your configuration to send jobs to specific places. For example, if you have multiple machines running macOS, and multiple machines running Linux, you could create resource classes for each of these, orgname/macOS and orgname/linux, respectively. At the job level in your .circleci/config.yml, you can associate which self-hosted runner resources to send a job to based on the resource class.
+Optionally, you can give your resource class a description.
+Please note, if you are already using orbs, you have an existing namespace. Your self-hosted runner namespace will be the same one you are using for orbs. If you need to change your namespace, please contact support
+The task-agent handles running a task retrieved and configured by the container runner or machine runner. Task-agents run with the same privileges as circleci.
+The container-agent gets installed with container runner. Container-agent polls CircleCI for jobs, spins up ephemeral pods with an injected task-agent, and executes each job within each pod. The pods are torn down after the jobs have completed.
+The machine runner 3.0 replaces launch-agent on cloud and server v4.4+, bringing improvements to network resiliency, installation, and the upgrade process. As with launch-agent, any user who is able to execute a job will be able to gain the same privileges as the task-agent, which when installed using the provided packages runs as the circleci user.
+The launch-agent manages gathering the information required to run a task with machine runner (defined as a parallel run of a job) while also downloading and launching the task-agent process.
+The system has been designed to allow admins to configure the task-agent to run with a lower level of privileges than the launch-agent. Any user who is able to execute a job will be able to gain the same privileges as the task-agent. The launch-agent will run as root, but the task-agent will run as circleci.
+Launch-agent is currently supported on Server v4.x and v3.x. Cloud users and server v4.4+ users should instead refer to Machine Runner 3.
+Rather than limit the total number of registered self-hosted runners, CircleCI’s self-hosted runners are limited by the total number of self-hosted runner jobs (tasks) across your organization.
+CircleCI’s self-hosted runners are not available for use with public projects that have the Build forked pull requests setting enabled. This feature is not availalbe for security reasons. A malicious actor may alter your machine or execute code on it by forking your repository, committing code, and opening a pull request. Untrusted jobs running on your CircleCI’s self-hosted runner pose significant security risks for your machine and network environment, especially if your machine persists its environment between jobs. Some of the risks include:
+Malicious programs running on the machine
+Escaping the machine’s self-hosted runner sandbox
+Exposing access to the machine’s network environment
+Persisting unwanted or dangerous data on the machine
+Organizations are, by default, limited to claiming only one namespace. This policy is designed to limit name-squatting and namespace noise. If you need to change your namespace, please contact support
+Self-hosted runner Concepts - CircleCI
+CircleCI’s self-hosted runner API
+3 weeks ago2 min read
+Authentication methods
+Circle-Token (personal authentication)
+Browser session authentication
+Resource class token authentication
+Supported methods
+Endpoints
+GET /api/v3/runner
+Request
+Response
+Response schema
+GET /api/v3/runner/tasks
+GET /api/v3/runner/tasks/running
+This document contains all the external facing endpoints for the CircleCI’s self-hosted runner API. This API is separate from the main CircleCI v2 API and is used for the management and execution of self-hosted runner jobs. It is hosted at runner.circleci.com
+The CircleCI’s self-hosted runner API contains different authentication methods. Each authentication method may be used in different endpoints for different purposes. Also, one endpoint may accept multiple authentication methods.
+This authentication method is based on personal tokens and follows the same rules for CircleCI v2 API.
+Name Description
+Circle-Token header
+Header that contains the &lt;circle-token&gt; used to authenticate the user.
+HTTP Basic auth username
+The token can be provided using the Basic scheme, where username should be set as the &lt;circle-token&gt; and the password should be left blank.
+Ring-session sent through a cookie on the request. This authentication allows users that are already logged into CircleCI.com to access certain endpoints seamlessly.
+This token is generated when creating a new resource class. This token is only displayed once when creating a resource class, and cannot be retrieved again. This token is used exclusively by the self-hosted runner agents for claiming tasks.
+HTTP Bearer auth
+The token that should be provided using the Bearer scheme.
+Lists the available self-hosted runners based on the specified parameters. It is mandatory to use one parameter to filter results.
+This allows the endpoint to be accessible on circleci.com/api/v3/runner for users that have already logged into circleci.com
+Name Type Input Required Description
+resource-class
+query
+filters the list of self-hosted runners by specific resource class.
+namespace
+filters the list of self-hosted runners by namespace.
+curl -X GET https://runner.circleci.com/api/v3/runner?resource-class=test-namespace/test-resource \
+-H "Circle-Token: secret-token"
+curl -X GET https://runner.circleci.com/api/v3/runner?namespace=test-namespace \
+Status Description Format
+List of agents
+JSON
+Name Type Required Description
+items
+[object]
+true
+array containing the self-hosted runners
+self-hosted runner resource class
+hostname
+self-hosted runner hostname
+self-hosted runner name
+first_connected
+string (date-time)
+first time the self-hosted runner was connected
+last_connected
+last time the self-hosted runner was connected
+last_used
+last time the self-hosted runner was used to run a job
+version of the machine runner launch-agent running
+"items": [
+"resource_class": "test-namespace/test-resource",
+"hostname": "bobby",
+"name": "bobby-sue",
+"first_connected": "2020-05-15T00:00:00Z",
+"last_connected": "2020-05-16T00:00:00Z",
+"last_used": "2020-05-17T00:00:00Z",
+"version": "5.4.3.2.1"
+]
+Get the number of unclaimed tasks for a given resource class.
+filters tasks by specific resource class.
+curl -X GET https://runner.circleci.com/api/v3/runner/tasks?resource-class=test-namespace/test-resource \
+Number of unclaimed tasks
+unclaimed_task_count
+int
+number of unclaimed tasks
+"unclaimed_task_count": 42
+Get the number of running tasks for a given resource class.
+Browser Session Authentication
+This allows the endpoint to be accessible on circleci.com/api/v3/runner for users that have already logged into circleci.com.
+curl -X GET https://runner.circleci.com/api/v3/runner/tasks/running?resource-class=test-namespace/test-resource \
+Number of running tasks
+running_runner_tasks
+number of running tasks
+"running_runner_tasks": 42
+CircleCI’s self-hosted runner API - CircleCI
+CircleCI’s self-hosted runner FAQs
+8 months ago8 min read
+FAQs
+What is a CircleCI task vs. a job?
+What is a runner resource class? What is a resource class token?
+What is the security model for CircleCI’s self-hosted runners?
+How do I install dependencies needed for my jobs that use machine runners?
+What connectivity is required?
+How do caching, workspaces, and artifacts work with CircleCI’s self-hosted runners?
+What are the best practices for managing state between jobs?
+How long do inactive self-hosted runners persist in the self-hosted runner inventory page?
+Can I delete self-hosted runner resource classes?
+Who can create, delete, and view self-hosted runner resource classes?
+Can I delete runner resource class tokens?
+Can I create additional runner resource class tokens?
+Can jobs on forks of my OSS project use my organization’s self-hosted runners if the fork is not a part of my organization?
+Why did my test splitting job step error with circleci: command not found?
+Container runner specific FAQs
+Is there only one resource class allowed per container runner deployment?
+Does container runner use a pull or push based model?
+Does container runner scale my Kubernetes cluster for me?
+Is there a limit for the number of concurrent tasks that container runner can handle?
+Can I build Docker images with container runner either via Remote Docker or Docker in Docker (DIND)?
+Can I use something other than Kubernetes with container runner?
+Does container runner require specific Kubernetes providers?
+Does container runner need to sit within the cluster that it deploys pods to?
+What platforms can you install container runner on?
+Does container runner support arm64 Docker images?
+How do I uninstall container runner?
+Does container runner replace the existing self-hosted runner from CircleCI?
+If there are two container runners deployed to a single Kubernetes cluster, how does the agent.maxConcurrentTasks parameter work?
+How do I upgrade to the latest Helm chart?
+How is container runner versioned?
+How is a version of container runner supported?
+What are the security considerations for container runner?
+How can an IAM role be used to authorize pulling images from ECR?
+What if I want to run my CI job within a container, but do not want to use Kubernetes?
+Machine runner specific FAQs
+How can I tell whether a host with a self-hosted runner installed is executing a job?
+This page answers frequently asked questions for CircleCI’s self-hosted container and machine runners.
+A task is the smallest unit of work on CircleCI. If a job has parallelism of one, it is one task. If a job has parallelism = n and n &gt; 1, then the job creates n tasks to execute.
+A resource class is a label to match your CircleCI job with a type of runner (or container runner) that is identified to process that job. The first part of the resource class is your organization’s namespace. For example, a CircleCI resource class could be circleci/documentation.
+Resource classes help you identify a pool of self-hosted runners, which allow you to set up your configuration to send jobs to specific resources. For example, if you have multiple machines running macOS, and multiple machines running Linux, you could create resource classes for each of these, orgname/macOS and orgname/linux, respectively. At the job level in your .circleci/config.yml, you can associate which self-hosted runner resources to send a job to based on the resource class.
+Every time you create a resource class, a resource class token is generated that is associated with the given resource class. This token is the method by which CircleCI authenticates that the resource class is valid. The resource class token only has access to claim tasks.
+Machine runners let you choose the user that executes jobs when the self-hosted runner is installed. It is up to you to ensure this user only has permissions you are comfortable letting jobs use. The container runner installation page describes the security model for container runners.
+Allowing jobs to access a Docker daemon is equivalent to providing root access to the machine.
+Install dependencies in one of two ways:
+Allow the jobs to install their own dependencies
+This approach is the most flexible, but will require providing the jobs sufficient privileges to install tools or install the tools in a non-overlapping manner. For example into the working directory.
+Pre-install dependencies on the machine where the machine runner is installed
+This approach is the most secure; however, this means that if the job’s dependencies change, the self-hosted runner machine must be reconfigured.
+In order to connect back to CircleCI to receive and execute jobs, outbound HTTPS connections to runner.circleci.com, circleci-binary-releases.s3.amazonaws.com are required.
+No inbound connectivity is required by a self-hosted runner. Any other required connectivity is dependent on the content of the jobs themselves.
+Using the checkout step will require access to your VCS provider. Using the cache, workspace or artifact features will require outbound HTTPS connections to circleci-tasks-prod.s3.us-east-1.amazonaws.com.
+Caches, workspaces, and artifacts are methods you can implement to help persist data between jobs, and speed up builds. All three features are compatible with self-hosted runners.
+Find out more about these concepts below:
+Caching
+You can also find out more on the Persisting data page.
+If you would prefer to take complete control of artifact storage, CircleCI recommends you avoid the built-in steps and upload the artifacts directly to your chosen storage backend.
+Machine runners are not opinionated about state between jobs. Machine runners can be configured to give each job a unique working directory and clean it up afterwards - but this is optional. And by default, nothing restricts the job from placing files outside of its working directory.
+In general CircleCI recommends jobs rely on as little state as possible to improve their reproducibility. An effective way to accomplish this is to put cleanup steps at the start of a job so they are guaranteed to run regardless of what happened to a previous job.
+It may be possible to reduce build times by making use of caches that persist on the host between jobs, however this is a trade-off against reproducibility - and may also lead to disks filling up over time. As a result, this trade-off could lead to higher billable usage.
+If a self-hosted runner has not contacted CircleCI in 12 hours, it will not show up in the inventory page on the CircleCI web app
+Yes, self-hosted runner resource classes can be deleted through the CLI. Be sure you want to permanently delete the resource class and its associated tokens, as this action cannot be undone.
+circleci runner resource-class delete &lt;resource-class&gt; --force
+Organization admins in your VCS provider can create and delete self-hosted runner resource classes. Any organization user in your VCS provider that the resource class is associated with can view the resource class list through the CLI.
+Yes, runner resource class tokens can be deleted through the CLI. Be sure you want to permanently delete the token as this action cannot be undone. Note this will not delete the resource class itself, only the token.
+To get the list of tokens and their identifiers:
+circleci runner token list &lt;resource-class name&gt;
+To delete the token itself:
+circleci runner token delete &lt;token identifier&gt;
+Yes, additional runner resource class tokens for a specific runner resource class can be created through the CLI.
+To create the token:
+circleci runner token create &lt;resource-class-name&gt; &lt;nickname&gt;
+No, runner resource classes cannot be used by jobs that are not associated with the organization that owns the runner resource classes. Only forks of your OSS project that are a part of your organization may use the organization’s self-hosted runners.
+On self-hosted runners, circleci-agent is used for all commands in which you may use either circleci-agent or circleci on CircleCI cloud (such as test splitting and step halt commands). Note, circleci is not to be confused with the local CircleCI CLI, and is simply an alias of circleci-agent.
+If you would like to use the local CircleCI CLI in your self-hosted runner jobs, which can proxy test commands to circleci-agent, you can install the CLI via a job step. Install the CLI as a dependency on your machine for machine runner, or include it in a Docker image for container runner.
+This section answers frequently asked questions for CircleCI’s container runner.
+No, you can use as many resource classes as you desire with your container runner deployment. At least one resource class is required in order to run a job successfully with container runner.
+Container runner uses a pull-based model.
+Container runner itself is its own deployment of a single replica set that does not currently require scaling. Container runner will not scale the Kubernetes cluster itself. It schedules work if there are available resources in the cluster.
+You can use the queue depth API as a signal for cluster scaling.
+Container runner will claim and schedule work up to your runner concurrency limit. Additionally, by default, container runner is configured with a limit of 20 tasks it will allow to be concurrently scheduled and running. This can be configured via Helm to be a different value if your runner concurrency allows for a value greater than 20. See the agent.maxConcurrentTasks parameter on the Container runner page.
+An organization’s runner concurrency limit is shared with any existing machine self-hosted runners. If you do not know what your organization’s runner concurrency limit is, ask your point of contact at CircleCI, or submit a support ticket
+See building container images for details.
+At this time, no. Kubernetes and Helm are required.
+No, any Kubernetes provider can be used.
+At this time, yes.
+amd64 and arm64 Linux for both container runner, and the pods that execute tasks.
+Yes, container runner supports jobs that use either amd64 or arm64 Docker images, as well as Kubernetes clusters that use a mixture of amd64 and arm64 nodes. When using images built for a specific architecture, resource classes will need to be configured to target a node with that CPU architecture. Kubernetes provides several node labels automatically that are helpful in configuring the resource class pod specifications for a job to be deployed on the correct node. An example resource class configuration is shown in the example below. More information about these labels can be found in the Kubernetes documentation
+agent:
+resourceClasses:
+&lt;amd64 image resource class&gt;:
+token: &lt;amd64 resource class token&gt;
+spec:
+nodeSelector: # nodeSelector will cause this resource class to only create pods on nodes with the specified labels and values
+kubernetes.io/arch=amd64
+&lt;arm64 image resource class&gt;:
+token: &lt;arm64 resource class token&gt;
+nodeSelector:
+kubernetes.io/arch=arm64
+&lt;multiarchitecture image resource class&gt;: # note no nodeSelector is defined for the multiarchitecture image resource class
+token: &lt;multiarchitecture resource class token&gt;
+To uninstall the container-agent deployment, run:
+$ helm uninstall container-agent
+The command removes all the Kubernetes objects associated with the chart and deletes the release.
+No, container runner is meant to complement machine runners. With container runner and machine runners, CircleCI users have the flexibility to choose the execution environment they desire (Container vs. Machine) just like they are afforded on CircleCI’s cloud platform.
+The agent.maxConcurrentTasks parameter applies to each agent individually. However, multiple container runner deployments per Kubernetes cluster is not recommended at this time.
+Updates to the Helm chart can be applied
+via:
+$ helm repo update
+$ helm upgrade container-agent
+Container runner uses semantic versioning
+for both the container runner application as well as the Helm chart used for installation. The container runner image
+provides a floating tag for each major and minor version, that points to the most recent release of each, as well as a fully qualified tag that points to a specific patch release for a minor version.
+The container runner application promises backwards compatibility for releases within the same major version, as well as vulnerability and bug support for the most recent minor version. The Helm chart for container runner promises backwards compatibility with the values file within the same major version.
+Just like a machine runner, a container runner allows users to run arbitrary code in the infrastructure where container runner is hosted, meaning a bad actor could potentially use it as a method to gain knowledge of internal systems. Ensure you are following all best practices for security to mitigate this risk.
+An IAM role can be associated with the service account used for the container runner by following the AWS documentation
+. If an image in a job configuration specifies AWS credentials, those credentials will be used instead of the IAM role attached to the container runner service account. See the Container runner documentation for more details about the container runner service account.
+If you would like to run your CI job within a container, but do not want to use Kubernetes, you can use a machine runner with Docker installed.
+This section answers frequently asked questions for CircleCI’s machine runner.
+The recommended approach at this time is to query the host with the following command:
+ps aux | pgrep -f circleci-launch-agent
+If the result of the command above returns greater than two processes, you can assume that the machine runner is executing a task.
+Note that you must check to see if there are greater than two processes because the grep process itself will count as one process and the launch-agent process will count as a separate process.
+CircleCI’s self-hosted runner FAQs - CircleCI
