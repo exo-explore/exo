@@ -277,6 +277,11 @@ async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
   return None
 
 async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
+  # On macOS, try to get interface type using networksetup
+  if psutil.MACOS:
+    macos_type = await get_macos_interface_type(ifname)
+    if macos_type is not None: return macos_type
+
   # Local container/virtual interfaces
   if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
     'bridge' in ifname):
@@ -285,11 +290,6 @@ async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   # Loopback interface
   if ifname.startswith('lo'):
     return (6, "Loopback")
-
-  # On macOS, try to get interface type using networksetup
-  if psutil.MACOS:
-    macos_type = await get_macos_interface_type(ifname)
-    if macos_type is not None: return macos_type
 
   # Traditional detection for non-macOS systems or fallback
   if ifname.startswith(('tb', 'nx', 'ten')):
