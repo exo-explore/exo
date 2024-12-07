@@ -17,8 +17,6 @@ jobs:
     strategy:
       matrix:
         cpu: ['M4', 'M4']
-        include:
-          - benchmark_timeout: 500
     runs-on: ['self-hosted', 'macOS', '${{ matrix.cpu }}']
     steps:
       - uses: actions/checkout@v4
@@ -38,8 +36,13 @@ jobs:
           source env/bin/activate
           pip install --upgrade pip
           pip install .
+          pip install boto3==1.35.76
 
       - name: Run exo
+        env:
+          aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.S3_EXO_BENCHMARKS_AWS_SECRET_ACCESS_KEY }}
+          model: llama-3.2-1b
         run: |
           ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${GITHUB_JOB}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${GITHUB_JOB}_${{ strategy.job-index }}"
@@ -52,6 +55,7 @@ jobs:
           TAIL1=$!
 
           trap 'kill $TAIL1' EXIT
+          trap 'kill $PID1' EXIT
 
           for i in {1..100}; do
             nodes=$(curl http://localhost:52415/topology | jq ".nodes | length")
@@ -70,10 +74,15 @@ jobs:
           if [ "${{ strategy.job-index }}" -eq "0" ]; then
             python .github/bench.py
           else
-            sleep ${{ matrix.benchmark_timeout }}
+            sleep 10
+          while true; do
+            nodes=$(curl http://localhost:52415/topology | jq ".nodes | length")
+            if [ "$nodes" -lt "${{ strategy.job-total }}" ]; then
+              break
+            fi
+            sleep 5
+          done
           fi
-
-          kill $PID1
       - name: Test
         run: |
           echo "GITHUB_JOB: ${GITHUB_JOB}, GITHUB_RUN_ID: ${GITHUB_RUN_ID}, GITHUB_RUN_NUMBER: ${GITHUB_RUN_NUMBER}, GITHUB_WORKFLOW: ${GITHUB_WORKFLOW}"

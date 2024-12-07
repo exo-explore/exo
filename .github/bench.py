@@ -3,7 +3,9 @@ import asyncio
 import time
 import json
 import os
+import boto3
 from typing import Dict, Any
+from datetime import datetime
 
 
 async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
@@ -17,9 +19,33 @@ async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: A dictionary containing performance metrics or error information.
     """
-    results: Dict[str, Any] = {}
+    model = os.environ.get('model')
+    results: Dict[str, Any] = {'model': model, 'run_id': os.environ.get('GITHUB_RUN_ID')}
+    results['configuration'] = {
+        'M4': 2 # TODO get this through env vars from the matrix def
+    }
+
+    # Get prompt length in tokens
+    async with aiohttp.ClientSession() as session:
+        try:
+            request_payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}]
+            }
+            async with session.post(
+                "http://localhost:52415/v1/chat/token/encode",
+                json=request_payload
+            ) as response:
+                token_data = await response.json()
+                prompt_tokens = token_data.get('length', 0)
+                print(f"Prompt length: {prompt_tokens} tokens", flush=True)
+        except Exception as e:
+            print(f"Failed to get prompt length: {e}", flush=True)
+            prompt_tokens = 0
+    results['prompt_len'] = prompt_tokens
+
     request_payload = {
-        "model": "llama-3.2-1b",
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "stream": True
@@ -53,7 +79,8 @@ async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
                         if content:
                             if first_token_time is None:
                                 first_token_time = time.time()
-                                results["time_to_first_token"] = first_token_time - start_time
+                                results['ttft'] = first_token_time - start_time
+                                results['prompt_tps'] = prompt_tokens/results['ttft']
 
                             total_tokens += 1
                     except json.JSONDecodeError:
@@ -65,8 +92,8 @@ async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
 
             if total_tokens > 0:
                 results.update({
-                    "tokens_per_second": total_tokens / total_time,
-                    "total_tokens": total_tokens,
+                    "generation_tps": total_tokens / total_time,
+                    "response_len": total_tokens,
                     "total_time": total_time
                 })
             else:
@@ -84,28 +111,36 @@ async def main() -> None:
     api_endpoint = "http://localhost:52415/v1/chat/completions"
 
     # Define prompts
-    prompt_basic = "this is a ping"
     prompt_essay = "write an essay about cats"
-
-    # Measure performance for the basic prompt
-    print("Measuring performance for the basic prompt...", flush=True)
-    results_basic = await measure_performance(api_endpoint, prompt_basic)
-    print("Basic prompt performance metrics:", flush=True)
-    print(json.dumps(results_basic, indent=4))
 
     # Measure performance for the essay prompt, which depends on the first measurement
     print("\nMeasuring performance for the essay prompt...", flush=True)
     results = await measure_performance(api_endpoint, prompt_essay)
 
-    # Save metrics from the "universe and everything" prompt
-    metrics_file = os.path.join("artifacts", "benchmark.json")
-    os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
     try:
-        with open(metrics_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=4)
-        print(f"Performance metrics saved to {metrics_file}", flush=True)
-    except IOError as e:
-        print(f"Failed to save metrics: {e}", flush=True)
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=os.environ.get('aws_access_key_id'),
+            aws_secret_access_key=os.environ.get('aws_secret_key')
+        )
+        job_name = os.environ.get('GITHUB_JOB')
+        
+        # Create S3 key with timestamp and commit info
+        now = datetime.utcnow()
+        timestamp = now.strftime('%H-%M-%S')
+        commit_sha = os.environ.get('GITHUB_SHA', 'unknown')[:7]
+        s3_key = f"{job_name}/{now.year}/{now.month}/{now.day}/{timestamp}_{commit_sha}.json"
+        
+        # Upload to S3
+        s3_client.put_object(
+            Bucket='exo-benchmarks',
+            Key=s3_key,
+            Body=json.dumps(results),
+            ContentType='application/json'
+        )
+        print(f"Performance metrics uploaded to S3: s3://exo-benchmarks/{s3_key}", flush=True)
+    except Exception as e:
+        print(f"Failed to upload metrics to S3: {e}", flush=True)
 
     # Optionally print the metrics for visibility
     print("Performance metrics:", flush=True)
