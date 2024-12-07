@@ -44,6 +44,11 @@ class NodeServiceStub(object):
                 request_serializer=node__service__pb2.TensorRequest.SerializeToString,
                 response_deserializer=node__service__pb2.Tensor.FromString,
                 _registered_method=True)
+        self.SendExample = channel.unary_unary(
+                '/node_service.NodeService/SendExample',
+                request_serializer=node__service__pb2.ExampleRequest.SerializeToString,
+                response_deserializer=node__service__pb2.Loss.FromString,
+                _registered_method=True)
         self.GetInferenceResult = channel.unary_unary(
                 '/node_service.NodeService/GetInferenceResult',
                 request_serializer=node__service__pb2.GetInferenceResultRequest.SerializeToString,
@@ -81,6 +86,12 @@ class NodeServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def SendTensor(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SendExample(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -128,6 +139,11 @@ def add_NodeServiceServicer_to_server(servicer, server):
                     servicer.SendTensor,
                     request_deserializer=node__service__pb2.TensorRequest.FromString,
                     response_serializer=node__service__pb2.Tensor.SerializeToString,
+            ),
+            'SendExample': grpc.unary_unary_rpc_method_handler(
+                    servicer.SendExample,
+                    request_deserializer=node__service__pb2.ExampleRequest.FromString,
+                    response_serializer=node__service__pb2.Loss.SerializeToString,
             ),
             'GetInferenceResult': grpc.unary_unary_rpc_method_handler(
                     servicer.GetInferenceResult,
@@ -209,6 +225,33 @@ class NodeService(object):
             '/node_service.NodeService/SendTensor',
             node__service__pb2.TensorRequest.SerializeToString,
             node__service__pb2.Tensor.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SendExample(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/node_service.NodeService/SendExample',
+            node__service__pb2.ExampleRequest.SerializeToString,
+            node__service__pb2.Loss.FromString,
             options,
             channel_credentials,
             insecure,

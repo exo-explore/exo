@@ -42,6 +42,9 @@ class StandardNode(Node):
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
+    self.buffered_partials: Dict[str, List[np.ndarray]] = {}
+    self.checkpoints: Dict[str, Dict[str, int]] = {}
+    
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
     self.default_sample_temperature = default_sample_temperature
@@ -51,6 +54,7 @@ class StandardNode(Node):
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
     self.topology_inference_engines_pool: List[List[str]] = []
     self.shard_downloader = shard_downloader
+    self.outstanding_requests = {}
 
   async def start(self, wait_for_peers: int = 0) -> None:
     await self.server.start()
@@ -117,8 +121,9 @@ class StandardNode(Node):
       token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
       await self.inference_engine.ensure_shard(shard)
       self.buffered_token_output[request_id][0].append(token.item())
+      is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
       if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
-      is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id
+      asyncio.create_task(self.broadcast_result(request_id, *self.buffered_token_output[request_id]))
       forward = token.reshape(1, -1)
       self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
       asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))
@@ -127,7 +132,9 @@ class StandardNode(Node):
 
     if is_finished:
       self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+      self.outstanding_requests.pop(request_id)
     else:
+      self.outstanding_requests[request_id] = "waiting"
       asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1)))
 
     return np.array(self.buffered_token_output[request_id][0])
@@ -183,13 +190,152 @@ class StandardNode(Node):
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=}")
     if not shard.is_first_layer():
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
+      self.outstanding_requests[request_id] = "waiting"
       resp = await self.forward_prompt(shard, prompt, request_id, 0)
       return None
     else:
+      self.outstanding_requests[request_id] = "processing"
       result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
-      ret = await self.process_inference_result(shard, result, request_id) 
+      ret = await self.process_inference_result(shard, result, request_id)
       return result
 
+  async def enqueue_example(
+    self,
+    base_shard: Shard,
+    example: np.ndarray,
+    target: np.ndarray, 
+    length: np.ndarray,
+    request_id: Optional[str] = None,
+    train: bool = False,
+  ):
+    shard = self.get_current_shard(base_shard)
+    if shard.is_first_layer():
+      loss = await self.process_example(shard, example, target, length, train, request_id)
+      return loss
+    else:
+      if request_id is None:
+        request_id = str(uuid.uuid4())
+      self.outstanding_requests[request_id] = "waiting"
+      loss = await self.forward_example(shard, example, target, length, train, request_id, 0) 
+    return loss
+
+  async def coordinate_save(
+    self,
+    base_shard: Shard,
+    iteration: int,
+    destination: str,
+  ):
+    shard = self.get_current_shard(base_shard)
+    model = shard.model_id
+    sid = shard.__hash__()
+    path = f"{destination}/{model}/{sid}-{iteration}.safetensors"
+    self.outstanding_requests[f"{sid}::{iteration}"] = "Checking"
+    if model not in self.checkpoints:
+      self.checkpoints[model] = {}
+    if sid not in self.checkpoints[model]:
+      self.checkpoints[model][sid] = []
+    if len(self.checkpoints[model][sid]) < 1 or self.checkpoints[model][sid][-1] < iteration:
+      print(f"Saving checkpoint to {path}")
+      self.outstanding_requests[f"{sid}::{iteration}"] = "Saving"
+      import os
+      os.makedirs("/".join(path.split("/")[:-1]), exist_ok=True)
+      await self.inference_engine.save_checkpoint(shard, path)
+      self.checkpoints[model][sid] = sorted(self.checkpoints[model][sid] + [iteration])
+    self.outstanding_requests.pop(f"{sid}::{iteration}")
+
+  async def process_example(
+    self,
+    base_shard: Shard,
+    example: np.ndarray,
+    target: np.ndarray, 
+    length: np.ndarray,
+    train: bool = False,
+    request_id: Optional[str] = None,
+  ):
+    shard = self.get_current_shard(base_shard)
+    asyncio.create_task(
+      self.broadcast_opaque_status(
+        request_id,
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": f"start_{'train' if train else 'eval'}_example",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "example_size": example.size,
+          "example_shape": example.shape,
+          "request_id": request_id,
+        }),
+      )
+    )
+    start_time = time.perf_counter_ns()
+    resp = await self._process_example(shard, example, target, length, train, request_id)
+    end_time = time.perf_counter_ns()
+    elapsed_time_ns = end_time - start_time
+    asyncio.create_task(
+      self.broadcast_opaque_status(
+        request_id,
+        json.dumps({
+          "type": "node_status",
+          "node_id": self.id,
+          "status": f"end_{'train' if train else 'eval'}_example",
+          "base_shard": base_shard.to_dict(),
+          "shard": shard.to_dict(),
+          "request_id": request_id,
+          "elapsed_time_ns": elapsed_time_ns,
+        }),
+      )
+    )
+    return resp
+
+  async def _process_example(
+    self,
+    base_shard: Shard,
+    example: np.ndarray,
+    target: np.ndarray, 
+    length: np.ndarray,
+    train: bool = False,
+    request_id: Optional[str] = None,
+  ) -> Optional[np.ndarray]:
+    if request_id is None:
+      request_id = str(uuid.uuid4())
+    shard = self.get_current_shard(base_shard)
+    if DEBUG >= 1: print(f"[{request_id}] process_example: {example.shape=}")
+    try:
+      target = target.astype(int)
+      if train:
+        if shard.is_last_layer():
+          self.outstanding_requests[request_id] = "training"
+          loss, grad = await self.inference_engine.train(request_id, shard, example, target, length)
+        else:
+          self.outstanding_requests[request_id] = "preprocessing"
+          step = await self.inference_engine.infer_tensor(request_id, shard, example)
+          self.outstanding_requests[request_id] = "waiting"
+          loss, backgrad = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
+          self.outstanding_requests[request_id] = "training"
+          partial_loss, grad = await self.inference_engine.train(request_id, shard, example, backgrad, length, loss="back_gradient")
+        self.outstanding_requests.pop(request_id)
+        if shard.is_first_layer():
+          return loss
+        else:
+          return loss, grad
+      else:
+        if shard.is_last_layer():
+          self.outstanding_requests[request_id] = "evaluating"
+          loss = await self.inference_engine.evaluate(request_id, shard, example, target, length)
+        else:
+          self.outstanding_requests[request_id] = "preprocessing"
+          step = await self.inference_engine.infer_tensor(request_id, shard, example)
+          self.outstanding_requests[request_id] = "waiting"
+          loss = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
+        self.outstanding_requests.pop(request_id)
+        return loss
+    except Exception as e:
+      self.outstanding_requests.pop(request_id)
+      print(f"Error processing example for shard {shard}: {e}")
+      traceback.print_exc()
+      return None
+        
   async def process_tensor(
     self,
     base_shard: Shard,
@@ -245,13 +391,36 @@ class StandardNode(Node):
 
     if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
     try:
+      self.outstanding_requests[request_id] = "processing"
       result = await self.inference_engine.infer_tensor(request_id, shard, tensor)
       ret = await self.process_inference_result(shard, result, request_id) 
       return ret
     except Exception as e:
+      self.outstanding_requests.pop(request_id)
       print(f"Error processing tensor for shard {shard}: {e}")
       traceback.print_exc()
       return None
+  
+  async def forward_example(
+    self,
+    base_shard: Shard,
+    step: np.ndarray,
+    target: np.ndarray,
+    length: np.ndarray,
+    train: bool,
+    request_id: str,
+    target_index: int,
+  ) -> None:
+    if DEBUG >= 1: print(f"target partition index: {target_index}")
+    target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
+    target_shard = self.get_current_shard(base_shard, target_index)
+    if DEBUG >= 2: print(f"computed target from: {base_shard} {target_index}, {self.topology}. target shard: {target_shard}")
+    target_peer = next((p for p in self.peers if p.id() == target_id), None)
+    if not target_peer:
+      raise ValueError(f"peer for {target_index} not found")
+    if DEBUG >= 1: print(f"sending example to {target_peer.id()}: {step} => {target} ({length})")
+    resp = await target_peer.send_example(target_shard, step, target, length, request_id=request_id, train=train)
+    return resp
 
   async def forward_prompt(
     self,

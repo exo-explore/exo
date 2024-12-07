@@ -5,16 +5,18 @@ from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggin
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import load_state_dict
-from tinygrad import Tensor, nn, Context
+from tinygrad import Tensor, nn, Context, TinyJit
 from exo.inference.inference_engine import InferenceEngine
 import numpy as np
 from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
 from concurrent.futures import ThreadPoolExecutor
-from .stateful_model import StatefulModel
+from .stateful_model import make_prompt_state
+from .losses import length_masked_ce_loss
+from collections import OrderedDict
 import asyncio
 
-Tensor.no_grad = True
+Tensor.no_grad = True 
 # default settings
 TEMPERATURE = int(os.getenv("TEMPERATURE", 0.85))
 TOP_K = 25
@@ -62,6 +64,18 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
+    self.states = OrderedDict()
+    self.session = {}
+
+  def poll_state(self, x, request_id: str, max_states=2):
+    if request_id not in self.states:
+      if len(self.states) >= max_states:
+        self.states.popitem(last=False)
+      self.states[request_id] = make_prompt_state(x, self.model, self.shard)
+    else:
+      self.states.move_to_end(request_id)
+    state = self.states[request_id]
+    return {"start_pos": state.start, "cache": state.cache}
 
   async def sample(self, x: np.ndarray, temp=TEMPERATURE, top_p: float = 0.0) -> np.ndarray:
     logits = x[:, -1, :]
@@ -76,11 +90,47 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   
   async def decode(self, shard: Shard, tokens) -> str:
     await self.ensure_shard(shard)
-    return await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.decode, tokens)
-
+    tokens = await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.decode, tokens)
+    return tokens
+  
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
-    return await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.model(Tensor(input_data), request_id).realize().numpy())
+    def wrap_infer():
+      x = Tensor(input_data)
+      state = self.poll_state(x, request_id)
+      out = self.model(x, **state)
+      self.states[request_id].start += x.shape[1]
+      return out.realize()
+    output_data = await asyncio.get_running_loop().run_in_executor(self.executor, wrap_infer)
+    return output_data.numpy()
+
+  async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss):
+    def step(x, y, l):
+      Tensor.training = False
+      return self.session['loss'](self.model, x, y, l)
+    await self.ensure_shard(shard)
+    await self.ensure_session('loss', lambda: loss)
+    await self.ensure_session('jit', lambda: TinyJit(step)) 
+    score = await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.session['jit'](Tensor(inputs), targets, lengths))
+    out = score.numpy()
+    return out
+  
+  async def train(self, request_id: str, shard: Shard, inputs, targets, lengths, loss=length_masked_ce_loss, opt=nn.optim.Adam, lr=1e-5):
+    def step(x, y, l):
+      Tensor.training = True
+      score = self.session['loss'](self.model, x, y, l)
+      self.session['opt'].zero_grad()
+      score.backward()
+      self.session['opt'].step()
+      return score
+    await self.ensure_shard(shard)
+    await self.ensure_session('loss', lambda: loss)
+    await self.ensure_session('opt', lambda: opt(nn.state.get_parameters(self.model.model), lr=lr))
+    await self.ensure_session('jit', lambda: TinyJit(step)) 
+      
+    score = await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.session['jit'](Tensor(inputs), targets, lengths).realize())
+    
+    return loss.numpy(), loss.numpy()
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
@@ -96,4 +146,4 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
       self.shard = shard
-      self.model = await loop.run_in_executor(self.executor, StatefulModel, model_shard) 
+      self.model = model_shard
