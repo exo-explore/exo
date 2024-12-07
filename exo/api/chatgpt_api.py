@@ -65,6 +65,9 @@ def generate_completion(
       "finish_reason": finish_reason,
     }],
   }
+  
+  if DEBUG >= 3:
+    print(f"completion: {completion}")
 
   if not stream:
     completion["usage"] = {
