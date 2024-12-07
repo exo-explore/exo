@@ -287,7 +287,14 @@ class ChatGPTAPI:
     shard = build_base_shard(model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
-    return web.json_response({"length": len(build_prompt(tokenizer, messages)[0])})
+    prompt = build_prompt(tokenizer, messages)
+    tokens = tokenizer.encode(prompt)
+    return web.json_response({
+      "length": len(prompt),
+      "num_tokens": len(tokens),
+      "encoded_tokens": tokens,
+      "encoded_prompt": prompt,
+    })
 
   async def handle_get_download_progress(self, request):
     progress_data = {}
