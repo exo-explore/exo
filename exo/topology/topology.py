@@ -39,11 +39,13 @@ class Topology:
     conn = PeerConnection(from_id, to_id, description)
     self.peer_graph[from_id].add(conn)
 
-  def merge(self, other: "Topology"):
+  def merge(self, peer_node_id: str, other: "Topology"):
     for node_id, capabilities in other.nodes.items():
+      if node_id != peer_node_id: continue
       self.update_node(node_id, capabilities)
     for node_id, connections in other.peer_graph.items():
       for conn in connections:
+        if conn.from_id != peer_node_id: continue
         self.add_edge(conn.from_id, conn.to_id, conn.description)
 
   def __str__(self):
