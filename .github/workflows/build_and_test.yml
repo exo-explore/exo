@@ -16,7 +16,7 @@ jobs:
   check_local_runner:
     strategy:
       matrix:
-        cpu: ['M3', 'M4']
+        cpu: ['M4', 'M4']
         include:
           - benchmark_timeout: 500
     runs-on: ['self-hosted', 'macOS', '${{ matrix.cpu }}']
