@@ -42,7 +42,7 @@ class UDPDiscovery(Discovery):
     listen_port: int,
     broadcast_port: int,
     create_peer_handle: Callable[[str, str, str, DeviceCapabilities], PeerHandle],
-    broadcast_interval: int = 1,
+    broadcast_interval: int = 2.5,
     discovery_timeout: int = 30,
     device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     allowed_node_ids: List[str] = None,
