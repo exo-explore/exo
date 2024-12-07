@@ -1,7 +1,9 @@
+import os
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.sample_utils import top_p_sampling
+from pathlib import Path
 from ..inference_engine import InferenceEngine
 from .stateful_model import StatefulModel
 from .sharded_utils import load_shard
@@ -10,6 +12,8 @@ from typing import Dict, Optional, Tuple
 from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+from exo.models import get_repo
 
 def sample_logits(
   logits: mx.array,
@@ -63,7 +67,12 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+    if os.path.isdir(shard.model_id): # cli mode
+      model_path = Path(shard.model_id) 
+    elif "Local" in shard.model_id: # api mode
+      model_path = Path(get_repo(shard.model_id, self.__class__.__name__))
+    else:
+      model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
 
     if self.shard != shard:
       loop = asyncio.get_running_loop()
