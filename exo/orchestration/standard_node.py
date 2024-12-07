@@ -58,7 +58,7 @@ class StandardNode(Node):
     await self.update_peers(wait_for_peers)
     await self.collect_topology(set())
     if DEBUG >= 2: print(f"Collected topology: {self.topology}")
-    asyncio.create_task(self.periodic_topology_collection(1.0))
+    asyncio.create_task(self.periodic_topology_collection(2.0))
 
   async def stop(self) -> None:
     await self.discovery.stop()

@@ -8,9 +8,11 @@ import platform
 import psutil
 import uuid
 import netifaces
+import subprocess
 from pathlib import Path
 import tempfile
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -22,6 +24,9 @@ exo_text = r"""
 |  __/>  < (_) |
  \___/_/\_\___/ 
     """
+
+# Single shared thread pool for subprocess operations
+subprocess_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="subprocess_worker")
 
 
 def get_system_info():
@@ -239,10 +244,15 @@ def get_all_ip_addresses_and_interfaces():
 
 async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
   try:
-    proc = await asyncio.create_subprocess_exec('system_profiler', 'SPNetworkDataType', '-json',
-      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    output, _ = await proc.communicate()
-    data = json.loads(output.decode('utf-8'))
+    # Use the shared subprocess_pool
+    output = await asyncio.get_running_loop().run_in_executor(subprocess_pool, lambda: subprocess.run(
+      ['system_profiler', 'SPNetworkDataType', '-json'],
+      capture_output=True,
+      text=True,
+      close_fds=True
+    ).stdout)
+
+    data = json.loads(output)
 
     for interface in data.get('SPNetworkDataType', []):
       if interface.get('interface') == ifname:
@@ -250,21 +260,14 @@ async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
         type_name = interface.get('type', '').lower()
         name = interface.get('_name', '').lower()
 
-        # Thunderbolt interfaces
         if 'thunderbolt' in name:
           return (5, "Thunderbolt")
-
-        # Ethernet adapters
         if hardware == 'ethernet' or type_name == 'ethernet':
           if 'usb' in name:
             return (4, "Ethernet [USB]")
           return (4, "Ethernet")
-
-        # WiFi/AirPort
         if hardware == 'airport' or type_name == 'airport' or 'wi-fi' in name:
           return (3, "WiFi")
-
-        # VPN interfaces
         if type_name == 'vpn':
           return (1, "External Virtual")
 
