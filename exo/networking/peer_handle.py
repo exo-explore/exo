@@ -56,5 +56,5 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
-  async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
+  async def collect_topology(self, my_node_id: str, visited: set[str], max_depth: int) -> Topology:
     pass

@@ -117,11 +117,12 @@ class GRPCPeerHandle(PeerHandle):
       response.is_finished,
     )
 
-  async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
+  async def collect_topology(self, my_node_id: str, visited: set[str], max_depth: int) -> Topology:
     request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
     response = await self.stub.CollectTopology(request)
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
+      if node_id == my_node_id: continue
       device_capabilities = DeviceCapabilities(
         model=capabilities.model,
         chip=capabilities.chip,
@@ -130,6 +131,7 @@ class GRPCPeerHandle(PeerHandle):
       )
       topology.update_node(node_id, device_capabilities)
     for node_id, peer_connections in response.peer_graph.items():
+      if node_id == my_node_id: continue
       for conn in peer_connections.connections:
         topology.add_edge(node_id, conn.to_id, conn.description)
     return topology

@@ -28,7 +28,7 @@ class Node(ABC):
     pass
 
   @abstractmethod
-  async def collect_topology(self, visited: set[str] = set(), max_depth: int = 2) -> Topology:
+  async def collect_topology(self, my_node_id: str, visited: set[str] = set(), max_depth: int = 2) -> Topology:
     pass
 
   @property
