@@ -262,6 +262,11 @@ async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
         # Ethernet adapters
         if 'Ethernet' in hw_port:
           return (4, "Ethernet")
+        if 'USB' in hw_port:
+          if 'en' in ifname:
+            return (4, "Ethernet (USB Adapter)")
+          else:
+            return (4, "USB")
 
         # WiFi
         if hw_port == 'Wi-Fi':
