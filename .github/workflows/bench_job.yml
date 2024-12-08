@@ -102,6 +102,7 @@ jobs:
           fi
 
           if [ "${{ strategy.job-index }}" -eq "0" ]; then
+            sleep 10
             echo "This is the primary node (index 0). Running benchmark..."
             GITHUB_JOB=$CALLING_JOB python .github/bench.py
           else
