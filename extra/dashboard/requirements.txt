@@ -1,2 +1,4 @@
 boto3==1.35.76
 dash==2.18.2
+numpy
+pandas
