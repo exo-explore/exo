@@ -187,7 +187,7 @@ sudo launchctl load /Library/LaunchDaemons/com.github.runner.plist
 
 # Add Runner.Listener permissions (after runner installation)
 RUNNER_PATH="$RUNNER_DIR/bin/Runner.Listener"
-sudo chmod 755" "$RUNNER_PATH"
+sudo chmod 755 "$RUNNER_PATH"
 sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "$RUNNER_PATH"
 sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblock "$RUNNER_PATH"
 
