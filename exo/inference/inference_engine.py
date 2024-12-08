@@ -33,12 +33,6 @@ class InferenceEngine(ABC):
   async def save_session(self, key, value):
     self.session[key] = value
   
-  async def ensure_session(self, key, check, value_gen, hook=None):
-    if key not in self.session or not check(self.session[key]):
-      await self.save_session(key, value_gen())
-      if hook is not None:
-        hook()
-  
   async def clear_session(self):
     self.session.empty()
   
