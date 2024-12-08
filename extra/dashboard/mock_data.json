@@ -1,0 +1,54 @@
+{
+  "config1": [
+    {
+      "timestamp": "2024-03-01T10:00:00",
+      "prompt_tps": 150.5,
+      "generation_tps": 120.3,
+      "commit": "abc123",
+      "run_id": "12345678",
+      "configuration": {
+        "M4_Pro_16GB": 1,
+        "M4_Pro_24GB": 2,
+        "M4_32GB": 1
+      }
+    },
+    {
+      "timestamp": "2024-03-02T10:00:00",
+      "prompt_tps": 155.2,
+      "generation_tps": 125.1,
+      "commit": "def456",
+      "run_id": "23456789",
+      "configuration": {
+        "M4_Pro_16GB": 1,
+        "M4_Pro_24GB": 2,
+        "M4_32GB": 1
+      }
+    }
+  ],
+  "config2": [
+    {
+      "timestamp": "2024-03-01T10:00:00",
+      "prompt_tps": 140.8,
+      "generation_tps": 110.5,
+      "commit": "ghi789",
+      "run_id": "34567890",
+      "configuration": {
+        "M4_Pro_16GB": 1,
+        "M4_Pro_24GB": 2,
+        "M4_32GB": 1
+      }
+    },
+    {
+      "timestamp": "2024-03-02T10:00:00",
+      "prompt_tps": 145.6,
+      "generation_tps": 115.2,
+      "commit": "jkl012",
+      "run_id": "45678901",
+      "configuration": {
+        "M4_Pro_16GB": 1,
+        "M4_Pro_24GB": 2,
+        "M4_32GB": 1
+      }
+    }
+  ]
+} 
