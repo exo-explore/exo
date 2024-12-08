@@ -7,7 +7,6 @@ import traceback
 from typing import List, Dict, Optional, Tuple, Union, Set
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
-from .node import Node
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
