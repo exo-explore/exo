@@ -37,6 +37,7 @@ jobs:
     steps:
       - name: Setup Git LFS
         run: |
+          git --version
           # Print current Git LFS status
           which git-lfs || echo "git-lfs not found"
           git lfs version || echo "git-lfs version failed"
