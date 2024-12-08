@@ -35,6 +35,17 @@ jobs:
       HARDWARE_CONFIG: ${{ inputs.config }}
       model: ${{ inputs.model }}
     steps:
+      - name: Setup Git LFS
+        run: |
+          # Print current Git LFS status
+          which git-lfs || echo "git-lfs not found"
+          git lfs version || echo "git-lfs version failed"
+          
+          # Ensure Git LFS is initialized
+          git lfs install
+          
+          # Verify installation
+          git lfs env
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
