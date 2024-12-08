@@ -62,7 +62,7 @@ jobs:
           ps aux | grep exo || true
 
           CALLING_JOB="${{ inputs.calling_job_name }}"
-          UNIQUE_JOB_ID="${CALLING_JOB}_${GITHUB_RUN_ID}"
+          UNIQUE_JOB_ID="${CALLING_JOB}_${model}_${GITHUB_RUN_ID}"
           ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${UNIQUE_JOB_ID}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${UNIQUE_JOB_ID}_${{ strategy.job-index }}"
           source env/bin/activate

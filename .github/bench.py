@@ -8,7 +8,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 
-async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
+async def measure_performance(api_endpoint: str, prompt: str, model: str) -> Dict[str, Any]:
     """
     Measures the performance of an API endpoint by sending a prompt and recording metrics.
 
@@ -19,7 +19,6 @@ async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: A dictionary containing performance metrics or error information.
     """
-    model = os.environ.get('model', 'llama-3.2-1b')
 
     results = {
         'model': model,
@@ -100,17 +99,18 @@ async def main() -> None:
     prompt_warmup = "what is the capital of France?"
     prompt_essay = "write an essay about cats"
 
+    model = os.environ.get('model', 'llama-3.2-1b')
     # Warmup request
     print("\nPerforming warmup request...", flush=True)
     try:
-        warmup_results = await measure_performance(api_endpoint, prompt_warmup)
+        warmup_results = await measure_performance(api_endpoint, prompt_warmup, model)
         print("Warmup completed successfully", flush=True)
     except Exception as e:
         print(f"Warmup request failed: {e}", flush=True)
 
     # Measure performance for the essay prompt
     print("\nMeasuring performance for the essay prompt...", flush=True)
-    results = await measure_performance(api_endpoint, prompt_essay)
+    results = await measure_performance(api_endpoint, prompt_essay, model)
 
     try:
         s3_client = boto3.client(
@@ -124,7 +124,7 @@ async def main() -> None:
         now = datetime.utcnow()
         timestamp = now.strftime('%H-%M-%S')
         commit_sha = os.environ.get('GITHUB_SHA', 'unknown')[:7]
-        s3_key = f"{job_name}/{now.year}/{now.month}/{now.day}/{timestamp}_{commit_sha}.json"
+        s3_key = f"{job_name}/{model}/{now.year}/{now.month}/{now.day}/{timestamp}_{commit_sha}.json"
 
         # Upload to S3
         s3_client.put_object(
