@@ -97,9 +97,18 @@ async def main() -> None:
     api_endpoint = "http://localhost:52415/v1/chat/completions"
 
     # Define prompts
+    prompt_warmup = "what is the capital of France?"
     prompt_essay = "write an essay about cats"
 
-    # Measure performance for the essay prompt, which depends on the first measurement
+    # Warmup request
+    print("\nPerforming warmup request...", flush=True)
+    try:
+        warmup_results = await measure_performance(api_endpoint, prompt_warmup)
+        print("Warmup completed successfully", flush=True)
+    except Exception as e:
+        print(f"Warmup request failed: {e}", flush=True)
+
+    # Measure performance for the essay prompt
     print("\nMeasuring performance for the essay prompt...", flush=True)
     results = await measure_performance(api_endpoint, prompt_essay)
 
