@@ -35,12 +35,8 @@ class InferenceEngine(ABC):
       if hook is not None:
         hook()
   
-  async def ensure_session_match(self, key, check, value_gen):
-    if key not in self.session or not check(self.session[key]):
-      await self.save_session(key, value_gen())
-  
   async def clear_session(self):
-    session.empty()
+    self.session.empty()
   
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str) -> np.ndarray:
     tokens = await self.encode(shard, prompt)
