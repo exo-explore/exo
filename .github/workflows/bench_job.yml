@@ -65,37 +65,54 @@ jobs:
           UNIQUE_JOB_ID="${CALLING_JOB}_${model}_${GITHUB_RUN_ID}"
           ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${UNIQUE_JOB_ID}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${UNIQUE_JOB_ID}_${{ strategy.job-index }}"
+          echo "Starting exo process with:"
+          echo "MY_NODE_ID: ${MY_NODE_ID}"
+          echo "ALL_NODE_IDS: ${ALL_NODE_IDS}"
+          echo "Total expected nodes: ${{ strategy.job-total }}"
+
           source env/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+          echo "Starting exo daemon..."
           DEBUG=6 exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
+          echo "Exo process started with PID: $PID1"
           tail -f output1.log &
           TAIL1=$!
 
           trap 'kill $TAIL1' EXIT
           trap 'kill $PID1' EXIT
 
+          echo "Waiting for all nodes to connect..."
           for i in {1..100}; do
-            nodes=$(curl http://localhost:52415/topology | jq ".nodes | length")
+            echo "Attempt $i: Checking node count..."
+            nodes=$(curl -s http://localhost:52415/topology | jq ".nodes | length")
+            echo "Current node count: $nodes"
             if [ "$nodes" -eq "${{ strategy.job-total }}" ]; then
+              echo "All nodes connected successfully!"
               break
             fi
             sleep 5
           done
 
           if ! kill -0 $PID1 2>/dev/null; then
-              echo "Instance (PID $PID1) died unexpectedly. Log output:"
+              echo "ERROR: Instance (PID $PID1) died unexpectedly. Full log output:"
               cat output1.log
               exit 1
           fi
 
           if [ "${{ strategy.job-index }}" -eq "0" ]; then
+            echo "This is the primary node (index 0). Running benchmark..."
             GITHUB_JOB=$CALLING_JOB python .github/bench.py
           else
+            echo "This is a secondary node (index ${{ strategy.job-index }}). Waiting for completion..."
             sleep 10
             while true; do
-              nodes=$(curl http://localhost:52415/topology | jq ".nodes | length")
+              echo "Checking if primary node is still running..."
+              nodes=$(curl -s http://localhost:52415/topology | jq ".nodes | length")
+              echo "Current node count: $nodes"
               if [ "$nodes" -lt "${{ strategy.job-total }}" ]; then
+                echo "Primary node completed, exiting..."
                 break
               fi
               sleep 5
