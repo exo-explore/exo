@@ -42,7 +42,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
     self.caches = OrderedDict()
-    self.session = {}
 
   async def poll_state(self, request_id: str, max_caches=2):
     if request_id in self.caches:

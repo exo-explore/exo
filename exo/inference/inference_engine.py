@@ -8,6 +8,8 @@ from .shard import Shard
 
 
 class InferenceEngine(ABC):
+  session = {}
+
   @abstractmethod
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     pass

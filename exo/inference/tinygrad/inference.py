@@ -65,7 +65,6 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard_downloader = shard_downloader
     self.executor = ThreadPoolExecutor(max_workers=1)
     self.states = OrderedDict()
-    self.session = {}
 
   def poll_state(self, x, request_id: str, max_states=2):
     if request_id not in self.states:
