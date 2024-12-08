@@ -35,19 +35,6 @@ jobs:
       HARDWARE_CONFIG: ${{ inputs.config }}
       model: ${{ inputs.model }}
     steps:
-      - name: Setup Git LFS
-        run: |
-          # Install Git LFS
-          brew install git-lfs || echo "Failed to install via brew, trying alternative"
-          
-          # Verify git version
-          git --version
-          
-          # Initialize Git LFS
-          git lfs install
-          
-          # Verify installation
-          git lfs env
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
