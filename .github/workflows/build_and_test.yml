@@ -128,7 +128,7 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'M4PRO_GPU16_24GB' || 'M4PRO_GPU16_24GB' }}
+    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'depot-ubuntu-22.04-4' || 'depot-macos-latest' }}
     strategy:
       matrix:
         inference_engine: [mlx, tinygrad, dummy]
