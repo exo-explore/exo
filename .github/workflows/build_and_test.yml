@@ -50,7 +50,7 @@ jobs:
             line-count-diff.json
 
   unit_test:
-    runs-on: macos-15
+    runs-on: depot-macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
           python3 ./test/test_model_helpers.py
 
   discovery_integration_test:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-22.04-4
     steps:
       - uses: actions/checkout@v4
 
@@ -128,16 +128,15 @@ jobs:
           fi
 
   chatgpt_api_tests:
-    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'ubuntu-latest' || 'macos-15' }}
+    runs-on: ${{ (matrix.inference_engine == 'tinygrad' || matrix.inference_engine == 'dummy') && 'depot-ubuntu-22.04-4' || 'depot-macos-latest' }}
     strategy:
       matrix:
-        # inference_engine: [mlx, tinygrad, dummy]
-        inference_engine: [tinygrad, dummy]
+        inference_engine: [mlx, tinygrad, dummy]
         include:
-          # - inference_engine: mlx
-          #   model_id: llama-3.2-1b
-          #   prompt: "Keep responses concise. Who was the king of pop?"
-          #   expected_output: "Michael Jackson"
+          - inference_engine: mlx
+            model_id: llama-3.2-1b
+            prompt: "Keep responses concise. Who was the king of pop?"
+            expected_output: "Michael Jackson"
           - inference_engine: tinygrad
             model_id: llama-3.2-1b
             prompt: "Keep responses concise. Who was the king of pop?"
@@ -273,7 +272,7 @@ jobs:
           fi
 
   measure_pip_sizes:
-    runs-on: macos-15
+    runs-on: depot-macos-latest
     steps:
       - uses: actions/checkout@v4
 
