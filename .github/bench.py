@@ -21,9 +21,7 @@ async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
     """
     model = os.environ.get('model')
     results: Dict[str, Any] = {'model': model, 'run_id': os.environ.get('GITHUB_RUN_ID')}
-    results['configuration'] = {
-        'M4': 2 # TODO get this through env vars from the matrix def
-    }
+    results['configuration'] = json.loads(os.environ.get('HARDWARE_CONFIG'))
 
     # Get prompt length in tokens
     async with aiohttp.ClientSession() as session:
@@ -37,7 +35,7 @@ async def measure_performance(api_endpoint: str, prompt: str) -> Dict[str, Any]:
                 json=request_payload
             ) as response:
                 token_data = await response.json()
-                prompt_tokens = token_data.get('length', 0)
+                prompt_tokens = token_data.get('num_tokens', 0)
                 print(f"Prompt length: {prompt_tokens} tokens", flush=True)
         except Exception as e:
             print(f"Failed to get prompt length: {e}", flush=True)

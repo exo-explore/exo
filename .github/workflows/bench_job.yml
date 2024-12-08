@@ -1,26 +1,38 @@
-name: Build and Test
+# This is the reusable workflow file
+name: Distributed Job Runner
 
 on:
-  push:
-    branches: [ '*' ]
-    tags: [ '*' ]
-  pull_request:
-    branches: [ '*' ]
-
-env:
-  PYTHON_VERSION: "3.12"
-  TOKENIZERS_PARALLELISM: "false"
-  PYTHONPATH: "."
-
+  workflow_call:
+    inputs:
+      config:
+        required: true
+        type: string
+      model:
+        required: true
+        type: string
 jobs:
-  check_local_runner:
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: |
+          MATRIX=$(echo $CONFIG | jq -c '{cpu: [to_entries | .[] | .key as $k | range(.value) | $k]}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  run-distributed-job:
+    needs: generate-matrix
     strategy:
-      matrix:
-        cpu: ['M4', 'M4']
+      matrix: ${{fromJson(needs.generate-matrix.outputs.matrix)}}
     runs-on: ['self-hosted', 'macOS', '${{ matrix.cpu }}']
+    env:
+      HARDWARE_CONFIG: ${{ inputs.config }}
+      model: ${{ inputs.model }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Install dependencies
         run: |
           # First, find where python3.12 is installed
@@ -37,18 +49,16 @@ jobs:
           pip install --upgrade pip
           pip install .
           pip install boto3==1.35.76
-
       - name: Run exo
         env:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
           aws_secret_key: ${{ secrets.S3_EXO_BENCHMARKS_AWS_SECRET_ACCESS_KEY }}
-          model: llama-3.2-1b
         run: |
-          ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${GITHUB_JOB}_${i},"; done | sed 's/,$//')
-          MY_NODE_ID="${GITHUB_JOB}_${{ strategy.job-index }}"
+          UNIQUE_JOB_ID="${GITHUB_JOB}_${GITHUB_RUN_ID}"
+          ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${UNIQUE_JOB_ID}_${i},"; done | sed 's/,$//')
+          MY_NODE_ID="${UNIQUE_JOB_ID}_${{ strategy.job-index }}"
           source env/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
-          echo "${ALL_NODE_IDS}"
           exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
           PID1=$!
           tail -f output1.log &
@@ -83,6 +93,3 @@ jobs:
             sleep 5
           done
           fi
-      - name: Test
-        run: |
-          echo "GITHUB_JOB: ${GITHUB_JOB}, GITHUB_RUN_ID: ${GITHUB_RUN_ID}, GITHUB_RUN_NUMBER: ${GITHUB_RUN_NUMBER}, GITHUB_WORKFLOW: ${GITHUB_WORKFLOW}"
