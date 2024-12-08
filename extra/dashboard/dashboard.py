@@ -20,14 +20,17 @@ def load_data_from_s3():
   # For testing, use mock data if environment variable is set
   if os.getenv('USE_MOCK_DATA'):
     return load_mock_data()
-    
+
   config_data = defaultdict(list)
-  
+
   paginator = s3.get_paginator('list_objects_v2')
   for page in paginator.paginate(Bucket=BUCKET_NAME):
     for obj in page.get('Contents', []):
       key = obj['Key']
-      config_name = key.split('/')[0]
+      key_parts = key.split('/')
+      if len(key_parts) < 2:
+        continue
+      config_name = f"{key_parts[0]}/{key_parts[1]}"  # Include both config and model
       response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
       data = json.loads(response['Body'].read().decode('utf-8'))
       print(f"Processing object: {obj['Key']}: {data}")
@@ -38,10 +41,10 @@ def load_data_from_s3():
         'commit': data.get('commit', ''),
         'run_id': data.get('run_id', '')
       })
-  
+
   for config in config_data:
     config_data[config].sort(key=lambda x: x['timestamp'])
-    
+
   return config_data
 
 app = dash.Dash(__name__)
@@ -63,16 +66,16 @@ app.layout = html.Div([
 def update_graphs(n):
   config_data = load_data_from_s3()
   graphs = []
-  
+
   for config_name, data in config_data.items():
     timestamps = [d['timestamp'] for d in data]
     prompt_tps = [d['prompt_tps'] for d in data]
     generation_tps = [d['generation_tps'] for d in data]
     commits = [d['commit'] for d in data]
     run_ids = [d['run_id'] for d in data]
-    
+
     fig = go.Figure()
-    
+
     fig.add_trace(go.Scatter(
       x=timestamps,
       y=prompt_tps,
@@ -82,7 +85,7 @@ def update_graphs(n):
       text=commits,
       customdata=run_ids
     ))
-    
+
     fig.add_trace(go.Scatter(
       x=timestamps,
       y=generation_tps,
@@ -92,7 +95,7 @@ def update_graphs(n):
       text=commits,
       customdata=run_ids
     ))
-    
+
     fig.update_layout(
       title=f'Performance Metrics - {config_name}',
       xaxis_title='Timestamp',
@@ -100,7 +103,7 @@ def update_graphs(n):
       hovermode='x unified',
       clickmode='event'
     )
-    
+
     graphs.append(html.Div([
       dcc.Graph(
         figure=fig,
@@ -108,7 +111,7 @@ def update_graphs(n):
         config={'displayModeBar': True}
       )
     ]))
-    
+
   return graphs
 
 @app.callback(
