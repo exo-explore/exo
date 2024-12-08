@@ -13,4 +13,5 @@ jobs:
     with:
       config: '{"M4PRO_GPU16_24GB": 2}'
       model: 'llama-3.2-1b'
+      calling_job_name: 'test-m4-cluster'
     secrets: inherit

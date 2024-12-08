@@ -10,6 +10,9 @@ on:
       model:
         required: true
         type: string
+      calling_job_name:  # New input parameter
+        required: true
+        type: string
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
@@ -54,13 +57,13 @@ jobs:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
           aws_secret_key: ${{ secrets.S3_EXO_BENCHMARKS_AWS_SECRET_ACCESS_KEY }}
         run: |
-          CALLING_JOB=$(echo "${{ github.workflow_ref }}" | awk -F'/' '{print $NF}')
+          CALLING_JOB="${{ inputs.calling_job_name }}"
           UNIQUE_JOB_ID="${CALLING_JOB}_${GITHUB_RUN_ID}"
           ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${UNIQUE_JOB_ID}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${UNIQUE_JOB_ID}_${{ strategy.job-index }}"
           source env/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
-          exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 --disable-tui > output1.log 2>&1 &
+          exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           tail -f output1.log &
           TAIL1=$!
