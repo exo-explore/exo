@@ -53,17 +53,22 @@ message CollectTopologyRequest {
 
 message Topology {
   map<string, DeviceCapabilities> nodes = 1;
-  map<string, Peers> peer_graph = 2;
+  map<string, PeerConnections> peer_graph = 2;
 }
 
-message Peers {
-    repeated string peer_ids = 1;
+message PeerConnection {
+  string to_id = 1;
+  optional string description = 2;
+}
+
+message PeerConnections {
+  repeated PeerConnection connections = 1;
 }
 
 message DeviceFlops {
-  float fp32 = 1;
-  float fp16 = 2;
-  float int8 = 3;
+  double fp32 = 1;
+  double fp16 = 2;
+  double int8 = 3;
 }
 
 message DeviceCapabilities {

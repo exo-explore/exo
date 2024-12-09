@@ -1,11 +1,27 @@
 from .device_capabilities import DeviceCapabilities
 from typing import Dict, Set, Optional
+from dataclasses import dataclass
 
+@dataclass
+class PeerConnection:
+  from_id: str
+  to_id: str
+  description: Optional[str] = None
+
+  def __hash__(self):
+    # Use both from_id and to_id for uniqueness in sets
+    return hash((self.from_id, self.to_id))
+
+  def __eq__(self, other):
+    if not isinstance(other, PeerConnection):
+      return False
+    # Compare both from_id and to_id for equality
+    return self.from_id == other.from_id and self.to_id == other.to_id
 
 class Topology:
   def __init__(self):
-    self.nodes: Dict[str, DeviceCapabilities] = {}  # Maps node IDs to DeviceCapabilities
-    self.peer_graph: Dict[str, Set[str]] = {}  # Adjacency list representing the graph
+    self.nodes: Dict[str, DeviceCapabilities] = {}
+    self.peer_graph: Dict[str, Set[PeerConnection]] = {}
     self.active_node_id: Optional[str] = None
 
   def update_node(self, node_id: str, device_capabilities: DeviceCapabilities):
@@ -17,33 +33,43 @@ class Topology:
   def all_nodes(self):
     return self.nodes.items()
 
-  def add_edge(self, node1_id: str, node2_id: str):
-    if node1_id not in self.peer_graph:
-      self.peer_graph[node1_id] = set()
-    if node2_id not in self.peer_graph:
-      self.peer_graph[node2_id] = set()
-    self.peer_graph[node1_id].add(node2_id)
-    self.peer_graph[node2_id].add(node1_id)
+  def add_edge(self, from_id: str, to_id: str, description: Optional[str] = None):
+    if from_id not in self.peer_graph:
+      self.peer_graph[from_id] = set()
+    conn = PeerConnection(from_id, to_id, description)
+    self.peer_graph[from_id].add(conn)
 
-  def get_neighbors(self, node_id: str) -> Set[str]:
-    return self.peer_graph.get(node_id, set())
-
-  def all_edges(self):
-    edges = []
-    for node, neighbors in self.peer_graph.items():
-      for neighbor in neighbors:
-        if (neighbor, node) not in edges:  # Avoid duplicate edges
-          edges.append((node, neighbor))
-    return edges
-
-  def merge(self, other: "Topology"):
+  def merge(self, peer_node_id: str, other: "Topology"):
     for node_id, capabilities in other.nodes.items():
+      if node_id != peer_node_id: continue
       self.update_node(node_id, capabilities)
-    for node_id, neighbors in other.peer_graph.items():
-      for neighbor in neighbors:
-        self.add_edge(node_id, neighbor)
+    for node_id, connections in other.peer_graph.items():
+      for conn in connections:
+        if conn.from_id != peer_node_id: continue
+        self.add_edge(conn.from_id, conn.to_id, conn.description)
 
   def __str__(self):
     nodes_str = ", ".join(f"{node_id}: {cap}" for node_id, cap in self.nodes.items())
-    edges_str = ", ".join(f"{node}: {neighbors}" for node, neighbors in self.peer_graph.items())
+    edges_str = ", ".join(f"{node}: {[f'{c.to_id}({c.description})' for c in conns]}"
+                         for node, conns in self.peer_graph.items())
     return f"Topology(Nodes: {{{nodes_str}}}, Edges: {{{edges_str}}})"
+
+  def to_json(self):
+    return {
+      "nodes": {
+        node_id: capabilities.to_dict()
+        for node_id, capabilities in self.nodes.items()
+      },
+      "peer_graph": {
+        node_id: [
+          {
+            "from_id": conn.from_id,
+            "to_id": conn.to_id,
+            "description": conn.description
+          }
+          for conn in connections
+        ]
+        for node_id, connections in self.peer_graph.items()
+      },
+      "active_node_id": self.active_node_id
+    }

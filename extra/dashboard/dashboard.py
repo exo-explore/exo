@@ -9,6 +9,9 @@ from typing import List, Dict, Optional
 from pathlib import Path
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import time
+import pygame.mixer
+from datetime import datetime
 
 class AsyncCircleCIClient:
     def __init__(self, token: str, project_slug: str):
@@ -36,15 +39,7 @@ class AsyncCircleCIClient:
     ):
         """
         Get recent pipelines for a project with pagination support
-
-        Args:
-            session: aiohttp client session
-            org_slug: Organization slug
-            page_token: Token for pagination
-            limit: Maximum number of pipelines to return
-            branch: Specific branch to fetch pipelines from
         """
-
         params = {
             "branch": branch,
             "page-token": page_token
@@ -59,13 +54,17 @@ class AsyncCircleCIClient:
 
         next_page_token = data.get("next_page_token")
 
+        # If we have a limit, check if we need more pages
+        if limit and len(pipelines) >= limit:
+            return pipelines
+
         # If there are more pages and we haven't hit the limit, recursively get them
-        if next_page_token and (limit is None or len(pipelines) < limit):
+        if next_page_token:
             next_pipelines = await self.get_recent_pipelines(
                 session,
                 org_slug,
                 page_token=next_page_token,
-                limit=limit,
+                limit=limit - len(pipelines) if limit else None,  # Adjust limit for next page
                 branch=branch
             )
             pipelines.extend(next_pipelines)
@@ -104,6 +103,30 @@ class PackageSizeTracker:
         self.setup_logging(debug)
         self.client = AsyncCircleCIClient(token, project_slug)
         self.logger = logging.getLogger("PackageSizeTracker")
+        self.last_data_hash = None
+        self.debug = debug
+
+        # Initialize pygame mixer
+        pygame.mixer.init()
+
+        # Sound file paths - can use MP3 files with pygame
+        sounds_dir = Path(__file__).parent / "sounds"
+        self.sounds = {
+            'lines_up': sounds_dir / "gta5_wasted.mp3",
+            'lines_down': sounds_dir / "pokemon_evolve.mp3",
+            'tokens_up': sounds_dir / "pokemon_evolve.mp3",
+            'tokens_down': sounds_dir / "gta5_wasted.mp3",
+            'size_up': sounds_dir / "gta5_wasted.mp3",
+            'size_down': sounds_dir / "pokemon_evolve.mp3"
+        }
+
+    def test_sound_effects(self):
+        """Test all sound effects with a small delay between each"""
+        self.logger.info("Testing sound effects...")
+        for sound_key in self.sounds:
+            self.logger.info(f"Playing {sound_key}")
+            self._play_sound(sound_key)
+            time.sleep(1)  # Wait 1 second between sounds
 
     def setup_logging(self, debug: bool):
         level = logging.DEBUG if debug else logging.INFO
@@ -115,20 +138,35 @@ class PackageSizeTracker:
 
     def extract_commit_info(self, pipeline: Dict) -> Optional[Dict]:
         try:
-            if 'trigger_parameters' in pipeline:
-                github_app = pipeline['trigger_parameters'].get('github_app', {})
-                if github_app:
-                    return {
-                        'commit_hash': github_app.get('checkout_sha'),
-                        'web_url': f"{github_app.get('repo_url')}/commit/{github_app.get('checkout_sha')}"
-                    }
+            # Extract from github_app first (preferred)
+            if 'trigger_parameters' in pipeline and 'github_app' in pipeline['trigger_parameters']:
+                github_app = pipeline['trigger_parameters']['github_app']
+                return {
+                    'commit_hash': github_app.get('checkout_sha'),
+                    'web_url': f"{github_app.get('repo_url')}/commit/{github_app.get('checkout_sha')}",
+                    'branch': github_app.get('branch', 'unknown'),
+                    'author': {
+                        'name': github_app.get('commit_author_name'),
+                        'email': github_app.get('commit_author_email'),
+                        'username': github_app.get('user_username')
+                    },
+                    'message': github_app.get('commit_message')
+                }
 
-                git_params = pipeline['trigger_parameters'].get('git', {})
-                if git_params:
-                    return {
-                        'commit_hash': git_params.get('checkout_sha'),
-                        'web_url': f"{git_params.get('repo_url')}/commit/{git_params.get('checkout_sha')}"
-                    }
+            # Fallback to git parameters
+            if 'trigger_parameters' in pipeline and 'git' in pipeline['trigger_parameters']:
+                git = pipeline['trigger_parameters']['git']
+                return {
+                    'commit_hash': git.get('checkout_sha'),
+                    'web_url': f"{git.get('repo_url')}/commit/{git.get('checkout_sha')}",
+                    'branch': git.get('branch', 'unknown'),
+                    'author': {
+                        'name': git.get('commit_author_name'),
+                        'email': git.get('commit_author_email'),
+                        'username': git.get('author_login')
+                    },
+                    'message': git.get('commit_message')
+                }
 
             self.logger.warning(f"Could not find commit info in pipeline {pipeline['id']}")
             return None
@@ -143,13 +181,17 @@ class PackageSizeTracker:
             if not commit_info:
                 return None
 
-            jobs = await self.client.get_workflow_jobs(session, pipeline["id"])
+            data_point = {
+                "commit_hash": commit_info['commit_hash'],
+                "commit_url": commit_info['web_url'],
+                "timestamp": pipeline.get("created_at", pipeline.get("updated_at")),
+                "pipeline_status": pipeline.get("state", "unknown"),
+                "branch": commit_info['branch'],
+                "author": commit_info['author'],
+                "commit_message": commit_info['message']
+            }
 
-            # Add test status check
-            test_job = next(
-                (j for j in jobs if j["name"] == "test" and j["status"] in ["success", "failed"]),
-                None
-            )
+            jobs = await self.client.get_workflow_jobs(session, pipeline["id"])
 
             # Get package size data
             size_job = next(
@@ -173,13 +215,6 @@ class PackageSizeTracker:
             if not size_job and not linecount_job and not benchmark_job:
                 self.logger.debug(f"No relevant jobs found for pipeline {pipeline['id']}")
                 return None
-
-            data_point = {
-                "commit_hash": commit_info['commit_hash'],
-                "commit_url": commit_info['web_url'],
-                "timestamp": pipeline.get("created_at", pipeline.get("updated_at")),
-                "tests_passing": test_job["status"] == "success" if test_job else None
-            }
 
             # Process benchmark data if available
             if benchmark_job:
@@ -245,16 +280,57 @@ class PackageSizeTracker:
             self.logger.error(f"Error processing pipeline {pipeline['id']}: {str(e)}")
             return None
 
+    async def process_pipeline_batch(
+        self,
+        session: aiohttp.ClientSession,
+        pipelines: List[Dict],
+        batch_size: int = 5
+    ) -> List[Dict]:
+        """
+        Process a batch of pipelines with rate limiting.
+
+        Args:
+            session: aiohttp client session
+            pipelines: List of pipelines to process
+            batch_size: Number of pipelines to process in parallel
+
+        Returns:
+            List of processed pipeline data points
+        """
+        data_points = []
+
+        for i in range(0, len(pipelines), batch_size):
+            batch = pipelines[i:i + batch_size]
+
+            # Process batch in parallel
+            tasks = [self.process_pipeline(session, pipeline) for pipeline in batch]
+            batch_results = await asyncio.gather(*tasks)
+
+            # Filter out None results
+            batch_data = [r for r in batch_results if r is not None]
+            data_points.extend(batch_data)
+
+            # Add delay between batches if there are more to process
+            if i + batch_size < len(pipelines):
+                await asyncio.sleep(1)  # 1 second delay between batches
+
+        return data_points
+
     async def collect_data(self) -> List[Dict]:
         self.logger.info("Starting data collection...")
         async with aiohttp.ClientSession(headers=self.client.headers) as session:
-            # Get pipelines from both main and circleci branches
+            # Get pipelines from main branch
             main_pipelines = await self.client.get_recent_pipelines(
                 session,
                 org_slug=self.client.project_slug,
                 limit=20,
                 branch="main"
             )
+
+            # Add delay between branch requests
+            await asyncio.sleep(2)
+
+            # Get pipelines from circleci branch
             circleci_pipelines = await self.client.get_recent_pipelines(
                 session,
                 org_slug=self.client.project_slug,
@@ -262,18 +338,27 @@ class PackageSizeTracker:
                 branch="circleci"
             )
 
+            # Combine pipelines and sort by created_at date
             pipelines = main_pipelines + circleci_pipelines
-            # Sort pipelines by created_at date
-            pipelines.sort(key=lambda x: x.get("created_at", x.get("updated_at")), reverse=True)
+            pipelines.sort(
+                key=lambda x: datetime.fromisoformat(
+                    x.get("created_at", x.get("updated_at")).replace('Z', '+00:00')
+                ),
+                reverse=True  # Most recent first
+            )
 
             self.logger.info(f"Found {len(pipelines)} recent pipelines")
 
-            # Process all pipelines in parallel
-            tasks = [self.process_pipeline(session, pipeline) for pipeline in pipelines]
-            results = await asyncio.gather(*tasks)
+            # Process pipelines in batches
+            data_points = await self.process_pipeline_batch(session, pipelines)
 
-            # Filter out None results
-            data_points = [r for r in results if r is not None]
+            # Sort by timestamp
+            data_points.sort(
+                key=lambda x: datetime.fromisoformat(
+                    x.get("timestamp").replace('Z', '+00:00')
+                ),
+                reverse=True  # Most recent first
+            )
 
         return data_points
 
@@ -283,46 +368,40 @@ class PackageSizeTracker:
             self.logger.error("No data to generate report from!")
             return None
 
+        # Get latest pipeline status based on errors
+        latest_main_pipeline = next((d for d in data if d.get('branch') == 'main'), None)
+        latest_pipeline_status = 'success' if latest_main_pipeline and not latest_main_pipeline.get('errors') else 'failure'
+
+        # Log the pipeline status
+        if latest_main_pipeline:
+            self.logger.info(
+                f"Latest main branch pipeline status: {latest_pipeline_status} "
+                f"(commit: {latest_main_pipeline['commit_hash'][:7]})"
+            )
+        else:
+            self.logger.warning("No pipeline data found for main branch")
+
+        # Convert output_dir to Path object
+        output_dir = Path(output_dir)
+
+        # Create output directory if it doesn't exist
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         # Create separate dataframes for each metric
         df_size = pd.DataFrame([d for d in data if 'total_size_mb' in d])
         df_lines = pd.DataFrame([d for d in data if 'total_lines' in d])
         df_benchmark = pd.DataFrame([d for d in data if 'tokens_per_second' in d])
 
-        # Ensure output directory exists
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         # Create a single figure with subplots
         fig = make_subplots(
             rows=3, cols=2,
-            subplot_titles=('Test Status', 'Package Size', '', 'Line Count', '', 'Tokens per Second'),
+            subplot_titles=('', 'Package Size', '', 'Line Count', '', 'Tokens per Second'),
             vertical_spacing=0.2,
             column_widths=[0.2, 0.8],
             specs=[[{"type": "indicator"}, {"type": "scatter"}],
                    [None, {"type": "scatter"}],
                    [None, {"type": "scatter"}]]
         )
-
-        # Add test status indicator if we have data
-        latest_test_status = next((d["tests_passing"] for d in reversed(data) if "tests_passing" in d), None)
-        if latest_test_status is not None:
-            fig.add_trace(
-                go.Indicator(
-                    mode="gauge",
-                    gauge={
-                        "shape": "bullet",
-                        "axis": {"visible": False},
-                        "bar": {"color": "green" if latest_test_status else "red"},
-                        "bgcolor": "white",
-                        "steps": [
-                            {"range": [0, 1], "color": "lightgray"}
-                        ]
-                    },
-                    value=1,
-                    title={"text": "Tests<br>Status"}
-                ),
-                row=1, col=1
-            )
 
         # Add package size trace if we have data
         if not df_size.empty:
@@ -510,7 +589,34 @@ class PackageSizeTracker:
                     height: 350px;
                     display: flex;
                     flex-direction: column;
+                    align-items: center;
                     justify-content: center;
+                }}
+
+                .traffic-light {{
+                    width: 150px;
+                    height: 150px;
+                    border-radius: 50%;
+                    margin: 20px;
+                    box-shadow: 0 0 20px rgba(0,0,0,0.2);
+                    position: relative;
+                }}
+
+                .traffic-light.success {{
+                    background: #2ecc71;  /* Bright green */
+                    border: 8px solid #27ae60;  /* Darker green border */
+                }}
+
+                .traffic-light.failure {{
+                    background: #e74c3c;  /* Bright red */
+                    border: 8px solid #c0392b;  /* Darker red border */
+                }}
+
+                .status-text {{
+                    font-size: 24px;
+                    font-weight: bold;
+                    margin-top: 20px;
+                    color: #2c3e50;
                 }}
 
                 /* Override Plotly's default margins */
@@ -534,8 +640,11 @@ class PackageSizeTracker:
 
             <div class="dashboard-grid">
                 <div class="status-container">
-                    <div class="chart-title">Test Status</div>
-                    <div id="status-chart"></div>
+                    <div class="chart-title">Pipeline Status</div>
+                    <div class="traffic-light {'success' if latest_pipeline_status == 'success' else 'failure'}"></div>
+                    <div class="status-text">
+                        {'✓ Pipeline Passing' if latest_pipeline_status == 'success' else '✗ Pipeline Failing'}
+                    </div>
                 </div>
                 <div class="chart-row">
                     <div class="chart-box">
@@ -567,18 +676,6 @@ class PackageSizeTracker:
                 const originalData = {fig.to_json()};
 
                 function initializeCharts() {{
-                    // Create the status indicator
-                    if (originalData.data[0].type === 'indicator') {{
-                        Plotly.newPlot('status-chart',
-                            [originalData.data[0]],
-                            {{
-                                ...originalData.layout,
-                                margin: {{ t: 0, b: 0, l: 0, r: 0 }},
-                                height: 280
-                            }}
-                        );
-                    }}
-
                     // Create the size trend chart
                     const sizeTrace = originalData.data.find(trace => trace.name === 'Package Size');
                     if (sizeTrace) {{
@@ -687,13 +784,13 @@ class PackageSizeTracker:
 
                     // Update the ranges
                     const sizeUpdateLayout = {{}};
-                    sizeUpdateLayout[`${{sizeXAxisName}}.range`] = [startDate, endDate];
+                    sizeUpdateLayout[`{{sizeXAxisName}}.range`] = [startDate, endDate];
 
                     const linesUpdateLayout = {{}};
-                    linesUpdateLayout[`${{linesXAxisName}}.range`] = [startDate, endDate];
+                    linesUpdateLayout[`{{linesXAxisName}}.range`] = [startDate, endDate];
 
                     const tokensUpdateLayout = {{}};
-                    tokensUpdateLayout[`${{tokensXAxisName}}.range`] = [startDate, endDate];
+                    tokensUpdateLayout[`{{tokensXAxisName}}.range`] = [startDate, endDate];
 
                     // Update both charts
                     Plotly.relayout('size-chart', sizeUpdateLayout)
@@ -882,10 +979,154 @@ class PackageSizeTracker:
 
         print("\n")
 
+    def _calculate_data_hash(self, data: List[Dict]) -> str:
+        """Calculate a hash of the data to detect changes"""
+        return hash(str(sorted([
+            (d.get('commit_hash'), d.get('timestamp'))
+            for d in data
+        ])))
+
+    def _play_sound(self, sound_key: str):
+        """Play a specific notification sound using pygame"""
+        try:
+            sound_path = self.sounds.get(sound_key)
+            if sound_path and sound_path.exists():
+                sound = pygame.mixer.Sound(str(sound_path))
+                sound.play()
+                # Wait for the sound to finish playing
+                pygame.time.wait(int(sound.get_length() * 1000))
+            else:
+                self.logger.warning(f"Sound file not found: {sound_key} at {sound_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to play sound {sound_key}: {e}")
+
+    def _check_metrics_changes(self, current_data: List[Dict], previous_data: List[Dict]):
+        # Sort data by timestamp in descending order (most recent first)
+        def sort_by_timestamp(data):
+            return sorted(
+                data,
+                key=lambda x: x.get('timestamp', ''),
+                reverse=True  # Most recent first
+            )
+
+        current_data = sort_by_timestamp(current_data)
+        previous_data = sort_by_timestamp(previous_data)
+
+        # Helper to find latest entry with a specific metric
+        def find_latest_with_metric(data: List[Dict], metric: str) -> Optional[Dict]:
+            return next((d for d in data if metric in d), None)
+
+        # Check line count changes
+        current_lines = find_latest_with_metric(current_data, 'total_lines')
+        previous_lines = find_latest_with_metric(previous_data, 'total_lines')
+
+        if current_lines and previous_lines:
+            diff = current_lines['total_lines'] - previous_lines['total_lines']
+            self.logger.debug(f"Lines of code diff: {diff}")
+            if diff > 0:
+                self.logger.info(f"Lines of code increased by {diff:,}")
+                self._play_sound('lines_up')
+            elif diff < 0:
+                self.logger.info(f"Lines of code decreased by {abs(diff):,}")
+                self._play_sound('lines_down')
+        else:
+            self.logger.debug("No lines of code data found")
+
+        # Check tokens per second changes
+        current_tokens = find_latest_with_metric(current_data, 'tokens_per_second')
+        previous_tokens = find_latest_with_metric(previous_data, 'tokens_per_second')
+
+        if current_tokens and previous_tokens:
+            diff = current_tokens['tokens_per_second'] - previous_tokens['tokens_per_second']
+            self.logger.debug(f"Tokens per second diff: {diff}")
+            if diff > 0:
+                self.logger.info(f"Tokens per second increased by {diff:.2f}")
+                self._play_sound('tokens_up')
+            elif diff < 0:
+                self.logger.info(f"Tokens per second decreased by {abs(diff):.2f}")
+                self._play_sound('tokens_down')
+        else:
+            self.logger.debug("No tokens per second data found")
+
+        # Check package size changes
+        current_size = find_latest_with_metric(current_data, 'total_size_mb')
+        previous_size = find_latest_with_metric(previous_data, 'total_size_mb')
+
+        if current_size and previous_size:
+            diff = current_size['total_size_mb'] - previous_size['total_size_mb']
+            self.logger.debug(f"Package size diff: {diff:.2f}MB")
+            if diff > 0:
+                self.logger.info(f"Package size increased by {diff:.2f}MB")
+                self._play_sound('size_up')
+            elif diff < 0:
+                self.logger.info(f"Package size decreased by {abs(diff):.2f}MB")
+                self._play_sound('size_down')
+        else:
+            self.logger.debug("No package size data found")
+
+    async def run_dashboard(self, update_interval: int = 10):
+        """Run the dashboard with periodic updates"""
+        try:
+            update_interval = float(update_interval)
+            self.logger.debug(f"Update interval type: {type(update_interval)}, value: {update_interval}")
+        except ValueError as e:
+            self.logger.error(f"Failed to convert update_interval to float: {update_interval}")
+            raise
+
+        self.logger.info(f"Starting real-time dashboard with {update_interval}s updates")
+        previous_data = None
+
+        while True:
+            try:
+                start_time = time.time()
+
+                # Collect new data
+                current_data = await self.collect_data()
+                if not current_data:
+                    self.logger.warning("No data collected")
+                    await asyncio.sleep(update_interval)
+                    continue
+
+                # Generate report
+                report_path = self.generate_report(current_data)
+                if report_path:
+                    self.logger.info(
+                        f"Dashboard updated at {datetime.now().strftime('%H:%M:%S')}"
+                    )
+
+                    print("Curr:", len(current_data))
+                    print("Prev:", len(previous_data) if previous_data else "None")
+                    if previous_data:
+                        # Check for metric changes and play appropriate sounds
+                        self.logger.debug(f"Checking metrics changes between {len(current_data)} current and {len(previous_data)} previous data points")
+                        self._check_metrics_changes(current_data, previous_data)
+
+                # Update previous data
+                previous_data = current_data.copy()  # Make a copy to prevent reference issues
+
+                # Calculate sleep time
+                elapsed = float(time.time() - start_time)
+                sleep_time = max(0.0, update_interval - elapsed)
+                await asyncio.sleep(sleep_time)
+
+            except Exception as e:
+                self.logger.error(f"Error in dashboard update loop: {e}", exc_info=True)
+                if self.debug:
+                    raise
+                await asyncio.sleep(update_interval)
+
 async def main():
     token = os.getenv("CIRCLECI_TOKEN")
     project_slug = os.getenv("CIRCLECI_PROJECT_SLUG")
     debug = os.getenv("DEBUG", "").lower() in ("true", "1", "yes")
+
+    try:
+        # Get update interval from environment or use default
+        update_interval = float(os.getenv("UPDATE_INTERVAL", "10"))
+        print(f"Update interval type: {type(update_interval)}, value: {update_interval}")  # Debug print
+    except ValueError as e:
+        print(f"Error converting UPDATE_INTERVAL to float: {os.getenv('UPDATE_INTERVAL')}")
+        update_interval = 10.0
 
     if not token or not project_slug:
         print("Error: Please set CIRCLECI_TOKEN and CIRCLECI_PROJECT_SLUG environment variables")
@@ -894,17 +1135,11 @@ async def main():
     tracker = PackageSizeTracker(token, project_slug, debug)
 
     try:
-        data = await tracker.collect_data()
-        if not data:
-            print("No data found!")
-            return
-
-        report_path = tracker.generate_report(data)
-        if report_path:
-            print(f"\nDetailed report available at: {report_path}")
-
+        await tracker.run_dashboard(update_interval)
+    except KeyboardInterrupt:
+        print("\nDashboard stopped by user")
     except Exception as e:
-        logging.error(f"Error: {str(e)}")
+        logging.error(f"Error: {str(e)}", exc_info=True)
         if debug:
             raise
 
