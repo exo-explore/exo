@@ -247,7 +247,7 @@ class PackageSizeTracker:
 
     async def collect_data(self) -> List[Dict]:
         self.logger.info("Starting data collection...")
-        async with aiohttp.ClientSession(headers=self.client.headers, trust_env=True) as session:
+        async with aiohttp.ClientSession(headers=self.client.headers) as session:
             # Get pipelines from both main and circleci branches
             main_pipelines = await self.client.get_recent_pipelines(
                 session,
