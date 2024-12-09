@@ -1,3 +1,4 @@
+import aiohttp
 import argparse
 import asyncio
 import atexit
@@ -59,6 +60,7 @@ parser.add_argument("--default-temp", type=float, help="Default token sampling t
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
+parser.add_argument("--trust-env", action="store_true", help="Enable aiohttp to trust environment variables for proxy settings")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -163,6 +165,12 @@ if args.prometheus_client_port:
 
 last_broadcast_time = 0
 
+if args.trust_env:
+    original_init = aiohttp.ClientSession.__init__
+    def patched_init(self, *init_args, **init_kwargs):
+        init_kwargs['trust_env'] = True
+        original_init(self, *init_args, **init_kwargs)
+    aiohttp.ClientSession.__init__ = patched_init
 
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
   global last_broadcast_time
