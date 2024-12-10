@@ -219,11 +219,9 @@ def clean_path(path):
     return os.path.expanduser(path)
 
 async def hold_outstanding(node: Node):
-  while True:
-    if node.outstanding_requests:
-      await asyncio.sleep(1)
-    else:
-      return      
+  while node.outstanding_requests:
+    await asyncio.sleep(.5)
+  return 
 
 async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
   losses = []
