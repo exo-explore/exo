@@ -3,15 +3,12 @@ import asyncio
 import atexit
 import signal
 import json
-import logging
 import platform
 import os
-import sys
 import time
 import traceback
 import uuid
 from exo.networking.manual.manual_discovery import ManualDiscovery
-from exo.networking.manual.network_topology_config import NetworkTopology
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
@@ -28,6 +25,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration.node import Node
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
+from exo.topology.device_capabilities import LazyDeviceCapabilities
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 
 # parse args
@@ -90,6 +88,7 @@ if DEBUG >= 0:
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
+lazy_device_capabilities = LazyDeviceCapabilities(inference_engine)
 # Convert node-id-filter to list if provided
 allowed_node_ids = args.node_id_filter.split(',') if args.node_id_filter else None
 
@@ -99,6 +98,7 @@ if args.discovery_module == "udp":
     args.node_port,
     args.listen_port,
     args.broadcast_port,
+    lazy_device_capabilities,
     lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
     discovery_timeout=args.discovery_timeout,
     allowed_node_ids=allowed_node_ids
@@ -107,6 +107,7 @@ elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(
     args.node_id,
     args.node_port,
+    lazy_device_capabilities,
     lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
     discovery_timeout=args.discovery_timeout,
     tailscale_api_key=args.tailscale_api_key,
@@ -123,6 +124,7 @@ node = StandardNode(
   None,
   inference_engine,
   discovery,
+  lazy_device_capabilities,
   partitioning_strategy=RingMemoryWeightedPartitioningStrategy(),
   max_generate_tokens=args.max_generate_tokens,
   topology_viz=topology_viz,
