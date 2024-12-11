@@ -97,11 +97,8 @@ jobs:
           ulimit -l unlimited
           
           # Set process priority using macOS commands
-          sudo renice -n -20 $$ || true
-          sudo /usr/bin/nice -n -20 $$ || true
-          
-          # Disable memory compression
-          sudo nvram boot-args="vm_compressor=1"
+          CURRENT_PID=$PPID
+          sudo renice -n -20 $CURRENT_PID || true
           
           # Set Metal environment variables
           export METAL_DEVICE_WRAPPER_TYPE=1
