@@ -75,8 +75,12 @@ jobs:
           
           # Additional runtime optimizations
           
-          # Set process scheduling
-          sudo taskpolicy -b PERFORMANCE
+          # Check if taskpolicy exists before using it
+          if command -v taskpolicy >/dev/null 2>&1; then
+            sudo taskpolicy -b PERFORMANCE
+          else
+            echo "taskpolicy command not available, skipping process scheduling optimization"
+          fi
           
           # Verify optimizations
           echo "Verifying performance settings..."
