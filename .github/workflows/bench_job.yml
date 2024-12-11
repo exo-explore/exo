@@ -66,26 +66,23 @@ jobs:
 
       - name: Apply Performance Optimizations
         run: |
-          # Make the script executable and run it
-          chmod +x .github/optimize_performance.sh
-          ./.github/optimize_performance.sh
+          # Export performance-related environment variables
+          cat << 'EOF' > /tmp/performance_env.sh
+          # MLX and Metal optimizations
+          export MTL_DEBUG_LAYER=0
+          export METAL_VALIDATION_ENABLED=0
+          export MLX_METAL_VALIDATION=0
+          export MLX_METAL_DEBUG=0
+          export MLX_FORCE_P_CORES=1
+          export MLX_METAL_PREWARM=1
+          export PYTHONOPTIMIZE=2
+          EOF
           
           # Source the performance environment variables
           source /tmp/performance_env.sh
           
-          # Additional runtime optimizations
-          
-          # Check if taskpolicy exists before using it
-          if command -v taskpolicy >/dev/null 2>&1; then
-            sudo taskpolicy -b PERFORMANCE
-          else
-            echo "taskpolicy command not available, skipping process scheduling optimization"
-          fi
-          
           # Verify optimizations
           echo "Verifying performance settings..."
-          pmset -g
-          sysctl iogpu
           env | grep -E "MLX_|METAL_|MTL_"
 
       - name: Run exo
@@ -110,28 +107,15 @@ jobs:
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           
           echo "Starting exo daemon..."
-          # Set high priority and performance mode
-          sudo renice -n -20 $$ || true
-          sudo taskpolicy -b PERFORMANCE $$ || true
           
-          # Start exo with performance optimizations
-          sudo taskpolicy -b PERFORMANCE .venv/bin/exo \
+          # Start exo
+          .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           
-          # Set process and thread priorities
-          sudo renice -n -20 -p $PID1 || true
-          sudo taskpolicy -b PERFORMANCE -p $PID1 || true
-          
-          # Set thread priority for all Python threads
-          for tid in $(ps -M $PID1 | grep Python | awk '{print $2}'); do
-            sudo renice -n -20 -p $tid || true
-            sudo taskpolicy -b PERFORMANCE -p $tid || true
-          done
-
           echo "Exo process started with PID: $PID1"
           tail -f output1.log &
           TAIL1=$!
