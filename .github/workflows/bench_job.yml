@@ -43,17 +43,25 @@ jobs:
           # Add common Python installation locations to PATH
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           # Now try to create the venv with explicit python3.12
-          python3.12 -m venv env || {
+          python3.12 -m venv .venv || {
             echo "Failed to find python3.12. Checking installation locations:"
             ls -l /usr/local/bin/python* /opt/homebrew/bin/python* 2>/dev/null || true
             exit 1
           }
-          source env/bin/activate
+          source .venv/bin/activate
           pip install --upgrade pip
-          pip install .
+          pip install -e .
           pip install boto3==1.35.76
       - name: Configure system
         run: |
+          # Check initial CPU state
+          echo "Initial CPU state:"
+          sysctl machdep.cpu || true
+          sysctl hw.cpufamily || true
+          sysctl hw.cputype || true
+          sysctl hw.logicalcpu || true
+          sysctl hw.physicalcpu || true
+          
           # Apply MLX optimizations
           ./configure_mlx.sh
           
@@ -61,8 +69,11 @@ jobs:
           sudo pmset -a powermode 0 2>/dev/null || echo "Failed to set power mode"
           sudo pmset -a gpuswitch 2 2>/dev/null || echo "Failed to set GPU mode"
           
-          # Check current state
-          pmset -g
+          # Check final state
+          echo "Final CPU state:"
+          sysctl machdep.cpu || true
+          pmset -g thermals || true
+          pmset -g || true
           sysctl iogpu
       - name: Run exo
         env:
@@ -82,7 +93,7 @@ jobs:
           echo "ALL_NODE_IDS: ${ALL_NODE_IDS}"
           echo "Total expected nodes: ${{ strategy.job-total }}"
 
-          source env/bin/activate
+          source .venv/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 
           echo "Starting exo daemon..."
