@@ -69,12 +69,32 @@ jobs:
           sudo pmset -a powernap 0
           sudo pmset -a proximitywake 0
           sudo pmset -a tcpkeepalive 1
-          sudo pmset -a powermode 0
+          sudo pmset -a powermode 1
           sudo pmset -a gpuswitch 2
           
           # Optimize GPU memory allocation
           sudo sysctl -w kern.memorystatus_purge_on_warning=0
           sudo sysctl -w kern.memorystatus_purge_on_critical=0
+          
+          # Additional performance optimizations
+          sudo sysctl -w kern.timer.coalescing_enabled=0
+          sudo sysctl -w kern.timer.throttle_enabled=0
+          sudo sysctl -w kern.sched.idle_spin=1
+          sudo sysctl -w kern.sched.idle_spin_time=100
+          
+          # Optimize Metal performance
+          defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
+          defaults write com.apple.CoreML MPSEnableMetalValidation -bool false
+          defaults write com.apple.CoreML MPSEnableGPUDebug -bool false
+          defaults write com.apple.Metal GPUDebug -bool false
+          defaults write com.apple.Metal GPUValidation -bool false
+          defaults write com.apple.Metal MetalValidation -bool false
+          defaults write com.apple.Metal MetalCaptureEnabled -bool false
+          defaults write com.apple.Metal MTLValidationBehavior -string "Disabled"
+          defaults write com.apple.Metal EnableMTLDebugLayer -bool false
+          defaults write com.apple.Metal MTLDebugLevel -int 0
+          defaults write com.apple.Metal PreferIntegratedGPU -bool false
+          defaults write com.apple.Metal ForceMaximumPerformance -bool true
 
           ./configure_mlx.sh
 
@@ -100,10 +120,32 @@ jobs:
           CURRENT_PID=$PPID
           sudo renice -n -20 $CURRENT_PID || true
           
+          # Set high performance I/O policy
+          sudo taskpolicy -d 0 -p $CURRENT_PID || true
+          
           # Set Metal environment variables
           export METAL_DEVICE_WRAPPER_TYPE=1
           export METAL_DEBUG_ERROR_MODE=0
+          export METAL_FORCE_PERFORMANCE_MODE=1
+          export METAL_DEVICE_PRIORITY=high
+          export METAL_MAX_COMMAND_QUEUES=1024
+          export METAL_LOAD_LIMIT=0
+          export METAL_VALIDATION_ENABLED=0
+          export METAL_ENABLE_VALIDATION_LAYER=0
           export OBJC_DEBUG_MISSING_POOLS=NO
+          
+          # MLX optimizations
+          export MLX_USE_GPU=1
+          export MLX_METAL_COMPILE_ASYNC=1
+          export MLX_METAL_PREALLOCATE=1
+          export MLX_METAL_MEMORY_GUARD=0
+          export MLX_METAL_CACHE_KERNELS=1
+          export MLX_PLACEMENT_POLICY=metal
+          export MLX_METAL_VALIDATION=0
+          export MLX_METAL_DEBUG=0
+          export MLX_FORCE_P_CORES=1
+          export MLX_METAL_MEMORY_BUDGET=0
+          export MLX_METAL_PREWARM=1
       - name: Run exo
         env:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
@@ -137,19 +179,25 @@ jobs:
           echo "Starting exo daemon..."
           # Set process scheduling priority
           sudo renice -n -20 $$ || true
-          sudo ionice -c 2 -n 0 $$ || true
+          sudo taskpolicy -d 0 $$ || true
           
-          # Start exo with inherited priority
-          .venv/bin/exo \
+          # Start exo with inherited priority and performance settings
+          sudo taskpolicy -d 0 .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           
-          # Ensure child process inherits priority
+          # Set process priority using macOS-specific commands
           sudo renice -n -20 -p $PID1 || true
-          sudo ionice -c 2 -n 0 -p $PID1 || true
+          sudo taskpolicy -d 0 -p $PID1 || true
+          
+          # Set thread priority for all Python threads
+          for tid in $(ps -M $PID1 | grep Python | awk '{print $2}'); do
+            sudo renice -n -20 -p $tid || true
+            sudo taskpolicy -d 0 -p $tid || true
+          done
 
           echo "Exo process started with PID: $PID1"
           tail -f output1.log &
