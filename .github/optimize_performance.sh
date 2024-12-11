@@ -6,6 +6,15 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Function to safely set sysctl value
+safe_sysctl() {
+  if sysctl -n "$1" >/dev/null 2>&1; then
+    sudo sysctl -w "$1=$2" 2>/dev/null || log "Warning: Could not set $1"
+  else
+    log "Notice: $1 not available on this system"
+  fi
+}
+
 log "Applying comprehensive performance optimizations..."
 
 # System-wide power management
@@ -26,11 +35,15 @@ sudo pmset -a disksleep 0
 
 # Memory and kernel optimizations
 log "Configuring memory and kernel settings..."
-sudo sysctl -w kern.memorystatus_purge_on_warning=0
-sudo sysctl -w kern.memorystatus_purge_on_critical=0
-sudo sysctl -w kern.timer.coalescing_enabled=0
-sudo sysctl -w kern.iogpu.dynamic_memory_management=0
-sudo sysctl -w kern.iogpu.dynamic_memory_management_debug=0
+safe_sysctl "kern.memorystatus_purge_on_warning" 0
+safe_sysctl "kern.memorystatus_purge_on_critical" 0
+safe_sysctl "kern.timer.coalescing_enabled" 0
+
+# Only try to set iogpu settings if they exist
+if sysctl -n kern.iogpu >/dev/null 2>&1; then
+  safe_sysctl "kern.iogpu.dynamic_memory_management" 0
+  safe_sysctl "kern.iogpu.dynamic_memory_management_debug" 0
+fi
 
 # Metal and GPU optimizations
 log "Configuring Metal and GPU settings..."
@@ -55,9 +68,9 @@ sudo chmod 777 /tmp/mps_cache
 # Process and resource limits
 log "Configuring process limits..."
 sudo launchctl limit maxfiles 524288 524288
-ulimit -n 524288
+ulimit -n 524288 || log "Warning: Could not set file descriptor limit"
 ulimit -c 0
-ulimit -l unlimited
+ulimit -l unlimited || log "Warning: Could not set memory lock limit"
 
 # Export performance-related environment variables
 cat << 'EOF' > /tmp/performance_env.sh
