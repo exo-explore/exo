@@ -18,8 +18,13 @@ def check_system_state():
     # Add macOS-specific checks
     try:
         # Check powermetrics
-        power_metrics = subprocess.run(['sudo', 'powermetrics', '-n', '1', '-i', '1000', '--show-process-energy'], 
-                                    capture_output=True, text=True)
+        try:
+            power_metrics = subprocess.run(['powermetrics', '-n', '1', '-i', '1000', '--show-process-energy'], 
+                                      capture_output=True, text=True)
+        except:
+            # Try with sudo if direct access fails
+            power_metrics = subprocess.run(['sudo', 'powermetrics', '-n', '1', '-i', '1000', '--show-process-energy'], 
+                                      capture_output=True, text=True)
         print("\nPower Metrics:", power_metrics.stdout, flush=True)
         
         # Check thermal state

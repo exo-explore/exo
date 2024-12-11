@@ -57,9 +57,9 @@ jobs:
           # Apply MLX optimizations
           ./configure_mlx.sh
           
-          # Disable CPU throttling
-          sudo pmset -a processorperf 2
-          sudo pmset -a gpuswitch 2
+          # Disable CPU throttling (correct syntax for M-series Macs)
+          sudo pmset -a powermode 0 2>/dev/null || echo "Failed to set power mode"
+          sudo pmset -a gpuswitch 2 2>/dev/null || echo "Failed to set GPU mode"
           
           # Check current state
           pmset -g
