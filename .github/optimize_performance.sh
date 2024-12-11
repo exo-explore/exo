@@ -6,16 +6,6 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Function to safely set sysctl value
-safe_sysctl() {
-  if sysctl -n "$1" >/dev/null 2>&1; then
-    sudo sysctl -w "$1=$2" >/dev/null 2>&1 || log "Warning: Could not set $1"
-  else
-    log "Notice: $1 not available on this system"
-  fi
-  return 0  # Always return success
-}
-
 log "Applying comprehensive performance optimizations..."
 
 # System-wide power management
@@ -36,18 +26,9 @@ sudo pmset -a disksleep 0
 
 # Memory and kernel optimizations
 log "Configuring memory and kernel settings..."
-safe_sysctl "kern.memorystatus_purge_on_warning" 0
-safe_sysctl "kern.memorystatus_purge_on_critical" 0
-safe_sysctl "kern.timer.coalescing_enabled" 0
-
-# Check for integrated GPU using system_profiler
-if system_profiler SPDisplaysDataType | grep -q "Chipset Model: Apple"; then
-  log "Apple Silicon GPU detected, configuring GPU settings..."
-  safe_sysctl "kern.iogpu.dynamic_memory_management" 0
-  safe_sysctl "kern.iogpu.dynamic_memory_management_debug" 0
-else
-  log "Notice: Apple Silicon GPU not detected, skipping GPU-specific optimizations"
-fi
+sudo sysctl -w kern.memorystatus_purge_on_warning=0
+sudo sysctl -w kern.memorystatus_purge_on_critical=0
+sudo sysctl -w kern.timer.coalescing_enabled=0
 
 # Metal and GPU optimizations
 log "Configuring Metal and GPU settings..."
