@@ -74,7 +74,6 @@ jobs:
           source /tmp/performance_env.sh
           
           # Additional runtime optimizations
-          sudo sysctl -w kern.iogpu.dynamic_memory_management=0
           
           # Set process scheduling
           sudo taskpolicy -b PERFORMANCE
