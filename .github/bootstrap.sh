@@ -168,15 +168,38 @@ log "Configuring runner with labels: $CUSTOM_LABELS"
 
 # Set optimal performance settings
 log "Configuring system for optimal performance..."
-sudo pmset -a gpuswitch 2  # Force discrete GPU if available
+
+# Force high performance mode and disable all power saving
+sudo pmset -a gpuswitch 2  # Force discrete GPU
 sudo pmset -a lowpowermode 0  # Disable low power mode
 sudo pmset -a hibernatemode 0  # Disable hibernation
 sudo pmset -a standby 0  # Disable standby
 sudo pmset -a autopoweroff 0  # Disable auto power off
+sudo pmset -a powernap 0  # Disable power nap
+sudo pmset -a sleep 0  # Disable sleep
+sudo pmset -a disksleep 0  # Disable disk sleep
+sudo pmset -a powermode 1  # Force high performance mode
+sudo pmset -a lessbright 0  # Disable auto-brightness
+sudo pmset -a halfdim 0  # Disable display dimming
+sudo pmset -a acwake 0  # Disable wake on AC
+sudo pmset -a lidwake 0  # Disable wake on lid open
+sudo pmset -a proximitywake 0  # Disable wake on proximity
 
-# Set Metal performance mode
-defaults write com.apple.MetalPerformanceShadersGraph MTLGPUFamilyMac2 -bool true
-defaults write com.apple.MetalPerformanceShadersGraph MTLCaptureEnabled -bool false
+# Disable Metal validation and debugging
+defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
+defaults write com.apple.CoreML MPSEnableMetalValidation -bool false
+defaults write com.apple.CoreML MPSEnableGPUDebug -bool false
+defaults write com.apple.Metal GPUDebug -bool false
+defaults write com.apple.Metal GPUValidation -bool false
+defaults write com.apple.Metal MetalValidation -bool false
+defaults write com.apple.Metal MetalCaptureEnabled -bool false
+defaults write com.apple.Metal MTLValidationBehavior -string "Default"
+defaults write com.apple.Metal EnableMTLDebugLayer -bool false
+defaults write com.apple.Metal MTLDebugLevel -int 0
+
+# Create temporary directory for MPS cache with appropriate permissions
+sudo mkdir -p /tmp/mps_cache
+sudo chmod 777 /tmp/mps_cache
 
 # Create and load launch daemon
 log "Creating LaunchDaemon service..."
@@ -216,9 +239,11 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <key>CPUUsageLimit</key>
         <integer>0</integer>
         <key>SchedulingPolicy</key>
-        <string>RR</string>
+        <string>FIFO</string>
         <key>ThreadPriority</key>
         <integer>1</integer>
+        <key>ThreadPolicy</key>
+        <string>STANDARD</string>
         
         <!-- Memory Management -->
         <key>SoftResourceLimits</key>
@@ -231,6 +256,8 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <integer>2048</integer>
             <key>CPU</key>
             <integer>-1</integer>
+            <key>MemoryLimit</key>
+            <integer>0</integer>
         </dict>
         <key>HardResourceLimits</key>
         <dict>
@@ -242,6 +269,8 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <integer>2048</integer>
             <key>CPU</key>
             <integer>-1</integer>
+            <key>MemoryLimit</key>
+            <integer>0</integer>
         </dict>
         
         <!-- QoS Settings -->
@@ -266,6 +295,10 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <string>1</string>
             <key>MLX_PLACEMENT_POLICY</key>
             <string>metal</string>
+            <key>MLX_METAL_VALIDATION</key>
+            <string>0</string>
+            <key>MLX_METAL_DEBUG</key>
+            <string>0</string>
             <!-- Metal Settings -->
             <key>OBJC_DEBUG_MISSING_POOLS</key>
             <string>NO</string>
@@ -281,10 +314,38 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <string>0</string>
             <key>METAL_MAX_COMMAND_QUEUES</key>
             <string>1024</string>
+            <key>METAL_DEVICE_PRIORITY</key>
+            <string>high</string>
+            <key>METAL_VALIDATION_ENABLED</key>
+            <string>0</string>
+            <key>METAL_PERFORMANCE_HUD</key>
+            <string>0</string>
+            <key>METAL_FORCE_PERFORMANCE_MODE</key>
+            <string>1</string>
+            <key>METAL_ENABLE_VALIDATION_LAYER</key>
+            <string>0</string>
             <!-- Process Priority -->
             <key>PYTHON_CPU_AFFINITY</key>
-            <string>-1</string>  <!-- Use all cores -->
+            <string>-1</string>
+            <key>MPS_PREFETCH_ENABLED</key>
+            <string>1</string>
+            <key>MPS_CACHE_DIRECTORY</key>
+            <string>/tmp/mps_cache</string>
+            <key>PYTORCH_ENABLE_MPS_FALLBACK</key>
+            <string>0</string>
+            <key>DISABLE_METAL_VALIDATION</key>
+            <string>1</string>
         </dict>
+        
+        <!-- Additional Process Controls -->
+        <key>EnableTransactions</key>
+        <true/>
+        <key>EnablePressuredExit</key>
+        <false/>
+        <key>PriorityModifier</key>
+        <integer>20</integer>
+        <key>LegacyTimers</key>
+        <false/>
     </dict>
 </plist>
 EOF
