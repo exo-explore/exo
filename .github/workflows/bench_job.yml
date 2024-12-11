@@ -107,8 +107,11 @@ jobs:
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           
           echo "=== Before starting exo ==="
-          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | head -1
-          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | grep -i python
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | grep -i python
+          
+          echo "Process scheduling info:"
+          ps -Mo pid,tid,policy,pri,sched,pname | grep -i python || true
           
           echo "Starting exo daemon..."
           
@@ -128,11 +131,14 @@ jobs:
           sleep 2
           
           echo "=== After starting exo ==="
-          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | head -1
-          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | grep $PID1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | grep $PID1
           
-          echo "Process details from sysctl:"
-          sudo sysctl -a | grep -i "kern.*.$PID1" || true
+          echo "Process scheduling info for exo:"
+          ps -Mo pid,tid,policy,pri,sched,pname | grep $PID1 || true
+          
+          echo "Additional process details:"
+          sudo powermetrics -n 1 -i 1000 --show-process-energy | grep -A 5 $PID1 || true
 
           trap 'kill $TAIL1' EXIT
           trap 'kill $PID1' EXIT
