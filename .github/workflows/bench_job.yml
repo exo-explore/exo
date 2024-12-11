@@ -110,16 +110,14 @@ jobs:
           ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
           ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | grep -i python
           
-          echo "Process scheduling info:"
-          ps -Mo pid,tid,policy,pri,sched,pname | grep -i python || true
-          
           echo "Starting exo daemon..."
           
-          # Start exo
-          .venv/bin/exo \
+          # Start exo with explicit process control
+          sudo taskpolicy -d -B .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
+            --disable-tui \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           
@@ -130,12 +128,13 @@ jobs:
           # Give process time to start
           sleep 2
           
+          # Set additional process priorities
+          sudo renice -n -20 -p $PID1
+          sudo taskpolicy -b -p $PID1  # Set as background task
+          
           echo "=== After starting exo ==="
           ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
           ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | grep $PID1
-          
-          echo "Process scheduling info for exo:"
-          ps -Mo pid,tid,policy,pri,sched,pname | grep $PID1 || true
           
           echo "Additional process details:"
           sudo powermetrics -n 1 -i 1000 --show-process-energy | grep -A 5 $PID1 || true
