@@ -106,6 +106,10 @@ jobs:
           source .venv/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           
+          echo "=== Before starting exo ==="
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | head -1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | grep -i python
+          
           echo "Starting exo daemon..."
           
           # Start exo
@@ -119,6 +123,16 @@ jobs:
           echo "Exo process started with PID: $PID1"
           tail -f output1.log &
           TAIL1=$!
+
+          # Give process time to start
+          sleep 2
+          
+          echo "=== After starting exo ==="
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | head -1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,policy,cls,pri,psr,command | grep $PID1
+          
+          echo "Process details from sysctl:"
+          sudo sysctl -a | grep -i "kern.*.$PID1" || true
 
           trap 'kill $TAIL1' EXIT
           trap 'kill $PID1' EXIT
