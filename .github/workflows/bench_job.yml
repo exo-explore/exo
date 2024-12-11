@@ -55,7 +55,7 @@ jobs:
       - name: Configure system
         run: |
           # Apply MLX optimizations
-          sudo ./configure_mlx.sh
+          ./configure_mlx.sh
           
           # Disable CPU throttling
           sudo pmset -a processorperf 2
