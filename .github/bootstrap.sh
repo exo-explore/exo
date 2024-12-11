@@ -17,7 +17,7 @@ fi
 # Check for required arguments
 if [ -z "$1" ]; then
     log "Error: Runner token is required"
-    log "Usage: $0 <github-pat> [tailscale-auth-key]"
+    log "Usage: $0 <runner-token> [tailscale-auth-key]"
     exit 1
 fi
 
