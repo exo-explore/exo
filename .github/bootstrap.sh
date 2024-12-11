@@ -27,7 +27,7 @@ REPO="exo-explore/exo"
 
 # Add sudoers configuration
 log "Configuring sudo access..."
-SUDOERS_CONTENT="$(whoami) ALL=(ALL) NOPASSWD: /usr/sbin/tccutil, /bin/launchctl, /usr/bin/tee /Library/LaunchDaemons/*, /usr/bin/sqlite3, /usr/libexec/ApplicationFirewall/socketfilterfw, /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/xcode-select, /usr/bin/chown, /bin/mkdir, /usr/bin/touch, /usr/sbin/softwareupdate"
+SUDOERS_CONTENT="$(whoami) ALL=(ALL) NOPASSWD: /usr/sbin/tccutil, /bin/launchctl, /usr/bin/tee /Library/LaunchDaemons/*, /usr/bin/sqlite3, /usr/libexec/ApplicationFirewall/socketfilterfw, /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/xcode-select, /usr/bin/chown, /bin/mkdir, /usr/bin/touch, /usr/sbin/softwareupdate, /usr/sbin/sysctl, /usr/bin/pmset, /usr/sbin/powermetrics"
 echo "$SUDOERS_CONTENT" | sudo tee /etc/sudoers.d/github-runner > /dev/null
 sudo chmod 440 /etc/sudoers.d/github-runner
 
