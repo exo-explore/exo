@@ -145,6 +145,8 @@ def load_model_shard(
 
   if hasattr(model, "sanitize"):
     weights = model.sanitize(weights)
+  if DEBUG >= 8:
+    print(f"\n|| {config=} ||\n")
 
   if (quantization := config.get("quantization", None)) is not None:
     # Handle legacy models which may not have everything quantized
@@ -152,6 +154,7 @@ def load_model_shard(
       if not hasattr(m, "to_quantized"):
         return False
       return f"{p}.scales" in weights
+
 
     nn.quantize(
       model,
