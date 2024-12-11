@@ -19,7 +19,7 @@ sudo pmset -a standby 0
 sudo pmset -a powernap 0
 sudo pmset -a proximitywake 0
 sudo pmset -a tcpkeepalive 1
-sudo pmset -a powermode 1
+sudo pmset -a powermode 2
 sudo pmset -a gpuswitch 2
 sudo pmset -a displaysleep 0
 sudo pmset -a disksleep 0

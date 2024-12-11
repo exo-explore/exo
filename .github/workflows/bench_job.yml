@@ -112,6 +112,16 @@ jobs:
           
           echo "Starting exo daemon..."
           
+          # Force highest power mode
+          sudo pmset -a powermode 2
+          sudo pmset -a gpuswitch 2
+          sudo pmset -a lowpowermode 0
+          sudo pmset -a lessbright 0
+          sudo pmset -a disablesleep 1
+          
+          echo "Power mode settings:"
+          sudo pmset -g
+          
           # Start exo with explicit process control
           sudo taskpolicy -d 4 -t 4 .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
