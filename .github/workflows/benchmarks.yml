@@ -21,7 +21,7 @@ jobs:
   #     calling_job_name: 'test-m4-cluster'
   #   secrets: inherit
 
-  test-m3-cluster:
+  test-m3-single-node:
     strategy:
       matrix:
         model: ['llama-3.2-1b']
