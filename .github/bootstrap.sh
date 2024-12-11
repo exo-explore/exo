@@ -239,6 +239,30 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         </dict>
         <key>ProcessType</key>
         <string>Interactive</string>
+        <key>LowPriorityIO</key>
+        <false/>
+        <key>AbandonProcessGroup</key>
+        <false/>
+        <key>EnableTransactions</key>
+        <true/>
+        <key>ThrottleInterval</key>
+        <integer>0</integer>
+        <key>HardResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+            <key>MemoryLock</key>
+            <integer>-1</integer>
+        </dict>
+        <key>SoftResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+            <key>MemoryLock</key>
+            <integer>-1</integer>
+        </dict>
+        <key>QOSClass</key>
+        <string>User-Interactive</string>
         <key>StandardOutPath</key>
         <string>$RUNNER_DIR/_diag/runner.log</string>
         <key>StandardErrorPath</key>
@@ -248,6 +272,8 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <key>PATH</key>
             <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         </dict>
+        <key>Nice</key>
+        <integer>-20</integer>
     </dict>
 </plist>
 EOF
