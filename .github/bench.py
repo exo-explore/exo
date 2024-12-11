@@ -23,6 +23,7 @@ async def measure_performance(api_endpoint: str, prompt: str, model: str) -> Dic
     results = {
         'model': model,
         'run_id': os.environ.get('GITHUB_RUN_ID', 'unknown'),
+        'branch': os.environ.get('GITHUB_REF_NAME', 'unknown'),
         'configuration': json.loads(os.environ.get('HARDWARE_CONFIG', '{}'))
     }
 
