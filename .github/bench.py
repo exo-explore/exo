@@ -6,6 +6,20 @@ import os
 import boto3
 from typing import Dict, Any
 from datetime import datetime
+import subprocess
+
+
+def check_gpu_access():
+    try:
+        # Check if MLX can see the GPU
+        import mlx.core as mx
+        print("MLX device info:", mx.default_device())
+        
+        # Check Metal device availability
+        result = subprocess.run(['system_profiler', 'SPDisplaysDataType'], capture_output=True, text=True)
+        print("GPU Info:", result.stdout)
+    except Exception as e:
+        print(f"Failed to check GPU access: {e}")
 
 
 async def measure_performance(api_endpoint: str, prompt: str, model: str) -> Dict[str, Any]:
@@ -144,4 +158,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    check_gpu_access()
     asyncio.run(main())
