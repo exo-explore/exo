@@ -92,4 +92,4 @@ export PYTHONHASHSEED=0
 export PYTHONDONTWRITEBYTECODE=1
 EOF
 
-log "Performance optimizations completed. Environment variables written to /tmp/performance_env.sh" 
+log "Performance optimizations completed. Environment variables written to /tmp/performance_env.sh"
