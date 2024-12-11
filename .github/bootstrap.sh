@@ -134,16 +134,29 @@ MEMORY=$(($(sysctl -n hw.memsize) / 1024 / 1024 / 1024))
 
 # Set up GitHub Runner
 RUNNER_DIR="$HOME/actions-runner"
+
+# Check if runner is already configured
+if [ -f "$RUNNER_DIR/.runner" ]; then
+  log "Runner already configured. Stopping existing service..."
+  sudo launchctl unload /Library/LaunchDaemons/com.github.runner.plist 2>/dev/null || true
+fi
+
+# Create runner directory if it doesn't exist
 mkdir -p "$RUNNER_DIR"
 cd "$RUNNER_DIR"
 
 CUSTOM_LABELS="self-hosted,macos,arm64,${CHIP_MODEL}_GPU${GPU_CORES}_${MEMORY}GB"
 
-log "Downloading GitHub Actions runner..."
-RUNNER_VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | grep '"tag_name":' | cut -d'"' -f4)
-curl -o actions-runner.tar.gz -L "https://github.com/actions/runner/releases/download/${RUNNER_VERSION}/actions-runner-osx-arm64-${RUNNER_VERSION#v}.tar.gz"
-tar xzf actions-runner.tar.gz
-rm actions-runner.tar.gz
+# Only download and extract if not already present or if forced
+if [ ! -f "$RUNNER_DIR/run.sh" ] || [ "${FORCE_SETUP:-false}" = "true" ]; then
+  log "Downloading GitHub Actions runner..."
+  RUNNER_VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | grep '"tag_name":' | cut -d'"' -f4)
+  curl -o actions-runner.tar.gz -L "https://github.com/actions/runner/releases/download/${RUNNER_VERSION}/actions-runner-osx-arm64-${RUNNER_VERSION#v}.tar.gz"
+  tar xzf actions-runner.tar.gz
+  rm actions-runner.tar.gz
+else
+  log "Runner already downloaded, skipping download step"
+fi
 
 log "Configuring runner with labels: $CUSTOM_LABELS"
 ./config.sh --unattended \
@@ -174,15 +187,32 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <true/>
         <key>KeepAlive</key>
         <true/>
+        <key>ProcessType</key>
+        <string>Interactive</string>
+        <key>Nice</key>
+        <integer>-20</integer>
+        <key>IOSchedulingPriority</key>
+        <integer>0</integer>
+        <key>ThrottleInterval</key>
+        <integer>0</integer>
         <key>StandardOutPath</key>
         <string>${RUNNER_DIR}/stdout.log</string>
         <key>StandardErrorPath</key>
         <string>${RUNNER_DIR}/stderr.log</string>
+        <key>EnvironmentVariables</key>
+        <dict>
+            <key>PATH</key>
+            <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+            <key>MLX_USE_GPU</key>
+            <string>1</string>
+        </dict>
     </dict>
 </plist>
 EOF
 
 log "Starting GitHub Actions runner service..."
+sudo chmod 644 /Library/LaunchDaemons/com.github.runner.plist
+sudo launchctl unload /Library/LaunchDaemons/com.github.runner.plist 2>/dev/null || true
 sudo launchctl load /Library/LaunchDaemons/com.github.runner.plist
 
 # Add Runner.Listener permissions (after runner installation)
