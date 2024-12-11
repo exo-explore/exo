@@ -169,6 +169,85 @@ log "Configuring runner with labels: $CUSTOM_LABELS"
 # Set optimal performance settings
 log "Configuring system for optimal performance..."
 
+# Force high power mode using system preferences
+log "Setting power mode to high performance..."
+
+# Set power mode using defaults for all locations
+sudo defaults write /Library/Preferences/.GlobalPreferences.plist com.apple.PowerManagement.PowerMode -int 2
+sudo defaults write /Library/Preferences/com.apple.PowerManagement PowerMode -int 2
+sudo defaults write -g PowerMode -int 2
+
+# Create power mode override file
+sudo mkdir -p /Library/Preferences/SystemConfiguration/
+sudo tee /Library/Preferences/SystemConfiguration/com.apple.PowerManagement.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>ActivePowerProfiles</key>
+    <dict>
+        <key>AC Power</key>
+        <dict>
+            <key>PowerMode</key>
+            <integer>2</integer>
+            <key>ForcedPowerMode</key>
+            <integer>2</integer>
+            <key>LowPowerModeEnabled</key>
+            <false/>
+            <key>AutoPowerModeEnabled</key>
+            <false/>
+            <key>HighPowerMode</key>
+            <true/>
+            <key>ReduceBrightness</key>
+            <false/>
+            <key>DynamicPowerStep</key>
+            <false/>
+            <key>GPUSwitch</key>
+            <integer>2</integer>
+        </dict>
+        <key>Battery Power</key>
+        <dict>
+            <key>PowerMode</key>
+            <integer>2</integer>
+            <key>ForcedPowerMode</key>
+            <integer>2</integer>
+            <key>LowPowerModeEnabled</key>
+            <false/>
+            <key>AutoPowerModeEnabled</key>
+            <false/>
+            <key>HighPowerMode</key>
+            <true/>
+            <key>ReduceBrightness</key>
+            <false/>
+            <key>DynamicPowerStep</key>
+            <false/>
+            <key>GPUSwitch</key>
+            <integer>2</integer>
+        </dict>
+    </dict>
+    <key>SystemPowerProfileOverride</key>
+    <integer>2</integer>
+    <key>Custom Profile</key>
+    <dict>
+        <key>AC Power</key>
+        <dict>
+            <key>PowerMode</key>
+            <integer>2</integer>
+            <key>ForcedPowerMode</key>
+            <integer>2</integer>
+        </dict>
+        <key>Battery Power</key>
+        <dict>
+            <key>PowerMode</key>
+            <integer>2</integer>
+            <key>ForcedPowerMode</key>
+            <integer>2</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>
+EOF
+
 # Configure power management settings for maximum performance
 log "Setting power management options..."
 sudo pmset -a displaysleep 0
@@ -183,6 +262,67 @@ sudo pmset -a acwake 0
 sudo pmset -a lidwake 0
 sudo pmset -a lessbright 0
 sudo pmset -a halfdim 0
+sudo pmset -a autopoweroff 0
+sudo pmset -a standby 0
+
+# Create a script to continuously enforce high power mode
+sudo tee /usr/local/bin/enforce_high_power.sh << 'EOF'
+#!/bin/bash
+
+while true; do
+    # Set power mode using defaults
+    defaults write com.apple.systempreferences PowerMode -int 2
+    defaults write -g PowerMode -int 2
+    
+    # Check current power mode
+    current_mode=$(pmset -g | grep powermode | awk '{print $2}')
+    if [ "$current_mode" != "2" ]; then
+        # Force high power mode using additional methods
+        sudo pmset -a lessbright 0
+        sudo pmset -a halfdim 0
+        sudo defaults write /Library/Preferences/com.apple.PowerManagement PowerMode -int 2
+    fi
+    
+    sleep 60
+done
+EOF
+
+sudo chmod +x /usr/local/bin/enforce_high_power.sh
+
+# Create LaunchDaemon to run the enforcement script
+sudo tee /Library/LaunchDaemons/com.local.powermode.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.powermode</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/enforce_high_power.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>0</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>Nice</key>
+    <integer>-20</integer>
+</dict>
+</plist>
+EOF
+
+sudo chmod 644 /Library/LaunchDaemons/com.local.powermode.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.local.powermode.plist
+sudo launchctl load -w /Library/LaunchDaemons/com.local.powermode.plist
+
+# Verify power settings
+log "Verifying power settings..."
+pmset -g
+system_profiler SPPowerDataType
 
 # Create performance mode configuration with supported settings
 sudo tee /Library/Preferences/com.apple.perfmode.plist << EOF
@@ -194,9 +334,16 @@ sudo tee /Library/Preferences/com.apple.perfmode.plist << EOF
     <string>Performance</string>
     <key>PowerMode</key>
     <integer>2</integer>
+    <key>LowPowerModeEnabled</key>
+    <false/>
+    <key>ForcedPowerMode</key>
+    <integer>2</integer>
 </dict>
 </plist>
 EOF
+
+# Force high performance mode using powermetrics
+sudo powermetrics --show-process-energy --samplers cpu_power -i 1000 -n 1 2>/dev/null || true
 
 # Enhanced Metal and GPU settings using defaults
 defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
