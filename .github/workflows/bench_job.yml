@@ -78,9 +78,6 @@ jobs:
           
           # Additional performance optimizations
           sudo sysctl -w kern.timer.coalescing_enabled=0
-          sudo sysctl -w kern.timer.throttle_enabled=0
-          sudo sysctl -w kern.sched.idle_spin=1
-          sudo sysctl -w kern.sched.idle_spin_time=100
           
           # Optimize Metal performance
           defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
