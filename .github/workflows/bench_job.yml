@@ -110,13 +110,22 @@ jobs:
           which .venv/bin/exo
 
           echo "Starting exo daemon..."
-          # Start exo with high priority
-          sudo nice -n -20 .venv/bin/exo \
+          # Set process scheduling priority
+          sudo renice -n -20 $$ || true
+          sudo ionice -c 2 -n 0 $$ || true
+          
+          # Start exo with inherited priority
+          .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
+          
+          # Ensure child process inherits priority
+          sudo renice -n -20 -p $PID1 || true
+          sudo ionice -c 2 -n 0 -p $PID1 || true
+
           echo "Exo process started with PID: $PID1"
           tail -f output1.log &
           TAIL1=$!
