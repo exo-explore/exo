@@ -103,10 +103,10 @@ jobs:
           
           # Check installed exo version
           pip show exo
-          which exo
+          which .venv/bin/exo
 
           echo "Starting exo daemon..."
-          DEBUG=6 DEBUG_DISCOVERY=6 exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --interface-type-filter="Ethernet" --chatgpt-api-port 52415 > output1.log 2>&1 &
+          DEBUG=6 DEBUG_DISCOVERY=6 .venv/bin/exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --interface-type-filter="Ethernet" --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           echo "Exo process started with PID: $PID1"
           tail -f output1.log &
