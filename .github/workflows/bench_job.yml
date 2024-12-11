@@ -54,27 +54,31 @@ jobs:
           pip install boto3==1.35.76
       - name: Configure system
         run: |
-          # Check initial CPU state
-          echo "Initial CPU state:"
-          sysctl machdep.cpu || true
-          sysctl hw.cpufamily || true
-          sysctl hw.cputype || true
-          sysctl hw.logicalcpu || true
-          sysctl hw.physicalcpu || true
+          # Disable all power management and performance throttling
+          sudo pmset -a lessbright 0
+          sudo pmset -a disablesleep 1
+          sudo pmset -a sleep 0
+          sudo pmset -a hibernatemode 0
+          sudo pmset -a autopoweroff 0
+          sudo pmset -a standby 0
+          sudo pmset -a powernap 0
+          sudo pmset -a proximitywake 0
+          sudo pmset -a tcpkeepalive 1
+          sudo pmset -a powermode 0
+          sudo pmset -a gpuswitch 2
           
-          # Apply MLX optimizations
+          # Optimize GPU memory allocation
+          sudo sysctl -w kern.memorystatus_purge_on_warning=0
+          sudo sysctl -w kern.memorystatus_purge_on_critical=0
+
           ./configure_mlx.sh
-          
-          # Disable CPU throttling (correct syntax for M-series Macs)
-          sudo pmset -a powermode 0 2>/dev/null || echo "Failed to set power mode"
-          sudo pmset -a gpuswitch 2 2>/dev/null || echo "Failed to set GPU mode"
-          
+
           # Check final state
-          echo "Final CPU state:"
-          sysctl machdep.cpu || true
-          pmset -g thermals || true
-          pmset -g || true
+          echo "Final system state:"
+          pmset -g
           sysctl iogpu
+          sysctl kern.memorystatus_purge_on_warning
+          sysctl kern.memorystatus_purge_on_critical
       - name: Run exo
         env:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
@@ -106,7 +110,12 @@ jobs:
           which .venv/bin/exo
 
           echo "Starting exo daemon..."
-          .venv/bin/exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --interface-type-filter="Ethernet" --chatgpt-api-port 52415 > output1.log 2>&1 &
+          # Start exo with high priority
+          sudo nice -n -20 .venv/bin/exo \
+            --node-id="${MY_NODE_ID}" \
+            --node-id-filter="${ALL_NODE_IDS}" \
+            --interface-type-filter="Ethernet" \
+            --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           echo "Exo process started with PID: $PID1"
           tail -f output1.log &
