@@ -9,10 +9,11 @@ log() {
 # Function to safely set sysctl value
 safe_sysctl() {
   if sysctl -n "$1" >/dev/null 2>&1; then
-    sudo sysctl -w "$1=$2" 2>/dev/null || log "Warning: Could not set $1"
+    sudo sysctl -w "$1=$2" >/dev/null 2>&1 || log "Warning: Could not set $1"
   else
     log "Notice: $1 not available on this system"
   fi
+  return 0  # Always return success
 }
 
 log "Applying comprehensive performance optimizations..."
