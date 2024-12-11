@@ -113,7 +113,7 @@ jobs:
           echo "Starting exo daemon..."
           
           # Start exo with explicit process control
-          sudo taskpolicy -d -B .venv/bin/exo \
+          sudo taskpolicy -d utility .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
@@ -130,7 +130,7 @@ jobs:
           
           # Set additional process priorities
           sudo renice -n -20 -p $PID1
-          sudo taskpolicy -b -p $PID1  # Set as background task
+          sudo taskpolicy -t utility -p $PID1
           
           echo "=== After starting exo ==="
           ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
