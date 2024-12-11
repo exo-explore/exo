@@ -39,10 +39,13 @@ safe_sysctl "kern.memorystatus_purge_on_warning" 0
 safe_sysctl "kern.memorystatus_purge_on_critical" 0
 safe_sysctl "kern.timer.coalescing_enabled" 0
 
-# Only try to set iogpu settings if they exist
-if sysctl -n kern.iogpu >/dev/null 2>&1; then
+# Check for integrated GPU using system_profiler
+if system_profiler SPDisplaysDataType | grep -q "Chipset Model: Apple"; then
+  log "Apple Silicon GPU detected, configuring GPU settings..."
   safe_sysctl "kern.iogpu.dynamic_memory_management" 0
   safe_sysctl "kern.iogpu.dynamic_memory_management_debug" 0
+else
+  log "Notice: Apple Silicon GPU not detected, skipping GPU-specific optimizations"
 fi
 
 # Metal and GPU optimizations
