@@ -35,6 +35,11 @@ jobs:
       HARDWARE_CONFIG: ${{ inputs.config }}
       model: ${{ inputs.model }}
     steps:
+      - name: Cleanup workspace
+        run: |
+          sudo rm -rf "$GITHUB_WORKSPACE"
+          sudo mkdir -p "$GITHUB_WORKSPACE"
+          sudo chown -R $(whoami):$(id -g) "$GITHUB_WORKSPACE"
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
@@ -79,6 +84,28 @@ jobs:
           sysctl iogpu
           sysctl kern.memorystatus_purge_on_warning
           sysctl kern.memorystatus_purge_on_critical
+      - name: Configure process limits
+        run: |
+          # Increase resource limits
+          sudo launchctl limit maxfiles 524288 524288
+          ulimit -n 524288
+          
+          # Disable core dumps
+          ulimit -c 0
+          
+          # Set max locked memory to unlimited
+          ulimit -l unlimited
+          
+          # Set process priority class
+          sudo chrt -f -p 99 $$
+          
+          # Disable memory compression
+          sudo nvram boot-args="vm_compressor=1"
+          
+          # Set Metal environment variables
+          export METAL_DEVICE_WRAPPER_TYPE=1
+          export METAL_DEBUG_ERROR_MODE=0
+          export OBJC_DEBUG_MISSING_POOLS=NO
       - name: Run exo
         env:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}

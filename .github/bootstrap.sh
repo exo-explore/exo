@@ -27,7 +27,7 @@ REPO="exo-explore/exo"
 
 # Add sudoers configuration
 log "Configuring sudo access..."
-SUDOERS_CONTENT="$(whoami) ALL=(ALL) NOPASSWD: /usr/sbin/tccutil, /bin/launchctl, /usr/bin/tee /Library/LaunchDaemons/*, /usr/bin/sqlite3, /usr/libexec/ApplicationFirewall/socketfilterfw, /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/xcode-select, /usr/bin/chown, /bin/mkdir, /usr/bin/touch, /usr/sbin/softwareupdate, /usr/sbin/sysctl, /usr/bin/pmset, /usr/sbin/powermetrics, /usr/bin/nice, /usr/bin/renice, /usr/bin/ionice"
+SUDOERS_CONTENT="$(whoami) ALL=(ALL) NOPASSWD: /usr/sbin/tccutil, /bin/launchctl, /usr/bin/tee /Library/LaunchDaemons/*, /usr/bin/sqlite3, /usr/libexec/ApplicationFirewall/socketfilterfw, /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/xcode-select, /usr/bin/chown, /bin/mkdir, /usr/bin/touch, /usr/sbin/softwareupdate, /usr/sbin/sysctl, /usr/bin/pmset, /usr/sbin/powermetrics, /usr/bin/nice, /usr/bin/renice, /usr/bin/ionice, /bin/rm, /bin/chmod"
 echo "$SUDOERS_CONTENT" | sudo tee /etc/sudoers.d/github-runner > /dev/null
 sudo chmod 440 /etc/sudoers.d/github-runner
 
@@ -195,15 +195,35 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <integer>0</integer>
         <key>ThrottleInterval</key>
         <integer>0</integer>
-        <key>StandardOutPath</key>
-        <string>${RUNNER_DIR}/stdout.log</string>
-        <key>StandardErrorPath</key>
-        <string>${RUNNER_DIR}/stderr.log</string>
+        <key>LowPriorityIO</key>
+        <false/>
+        <key>MaterializeDataless</key>
+        <true/>
+        <key>HardResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+            <key>MemoryLock</key>
+            <integer>-1</integer>
+        </dict>
+        <key>SoftResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+            <key>MemoryLock</key>
+            <integer>-1</integer>
+        </dict>
         <key>EnvironmentVariables</key>
         <dict>
             <key>PATH</key>
             <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
             <key>MLX_USE_GPU</key>
+            <string>1</string>
+            <key>OBJC_DEBUG_MISSING_POOLS</key>
+            <string>NO</string>
+            <key>METAL_DEBUG_ERROR_MODE</key>
+            <string>0</string>
+            <key>METAL_DEVICE_WRAPPER_TYPE</key>
             <string>1</string>
         </dict>
     </dict>
