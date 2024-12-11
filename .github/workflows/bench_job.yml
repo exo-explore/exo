@@ -194,3 +194,14 @@ jobs:
               sleep 5
             done
           fi
+
+      # Add system state check
+      - name: Check System State
+        run: |
+          sudo pmset -g
+          sudo powermetrics -n 1 -i 1000 --show-process-energy
+          system_profiler SPDisplaysDataType
+          sysctl iogpu
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,command | grep -i python
+          sudo launchctl list | grep github
+          env | grep -E "MLX|METAL"

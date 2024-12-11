@@ -166,6 +166,18 @@ log "Configuring runner with labels: $CUSTOM_LABELS"
     --labels "${CUSTOM_LABELS}" \
     --work "_work"
 
+# Set optimal performance settings
+log "Configuring system for optimal performance..."
+sudo pmset -a gpuswitch 2  # Force discrete GPU if available
+sudo pmset -a lowpowermode 0  # Disable low power mode
+sudo pmset -a hibernatemode 0  # Disable hibernation
+sudo pmset -a standby 0  # Disable standby
+sudo pmset -a autopoweroff 0  # Disable auto power off
+
+# Set Metal performance mode
+defaults write com.apple.MetalPerformanceShadersGraph MTLGPUFamilyMac2 -bool true
+defaults write com.apple.MetalPerformanceShadersGraph MTLCaptureEnabled -bool false
+
 # Create and load launch daemon
 log "Creating LaunchDaemon service..."
 sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
@@ -199,32 +211,79 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <false/>
         <key>MaterializeDataless</key>
         <true/>
-        <key>HardResourceLimits</key>
-        <dict>
-            <key>NumberOfFiles</key>
-            <integer>524288</integer>
-            <key>MemoryLock</key>
-            <integer>-1</integer>
-        </dict>
+        
+        <!-- CPU Priority and Scheduling -->
+        <key>CPUUsageLimit</key>
+        <integer>0</integer>
+        <key>SchedulingPolicy</key>
+        <string>RR</string>
+        <key>ThreadPriority</key>
+        <integer>1</integer>
+        
+        <!-- Memory Management -->
         <key>SoftResourceLimits</key>
         <dict>
             <key>NumberOfFiles</key>
             <integer>524288</integer>
             <key>MemoryLock</key>
             <integer>-1</integer>
+            <key>NumberOfProcesses</key>
+            <integer>2048</integer>
+            <key>CPU</key>
+            <integer>-1</integer>
         </dict>
+        <key>HardResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+            <key>MemoryLock</key>
+            <integer>-1</integer>
+            <key>NumberOfProcesses</key>
+            <integer>2048</integer>
+            <key>CPU</key>
+            <integer>-1</integer>
+        </dict>
+        
+        <!-- QoS Settings -->
+        <key>QOSClass</key>
+        <string>User-Interactive</string>
+        
+        <!-- Environment Variables -->
         <key>EnvironmentVariables</key>
         <dict>
             <key>PATH</key>
             <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+            <!-- MLX Settings -->
             <key>MLX_USE_GPU</key>
             <string>1</string>
+            <key>MLX_METAL_COMPILE_ASYNC</key>
+            <string>1</string>
+            <key>MLX_METAL_PREALLOCATE</key>
+            <string>1</string>
+            <key>MLX_METAL_MEMORY_GUARD</key>
+            <string>0</string>
+            <key>MLX_METAL_CACHE_KERNELS</key>
+            <string>1</string>
+            <key>MLX_PLACEMENT_POLICY</key>
+            <string>metal</string>
+            <!-- Metal Settings -->
             <key>OBJC_DEBUG_MISSING_POOLS</key>
             <string>NO</string>
             <key>METAL_DEBUG_ERROR_MODE</key>
             <string>0</string>
             <key>METAL_DEVICE_WRAPPER_TYPE</key>
             <string>1</string>
+            <key>METAL_CAPTURE_ENABLED</key>
+            <string>0</string>
+            <key>METAL_DEBUG_LAYER_ENABLED</key>
+            <string>0</string>
+            <key>METAL_LOAD_LIMIT</key>
+            <string>0</string>
+            <key>METAL_MAX_COMMAND_QUEUES</key>
+            <string>1024</string>
+            <!-- Process Priority -->
+            <key>PYTHON_CPU_AFFINITY</key>
+            <string>-1</string>  <!-- Use all cores -->
         </dict>
     </dict>
 </plist>
