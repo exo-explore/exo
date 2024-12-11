@@ -193,158 +193,24 @@ sudo sysctl -w kern.timer_coalesce_tier4_ns_max=1000
 sudo sysctl -w kern.timer.scan_interval=40000
 sudo sysctl -w kern.timer.longterm.scan_interval=100000
 sudo sysctl -w kern.cpu_checkin_interval=5000
+# Disable QoS restrictions
+sudo sysctl -w net.qos.policy.restricted=0
+sudo sysctl -w net.qos.policy.restrict_avapps=0
+sudo sysctl -w net.qos.policy.wifi_enabled=0
+sudo sysctl -w net.qos.policy.capable_enabled=0
+# Set scheduler parameters
+sudo sysctl -w kern.sched_rt_avoid_cpu0=0
+sudo sysctl -w debug.sched=2
+sudo sysctl -w net.pktsched.netem.sched_output_ival_ms=1
 
-# Configure power management settings for maximum performance
-log "Setting power management options..."
-
-# Disable all power saving features for both battery (-b) and AC power (-c)
-for power_source in "-b" "-c"; do
-    # Disable all sleep/idle features
-    sudo pmset $power_source sleep 0
-    sudo pmset $power_source disksleep 0
-    sudo pmset $power_source displaysleep 0
-    sudo pmset $power_source powernap 0
-    sudo pmset $power_source proximitywake 0
-    
-    # Disable power-saving display features
-    sudo pmset $power_source lessbright 0
-    sudo pmset $power_source halfdim 0
-    
-    # Disable hibernation and standby
-    sudo pmset $power_source hibernatemode 0
-    sudo pmset $power_source standby 0
-    sudo pmset $power_source autopoweroff 0
-    
-    # Keep system active
-    sudo pmset $power_source ttyskeepawake 1
-    sudo pmset $power_source tcpkeepalive 1
-    
-    # Disable other power-saving features
-    sudo pmset $power_source womp 0
-    sudo pmset $power_source ring 0
-    sudo pmset $power_source networkoversleep 0
-    sudo pmset $power_source sms 0
+# Clean up any existing runner services
+log "Cleaning up existing runner services..."
+for service in com.github.runner com.github.runner.monitor com.github.runner.cpuaffinity com.github.runner.affinity; do
+    sudo launchctl bootout system/$service 2>/dev/null || true
+    sudo rm -f /Library/LaunchDaemons/$service.plist
 done
 
-# Create a script to continuously enforce performance settings
-sudo tee /usr/local/bin/enforce_performance.sh << 'EOF'
-#!/bin/bash
-
-enforce_settings() {
-    power_source=$1
-    
-    # Disable all sleep/idle features
-    sudo pmset $power_source sleep 0
-    sudo pmset $power_source disksleep 0
-    sudo pmset $power_source displaysleep 0
-    sudo pmset $power_source powernap 0
-    sudo pmset $power_source proximitywake 0
-    
-    # Disable power-saving display features
-    sudo pmset $power_source lessbright 0
-    sudo pmset $power_source halfdim 0
-    
-    # Disable hibernation and standby
-    sudo pmset $power_source hibernatemode 0
-    sudo pmset $power_source standby 0
-    sudo pmset $power_source autopoweroff 0
-    
-    # Keep system active
-    sudo pmset $power_source ttyskeepawake 1
-    sudo pmset $power_source tcpkeepalive 1
-}
-
-enforce_cpu_performance() {
-    # Disable timer coalescing
-    sudo sysctl -w kern.timer.coalescing_enabled=0
-    sudo sysctl -w kern.timer_coalesce_bg_scale=-5
-    sudo sysctl -w kern.timer_resort_threshold_ns=0
-    # Set minimum timer intervals
-    sudo sysctl -w kern.wq_max_timer_interval_usecs=1000
-    sudo sysctl -w kern.timer_coalesce_bg_ns_max=1000
-    # Set minimum timer coalescing for all tiers
-    sudo sysctl -w kern.timer_coalesce_tier0_scale=-5
-    sudo sysctl -w kern.timer_coalesce_tier0_ns_max=1000
-    sudo sysctl -w kern.timer_coalesce_tier1_scale=-5
-    sudo sysctl -w kern.timer_coalesce_tier1_ns_max=1000
-    sudo sysctl -w kern.timer_coalesce_tier2_scale=-5
-    sudo sysctl -w kern.timer_coalesce_tier2_ns_max=1000
-    sudo sysctl -w kern.timer_coalesce_tier3_scale=-5
-    sudo sysctl -w kern.timer_coalesce_tier3_ns_max=1000
-    sudo sysctl -w kern.timer_coalesce_tier4_scale=-5
-    sudo sysctl -w kern.timer_coalesce_tier4_ns_max=1000
-    # Set minimum allowed scan intervals
-    sudo sysctl -w kern.timer.scan_interval=40000
-    sudo sysctl -w kern.timer.longterm.scan_interval=100000
-    sudo sysctl -w kern.cpu_checkin_interval=5000
-}
-
-while true; do
-    # Check current power source
-    if pmset -g ps | grep -q "AC Power"; then
-        enforce_settings "-c"
-    else
-        enforce_settings "-b"
-    fi
-    
-    # Enforce CPU performance settings
-    enforce_cpu_performance
-    
-    # Verify settings every 30 seconds
-    sleep 30
-done
-EOF
-
-sudo chmod +x /usr/local/bin/enforce_performance.sh
-
-# Create LaunchDaemon to run the enforcement script
-sudo tee /Library/LaunchDaemons/com.local.performance.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.local.performance</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/bash</string>
-        <string>/usr/local/bin/enforce_performance.sh</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-    <key>Nice</key>
-    <integer>-20</integer>
-    <key>AbandonProcessGroup</key>
-    <false/>
-</dict>
-</plist>
-EOF
-
-sudo chmod 644 /Library/LaunchDaemons/com.local.performance.plist
-sudo chown root:wheel /Library/LaunchDaemons/com.local.performance.plist
-sudo launchctl load -w /Library/LaunchDaemons/com.local.performance.plist
-
-# Verify current settings
-log "Verifying power settings..."
-echo "Current power source settings:"
-pmset -g
-echo "Custom settings:"
-pmset -g custom
-echo "Power source status:"
-pmset -g ps
-echo "Timer coalescing settings:"
-sysctl kern.timer.coalescing_enabled kern.timer_coalesce_bg_scale kern.timer_resort_threshold_ns kern.wq_max_timer_interval_usecs
-
-# Create enhanced MPS cache configuration
-sudo mkdir -p /tmp/mps_cache
-sudo chmod 777 /tmp/mps_cache
-
-# Create and load launch daemon
-log "Creating LaunchDaemon service..."
+# Create a simple runner service configuration
 sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -354,132 +220,37 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <string>com.github.runner</string>
         <key>UserName</key>
         <string>$(whoami)</string>
+        <key>GroupName</key>
+        <string>staff</string>
         <key>WorkingDirectory</key>
-        <string>${RUNNER_DIR}</string>
+        <string>$RUNNER_DIR</string>
         <key>ProgramArguments</key>
         <array>
-            <string>/bin/bash</string>
-            <string>-c</string>
-            <string>exec /usr/bin/taskpolicy -b PERFORMANCE -p PERFORMANCE -t PERFORMANCE --cpu-qos USER_INTERACTIVE --gpu-qos USER_INTERACTIVE --io-qos USER_INTERACTIVE --affinity-tag com.github.runner /usr/bin/nice -n -20 ${RUNNER_DIR}/run.sh</string>
+            <string>$RUNNER_DIR/run.sh</string>
         </array>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <dict>
+            <key>SuccessfulExit</key>
+            <false/>
+            <key>Crashed</key>
+            <true/>
+        </dict>
+        <key>ProcessType</key>
+        <string>Interactive</string>
+        <key>StandardOutPath</key>
+        <string>$RUNNER_DIR/_diag/runner.log</string>
+        <key>StandardErrorPath</key>
+        <string>$RUNNER_DIR/_diag/runner.err</string>
         <key>EnvironmentVariables</key>
         <dict>
             <key>PATH</key>
             <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-            <!-- MLX Settings -->
-            <key>MLX_USE_GPU</key>
-            <string>1</string>
-            <key>MLX_METAL_COMPILE_ASYNC</key>
-            <string>1</string>
-            <key>MLX_METAL_PREALLOCATE</key>
-            <string>1</string>
-            <key>MLX_METAL_MEMORY_GUARD</key>
-            <string>0</string>
-            <key>MLX_METAL_CACHE_KERNELS</key>
-            <string>1</string>
-            <key>MLX_PLACEMENT_POLICY</key>
-            <string>metal</string>
-            <key>MLX_METAL_VALIDATION</key>
-            <string>0</string>
-            <key>MLX_METAL_DEBUG</key>
-            <string>0</string>
-            <key>MLX_FORCE_P_CORES</key>
-            <string>1</string>
-            <key>MLX_METAL_MEMORY_BUDGET</key>
-            <string>0</string>
-            <key>MLX_METAL_PREWARM</key>
-            <string>1</string>
-            <!-- Metal Settings -->
-            <key>MTL_DEBUG_LAYER</key>
-            <string>0</string>
-            <key>METAL_DEBUG_ERROR_MODE</key>
-            <string>0</string>
-            <key>METAL_DEVICE_WRAPPER_TYPE</key>
-            <string>1</string>
-            <key>METAL_CAPTURE_ENABLED</key>
-            <string>0</string>
-            <key>METAL_DEBUG_LAYER_ENABLED</key>
-            <string>0</string>
-            <key>METAL_LOAD_LIMIT</key>
-            <string>0</string>
-            <key>METAL_MAX_COMMAND_QUEUES</key>
-            <string>1024</string>
-            <key>METAL_DEVICE_PRIORITY</key>
-            <string>high</string>
-            <key>METAL_FORCE_PERFORMANCE_MODE</key>
-            <string>1</string>
-            <key>METAL_VALIDATION_ENABLED</key>
-            <string>0</string>
-            <key>METAL_ENABLE_VALIDATION_LAYER</key>
-            <string>0</string>
-            <!-- Process Priority -->
-            <key>MPS_PREFETCH_ENABLED</key>
-            <string>1</string>
-            <key>MPS_CACHE_DIRECTORY</key>
-            <string>/tmp/mps_cache</string>
-            <key>MPS_MEMORY_BUDGET</key>
-            <string>0</string>
-            <key>MPS_PURGE_ON_LAUNCH</key>
-            <string>0</string>
-            <key>DISABLE_METAL_VALIDATION</key>
-            <string>1</string>
-            <!-- CPU Priority -->
-            <key>QOS_CLASS_USER_INTERACTIVE</key>
-            <string>1</string>
-            <key>PERFORMANCE_MODE</key>
-            <string>1</string>
-            <!-- Python Settings -->
-            <key>PYTHONOPTIMIZE</key>
-            <string>2</string>
-            <key>PYTHONUNBUFFERED</key>
-            <string>1</string>
-            <key>PYTHONHASHSEED</key>
-            <string>0</string>
-            <!-- Process Inheritance -->
-            <key>TASKPOLICY_INHERIT</key>
-            <string>1</string>
-            <key>TASKPOLICY_OVERRIDE_ENABLE</key>
-            <string>1</string>
-        </dict>
-        <key>RunAtLoad</key>
-        <true/>
-        <key>KeepAlive</key>
-        <true/>
-        <key>ProcessType</key>
-        <string>Interactive</string>
-        <key>LowPriorityIO</key>
-        <false/>
-        <key>AbandonProcessGroup</key>
-        <false/>
-        <key>Nice</key>
-        <integer>-20</integer>
-        <key>ThrottleInterval</key>
-        <integer>0</integer>
-        <key>EnableTransactions</key>
-        <true/>
-        <key>EnablePressuredExit</key>
-        <false/>
-        <key>HardResourceLimits</key>
-        <dict>
-            <key>NumberOfFiles</key>
-            <integer>524288</integer>
-        </dict>
-        <key>SoftResourceLimits</key>
-        <dict>
-            <key>NumberOfFiles</key>
-            <integer>524288</integer>
-        </dict>
-        <key>MachServices</key>
-        <dict>
-            <key>com.github.runner.mach</key>
-            <true/>
         </dict>
     </dict>
 </plist>
 EOF
-
-# Remove the separate CPU affinity configuration since it's now integrated
-sudo rm -f /Library/LaunchDaemons/com.github.runner.cpuaffinity.plist
 
 # Set proper permissions for the LaunchDaemon
 sudo chown root:wheel /Library/LaunchDaemons/com.github.runner.plist
