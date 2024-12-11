@@ -80,6 +80,11 @@ jobs:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
           aws_secret_key: ${{ secrets.S3_EXO_BENCHMARKS_AWS_SECRET_ACCESS_KEY }}
         run: |
+          # Debug information
+          echo "Current commit SHA: $GITHUB_SHA"
+          git rev-parse HEAD
+          git status
+          
           # List existing exo processes
           echo "Existing exo processes:"
           ps aux | grep exo || true
@@ -95,6 +100,10 @@ jobs:
 
           source .venv/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          
+          # Check installed exo version
+          pip show exo
+          which exo
 
           echo "Starting exo daemon..."
           DEBUG=6 DEBUG_DISCOVERY=6 exo --node-id="${MY_NODE_ID}" --node-id-filter="${ALL_NODE_IDS}" --interface-type-filter="Ethernet" --chatgpt-api-port 52415 > output1.log 2>&1 &
