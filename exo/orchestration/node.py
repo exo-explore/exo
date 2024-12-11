@@ -18,7 +18,7 @@ from exo.download.hf.hf_helpers import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
-class StandardNode(Node):
+class Node:
   def __init__(
     self,
     _id: str,
