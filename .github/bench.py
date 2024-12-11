@@ -15,6 +15,28 @@ from pathlib import Path
 def check_system_state():
     print("\n=== System State Check ===", flush=True)
     
+    # Add macOS-specific checks
+    try:
+        # Check powermetrics
+        power_metrics = subprocess.run(['sudo', 'powermetrics', '-n', '1', '-i', '1000', '--show-process-energy'], 
+                                    capture_output=True, text=True)
+        print("\nPower Metrics:", power_metrics.stdout, flush=True)
+        
+        # Check thermal state
+        thermal_state = subprocess.run(['pmset', '-g', 'therm'], capture_output=True, text=True)
+        print("\nThermal State:", thermal_state.stdout, flush=True)
+        
+        # Check if running under Rosetta
+        arch = subprocess.run(['arch'], capture_output=True, text=True)
+        print("\nArchitecture:", arch.stdout, flush=True)
+        
+        # Check MLX compilation mode
+        import mlx.core as mx
+        print("\nMLX Build Info:", mx.build_info(), flush=True)
+        
+    except Exception as e:
+        print(f"Error in macOS checks: {e}", flush=True)
+
     # CPU Info
     print("\nCPU Information:", flush=True)
     try:

@@ -52,6 +52,18 @@ jobs:
           pip install --upgrade pip
           pip install .
           pip install boto3==1.35.76
+      - name: Configure system
+        run: |
+          # Apply MLX optimizations
+          sudo ./configure_mlx.sh
+          
+          # Disable CPU throttling
+          sudo pmset -a processorperf 2
+          sudo pmset -a gpuswitch 2
+          
+          # Check current state
+          pmset -g
+          sysctl iogpu
       - name: Run exo
         env:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
