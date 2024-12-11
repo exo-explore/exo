@@ -36,6 +36,19 @@ sudo tccutil reset All
 sudo tccutil reset SystemPolicyAllFiles
 sudo tccutil reset SystemPolicyNetworkVolumes
 
+# Configure power management for maximum performance
+log "Configuring power management..."
+sudo pmset -a powermode 2  # Force highest performance mode
+sudo pmset -a gpuswitch 2  # Force discrete/high-performance GPU
+sudo pmset -a lowpowermode 0
+sudo pmset -a lessbright 0
+sudo pmset -a disablesleep 1
+sudo pmset -a sleep 0
+sudo pmset -a hibernatemode 0
+sudo pmset -a autopoweroff 0
+sudo pmset -a standby 0
+sudo pmset -a powernap 0
+
 # For Python specifically
 PYTHON_PATH="/opt/homebrew/bin/python3.12"
 sudo chmod 755 "$PYTHON_PATH"

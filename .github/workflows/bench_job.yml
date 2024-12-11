@@ -112,13 +112,6 @@ jobs:
           
           echo "Starting exo daemon..."
           
-          # Force highest power mode
-          sudo pmset -a powermode 2
-          sudo pmset -a gpuswitch 2
-          sudo pmset -a lowpowermode 0
-          sudo pmset -a lessbright 0
-          sudo pmset -a disablesleep 1
-          
           echo "Power mode settings:"
           sudo pmset -g
           
