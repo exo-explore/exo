@@ -7,6 +7,85 @@ import boto3
 from typing import Dict, Any
 from datetime import datetime
 import subprocess
+import psutil
+import platform
+from pathlib import Path
+
+
+def check_system_state():
+    print("\n=== System State Check ===", flush=True)
+    
+    # CPU Info
+    print("\nCPU Information:", flush=True)
+    try:
+        cpu_freq = psutil.cpu_freq()
+        print(f"CPU Frequency - Current: {cpu_freq.current:.2f}MHz, Min: {cpu_freq.min:.2f}MHz, Max: {cpu_freq.max:.2f}MHz", flush=True)
+        print(f"CPU Usage per Core: {psutil.cpu_percent(percpu=True)}%", flush=True)
+        
+        # Check if running in low power mode
+        power_mode = subprocess.run(['pmset', '-g'], capture_output=True, text=True)
+        print("Power Settings:", power_mode.stdout, flush=True)
+    except Exception as e:
+        print(f"Error getting CPU info: {e}", flush=True)
+
+    # Memory Info
+    print("\nMemory Information:", flush=True)
+    try:
+        mem = psutil.virtual_memory()
+        print(f"Total: {mem.total/1024/1024/1024:.2f}GB", flush=True)
+        print(f"Available: {mem.available/1024/1024/1024:.2f}GB", flush=True)
+        print(f"Used: {mem.used/1024/1024/1024:.2f}GB ({mem.percent}%)", flush=True)
+        
+        # Check swap
+        swap = psutil.swap_memory()
+        print(f"Swap Used: {swap.used/1024/1024/1024:.2f}GB of {swap.total/1024/1024/1024:.2f}GB", flush=True)
+    except Exception as e:
+        print(f"Error getting memory info: {e}", flush=True)
+
+    # GPU Info
+    print("\nGPU Information:", flush=True)
+    try:
+        # Check MLX GPU settings
+        print("MLX Environment Variables:", flush=True)
+        mlx_vars = {k: v for k, v in os.environ.items() if k.startswith('MLX')}
+        print(json.dumps(mlx_vars, indent=2), flush=True)
+        
+        # Check Metal GPU memory allocation
+        gpu_mem = subprocess.run(['sysctl', 'iogpu'], capture_output=True, text=True)
+        print("GPU Memory Settings:", gpu_mem.stdout, flush=True)
+    except Exception as e:
+        print(f"Error getting GPU info: {e}", flush=True)
+
+    # Process Priority
+    print("\nProcess Priority Information:", flush=True)
+    try:
+        current_process = psutil.Process()
+        print(f"Process Nice Value: {current_process.nice()}", flush=True)
+        print(f"Process IO Nice Value: {current_process.ionice()}", flush=True)
+        print(f"Process CPU Affinity: {current_process.cpu_affinity()}", flush=True)
+    except Exception as e:
+        print(f"Error getting process priority info: {e}", flush=True)
+
+    # System Load
+    print("\nSystem Load:", flush=True)
+    try:
+        print(f"Load Average: {psutil.getloadavg()}", flush=True)
+        
+        # Get top processes by CPU and Memory
+        print("\nTop Processes:", flush=True)
+        processes = []
+        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+            try:
+                processes.append(proc.info)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        
+        sorted_by_cpu = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)[:5]
+        print("Top 5 CPU-consuming processes:", json.dumps(sorted_by_cpu, indent=2), flush=True)
+    except Exception as e:
+        print(f"Error getting system load info: {e}", flush=True)
+
+    print("\n=== End System State Check ===\n", flush=True)
 
 
 def check_gpu_access():
@@ -158,5 +237,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    check_system_state()
     check_gpu_access()
     asyncio.run(main())
