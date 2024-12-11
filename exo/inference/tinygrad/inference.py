@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 import os
-from exo.inference.tinygrad.models.llama import Transformer, convert_from_huggingface, fix_bf16, sample_logits
+from exo.inference.tinygrad.models.llama import Transformer, TransformerShard, convert_from_huggingface, fix_bf16, sample_logits
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import load_state_dict
@@ -57,6 +57,8 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
   with Context(BEAM=0):
     # replace weights in model
     load_state_dict(model, weights, strict=False, consume=False)  # consume=True
+    model = TransformerShard(shard, model)
+
   return model
 
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
@@ -70,7 +72,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     if request_id not in self.states:
       if len(self.states) >= max_states:
         self.states.popitem(last=False)
-      self.states[request_id] = make_prompt_state(x, self.model, self.shard)
+      self.states[request_id] = make_prompt_state(x, self.model)
     else:
       self.states.move_to_end(request_id)
     state = self.states[request_id]
