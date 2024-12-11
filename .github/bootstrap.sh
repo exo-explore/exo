@@ -169,195 +169,175 @@ log "Configuring runner with labels: $CUSTOM_LABELS"
 # Set optimal performance settings
 log "Configuring system for optimal performance..."
 
-# Force high power mode using system preferences
-log "Setting power mode to high performance..."
-
-# Set power mode using defaults for all locations
-sudo defaults write /Library/Preferences/.GlobalPreferences.plist com.apple.PowerManagement.PowerMode -int 2
-sudo defaults write /Library/Preferences/com.apple.PowerManagement PowerMode -int 2
-sudo defaults write -g PowerMode -int 2
-
-# Create power mode override file
-sudo mkdir -p /Library/Preferences/SystemConfiguration/
-sudo tee /Library/Preferences/SystemConfiguration/com.apple.PowerManagement.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>ActivePowerProfiles</key>
-    <dict>
-        <key>AC Power</key>
-        <dict>
-            <key>PowerMode</key>
-            <integer>2</integer>
-            <key>ForcedPowerMode</key>
-            <integer>2</integer>
-            <key>LowPowerModeEnabled</key>
-            <false/>
-            <key>AutoPowerModeEnabled</key>
-            <false/>
-            <key>HighPowerMode</key>
-            <true/>
-            <key>ReduceBrightness</key>
-            <false/>
-            <key>DynamicPowerStep</key>
-            <false/>
-            <key>GPUSwitch</key>
-            <integer>2</integer>
-        </dict>
-        <key>Battery Power</key>
-        <dict>
-            <key>PowerMode</key>
-            <integer>2</integer>
-            <key>ForcedPowerMode</key>
-            <integer>2</integer>
-            <key>LowPowerModeEnabled</key>
-            <false/>
-            <key>AutoPowerModeEnabled</key>
-            <false/>
-            <key>HighPowerMode</key>
-            <true/>
-            <key>ReduceBrightness</key>
-            <false/>
-            <key>DynamicPowerStep</key>
-            <false/>
-            <key>GPUSwitch</key>
-            <integer>2</integer>
-        </dict>
-    </dict>
-    <key>SystemPowerProfileOverride</key>
-    <integer>2</integer>
-    <key>Custom Profile</key>
-    <dict>
-        <key>AC Power</key>
-        <dict>
-            <key>PowerMode</key>
-            <integer>2</integer>
-            <key>ForcedPowerMode</key>
-            <integer>2</integer>
-        </dict>
-        <key>Battery Power</key>
-        <dict>
-            <key>PowerMode</key>
-            <integer>2</integer>
-            <key>ForcedPowerMode</key>
-            <integer>2</integer>
-        </dict>
-    </dict>
-</dict>
-</plist>
-EOF
+# Configure CPU performance
+log "Setting CPU performance controls..."
+# Disable timer coalescing
+sudo sysctl -w kern.timer.coalescing_enabled=0
+sudo sysctl -w kern.timer_coalesce_bg_scale=-5
+sudo sysctl -w kern.timer_resort_threshold_ns=0
+# Set minimum timer intervals
+sudo sysctl -w kern.wq_max_timer_interval_usecs=1000
+sudo sysctl -w kern.timer_coalesce_bg_ns_max=1000
+# Set minimum timer coalescing for all tiers
+sudo sysctl -w kern.timer_coalesce_tier0_scale=-5
+sudo sysctl -w kern.timer_coalesce_tier0_ns_max=1000
+sudo sysctl -w kern.timer_coalesce_tier1_scale=-5
+sudo sysctl -w kern.timer_coalesce_tier1_ns_max=1000
+sudo sysctl -w kern.timer_coalesce_tier2_scale=-5
+sudo sysctl -w kern.timer_coalesce_tier2_ns_max=1000
+sudo sysctl -w kern.timer_coalesce_tier3_scale=-5
+sudo sysctl -w kern.timer_coalesce_tier3_ns_max=1000
+sudo sysctl -w kern.timer_coalesce_tier4_scale=-5
+sudo sysctl -w kern.timer_coalesce_tier4_ns_max=1000
+# Set minimum allowed scan intervals
+sudo sysctl -w kern.timer.scan_interval=40000
+sudo sysctl -w kern.timer.longterm.scan_interval=100000
+sudo sysctl -w kern.cpu_checkin_interval=5000
 
 # Configure power management settings for maximum performance
 log "Setting power management options..."
-sudo pmset -a displaysleep 0
-sudo pmset -a disksleep 0
-sudo pmset -a sleep 0
-sudo pmset -a hibernatemode 0
-sudo pmset -a powernap 0
-sudo pmset -a proximitywake 0
-sudo pmset -a tcpkeepalive 1
-sudo pmset -a ttyskeepawake 1
-sudo pmset -a acwake 0
-sudo pmset -a lidwake 0
-sudo pmset -a lessbright 0
-sudo pmset -a halfdim 0
-sudo pmset -a autopoweroff 0
-sudo pmset -a standby 0
 
-# Create a script to continuously enforce high power mode
-sudo tee /usr/local/bin/enforce_high_power.sh << 'EOF'
+# Disable all power saving features for both battery (-b) and AC power (-c)
+for power_source in "-b" "-c"; do
+    # Disable all sleep/idle features
+    sudo pmset $power_source sleep 0
+    sudo pmset $power_source disksleep 0
+    sudo pmset $power_source displaysleep 0
+    sudo pmset $power_source powernap 0
+    sudo pmset $power_source proximitywake 0
+    
+    # Disable power-saving display features
+    sudo pmset $power_source lessbright 0
+    sudo pmset $power_source halfdim 0
+    
+    # Disable hibernation and standby
+    sudo pmset $power_source hibernatemode 0
+    sudo pmset $power_source standby 0
+    sudo pmset $power_source autopoweroff 0
+    
+    # Keep system active
+    sudo pmset $power_source ttyskeepawake 1
+    sudo pmset $power_source tcpkeepalive 1
+    
+    # Disable other power-saving features
+    sudo pmset $power_source womp 0
+    sudo pmset $power_source ring 0
+    sudo pmset $power_source networkoversleep 0
+    sudo pmset $power_source sms 0
+done
+
+# Create a script to continuously enforce performance settings
+sudo tee /usr/local/bin/enforce_performance.sh << 'EOF'
 #!/bin/bash
 
-while true; do
-    # Set power mode using defaults
-    defaults write com.apple.systempreferences PowerMode -int 2
-    defaults write -g PowerMode -int 2
+enforce_settings() {
+    power_source=$1
     
-    # Check current power mode
-    current_mode=$(pmset -g | grep powermode | awk '{print $2}')
-    if [ "$current_mode" != "2" ]; then
-        # Force high power mode using additional methods
-        sudo pmset -a lessbright 0
-        sudo pmset -a halfdim 0
-        sudo defaults write /Library/Preferences/com.apple.PowerManagement PowerMode -int 2
+    # Disable all sleep/idle features
+    sudo pmset $power_source sleep 0
+    sudo pmset $power_source disksleep 0
+    sudo pmset $power_source displaysleep 0
+    sudo pmset $power_source powernap 0
+    sudo pmset $power_source proximitywake 0
+    
+    # Disable power-saving display features
+    sudo pmset $power_source lessbright 0
+    sudo pmset $power_source halfdim 0
+    
+    # Disable hibernation and standby
+    sudo pmset $power_source hibernatemode 0
+    sudo pmset $power_source standby 0
+    sudo pmset $power_source autopoweroff 0
+    
+    # Keep system active
+    sudo pmset $power_source ttyskeepawake 1
+    sudo pmset $power_source tcpkeepalive 1
+}
+
+enforce_cpu_performance() {
+    # Disable timer coalescing
+    sudo sysctl -w kern.timer.coalescing_enabled=0
+    sudo sysctl -w kern.timer_coalesce_bg_scale=-5
+    sudo sysctl -w kern.timer_resort_threshold_ns=0
+    # Set minimum timer intervals
+    sudo sysctl -w kern.wq_max_timer_interval_usecs=1000
+    sudo sysctl -w kern.timer_coalesce_bg_ns_max=1000
+    # Set minimum timer coalescing for all tiers
+    sudo sysctl -w kern.timer_coalesce_tier0_scale=-5
+    sudo sysctl -w kern.timer_coalesce_tier0_ns_max=1000
+    sudo sysctl -w kern.timer_coalesce_tier1_scale=-5
+    sudo sysctl -w kern.timer_coalesce_tier1_ns_max=1000
+    sudo sysctl -w kern.timer_coalesce_tier2_scale=-5
+    sudo sysctl -w kern.timer_coalesce_tier2_ns_max=1000
+    sudo sysctl -w kern.timer_coalesce_tier3_scale=-5
+    sudo sysctl -w kern.timer_coalesce_tier3_ns_max=1000
+    sudo sysctl -w kern.timer_coalesce_tier4_scale=-5
+    sudo sysctl -w kern.timer_coalesce_tier4_ns_max=1000
+    # Set minimum allowed scan intervals
+    sudo sysctl -w kern.timer.scan_interval=40000
+    sudo sysctl -w kern.timer.longterm.scan_interval=100000
+    sudo sysctl -w kern.cpu_checkin_interval=5000
+}
+
+while true; do
+    # Check current power source
+    if pmset -g ps | grep -q "AC Power"; then
+        enforce_settings "-c"
+    else
+        enforce_settings "-b"
     fi
     
-    sleep 60
+    # Enforce CPU performance settings
+    enforce_cpu_performance
+    
+    # Verify settings every 30 seconds
+    sleep 30
 done
 EOF
 
-sudo chmod +x /usr/local/bin/enforce_high_power.sh
+sudo chmod +x /usr/local/bin/enforce_performance.sh
 
 # Create LaunchDaemon to run the enforcement script
-sudo tee /Library/LaunchDaemons/com.local.powermode.plist << EOF
+sudo tee /Library/LaunchDaemons/com.local.performance.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.local.powermode</string>
+    <string>com.local.performance</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/enforce_high_power.sh</string>
+        <string>/bin/bash</string>
+        <string>/usr/local/bin/enforce_performance.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>ThrottleInterval</key>
-    <integer>0</integer>
     <key>ProcessType</key>
     <string>Interactive</string>
     <key>Nice</key>
     <integer>-20</integer>
-</dict>
-</plist>
-EOF
-
-sudo chmod 644 /Library/LaunchDaemons/com.local.powermode.plist
-sudo chown root:wheel /Library/LaunchDaemons/com.local.powermode.plist
-sudo launchctl load -w /Library/LaunchDaemons/com.local.powermode.plist
-
-# Verify power settings
-log "Verifying power settings..."
-pmset -g
-system_profiler SPPowerDataType
-
-# Create performance mode configuration with supported settings
-sudo tee /Library/Preferences/com.apple.perfmode.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Mode</key>
-    <string>Performance</string>
-    <key>PowerMode</key>
-    <integer>2</integer>
-    <key>LowPowerModeEnabled</key>
+    <key>AbandonProcessGroup</key>
     <false/>
-    <key>ForcedPowerMode</key>
-    <integer>2</integer>
 </dict>
 </plist>
 EOF
 
-# Force high performance mode using powermetrics
-sudo powermetrics --show-process-energy --samplers cpu_power -i 1000 -n 1 2>/dev/null || true
+sudo chmod 644 /Library/LaunchDaemons/com.local.performance.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.local.performance.plist
+sudo launchctl load -w /Library/LaunchDaemons/com.local.performance.plist
 
-# Enhanced Metal and GPU settings using defaults
-defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
-defaults write com.apple.CoreML MPSEnableMetalValidation -bool false
-defaults write com.apple.CoreML MPSEnableGPUDebug -bool false
-defaults write com.apple.Metal GPUDebug -bool false
-defaults write com.apple.Metal GPUValidation -bool false
-defaults write com.apple.Metal MetalValidation -bool false
-defaults write com.apple.Metal MetalCaptureEnabled -bool false
-defaults write com.apple.Metal MTLValidationBehavior -string "Disabled"
-defaults write com.apple.Metal EnableMTLDebugLayer -bool false
-defaults write com.apple.Metal MTLDebugLevel -int 0
-defaults write com.apple.Metal PreferIntegratedGPU -bool false
-defaults write com.apple.Metal ForceMaximumPerformance -bool true
+# Verify current settings
+log "Verifying power settings..."
+echo "Current power source settings:"
+pmset -g
+echo "Custom settings:"
+pmset -g custom
+echo "Power source status:"
+pmset -g ps
+echo "Timer coalescing settings:"
+sysctl kern.timer.coalescing_enabled kern.timer_coalesce_bg_scale kern.timer_resort_threshold_ns kern.wq_max_timer_interval_usecs
 
 # Create enhanced MPS cache configuration
 sudo mkdir -p /tmp/mps_cache
@@ -378,25 +358,9 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <string>${RUNNER_DIR}</string>
         <key>ProgramArguments</key>
         <array>
-            <string>/usr/bin/taskpolicy</string>
-            <string>-b</string>
-            <string>PERFORMANCE</string>
-            <string>-p</string>
-            <string>PERFORMANCE</string>
-            <string>-t</string>
-            <string>PERFORMANCE</string>
-            <string>--cpu-qos</string>
-            <string>USER_INTERACTIVE</string>
-            <string>--gpu-qos</string>
-            <string>USER_INTERACTIVE</string>
-            <string>--io-qos</string>
-            <string>USER_INTERACTIVE</string>
-            <string>--affinity-tag</string>
-            <string>com.github.runner</string>
-            <string>/usr/bin/nice</string>
-            <string>-n</string>
-            <string>-20</string>
-            <string>${RUNNER_DIR}/run.sh</string>
+            <string>/bin/bash</string>
+            <string>-c</string>
+            <string>exec /usr/bin/taskpolicy -b PERFORMANCE -p PERFORMANCE -t PERFORMANCE --cpu-qos USER_INTERACTIVE --gpu-qos USER_INTERACTIVE --io-qos USER_INTERACTIVE --affinity-tag com.github.runner /usr/bin/nice -n -20 ${RUNNER_DIR}/run.sh</string>
         </array>
         <key>EnvironmentVariables</key>
         <dict>
@@ -471,6 +435,11 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <string>1</string>
             <key>PYTHONHASHSEED</key>
             <string>0</string>
+            <!-- Process Inheritance -->
+            <key>TASKPOLICY_INHERIT</key>
+            <string>1</string>
+            <key>TASKPOLICY_OVERRIDE_ENABLE</key>
+            <string>1</string>
         </dict>
         <key>RunAtLoad</key>
         <true/>
@@ -499,6 +468,11 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <dict>
             <key>NumberOfFiles</key>
             <integer>524288</integer>
+        </dict>
+        <key>MachServices</key>
+        <dict>
+            <key>com.github.runner.mach</key>
+            <true/>
         </dict>
     </dict>
 </plist>
