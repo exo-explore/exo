@@ -216,41 +216,6 @@ defaults write com.apple.Metal ForceMaximumPerformance -bool true
 sudo mkdir -p /tmp/mps_cache
 sudo chmod 777 /tmp/mps_cache
 
-# Create CPU affinity configuration for performance cores
-sudo tee /Library/LaunchDaemons/com.github.runner.cpuaffinity.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.github.runner.cpuaffinity</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/taskpolicy</string>
-        <string>-p</string>
-        <string>PERFORMANCE</string>
-        <string>-b</string>
-        <string>PERFORMANCE</string>
-        <string>-t</string>
-        <string>PERFORMANCE</string>
-        <string>--cpu-qos</string>
-        <string>USER_INTERACTIVE</string>
-        <string>--gpu-qos</string>
-        <string>USER_INTERACTIVE</string>
-        <string>--io-qos</string>
-        <string>USER_INTERACTIVE</string>
-        <string>--affinity-tag</string>
-        <string>com.github.runner</string>
-        <string>${RUNNER_DIR}/run.sh</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
 # Create and load launch daemon
 log "Creating LaunchDaemon service..."
 sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
@@ -266,6 +231,21 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <string>${RUNNER_DIR}</string>
         <key>ProgramArguments</key>
         <array>
+            <string>/usr/bin/taskpolicy</string>
+            <string>-b</string>
+            <string>PERFORMANCE</string>
+            <string>-p</string>
+            <string>PERFORMANCE</string>
+            <string>-t</string>
+            <string>PERFORMANCE</string>
+            <string>--cpu-qos</string>
+            <string>USER_INTERACTIVE</string>
+            <string>--gpu-qos</string>
+            <string>USER_INTERACTIVE</string>
+            <string>--io-qos</string>
+            <string>USER_INTERACTIVE</string>
+            <string>--affinity-tag</string>
+            <string>com.github.runner</string>
             <string>/usr/bin/nice</string>
             <string>-n</string>
             <string>-20</string>
@@ -299,6 +279,8 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <key>MLX_METAL_PREWARM</key>
             <string>1</string>
             <!-- Metal Settings -->
+            <key>MTL_DEBUG_LAYER</key>
+            <string>0</string>
             <key>METAL_DEBUG_ERROR_MODE</key>
             <string>0</string>
             <key>METAL_DEVICE_WRAPPER_TYPE</key>
@@ -335,6 +317,13 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <string>1</string>
             <key>PERFORMANCE_MODE</key>
             <string>1</string>
+            <!-- Python Settings -->
+            <key>PYTHONOPTIMIZE</key>
+            <string>2</string>
+            <key>PYTHONUNBUFFERED</key>
+            <string>1</string>
+            <key>PYTHONHASHSEED</key>
+            <string>0</string>
         </dict>
         <key>RunAtLoad</key>
         <true/>
@@ -346,9 +335,30 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <false/>
         <key>AbandonProcessGroup</key>
         <false/>
+        <key>Nice</key>
+        <integer>-20</integer>
+        <key>ThrottleInterval</key>
+        <integer>0</integer>
+        <key>EnableTransactions</key>
+        <true/>
+        <key>EnablePressuredExit</key>
+        <false/>
+        <key>HardResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+        </dict>
+        <key>SoftResourceLimits</key>
+        <dict>
+            <key>NumberOfFiles</key>
+            <integer>524288</integer>
+        </dict>
     </dict>
 </plist>
 EOF
+
+# Remove the separate CPU affinity configuration since it's now integrated
+sudo rm -f /Library/LaunchDaemons/com.github.runner.cpuaffinity.plist
 
 # Set proper permissions for the LaunchDaemon
 sudo chown root:wheel /Library/LaunchDaemons/com.github.runner.plist

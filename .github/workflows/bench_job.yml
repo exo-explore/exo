@@ -10,7 +10,7 @@ on:
       model:
         required: true
         type: string
-      calling_job_name:  # New input parameter
+      calling_job_name:
         required: true
         type: string
 jobs:
@@ -34,20 +34,26 @@ jobs:
     env:
       HARDWARE_CONFIG: ${{ inputs.config }}
       model: ${{ inputs.model }}
+      # Add performance-related environment variables
+      MTL_DEBUG_LAYER: 0
+      METAL_VALIDATION_ENABLED: 0
+      MLX_METAL_VALIDATION: 0
+      MLX_METAL_DEBUG: 0
+      MLX_FORCE_P_CORES: 1
+      MLX_METAL_PREWARM: 1
+      PYTHONOPTIMIZE: 2
     steps:
       - name: Cleanup workspace
         run: |
           sudo rm -rf "$GITHUB_WORKSPACE"
           sudo mkdir -p "$GITHUB_WORKSPACE"
           sudo chown -R $(whoami):$(id -g) "$GITHUB_WORKSPACE"
+
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
-          # First, find where python3.12 is installed
-          which python3.12 || echo "python3.12 not in PATH"
-          # Add common Python installation locations to PATH
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
-          # Now try to create the venv with explicit python3.12
           python3.12 -m venv .venv || {
             echo "Failed to find python3.12. Checking installation locations:"
             ls -l /usr/local/bin/python* /opt/homebrew/bin/python* 2>/dev/null || true
@@ -57,143 +63,70 @@ jobs:
           pip install --upgrade pip
           pip install -e .
           pip install boto3==1.35.76
-      - name: Configure system
+
+      - name: Apply Performance Optimizations
         run: |
-          # Disable all power management and performance throttling
-          sudo pmset -a lessbright 0
-          sudo pmset -a disablesleep 1
-          sudo pmset -a sleep 0
-          sudo pmset -a hibernatemode 0
-          sudo pmset -a autopoweroff 0
-          sudo pmset -a standby 0
-          sudo pmset -a powernap 0
-          sudo pmset -a proximitywake 0
-          sudo pmset -a tcpkeepalive 1
-          sudo pmset -a powermode 1
-          sudo pmset -a gpuswitch 2
+          # Make the script executable and run it
+          chmod +x .github/optimize_performance.sh
+          ./.github/optimize_performance.sh
           
-          # Optimize GPU memory allocation
-          sudo sysctl -w kern.memorystatus_purge_on_warning=0
-          sudo sysctl -w kern.memorystatus_purge_on_critical=0
+          # Source the performance environment variables
+          source /tmp/performance_env.sh
           
-          # Additional performance optimizations
-          sudo sysctl -w kern.timer.coalescing_enabled=0
+          # Additional runtime optimizations
+          sudo sysctl -w kern.iogpu.dynamic_memory_management=0
           
-          # Optimize Metal performance
-          defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
-          defaults write com.apple.CoreML MPSEnableMetalValidation -bool false
-          defaults write com.apple.CoreML MPSEnableGPUDebug -bool false
-          defaults write com.apple.Metal GPUDebug -bool false
-          defaults write com.apple.Metal GPUValidation -bool false
-          defaults write com.apple.Metal MetalValidation -bool false
-          defaults write com.apple.Metal MetalCaptureEnabled -bool false
-          defaults write com.apple.Metal MTLValidationBehavior -string "Disabled"
-          defaults write com.apple.Metal EnableMTLDebugLayer -bool false
-          defaults write com.apple.Metal MTLDebugLevel -int 0
-          defaults write com.apple.Metal PreferIntegratedGPU -bool false
-          defaults write com.apple.Metal ForceMaximumPerformance -bool true
-
-          ./configure_mlx.sh
-
-          # Check final state
-          echo "Final system state:"
+          # Set process scheduling
+          sudo taskpolicy -b PERFORMANCE
+          
+          # Verify optimizations
+          echo "Verifying performance settings..."
           pmset -g
           sysctl iogpu
-          sysctl kern.memorystatus_purge_on_warning
-          sysctl kern.memorystatus_purge_on_critical
-      - name: Configure process limits
-        run: |
-          # Increase resource limits
-          sudo launchctl limit maxfiles 524288 524288
-          ulimit -n 524288
-          
-          # Disable core dumps
-          ulimit -c 0
-          
-          # Set max locked memory to unlimited
-          ulimit -l unlimited
-          
-          # Set process priority using macOS commands
-          CURRENT_PID=$PPID
-          sudo renice -n -20 $CURRENT_PID || true
-          
-          # Set high performance I/O policy
-          sudo taskpolicy -d 0 -p $CURRENT_PID || true
-          
-          # Set Metal environment variables
-          export METAL_DEVICE_WRAPPER_TYPE=1
-          export METAL_DEBUG_ERROR_MODE=0
-          export METAL_FORCE_PERFORMANCE_MODE=1
-          export METAL_DEVICE_PRIORITY=high
-          export METAL_MAX_COMMAND_QUEUES=1024
-          export METAL_LOAD_LIMIT=0
-          export METAL_VALIDATION_ENABLED=0
-          export METAL_ENABLE_VALIDATION_LAYER=0
-          export OBJC_DEBUG_MISSING_POOLS=NO
-          
-          # MLX optimizations
-          export MLX_USE_GPU=1
-          export MLX_METAL_COMPILE_ASYNC=1
-          export MLX_METAL_PREALLOCATE=1
-          export MLX_METAL_MEMORY_GUARD=0
-          export MLX_METAL_CACHE_KERNELS=1
-          export MLX_PLACEMENT_POLICY=metal
-          export MLX_METAL_VALIDATION=0
-          export MLX_METAL_DEBUG=0
-          export MLX_FORCE_P_CORES=1
-          export MLX_METAL_MEMORY_BUDGET=0
-          export MLX_METAL_PREWARM=1
+          env | grep -E "MLX_|METAL_|MTL_"
+
       - name: Run exo
         env:
           aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
           aws_secret_key: ${{ secrets.S3_EXO_BENCHMARKS_AWS_SECRET_ACCESS_KEY }}
         run: |
+          # Source performance environment variables
+          source /tmp/performance_env.sh
+          
           # Debug information
           echo "Current commit SHA: $GITHUB_SHA"
           git rev-parse HEAD
           git status
           
-          # List existing exo processes
-          echo "Existing exo processes:"
-          ps aux | grep exo || true
-
           CALLING_JOB="${{ inputs.calling_job_name }}"
           UNIQUE_JOB_ID="${CALLING_JOB}_${model}_${GITHUB_RUN_ID}"
           ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${UNIQUE_JOB_ID}_${i},"; done | sed 's/,$//')
           MY_NODE_ID="${UNIQUE_JOB_ID}_${{ strategy.job-index }}"
-          echo "Starting exo process with:"
-          echo "MY_NODE_ID: ${MY_NODE_ID}"
-          echo "ALL_NODE_IDS: ${ALL_NODE_IDS}"
-          echo "Total expected nodes: ${{ strategy.job-total }}"
-
+          
           source .venv/bin/activate
           export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
           
-          # Check installed exo version
-          pip show exo
-          which .venv/bin/exo
-
           echo "Starting exo daemon..."
-          # Set process scheduling priority
+          # Set high priority and performance mode
           sudo renice -n -20 $$ || true
-          sudo taskpolicy -d 0 $$ || true
+          sudo taskpolicy -b PERFORMANCE $$ || true
           
-          # Start exo with inherited priority and performance settings
-          sudo taskpolicy -d 0 .venv/bin/exo \
+          # Start exo with performance optimizations
+          sudo taskpolicy -b PERFORMANCE .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           
-          # Set process priority using macOS-specific commands
+          # Set process and thread priorities
           sudo renice -n -20 -p $PID1 || true
-          sudo taskpolicy -d 0 -p $PID1 || true
+          sudo taskpolicy -b PERFORMANCE -p $PID1 || true
           
           # Set thread priority for all Python threads
           for tid in $(ps -M $PID1 | grep Python | awk '{print $2}'); do
             sudo renice -n -20 -p $tid || true
-            sudo taskpolicy -d 0 -p $tid || true
+            sudo taskpolicy -b PERFORMANCE -p $tid || true
           done
 
           echo "Exo process started with PID: $PID1"
@@ -240,13 +173,14 @@ jobs:
             done
           fi
 
-      # Add system state check
-      - name: Check System State
+      - name: Check Final System State
+        if: always()
         run: |
+          echo "=== Final System State ==="
           sudo pmset -g
-          sudo powermetrics -n 1 -i 1000 --show-process-energy
+          sudo powermetrics -n 1 -i 1000 --show-process-energy || true
           system_profiler SPDisplaysDataType
           sysctl iogpu
           ps -eo pid,ppid,user,%cpu,%mem,nice,state,command | grep -i python
-          sudo launchctl list | grep github
-          env | grep -E "MLX|METAL"
+          env | grep -E "MLX_|METAL_|MTL_"
+          echo "=== End Final System State ==="
