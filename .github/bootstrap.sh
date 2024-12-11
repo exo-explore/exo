@@ -169,27 +169,22 @@ log "Configuring runner with labels: $CUSTOM_LABELS"
 # Set optimal performance settings
 log "Configuring system for optimal performance..."
 
-# Force high performance mode using native macOS tools
-sudo nvram boot-args="gpuswitch=2 amfi_get_out_of_my_way=1 serverperfmode=1"
-sudo pmset force -a ac
-
-# Disable power management and force performance mode
-sudo pmset -a gpuswitch 2  # Force discrete GPU
-sudo pmset -a lowpowermode 0
-sudo pmset -a hibernatemode 0
-sudo pmset -a standby 0
-sudo pmset -a autopoweroff 0
-sudo pmset -a powernap 0
-sudo pmset -a sleep 0
+# Configure power management settings for maximum performance
+log "Setting power management options..."
+sudo pmset -a displaysleep 0
 sudo pmset -a disksleep 0
-sudo pmset -a powermode 1
-sudo pmset -a lessbright 0
-sudo pmset -a halfdim 0
+sudo pmset -a sleep 0
+sudo pmset -a hibernatemode 0
+sudo pmset -a powernap 0
+sudo pmset -a proximitywake 0
+sudo pmset -a tcpkeepalive 1
+sudo pmset -a ttyskeepawake 1
 sudo pmset -a acwake 0
 sudo pmset -a lidwake 0
-sudo pmset -a proximitywake 0
+sudo pmset -a lessbright 0
+sudo pmset -a halfdim 0
 
-# Create performance mode configuration
+# Create performance mode configuration with supported settings
 sudo tee /Library/Preferences/com.apple.perfmode.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -198,14 +193,12 @@ sudo tee /Library/Preferences/com.apple.perfmode.plist << EOF
     <key>Mode</key>
     <string>Performance</string>
     <key>PowerMode</key>
-    <integer>1</integer>
-    <key>GPUSwitch</key>
     <integer>2</integer>
 </dict>
 </plist>
 EOF
 
-# Disable Metal validation and debugging
+# Enhanced Metal and GPU settings using defaults
 defaults write com.apple.CoreML MPSEnableGPUValidation -bool false
 defaults write com.apple.CoreML MPSEnableMetalValidation -bool false
 defaults write com.apple.CoreML MPSEnableGPUDebug -bool false
@@ -216,8 +209,10 @@ defaults write com.apple.Metal MetalCaptureEnabled -bool false
 defaults write com.apple.Metal MTLValidationBehavior -string "Disabled"
 defaults write com.apple.Metal EnableMTLDebugLayer -bool false
 defaults write com.apple.Metal MTLDebugLevel -int 0
+defaults write com.apple.Metal PreferIntegratedGPU -bool false
+defaults write com.apple.Metal ForceMaximumPerformance -bool true
 
-# Create MPS cache directory with appropriate permissions
+# Create enhanced MPS cache configuration
 sudo mkdir -p /tmp/mps_cache
 sudo chmod 777 /tmp/mps_cache
 
@@ -271,13 +266,9 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
         <string>${RUNNER_DIR}</string>
         <key>ProgramArguments</key>
         <array>
-            <string>/usr/bin/taskpolicy</string>
-            <string>-p</string>
-            <string>PERFORMANCE</string>
-            <string>-b</string>
-            <string>PERFORMANCE</string>
-            <string>-t</string>
-            <string>PERFORMANCE</string>
+            <string>/usr/bin/nice</string>
+            <string>-n</string>
+            <string>-20</string>
             <string>${RUNNER_DIR}/run.sh</string>
         </array>
         <key>EnvironmentVariables</key>
@@ -302,6 +293,10 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <key>MLX_METAL_DEBUG</key>
             <string>0</string>
             <key>MLX_FORCE_P_CORES</key>
+            <string>1</string>
+            <key>MLX_METAL_MEMORY_BUDGET</key>
+            <string>0</string>
+            <key>MLX_METAL_PREWARM</key>
             <string>1</string>
             <!-- Metal Settings -->
             <key>METAL_DEBUG_ERROR_MODE</key>
@@ -329,30 +324,41 @@ sudo tee /Library/LaunchDaemons/com.github.runner.plist > /dev/null << EOF
             <string>1</string>
             <key>MPS_CACHE_DIRECTORY</key>
             <string>/tmp/mps_cache</string>
+            <key>MPS_MEMORY_BUDGET</key>
+            <string>0</string>
+            <key>MPS_PURGE_ON_LAUNCH</key>
+            <string>0</string>
             <key>DISABLE_METAL_VALIDATION</key>
             <string>1</string>
-            <!-- CPU Affinity -->
+            <!-- CPU Priority -->
             <key>QOS_CLASS_USER_INTERACTIVE</key>
             <string>1</string>
             <key>PERFORMANCE_MODE</key>
             <string>1</string>
         </dict>
-        <key>Nice</key>
-        <integer>-20</integer>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
         <key>ProcessType</key>
         <string>Interactive</string>
         <key>LowPriorityIO</key>
+        <false/>
+        <key>AbandonProcessGroup</key>
         <false/>
     </dict>
 </plist>
 EOF
 
-# Load the LaunchDaemons
-sudo launchctl load -w /Library/LaunchDaemons/com.github.runner.cpuaffinity.plist
-sudo launchctl load -w /Library/LaunchDaemons/com.github.runner.plist
+# Set proper permissions for the LaunchDaemon
+sudo chown root:wheel /Library/LaunchDaemons/com.github.runner.plist
+sudo chmod 644 /Library/LaunchDaemons/com.github.runner.plist
 
-# Set CPU affinity for the current process
-taskpolicy -p PERFORMANCE -b PERFORMANCE -t PERFORMANCE
+# Remove any existing service
+sudo launchctl bootout system/com.github.runner 2>/dev/null || true
+
+# Load the new service using bootstrap
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.github.runner.plist
 
 # Add Runner.Listener permissions (after runner installation)
 RUNNER_PATH="$RUNNER_DIR/bin/Runner.Listener"
