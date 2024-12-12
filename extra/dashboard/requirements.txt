@@ -1,5 +1,5 @@
-plotly
+aioboto3==13.2.0
+dash==2.18.2
+numpy
 pandas
-requests
 aiohttp
-pygame
