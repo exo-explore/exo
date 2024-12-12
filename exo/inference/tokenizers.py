@@ -18,7 +18,7 @@ class DummyTokenizer:
     return "dummy_tokenized_prompt"
 
   def encode(self, text):
-    return np.random.randint(1, self.vocab_size, size=(1, len(text.split())))
+    return np.array([1])
 
   def decode(self, tokens):
     return "dummy" * len(tokens)

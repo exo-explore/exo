@@ -16,6 +16,10 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
+  def description(self) -> str:
+    pass
+
+  @abstractmethod
   def device_capabilities(self) -> DeviceCapabilities:
     pass
 
