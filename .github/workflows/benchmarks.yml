@@ -31,7 +31,7 @@ jobs:
     with:
       config: '{"M4PRO_GPU16_24GB": 3}'
       model: ${{ matrix.model }}
-      calling_job_name: 'test-m4-cluster'
+      calling_job_name: 'three-m4-pro-cluster'
     secrets: inherit
 
   # test-m3-single-node:
