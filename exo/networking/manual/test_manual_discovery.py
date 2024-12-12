@@ -16,11 +16,10 @@ class TestSingleNodeManualDiscovery(unittest.IsolatedAsyncioTestCase):
     self.peer1 = mock.AsyncMock(spec=Node)
     self.peer1.connect = mock.AsyncMock()
     self.discovery1 = ManualDiscovery(root_path, "node1", create_peer_handle=lambda peer_id, address, description, device_capabilities: self.peer1)
-    _ = self.discovery1.start()
+    await self.discovery1.start()
 
   async def asyncTearDown(self):
     await self.discovery1.stop()
-    await self.server1.stop()
 
   async def test_discovery(self):
     peers1 = await self.discovery1.discover_peers(wait_for_peers=0)
