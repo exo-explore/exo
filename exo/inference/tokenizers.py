@@ -1,3 +1,4 @@
+import os
 import traceback
 from aiofiles import os as aios
 from os import PathLike
@@ -27,7 +28,13 @@ class DummyTokenizer:
 async def resolve_tokenizer(model_id: str):
   if model_id == "dummy":
     return DummyTokenizer()
-  local_path = await get_local_snapshot_dir(model_id)
+
+  if os.path.isdir(model_id): # local model
+    local_path = str(model_id).rstrip('/')
+    model_id = 'Local/'+str(local_path.split('/')[-1])
+  else:
+    local_path = await get_local_snapshot_dir(model_id)
+
   if DEBUG >= 2: print(f"Checking if local path exists to load tokenizer from local {local_path=}")
   try:
     if local_path and await aios.path.exists(local_path):
