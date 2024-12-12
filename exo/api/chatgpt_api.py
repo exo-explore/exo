@@ -241,14 +241,19 @@ class ChatGPTAPI:
                 if self.inference_engine_classname in model_info.get("repo", {}):
                     shard = build_base_shard(model_name, self.inference_engine_classname)
                     if shard:
-                        downloader = HFShardDownloader(quick_check=True)
-                        downloader.current_shard = shard
-                        downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
-                        status = await downloader.get_shard_download_status()
+                        if 'Local/' in model_name:
+                          download_percentage = 100.0
+                          total_size = "Unknown"
+                          total_downloaded = "Unknown"
+                        else:
+                          downloader = HFShardDownloader(quick_check=True)
+                          downloader.current_shard = shard
+                          downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
+                          status = await downloader.get_shard_download_status()
 
-                        download_percentage = status.get("overall") if status else None
-                        total_size = status.get("total_size") if status else None
-                        total_downloaded = status.get("total_downloaded") if status else False
+                          download_percentage = status.get("overall") if status else None
+                          total_size = status.get("total_size") if status else None
+                          total_downloaded = status.get("total_downloaded") if status else False
 
                         model_data = {
                             model_name: {

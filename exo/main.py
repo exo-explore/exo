@@ -100,7 +100,7 @@ for folder_path in Path(exo_path).iterdir():
         config = json.load(file)
         config_n_layers = config['num_hidden_layers']
         build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, int(config_n_layers))
-print(f"Init local model card complete")
+print(f"Add Local Model Complete!!")
 
 if args.node_port is None:
   args.node_port = find_available_port(args.node_host) 

@@ -140,9 +140,9 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    if os.path.isdir(shard.model_id): # cli mode
+    if os.path.isdir(shard.model_id): # path mode
       model_path = Path(shard.model_id) 
-    elif "Local" in shard.model_id: # api mode
+    elif "Local" in shard.model_id: # Local card mode
       model_path = Path(get_repo(shard.model_id, self.__class__.__name__))
     else:
       model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
