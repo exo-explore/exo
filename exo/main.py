@@ -36,6 +36,8 @@ from exo.models import model_cards, build_local_model_card, build_base_shard, ge
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 
+from exo.localmodel.http_server import LocalModelAPI 
+
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
 parser.add_argument("command", nargs="?", choices=["run", "eval", "train"], help="Command to run")
@@ -71,6 +73,7 @@ parser.add_argument("--default-temp", type=float, help="Default token sampling t
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
+parser.add_argument("--local-model-api-port", type=int, default=52525, help="Local Model API port")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -107,15 +110,29 @@ if args.node_port is None:
   if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()
-chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip, _ in get_all_ip_addresses_and_interfaces()]
-web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+
+
+if args.node_host == "0.0.0.0":
+  chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip, _ in get_all_ip_addresses_and_interfaces()]
+  local_model_api_endpoints = [f"http://{ip}:{args.local_model_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+  web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+else:
+  chatgpt_api_endpoints = [f"http://{args.node_host}:{args.chatgpt_api_port}/v1/chat/completions"]
+  local_model_api_endpoints = [f"http://{args.node_host}:{args.local_model_api_port}"]
+  web_chat_urls = [f"http://{args.node_host}:{args.chatgpt_api_port}"]
+
 if DEBUG >= 0:
   print("Chat interface started:")
   for web_chat_url in web_chat_urls:
     print(f" - {terminal_link(web_chat_url)}")
+  
   print("ChatGPT API endpoint served at:")
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
+
+  print("Local Model API endpoint served at:")
+  for local_model_api_endpoint in local_model_api_endpoints:
+    print(f" - {terminal_link(local_model_api_endpoint)}")
 
 # Convert node-id-filter to list if provided
 allowed_node_ids = args.node_id_filter.split(',') if args.node_id_filter else None
@@ -144,7 +161,7 @@ elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
   discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
-topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
+topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls, local_model_api_endpoints=local_model_api_endpoints) if not args.disable_tui else None
 node = Node(
   args.node_id,
   None,
@@ -158,13 +175,14 @@ node = Node(
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
-api = ChatGPTAPI(
+chatgpt_api = ChatGPTAPI(
   node,
   inference_engine.__class__.__name__,
   response_timeout=args.chatgpt_api_response_timeout,
   on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None,
   default_model=args.default_model
 )
+local_model_api = LocalModelAPI()
 node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
@@ -372,7 +390,8 @@ async def main():
       await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters, save_interval=args.save_every, checkpoint_dir=args.save_checkpoint_dir)
     
   else:
-    asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
+    asyncio.create_task(chatgpt_api.run(host=args.node_host, port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
+    asyncio.create_task(local_model_api.run(host=args.node_host, port=args.local_model_api_port))  # Start the local model server as a non-blocking task
     await asyncio.Event().wait()
   
   if args.wait_for_peers > 0:
