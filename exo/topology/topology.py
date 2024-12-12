@@ -39,11 +39,13 @@ class Topology:
     conn = PeerConnection(from_id, to_id, description)
     self.peer_graph[from_id].add(conn)
 
-  def merge(self, other: "Topology"):
+  def merge(self, peer_node_id: str, other: "Topology"):
     for node_id, capabilities in other.nodes.items():
+      if node_id != peer_node_id: continue
       self.update_node(node_id, capabilities)
     for node_id, connections in other.peer_graph.items():
       for conn in connections:
+        if conn.from_id != peer_node_id: continue
         self.add_edge(conn.from_id, conn.to_id, conn.description)
 
   def __str__(self):
@@ -51,3 +53,23 @@ class Topology:
     edges_str = ", ".join(f"{node}: {[f'{c.to_id}({c.description})' for c in conns]}"
                          for node, conns in self.peer_graph.items())
     return f"Topology(Nodes: {{{nodes_str}}}, Edges: {{{edges_str}}})"
+
+  def to_json(self):
+    return {
+      "nodes": {
+        node_id: capabilities.to_dict()
+        for node_id, capabilities in self.nodes.items()
+      },
+      "peer_graph": {
+        node_id: [
+          {
+            "from_id": conn.from_id,
+            "to_id": conn.to_id,
+            "description": conn.description
+          }
+          for conn in connections
+        ]
+        for node_id, connections in self.peer_graph.items()
+      },
+      "active_node_id": self.active_node_id
+    }

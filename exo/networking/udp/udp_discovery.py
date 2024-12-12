@@ -42,7 +42,7 @@ class UDPDiscovery(Discovery):
     listen_port: int,
     broadcast_port: int,
     create_peer_handle: Callable[[str, str, str, DeviceCapabilities], PeerHandle],
-    broadcast_interval: int = 1,
+    broadcast_interval: int = 2.5,
     discovery_timeout: int = 30,
     device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     allowed_node_ids: List[str] = None,
@@ -88,7 +88,7 @@ class UDPDiscovery(Discovery):
       # Explicitly broadcasting on all assigned ips since broadcasting on `0.0.0.0` on MacOS does not broadcast over
       # the Thunderbolt bridge when other connection modalities exist such as WiFi or Ethernet
       for addr, interface_name in get_all_ip_addresses_and_interfaces():
-        interface_priority, interface_type = get_interface_priority_and_type(interface_name)
+        interface_priority, interface_type = await get_interface_priority_and_type(interface_name)
         message = json.dumps({
           "type": "discovery",
           "node_id": self.node_id,

@@ -266,9 +266,11 @@ class TopologyViz:
       # Add connection description near the midpoint of the line
       mid_x = (x + next_x) // 2
       mid_y = (y + next_y) // 2
+      # Center the description text around the midpoint
+      desc_start_x = mid_x - len(connection_description) // 2
       for j, char in enumerate(connection_description):
-        if 0 <= mid_y < 48 and 0 <= mid_x + j < 100:
-          visualization[mid_y][mid_x + j] = char
+        if 0 <= mid_y < 48 and 0 <= desc_start_x + j < 100:
+          visualization[mid_y][desc_start_x + j] = char
 
     # Convert to string
     return "\n".join("".join(str(char) for char in row) for row in visualization)
