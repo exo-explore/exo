@@ -43,13 +43,45 @@ def load_data_from_s3():
         'prompt_tps': data.get('prompt_tps', 0),
         'generation_tps': data.get('generation_tps', 0),
         'commit': data.get('commit', ''),
-        'run_id': data.get('run_id', '')
+        'run_id': data.get('run_id', ''),
+        'model': data.get('model', ''),
+        'branch': data.get('branch', ''),
+        'configuration': data.get('configuration', {}),
+        'prompt_len': data.get('prompt_len', 0),
+        'ttft': data.get('ttft', 0),
+        'response_len': data.get('response_len', 0),
+        'total_time': data.get('total_time', 0)
       })
 
   for config in config_data:
     config_data[config].sort(key=lambda x: x['timestamp'])
 
   return config_data
+
+def get_best_benchmarks():
+  config_data = load_data_from_s3()
+  best_results = {}
+
+  for config_name, data in config_data.items():
+    if not data:
+      continue
+
+    # Split config_name into config and model
+    config, model = config_name.split('/')
+
+    # Find the entry with the highest generation_tps
+    best_result = max(data, key=lambda x: x['generation_tps'])
+
+    # Create result dictionary with all original data plus config/model info
+    result = dict(best_result)  # Make a copy of all data from the best run
+    result.update({
+      'config': config,
+      'model': model,
+    })
+
+    best_results[config_name] = result
+
+  return best_results
 
 app = dash.Dash(__name__)
 
@@ -240,4 +272,22 @@ app.clientside_callback(
 )
 
 if __name__ == '__main__':
-  app.run_server(debug=True)
+  import sys
+  if '--generate' in sys.argv:
+    best_benchmarks = get_best_benchmarks()
+    print(json.dumps(best_benchmarks, indent=2))
+
+    # Upload best benchmarks to S3
+    try:
+      s3.put_object(
+        Bucket=BUCKET_NAME,
+        Key='best.json',
+        Body=json.dumps(best_benchmarks, indent=2),
+        ContentType='application/json'
+      )
+      print("Successfully uploaded best.json to S3")
+      print(f"Public URL: https://{BUCKET_NAME}.s3.amazonaws.com/best.json")
+    except Exception as e:
+      print(f"Error uploading to S3: {e}")
+  else:
+    app.run_server(debug=True)
