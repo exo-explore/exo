@@ -16,6 +16,7 @@ from exo.models import model_cards, get_repo
 import aiohttp
 from aiofiles import os as aios
 
+from exo.localmodel.lh_helpers import get_exo_home
 
 class HFShardDownloader(ShardDownloader):
   def __init__(self, quick_check: bool = False, max_parallel_downloads: int = 4):
@@ -36,7 +37,12 @@ class HFShardDownloader(ShardDownloader):
       return self.completed_downloads[shard]
     if self.quick_check:
       repo_root = get_repo_root(repo_name)
-      snapshots_dir = repo_root/"snapshots"
+      if 'Local' in shard.model_id:
+        model_name = shard.model_id.split('/')[1]
+        snapshots_dir = Path(get_exo_home()/model_name)
+      else:
+        snapshots_dir = repo_root/"snapshots"
+      
       if snapshots_dir.exists():
         visible_dirs = [d for d in snapshots_dir.iterdir() if not d.name.startswith('.')]
         if visible_dirs:

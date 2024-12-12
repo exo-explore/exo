@@ -28,7 +28,7 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent, NoopShardDownloader
 from exo.download.hf.hf_shard_download import HFShardDownloader
-from exo.helpers import print_yellow_exo, init_exo_env, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
@@ -36,7 +36,8 @@ from exo.models import model_cards, build_local_model_card, build_base_shard, ge
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 
-from exo.localmodel.http_server import LocalModelAPI 
+from exo.localmodel.http.http_server import LocalModelAPI 
+from exo.localmodel.lh_helpers import has_exo_home_read_access, has_exo_home_write_access, get_exo_home
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -79,8 +80,6 @@ print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
 
-exo_path = init_exo_env()
-
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
@@ -93,9 +92,10 @@ shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
-for folder_path in Path(exo_path).iterdir():
+exo_home = get_exo_home()
+for folder_path in Path(exo_home).iterdir():
   if folder_path.is_dir():
-    model_path = folder_path
+    model_path = f"http://{args.node_host}:{args.local_model_api_port}/models/{folder_path.name}"
     model_name = folder_path.name
     config_file_path = Path(folder_path/'config.json')
     if config_file_path.is_file():
@@ -195,6 +195,8 @@ def preemptively_start_download(request_id: str, opaque_status: str):
       
       if "Local" in current_shard.model_id or os.path.isdir(current_shard.model_id):
         print("Local model detected, skip download")
+        # borcast download model
+        #asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
         pass
       else:
         if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
@@ -339,6 +341,17 @@ async def main():
   if not has_read or not has_write:
     print(f"""
           WARNING: Limited permissions for model storage directory: {hf_home}.
+          This may prevent model downloads from working correctly.
+          {"❌ No read access" if not has_read else ""}
+          {"❌ No write access" if not has_write else ""}
+          """)
+  # Check exo directory permissions
+  exo_home, has_read, has_write = get_exo_home(), await has_exo_home_read_access(), await has_exo_home_write_access()
+  if DEBUG >= 1: print(f"Model storage directory: {exo_home}")
+  print(f"{has_read=}, {has_write=}")
+  if not has_read or not has_write:
+    print(f"""
+          WARNING: Limited permissions for model storage directory: {exo_home}.
           This may prevent model downloads from working correctly.
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}

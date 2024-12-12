@@ -93,15 +93,8 @@ def terminal_link(uri, label=None):
 
   return escape_mask.format(parameters, uri, label)
 
-def init_exo_env():
-  exo_path = Path(Path.home()/".cache"/"exo")
-  os.makedirs(exo_path, exist_ok=True)
-  if DEBUG >= 1: print(f"Init exo folder: {exo_path}")
-  return exo_path
-
 T = TypeVar("T")
 K = TypeVar("K")
-
 
 class AsyncCallback(Generic[T]):
   def __init__(self) -> None:
