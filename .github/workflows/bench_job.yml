@@ -80,6 +80,9 @@ jobs:
           
           # Source the performance environment variables
           source /tmp/performance_env.sh
+
+          # MLX Memory Settings
+          ./configure_mlx.sh
           
           # Verify optimizations
           echo "Verifying performance settings..."
