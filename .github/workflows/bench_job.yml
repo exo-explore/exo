@@ -116,7 +116,7 @@ jobs:
           sudo pmset -g
           
           # Start exo with explicit process control
-          sudo taskpolicy -d 4 -t 4 .venv/bin/exo \
+          sudo taskpolicy -d default -g default -a -t 0 -l 0 .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
             --interface-type-filter="Ethernet" \
