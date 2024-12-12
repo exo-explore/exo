@@ -5,6 +5,7 @@ import json
 import time
 import traceback
 import uuid
+import os
 from exo.orchestration.standard_node import StandardNode
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.grpc.grpc_discovery import GRPCDiscovery
@@ -42,6 +43,7 @@ parser.add_argument("--run-model", type=str, help="Specify a model to run direct
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
 # Add the Allora mode argument
 parser.add_argument("--allora-mode", action='store_true', help="Enable Allora mode")
+parser.add_argument("--allora-dir", type=str, help="absolute directory location of allora node")
 args = parser.parse_args()
 
 print_yellow_exo()
@@ -139,6 +141,23 @@ async def shutdown(signal, loop):
   await server.stop()
   loop.stop()
 
+async def start_allora_node(dir):
+  print(f"starting allora node")
+  cmd = f"cd {dir} && ./start.local"
+  proc = await asyncio.create_subprocess_shell(
+      cmd=cmd,
+      shell=True,
+      stdout=asyncio.subprocess.PIPE,
+      stderr=asyncio.subprocess.PIPE
+  )
+  stdout, stderr = await proc.communicate()
+
+  print(f'[{cmd!r} exited with {proc.returncode}]')
+  if stdout:
+      print(f'[stdout]\n{stdout.decode()}')
+  if stderr:
+      print(f'[stderr]\n{stderr.decode()}')
+
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   shard = model_base_shards.get(model_name, {}).get(inference_engine.__class__.__name__)
   if not shard:
@@ -183,8 +202,13 @@ async def main():
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
 
+  if args.allora_dir:
+    asyncio.create_task(
+      start_allora_node(args.allora_dir)
+    )
     # Add the inference endpoint when in Allora mode
   if args.allora_mode:
+      
       async def inference_endpoint(request):
         # Use the inference_engine to process the token
         token = request.match_info.get('token')
