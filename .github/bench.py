@@ -341,7 +341,60 @@ async def main() -> None:
     print(json.dumps(results, indent=4), flush=True)
 
 
+def optimize_system_performance():
+    """Set optimal system performance settings before running benchmark."""
+    try:
+        # Try to set high performance power mode
+        subprocess.run(['sudo', 'pmset', '-a', 'powermode', '2'], check=False)
+        
+        # Ensure MLX uses performance cores and GPU
+        os.environ['MLX_FORCE_P_CORES'] = '1'
+        os.environ['MLX_METAL_PREWARM'] = '1'
+        os.environ['MLX_USE_GPU'] = '1'
+        
+        # Set process priority
+        current_process = psutil.Process()
+        try:
+            # Set highest priority
+            subprocess.run(['sudo', 'renice', '-n', '-20', '-p', str(current_process.pid)], check=False)
+            
+            # Print current process state
+            print("\nProcess State Before Benchmark:", flush=True)
+            proc_info = subprocess.run(
+                ['ps', '-o', 'pid,ppid,user,%cpu,%mem,nice,stat,pri,command', '-p', str(current_process.pid)],
+                capture_output=True, text=True
+            )
+            print(proc_info.stdout, flush=True)
+            
+            # Verify power mode
+            power_info = subprocess.run(['pmset', '-g'], capture_output=True, text=True)
+            if 'powermode            0' in power_info.stdout:
+                print("\nWarning: System still in normal power mode. Trying to set high performance mode again...", flush=True)
+                subprocess.run(['sudo', 'pmset', '-a', 'powermode', '2'], check=False)
+            
+        except Exception as e:
+            print(f"Warning: Could not set process priority: {e}", flush=True)
+            
+    except Exception as e:
+        print(f"Warning: Could not optimize system performance: {e}", flush=True)
+    
+    # Print optimization status
+    print("\nOptimization Settings:", flush=True)
+    print("MLX Environment Variables:", flush=True)
+    for var in ['MLX_FORCE_P_CORES', 'MLX_METAL_PREWARM', 'MLX_USE_GPU']:
+        print(f"{var}: {os.environ.get(var, 'Not set')}", flush=True)
+    
+    try:
+        nice_value = psutil.Process().nice()
+        print(f"Process Nice Value: {nice_value}", flush=True)
+        if nice_value != -20:
+            print("Warning: Process not running at highest priority", flush=True)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     check_system_state()
     check_gpu_access()
+    optimize_system_performance()
     asyncio.run(main())
