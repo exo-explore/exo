@@ -2,7 +2,9 @@ import dash
 from dash import html, dcc, ctx
 import plotly.graph_objs as go
 from dash.dependencies import Input, Output, State
-import boto3
+import aioboto3
+import asyncio
+from aiohttp import ClientSession
 import json
 from collections import defaultdict
 import os
@@ -11,7 +13,9 @@ import numpy as np
 from plotly.subplots import make_subplots
 import plotly.express as px
 
-s3 = boto3.client('s3')
+# Replace boto3 client with aioboto3 session
+session = aioboto3.Session()
+
 BUCKET_NAME = 'exo-benchmarks'
 
 def load_mock_data():
@@ -20,46 +24,67 @@ def load_mock_data():
   with open(mock_data_path, 'r') as f:
     return json.load(f)
 
-def load_data_from_s3():
+async def load_data_from_s3():
   # For testing, use mock data if environment variable is set
   if os.getenv('USE_MOCK_DATA'):
     return load_mock_data()
 
   config_data = defaultdict(list)
 
-  paginator = s3.get_paginator('list_objects_v2')
-  for page in paginator.paginate(Bucket=BUCKET_NAME):
-    for obj in page.get('Contents', []):
-      key = obj['Key']
-      key_parts = key.split('/')
-      if len(key_parts) < 2:
-        continue
-      config_name = f"{key_parts[0]}/{key_parts[1]}"  # Include both config and model
-      response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
-      data = json.loads(response['Body'].read().decode('utf-8'))
-      print(f"Processing object: {obj['Key']}: {data}")
-      config_data[config_name].append({
-        'timestamp': data.get('timestamp', obj['LastModified'].strftime('%Y-%m-%dT%H:%M:%S')),
-        'prompt_tps': data.get('prompt_tps', 0),
-        'generation_tps': data.get('generation_tps', 0),
-        'commit': data.get('commit', ''),
-        'run_id': data.get('run_id', ''),
-        'model': data.get('model', ''),
-        'branch': data.get('branch', ''),
-        'configuration': data.get('configuration', {}),
-        'prompt_len': data.get('prompt_len', 0),
-        'ttft': data.get('ttft', 0),
-        'response_len': data.get('response_len', 0),
-        'total_time': data.get('total_time', 0)
-      })
+  async with session.client('s3') as s3:
+    paginator = s3.get_paginator('list_objects_v2')
+    objects_to_fetch = []
 
-  for config in config_data:
-    config_data[config].sort(key=lambda x: x['timestamp'])
+    # First, get all object keys
+    async for page in paginator.paginate(Bucket=BUCKET_NAME):
+      for obj in page.get('Contents', []):
+        key = obj['Key']
+        key_parts = key.split('/')
+        if len(key_parts) < 2:
+          continue
+        objects_to_fetch.append((key, obj['LastModified'], f"{key_parts[0]}/{key_parts[1]}"))
 
-  return config_data
+    # Then fetch all objects in parallel
+    async def fetch_object(key, last_modified, config_name):
+      response = await s3.get_object(Bucket=BUCKET_NAME, Key=key)
+      body = await response['Body'].read()
+      data = json.loads(body.decode('utf-8'))
+      print(f"Processing object: {key}: {data}")
+      return {
+        'config_name': config_name,
+        'data': {
+          'timestamp': data.get('timestamp', last_modified.strftime('%Y-%m-%dT%H:%M:%S')),
+          'prompt_tps': data.get('prompt_tps', 0),
+          'generation_tps': data.get('generation_tps', 0),
+          'commit': data.get('commit', ''),
+          'run_id': data.get('run_id', ''),
+          'model': data.get('model', ''),
+          'branch': data.get('branch', ''),
+          'configuration': data.get('configuration', {}),
+          'prompt_len': data.get('prompt_len', 0),
+          'ttft': data.get('ttft', 0),
+          'response_len': data.get('response_len', 0),
+          'total_time': data.get('total_time', 0)
+        }
+      }
 
-def get_best_benchmarks():
-  config_data = load_data_from_s3()
+    # Create tasks for all objects
+    tasks = [fetch_object(key, last_modified, config_name)
+             for key, last_modified, config_name in objects_to_fetch]
+    results = await asyncio.gather(*tasks)
+
+    # Organize results into config_data
+    for result in results:
+      config_data[result['config_name']].append(result['data'])
+
+    # Sort data by timestamp for each config
+    for config in config_data:
+      config_data[config].sort(key=lambda x: x['timestamp'])
+
+    return config_data
+
+async def get_best_benchmarks():
+  config_data = await load_data_from_s3()
   best_results = {}
 
   for config_name, data in config_data.items():
@@ -96,7 +121,7 @@ app.layout = html.Div([
   dcc.Store(id='previous-data', storage_type='memory'),
   dcc.Interval(
     id='interval-component',
-    interval=10000,  # Update every 10 seconds
+    interval=15000,  # Update every 15 seconds
     n_intervals=0
   )
 ])
@@ -109,7 +134,8 @@ app.layout = html.Div([
   [State('previous-data', 'data')]
 )
 def update_graphs(n, previous_data):
-  config_data = load_data_from_s3()
+  # Run async operations synchronously
+  config_data = asyncio.run(load_data_from_s3())
   graphs = []
   trigger_sound = None
 
@@ -225,6 +251,7 @@ def update_graphs(n, previous_data):
   prevent_initial_call=True
 )
 def handle_click(clickData):
+  # If you add any async operations here, wrap them with asyncio.run()
   if clickData and clickData[0] and clickData[0]['points'][0].get('customdata'):
     run_id = clickData[0]['points'][0]['customdata']
     url = f'https://github.com/exo-explore/exo/actions/runs/{run_id}'
@@ -274,20 +301,21 @@ app.clientside_callback(
 if __name__ == '__main__':
   import sys
   if '--generate' in sys.argv:
-    best_benchmarks = get_best_benchmarks()
-    print(json.dumps(best_benchmarks, indent=2))
+    async def generate_best():
+      async with session.client('s3') as s3:
+        best_benchmarks = await get_best_benchmarks()
+        try:
+          await s3.put_object(
+            Bucket=BUCKET_NAME,
+            Key='best.json',
+            Body=json.dumps(best_benchmarks, indent=2),
+            ContentType='application/json'
+          )
+          print("Successfully uploaded best.json to S3")
+          print(f"Public URL: https://{BUCKET_NAME}.s3.amazonaws.com/best.json")
+        except Exception as e:
+          print(f"Error uploading to S3: {e}")
 
-    # Upload best benchmarks to S3
-    try:
-      s3.put_object(
-        Bucket=BUCKET_NAME,
-        Key='best.json',
-        Body=json.dumps(best_benchmarks, indent=2),
-        ContentType='application/json'
-      )
-      print("Successfully uploaded best.json to S3")
-      print(f"Public URL: https://{BUCKET_NAME}.s3.amazonaws.com/best.json")
-    except Exception as e:
-      print(f"Error uploading to S3: {e}")
+    asyncio.run(generate_best())
   else:
     app.run_server(debug=True)
