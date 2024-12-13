@@ -112,13 +112,64 @@ async def get_best_benchmarks():
 
   return best_results
 
-async def send_discord_notification(benchmark_data):
+async def get_previous_benchmark(config_data, config_name, current_timestamp):
+  """Get the previous benchmark for a given configuration."""
+  benchmarks = config_data.get(config_name, [])
+  # Sort by timestamp and find the most recent benchmark before current_timestamp
+  previous = None
+  for b in sorted(benchmarks, key=lambda x: x['timestamp']):
+    if b['timestamp'] < current_timestamp:
+      previous = b
+    else:
+      break
+  return previous
+
+async def format_metric_comparison(current, previous, metric, format_str=".2f", lower_is_better=False):
+  """Format a metric with trend indicator."""
+  current_val = current.get(metric, 0)
+  if not previous:
+    return f"**{current_val:{format_str}}**"
+
+  prev_val = previous.get(metric, 0)
+  diff = current_val - prev_val
+
+  # Invert the comparison logic if lower values are better
+  if lower_is_better:
+    diff = -diff  # This makes negative diffs good and positive diffs bad
+
+  if diff > 0:
+    return f"**{current_val:{format_str}}** 🟢↑ ({'-' if lower_is_better else '+'}{abs(current_val - prev_val):{format_str}})"
+  elif diff < 0:
+    return f"**{current_val:{format_str}}** 🔴↓ ({'+' if lower_is_better else '-'}{abs(current_val - prev_val):{format_str}})"
+  else:
+    return f"**{current_val:{format_str}}** ⚪"
+
+async def send_discord_notification(benchmark_data, config_data):
   if not DISCORD_WEBHOOK_URL:
     print("Discord webhook URL not configured, skipping notification")
     return
 
   # Create a formatted message
   config_name = f"{benchmark_data['config']}/{benchmark_data['model']}"
+
+  # Use the passed config_data instead of fetching again
+  previous_benchmark = await get_previous_benchmark(
+    config_data,
+    f"{benchmark_data['config']}/{benchmark_data['model']}",
+    benchmark_data['timestamp']
+  )
+
+  # Format metrics with comparisons
+  gen_tps = await format_metric_comparison(benchmark_data, previous_benchmark, 'generation_tps')
+  prompt_tps = await format_metric_comparison(benchmark_data, previous_benchmark, 'prompt_tps')
+  ttft = await format_metric_comparison(
+    {'ttft': benchmark_data['ttft'] * 1000},
+    {'ttft': previous_benchmark['ttft'] * 1000} if previous_benchmark else None,
+    'ttft',
+    lower_is_better=True
+  )
+  prompt_len = await format_metric_comparison(benchmark_data, previous_benchmark, 'prompt_len', "d")
+  response_len = await format_metric_comparison(benchmark_data, previous_benchmark, 'response_len', "d")
 
   # Create a simple JSON string of the topology
   topology = benchmark_data.get('configuration', {})
@@ -127,11 +178,11 @@ async def send_discord_notification(benchmark_data):
   message = (
     f"🚀 New Benchmark Result for **{config_name}**\n\n"
     f"📊 Performance Metrics:\n"
-    f"• Generation TPS: **{benchmark_data['generation_tps']:.2f}**\n"
-    f"• Prompt TPS: **{benchmark_data['prompt_tps']:.2f}**\n"
-    f"• TTFT: **{benchmark_data['ttft'] * 1000:.2f}ms**\n"
-    f"• Prompt Length: {benchmark_data['prompt_len']}\n"
-    f"• Response Length: {benchmark_data['response_len']}\n\n"
+    f"• Generation TPS: {gen_tps}\n"
+    f"• Prompt TPS: {prompt_tps}\n"
+    f"• TTFT: {ttft}ms\n"
+    f"• Prompt Length: {prompt_len}\n"
+    f"• Response Length: {response_len}\n\n"
     f"🔍 Run Details:\n"
     f"• Commit: {benchmark_data['commit'][:7]}\n"
     f"• Branch: {benchmark_data['branch']}\n"
@@ -165,7 +216,7 @@ async def generate_best():
   print(f"Last processed timestamp: {last_processed}")
 
   async with session.client('s3') as s3:
-    # Load all benchmark data
+    # Load all benchmark data once
     config_data = await load_data_from_s3()
     best_benchmarks = await get_best_benchmarks()
 
@@ -185,7 +236,8 @@ async def generate_best():
             'config': config,
             'model': model,
           })
-          await send_discord_notification(benchmark_with_info)
+          # Pass the already loaded config_data to avoid refetching
+          await send_discord_notification(benchmark_with_info, config_data)
 
           # Update the latest timestamp if this is the newest we've seen
           if timestamp > new_latest:
