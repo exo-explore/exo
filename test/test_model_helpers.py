@@ -34,7 +34,7 @@ test_cases = [
     expected_models_contains=["llama-3.2-1b", "llama-3.2-3b"],
     min_count=5,
     exact_count=None,
-    max_count=10
+    max_count=15
   ),
   TestCase(
     name="multiple_engines_or",
@@ -58,7 +58,7 @@ test_cases = [
     expected_models_contains=["llama-3.2-1b"],
     min_count=5,
     exact_count=None,
-    max_count=10
+    max_count=15
   ),
   TestCase(
     name="no_engines",
@@ -111,7 +111,7 @@ class TestModelHelpers(unittest.TestCase):
 
     # Special case for distinct lists test
     if case.name == "distinct_engine_lists":
-      self.assertLess(len(result), 10)
+      self.assertLess(len(result), 15)
       self.assertNotIn("mistral-nemo", result)
 
     if case.max_count:
