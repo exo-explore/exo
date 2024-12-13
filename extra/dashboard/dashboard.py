@@ -12,11 +12,15 @@ import base64
 import numpy as np
 from plotly.subplots import make_subplots
 import plotly.express as px
+import aiohttp
+from datetime import datetime
 
 # Replace boto3 client with aioboto3 session
 session = aioboto3.Session()
 
 BUCKET_NAME = 'exo-benchmarks'
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+CURSOR_KEY = 'last_processed_timestamp.txt'
 
 def load_mock_data():
   current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -107,6 +111,102 @@ async def get_best_benchmarks():
     best_results[config_name] = result
 
   return best_results
+
+async def send_discord_notification(benchmark_data):
+  if not DISCORD_WEBHOOK_URL:
+    print("Discord webhook URL not configured, skipping notification")
+    return
+
+  # Create a formatted message
+  config_name = f"{benchmark_data['config']}/{benchmark_data['model']}"
+
+  # Create a simple JSON string of the topology
+  topology = benchmark_data.get('configuration', {})
+  topology_str = "```json\n" + json.dumps(topology, indent=2) + "\n```"
+
+  message = (
+    f"🚀 New Benchmark Result for **{config_name}**\n\n"
+    f"📊 Performance Metrics:\n"
+    f"• Generation TPS: **{benchmark_data['generation_tps']:.2f}**\n"
+    f"• Prompt TPS: **{benchmark_data['prompt_tps']:.2f}**\n"
+    f"• TTFT: **{benchmark_data['ttft'] * 1000:.2f}ms**\n"
+    f"• Prompt Length: {benchmark_data['prompt_len']}\n"
+    f"• Response Length: {benchmark_data['response_len']}\n\n"
+    f"🔍 Run Details:\n"
+    f"• Commit: {benchmark_data['commit'][:7]}\n"
+    f"• Branch: {benchmark_data['branch']}\n"
+    f"• Run ID: [{benchmark_data['run_id']}](https://github.com/exo-explore/exo/actions/runs/{benchmark_data['run_id']})\n\n"
+    f"{topology_str}"
+  )
+
+  async with aiohttp.ClientSession() as session:
+    await session.post(DISCORD_WEBHOOK_URL, json={'content': message})
+
+async def get_cursor():
+  try:
+    async with session.client('s3') as s3:
+      response = await s3.get_object(Bucket=BUCKET_NAME, Key=CURSOR_KEY)
+      body = await response['Body'].read()
+      return body.decode('utf-8').strip()
+  except:
+    return "1970-01-01T00:00:00"  # Default to epoch if no cursor exists
+
+async def update_cursor(timestamp):
+  async with session.client('s3') as s3:
+    await s3.put_object(
+      Bucket=BUCKET_NAME,
+      Key=CURSOR_KEY,
+      Body=timestamp.encode('utf-8')
+    )
+
+async def generate_best():
+  # Get the last processed timestamp
+  last_processed = await get_cursor()
+  print(f"Last processed timestamp: {last_processed}")
+
+  async with session.client('s3') as s3:
+    # Load all benchmark data
+    config_data = await load_data_from_s3()
+    best_benchmarks = await get_best_benchmarks()
+
+    # Check for new benchmarks in all data
+    new_latest = last_processed
+    for config_name, data_list in config_data.items():
+      for benchmark in data_list:
+        timestamp = benchmark['timestamp']
+
+        # If this benchmark is newer than our last processed timestamp
+        if timestamp > last_processed:
+          print(f"Found new benchmark for {config_name} at {timestamp}")
+          # Add config and model info to the benchmark data
+          config, model = config_name.split('/')
+          benchmark_with_info = dict(benchmark)
+          benchmark_with_info.update({
+            'config': config,
+            'model': model,
+          })
+          await send_discord_notification(benchmark_with_info)
+
+          # Update the latest timestamp if this is the newest we've seen
+          if timestamp > new_latest:
+            new_latest = timestamp
+
+    # Update the cursor if we found any new benchmarks
+    if new_latest > last_processed:
+      await update_cursor(new_latest)
+
+    # Upload the best benchmarks as before
+    try:
+      await s3.put_object(
+        Bucket=BUCKET_NAME,
+        Key='best.json',
+        Body=json.dumps(best_benchmarks, indent=2),
+        ContentType='application/json'
+      )
+      print("Successfully uploaded best.json to S3")
+      print(f"Public URL: https://{BUCKET_NAME}.s3.amazonaws.com/best.json")
+    except Exception as e:
+      print(f"Error uploading to S3: {e}")
 
 app = dash.Dash(__name__)
 
@@ -301,21 +401,6 @@ app.clientside_callback(
 if __name__ == '__main__':
   import sys
   if '--generate' in sys.argv:
-    async def generate_best():
-      async with session.client('s3') as s3:
-        best_benchmarks = await get_best_benchmarks()
-        try:
-          await s3.put_object(
-            Bucket=BUCKET_NAME,
-            Key='best.json',
-            Body=json.dumps(best_benchmarks, indent=2),
-            ContentType='application/json'
-          )
-          print("Successfully uploaded best.json to S3")
-          print(f"Public URL: https://{BUCKET_NAME}.s3.amazonaws.com/best.json")
-        except Exception as e:
-          print(f"Error uploading to S3: {e}")
-
     asyncio.run(generate_best())
   else:
     app.run_server(debug=True)
