@@ -118,12 +118,12 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     if DEBUG >= 5: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
     return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 
-  async def SendResult(self, request, context):
+  async def SendNewToken(self, request, context):
     request_id = request.request_id
-    result = request.result
+    token = request.token
     is_finished = request.is_finished
-    if DEBUG >= 5: print(f"Received SendResult request: {request_id=} {result=} {is_finished=}")
-    self.node.on_token.trigger_all(request_id, result, is_finished)
+    if DEBUG >= 5: print(f"Received SendNewToken request: {request_id=} {token=} {is_finished=}")
+    self.node.on_token.trigger_all(request_id, token, is_finished)
     return node_service_pb2.Empty()
 
   async def SendOpaqueStatus(self, request, context):
