@@ -147,16 +147,6 @@ class GRPCPeerHandle(PeerHandle):
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
-  async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
-    request = node_service_pb2.GetInferenceResultRequest(request_id=request_id)
-    response = await self.stub.GetInferenceResult(request)
-    if response.tensor is None:
-      return None, response.is_finished
-    return (
-      np.frombuffer(response.tensor.tensor_data, dtype=np.dtype(response.tensor.dtype)).reshape(response.tensor.shape),
-      response.is_finished,
-    )
-
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
     request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
     response = await self.stub.CollectTopology(request)
@@ -174,9 +164,9 @@ class GRPCPeerHandle(PeerHandle):
         topology.add_edge(node_id, conn.to_id, conn.description)
     return topology
 
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
-    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, is_finished=is_finished)
-    await self.stub.SendResult(request)
+  async def send_new_token(self, request_id: str, token: int, is_finished: bool) -> None:
+    request = node_service_pb2.SendNewTokenRequest(request_id=request_id, token=token, is_finished=is_finished)
+    await self.stub.SendNewToken(request)
 
   async def send_opaque_status(self, request_id: str, status: str) -> None:
     request = node_service_pb2.SendOpaqueStatusRequest(request_id=request_id, status=status)
