@@ -226,7 +226,7 @@ async def measure_performance(api_endpoint: str, prompt: str, model: str) -> Dic
     }
 
     # Get token count
-    session = aiohttp.ClientSession()
+    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600, connect=10, sock_read=600, sock_connect=10))
     try:
         response = await session.post(
             "http://localhost:52415/v1/chat/token/encode",
