@@ -52,7 +52,6 @@ parser.add_argument("--models-seed-dir", type=str, default=None, help="Model see
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--download-quick-check", action="store_true", help="Quick check local path for model shards download")
 parser.add_argument("--max-parallel-downloads", type=int, default=4, help="Max parallel downloads for model shards download")
-parser.add_argument("--prometheus-client-port", type=int, default=None, help="Prometheus client port")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
 parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale", "manual"], default="udp", help="Discovery module to use")
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
@@ -169,10 +168,6 @@ def preemptively_start_download(request_id: str, opaque_status: str):
 
 
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
-
-if args.prometheus_client_port:
-  from exo.stats.metrics import start_metrics_server
-  start_metrics_server(node, args.prometheus_client_port)
 
 last_broadcast_time = 0
 
