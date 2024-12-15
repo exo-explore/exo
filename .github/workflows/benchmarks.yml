@@ -8,18 +8,27 @@ on:
     branches: [ '*' ]
 
 jobs:
-  # test-m4-cluster:
-  #   strategy:
-  #     matrix:
-  #       model: ['llama-3.2-1b', 'llama-3.2-3b']
-  #     # Optional: add fail-fast: false if you want all matrix jobs to continue even if one fails
-  #     fail-fast: false
-  #   uses: ./.github/workflows/bench_job.yml
-  #   with:
-  #     config: '{"M4PRO_GPU16_24GB": 2}'
-  #     model: ${{ matrix.model }}
-  #     calling_job_name: 'test-m4-cluster'
-  #   secrets: inherit
+  single-m4-pro:
+    strategy:
+      matrix:
+        model: ['llama-3.2-1b', 'llama-3.2-3b', 'llama-3.1-8b']
+    uses: ./.github/workflows/bench_job.yml
+    with:
+      config: '{"M4PRO_GPU16_24GB": 1}'
+      model: ${{ matrix.model }}
+      calling_job_name: 'single-m4-pro'
+    secrets: inherit
+
+  two-m4-pro-cluster:
+    strategy:
+      matrix:
+        model: ['llama-3.2-1b', 'llama-3.2-3b', 'llama-3.1-8b']
+    uses: ./.github/workflows/bench_job.yml
+    with:
+      config: '{"M4PRO_GPU16_24GB": 2}'
+      model: ${{ matrix.model }}
+      calling_job_name: 'two-m4-pro-cluster'
+    secrets: inherit
 
   three-m4-pro-cluster:
     strategy:
