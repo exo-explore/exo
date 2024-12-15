@@ -69,6 +69,7 @@ parser.add_argument("--default-temp", type=float, help="Default token sampling t
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
+parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -100,8 +101,9 @@ if DEBUG >= 0:
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
-# Convert node-id-filter to list if provided
+# Convert node-id-filter and interface-type-filter to lists if provided
 allowed_node_ids = args.node_id_filter.split(',') if args.node_id_filter else None
+allowed_interface_types = args.interface_type_filter.split(',') if args.interface_type_filter else None
 
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(
@@ -111,7 +113,8 @@ if args.discovery_module == "udp":
     args.broadcast_port,
     lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
     discovery_timeout=args.discovery_timeout,
-    allowed_node_ids=allowed_node_ids
+    allowed_node_ids=allowed_node_ids,
+    allowed_interface_types=allowed_interface_types
   )
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(
@@ -149,7 +152,7 @@ api = ChatGPTAPI(
   default_model=args.default_model
 )
 node.on_token.register("update_topology_viz").on_next(
-  lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
+  lambda req_id, token, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode([token])) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
 
 def preemptively_start_download(request_id: str, opaque_status: str):

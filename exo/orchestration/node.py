@@ -47,7 +47,7 @@ class Node:
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
     self.default_sample_temperature = default_sample_temperature
-    self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
+    self._on_token = AsyncCallbackSystem[str, Tuple[str, int, bool]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
@@ -122,10 +122,9 @@ class Node:
       self.buffered_token_output[request_id][0].append(token.item())
       is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
       if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
-      asyncio.create_task(self.broadcast_result(request_id, *self.buffered_token_output[request_id]))
       forward = token.reshape(1, -1)
-      self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
-      asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))
+      self.trigger_on_token_callbacks(request_id, token.item(), is_finished)
+      asyncio.create_task(self.broadcast_new_token(request_id, token.item(), is_finished))
     else:
       forward = result
 
@@ -549,11 +548,6 @@ class Node:
         print(f"Error collecting topology: {e}")
         traceback.print_exc()
 
-  async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
-    if request_id not in self.buffered_token_output:
-      return None, False
-    return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
-
   async def collect_topology(self, visited: set[str], max_depth: int = 4) -> Topology:
     next_topology = Topology()
     next_topology.update_node(self.id, self.device_capabilities)
@@ -590,28 +584,28 @@ class Node:
     return self.topology
 
   @property
-  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
+  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, int, bool]]:
     return self._on_token
 
   @property
   def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
     return self._on_opaque_status
 
-  def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
-    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} num_tokens={len(tokens)} {is_finished=}")
-    self.on_token.trigger_all(request_id, tokens, is_finished)
+  def trigger_on_token_callbacks(self, request_id: str, token: int, is_finished: bool) -> None:
+    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} {token=} {is_finished=}")
+    self.on_token.trigger_all(request_id, token, is_finished)
   
-  async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
-    async def send_result_to_peer(peer):
+  async def broadcast_new_token(self, request_id: str, token: int, is_finished: bool) -> None:
+    async def send_new_token_to_peer(peer):
       try:
-        await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=15.0)
+        await asyncio.wait_for(peer.send_new_token(request_id, token, is_finished), timeout=15.0)
       except asyncio.TimeoutError:
-        print(f"Timeout broadcasting result to {peer.id()}")
+        print(f"Timeout broadcasting new token to {peer.id()}")
       except Exception as e:
-        print(f"Error broadcasting result to {peer.id()}: {e}")
+        print(f"Error broadcasting new token to {peer.id()}: {e}")
         traceback.print_exc()
 
-    await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
+    await asyncio.gather(*[send_new_token_to_peer(peer) for peer in self.peers], return_exceptions=True)
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
     if DEBUG >= 8: print(f"Broadcasting opaque status: {request_id=} {status=}")

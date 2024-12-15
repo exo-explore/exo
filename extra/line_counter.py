@@ -74,9 +74,9 @@ def gen_diff(table_old, table_new):
 
 def create_json_report(table, is_diff=False):
     timestamp = datetime.now(timezone.utc).isoformat()
-    commit_sha = os.environ.get('CIRCLE_SHA1', 'unknown')
-    branch = os.environ.get('CIRCLE_BRANCH', 'unknown')
-    pr_number = os.environ.get('CIRCLE_PR_NUMBER', '')
+    commit_sha = os.environ.get('GITHUB_SHA', 'unknown')
+    branch = os.environ.get('GITHUB_REF_NAME', 'unknown')
+    pr_number = os.environ.get('GITHUB_EVENT_NUMBER', '')
 
     if is_diff:
         files = [{
