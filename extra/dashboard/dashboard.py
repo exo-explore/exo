@@ -321,41 +321,59 @@ def update_graphs(n, previous_data):
     commits = [d['commit'] for d in data]
     run_ids = [d['run_id'] for d in data]
 
+    # Create a list of unique branches for this config
+    branches = list(set(d['branch'] for d in data))
+
     # Create subplot with 2 columns
     fig = make_subplots(rows=1, cols=2,
                        subplot_titles=('Performance Over Time', 'Generation TPS Distribution'),
                        column_widths=[0.7, 0.3])
 
-    # Time series plot (left)
-    fig.add_trace(go.Scatter(
-      x=timestamps,
-      y=generation_tps,
-      name='Generation TPS',
-      mode='lines+markers',
-      hovertemplate='Commit: %{text}<br>TPS: %{y}<extra></extra>',
-      text=commits,
-      customdata=run_ids,
-      line=dict(color='#2196F3', width=2),
-      marker=dict(color='#2196F3')
-    ), row=1, col=1)
+    # Generate a color for each branch
+    colors = px.colors.qualitative.Set1[:len(branches)]
+    branch_colors = dict(zip(branches, colors))
 
-    # Calculate statistics
+    # Time series plot (left) - separate line for each branch
+    for branch in branches:
+        branch_data = [d for d in data if d['branch'] == branch]
+        branch_timestamps = [d['timestamp'] for d in branch_data]
+        branch_generation_tps = [d['generation_tps'] for d in branch_data]
+        branch_commits = [d['commit'] for d in branch_data]
+        branch_run_ids = [d['run_id'] for d in branch_data]
+
+        fig.add_trace(go.Scatter(
+            x=branch_timestamps,
+            y=branch_generation_tps,
+            name=f'{branch}',
+            mode='lines+markers',
+            hovertemplate='Branch: %{text}<br>Commit: %{customdata}<br>TPS: %{y}<extra></extra>',
+            text=[branch] * len(branch_timestamps),
+            customdata=branch_commits,
+            line=dict(color=branch_colors[branch], width=2),
+            marker=dict(color=branch_colors[branch])
+        ), row=1, col=1)
+
+    # Histogram plot (right) - stacked histogram by branch
+    for branch in branches:
+        branch_data = [d for d in data if d['branch'] == branch]
+        branch_generation_tps = [d['generation_tps'] for d in branch_data]
+
+        fig.add_trace(go.Histogram(
+            x=branch_generation_tps,
+            name=f'{branch}',
+            nbinsx=10,
+            marker=dict(color=branch_colors[branch]),
+            opacity=0.75
+        ), row=1, col=2)
+
+    # Calculate statistics for all data
     gen_tps_array = np.array(generation_tps)
     stats = {
-      'Mean': np.mean(gen_tps_array),
-      'Std Dev': np.std(gen_tps_array),
-      'Min': np.min(gen_tps_array),
-      'Max': np.max(gen_tps_array)
+        'Mean': np.mean(gen_tps_array),
+        'Std Dev': np.std(gen_tps_array),
+        'Min': np.min(gen_tps_array),
+        'Max': np.max(gen_tps_array)
     }
-
-    # Histogram plot (right)
-    fig.add_trace(go.Histogram(
-      x=generation_tps,
-      name='Generation TPS Distribution',
-      nbinsx=10,
-      showlegend=False,
-      marker=dict(color='#2196F3')
-    ), row=1, col=2)
 
     # Add statistics as annotations
     stats_text = '<br>'.join([f'{k}: {v:.2f}' for k, v in stats.items()])
