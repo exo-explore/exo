@@ -66,6 +66,6 @@ class ManualDiscovery(Discovery):
               pass
         except Exception as e:
           if DEBUG_DISCOVERY >= 2: print(f"Exception occured when attempting to add {peer_id=}: {e}")
-      await asyncio.sleep(1.0)
+      await asyncio.sleep(5.0)
 
       if DEBUG_DISCOVERY >= 2: print(f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}")

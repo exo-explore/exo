@@ -3,8 +3,8 @@ syntax = "proto3";
 package node_service;
 
 service NodeService {
-  rpc SendPrompt (PromptRequest) returns (Tensor) {}
-  rpc SendTensor (TensorRequest) returns (Tensor) {}
+  rpc SendPrompt (PromptRequest) returns (Empty) {}
+  rpc SendTensor (TensorRequest) returns (Empty) {}
   rpc SendExample (ExampleRequest) returns (Loss) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
   rpc SendNewToken (SendNewTokenRequest) returns (Empty) {}

@@ -107,6 +107,8 @@ class Node:
   def get_topology_inference_engines(self) -> List[List[str]]:
     return self.topology_inference_engines_pool
   
+  token_count = 0
+  first_token_time = 0
   async def process_inference_result(
     self,
     shard,
@@ -116,7 +118,14 @@ class Node:
     if request_id not in self.buffered_token_output:
       self.buffered_token_output[request_id] = ([], False)
     is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+    
     if shard.is_last_layer() and not is_finished:
+      self.token_count += 1
+      if self.token_count == 1:
+        self.first_token_time = time.perf_counter_ns()
+      if self.token_count % 20 == 0:
+        print(f"[{request_id}] TPS: {self.token_count / ((time.perf_counter_ns() - self.first_token_time) / 1e9)}")
+
       token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
       await self.inference_engine.ensure_shard(shard)
       self.buffered_token_output[request_id][0].append(token.item())
@@ -142,60 +151,29 @@ class Node:
     base_shard: Shard,
     prompt: str,
     request_id: Optional[str] = None,
-  ) -> Optional[np.ndarray]:
+  ) -> None:
     shard = self.get_current_shard(base_shard)
-    asyncio.create_task(
-      self.broadcast_opaque_status(
-        request_id,
-        json.dumps({
-          "type": "node_status",
-          "node_id": self.id,
-          "status": "start_process_prompt",
-          "base_shard": base_shard.to_dict(),
-          "shard": shard.to_dict(),
-          "prompt": prompt,
-          "request_id": request_id,
-        }),
-      )
-    )
     start_time = time.perf_counter_ns()
-    resp = await self._process_prompt(base_shard, prompt, request_id)
+    await self._process_prompt(base_shard, prompt, request_id)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
-    asyncio.create_task(
-      self.broadcast_opaque_status(
-        request_id,
-        json.dumps({
-          "type": "node_status",
-          "node_id": self.id,
-          "status": "end_process_prompt",
-          "base_shard": base_shard.to_dict(),
-          "shard": shard.to_dict(),
-          "prompt": prompt,
-          "request_id": request_id,
-          "elapsed_time_ns": elapsed_time_ns,
-          "result_size": resp.size if resp is not None else 0,
-        }),
-      )
-    )
-    return resp
+    if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {elapsed_time_ns=}")
 
   async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
     shard = self.get_current_shard(base_shard)
-
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=}")
+
     if not shard.is_first_layer():
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
       self.outstanding_requests[request_id] = "waiting"
-      resp = await self.forward_prompt(shard, prompt, request_id, 0)
+      await self.forward_prompt(shard, prompt, request_id, 0)
       return None
-    else:
-      self.outstanding_requests[request_id] = "processing"
-      result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
-      ret = await self.process_inference_result(shard, result, request_id)
-      return result
+
+    self.outstanding_requests[request_id] = "processing"
+    result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
+    await self.process_inference_result(shard, result, request_id)
 
   async def enqueue_example(
     self,
@@ -339,7 +317,7 @@ class Node:
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
-  ) -> Optional[np.ndarray]:
+  ) -> None:
     shard = self.get_current_shard(base_shard)
     asyncio.create_task(
       self.broadcast_opaque_status(
@@ -357,7 +335,7 @@ class Node:
       )
     )
     start_time = time.perf_counter_ns()
-    resp = await self._process_tensor(shard, tensor, request_id)
+    await self._process_tensor(shard, tensor, request_id)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     asyncio.create_task(
@@ -371,18 +349,16 @@ class Node:
           "shard": shard.to_dict(),
           "request_id": request_id,
           "elapsed_time_ns": elapsed_time_ns,
-          "result_size": resp.size if resp is not None else 0,
         }),
       )
     )
-    return resp
 
   async def _process_tensor(
     self,
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
-  ) -> Optional[np.ndarray]:
+  ) -> None:
     if request_id is None:
       request_id = str(uuid.uuid4())
     shard = self.get_current_shard(base_shard)
@@ -391,13 +367,11 @@ class Node:
     try:
       self.outstanding_requests[request_id] = "processing"
       result = await self.inference_engine.infer_tensor(request_id, shard, tensor)
-      ret = await self.process_inference_result(shard, result, request_id) 
-      return ret
+      await self.process_inference_result(shard, result, request_id) 
     except Exception as e:
       self.outstanding_requests.pop(request_id)
       print(f"Error processing tensor for shard {shard}: {e}")
       traceback.print_exc()
-      return None
   
   async def forward_example(
     self,
@@ -621,7 +595,7 @@ class Node:
 
     await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)
     # in the case of opaque status, we also want to receive our own opaque statuses
-    self.on_opaque_status.trigger_all(request_id, status)
+    # self.on_opaque_status.trigger_all(request_id, status)
 
   @property
   def current_topology(self) -> Topology:

@@ -50,10 +50,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     )
     prompt = request.prompt
     request_id = request.request_id
-    result = await self.node.process_prompt(shard, prompt, request_id)
-    if DEBUG >= 5: print(f"SendPrompt {shard=} {prompt=} {request_id=} result: {result}")
-    tensor_data = result.tobytes() if result is not None else None
-    return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
+    await self.node.process_prompt(shard, prompt, request_id)
+    if DEBUG >= 5: print(f"SendPrompt {shard=} {prompt=} {request_id=}")
+    return node_service_pb2.Empty()
 
   async def SendTensor(self, request, context):
     shard = Shard(
@@ -64,11 +63,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     )
     tensor = np.frombuffer(request.tensor.tensor_data, dtype=np.dtype(request.tensor.dtype)).reshape(request.tensor.shape)
     request_id = request.request_id
-
-    result = await self.node.process_tensor(shard, tensor, request_id)
-    if DEBUG >= 5: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
-    tensor_data = result.tobytes() if result is not None else None
-    return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
+    await self.node.process_tensor(shard, tensor, request_id)
+    if DEBUG >= 5: print(f"SendTensor tensor {shard=} {tensor=} {request_id=}")
+    return node_service_pb2.Empty()
   
   async def SendExample(self, request, context):
     shard = Shard(

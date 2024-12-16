@@ -150,9 +150,9 @@ api = ChatGPTAPI(
   on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None,
   default_model=args.default_model
 )
-node.on_token.register("update_topology_viz").on_next(
-  lambda req_id, token, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode([token])) if topology_viz and hasattr(inference_engine, "tokenizer") else None
-)
+# node.on_token.register("update_topology_viz").on_next(
+#   lambda req_id, token, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode([token])) if topology_viz and hasattr(inference_engine, "tokenizer") else None
+# )
 
 def preemptively_start_download(request_id: str, opaque_status: str):
   try:
@@ -200,7 +200,11 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     print(f"Processing prompt: {prompt}")
     await node.process_prompt(shard, prompt, request_id=request_id)
 
-    _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
+    tokens = []
+    def on_token(_request_id, _token, _is_finished):
+      tokens.append(_token)
+      return _request_id == request_id and _is_finished
+    await callback.wait(on_token, timeout=300)
 
     print("\nGenerated response:")
     print(tokenizer.decode(tokens))

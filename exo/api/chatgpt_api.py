@@ -21,6 +21,7 @@ from exo.download.hf.hf_shard_download import HFShardDownloader
 import shutil
 from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
 from exo.apputil import create_animation_mp4
+from collections import defaultdict
 
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
@@ -160,6 +161,11 @@ class ChatGPTAPI:
     self.prev_token_lens: Dict[str, int] = {}
     self.stream_tasks: Dict[str, asyncio.Task] = {}
     self.default_model = default_model or "llama-3.2-1b"
+    self.token_queues = defaultdict(asyncio.Queue)
+
+    # Get the callback system and register our handler
+    self.token_callback = node.on_token.register("chatgpt-api-token-handler")
+    self.token_callback.on_next(lambda _request_id, token, is_finished: asyncio.create_task(self.handle_token(_request_id, token, is_finished)))
 
     cors = aiohttp_cors.setup(self.app)
     cors_options = aiohttp_cors.ResourceOptions(
@@ -346,9 +352,6 @@ class ChatGPTAPI:
     #   request_id = str(uuid.uuid4())
     #   self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
 
-    callback_id = f"chatgpt-api-wait-response-{request_id}"
-    callback = self.node.on_token.register(callback_id)
-
     if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=}")
 
     try:
@@ -367,53 +370,63 @@ class ChatGPTAPI:
         )
         await response.prepare(request)
 
-        async def stream_result(_request_id: str, token: int, is_finished: bool):
-          finish_reason = None
-          eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer,
-                                                                                                                             AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
-          if token == eos_token_id:
-            if is_finished:
-              finish_reason = "stop"
-          if is_finished and not finish_reason:
-            finish_reason = "length"
+        try:
+          # Stream tokens while waiting for inference to complete
+          while True:
+            token, is_finished = await asyncio.wait_for(
+              self.token_queues[request_id].get(),
+              timeout=self.response_timeout
+            )
 
-          completion = generate_completion(
-            chat_request,
-            tokenizer,
-            prompt,
-            request_id,
-            [token],
-            stream,
-            finish_reason,
-            "chat.completion",
-          )
-          if DEBUG >= 2: print(f"Streaming completion: {completion}")
-          try:
+            finish_reason = None
+            eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") else getattr(tokenizer, "eos_token_id", None)
+
+            if token == eos_token_id:
+              if is_finished:
+                finish_reason = "stop"
+            if is_finished and not finish_reason:
+              finish_reason = "length"
+
+            completion = generate_completion(
+              chat_request,
+              tokenizer,
+              prompt,
+              request_id,
+              [token],
+              stream,
+              finish_reason,
+              "chat.completion",
+            )
+
             await response.write(f"data: {json.dumps(completion)}\n\n".encode())
-          except Exception as e:
-            if DEBUG >= 2: print(f"Error streaming completion: {e}")
-            if DEBUG >= 2: traceback.print_exc()
 
-        def on_result(_request_id: str, token: int, is_finished: bool):
-          if _request_id == request_id: self.stream_tasks[_request_id] = asyncio.create_task(stream_result(_request_id, token, is_finished))
+            if is_finished:
+              break
 
-          return _request_id == request_id and is_finished
+          await response.write_eof()
+          return response
 
-        _, token, _ = await callback.wait(on_result, timeout=self.response_timeout)
-        if request_id in self.stream_tasks:  # in case there is still a stream task running, wait for it to complete
-          if DEBUG >= 2: print("Pending stream task. Waiting for stream task to complete.")
-          try:
-            await asyncio.wait_for(self.stream_tasks[request_id], timeout=30)
-          except asyncio.TimeoutError:
-            print("WARNING: Stream task timed out. This should not happen.")
-        await response.write_eof()
-        return response
+        except asyncio.TimeoutError:
+          return web.json_response({"detail": "Response generation timed out"}, status=408)
+
+        except Exception as e:
+          if DEBUG >= 2: traceback.print_exc()
+          return web.json_response(
+            {"detail": f"Error processing prompt: {str(e)}"},
+            status=500
+          )
+
+        finally:
+          # Clean up the queue for this request
+          if request_id in self.token_queues:
+            del self.token_queues[request_id]
       else:
-        _, token, _ = await callback.wait(
-          lambda _request_id, token, is_finished: _request_id == request_id and is_finished,
-          timeout=self.response_timeout,
-        )
-
+        tokens = []
+        while True:
+          token, is_finished = await asyncio.wait_for(self.token_queues[request_id].get(), timeout=self.response_timeout)
+          tokens.append(token)
+          if is_finished:
+            break
         finish_reason = "length"
         eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if isinstance(getattr(tokenizer, "_tokenizer", None), AutoTokenizer) else tokenizer.eos_token_id
         if DEBUG >= 2: print(f"Checking if end of tokens result {token=} is {eos_token_id=}")
@@ -426,9 +439,6 @@ class ChatGPTAPI:
     except Exception as e:
       if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
-    finally:
-      deregistered_callback = self.node.on_token.deregister(callback_id)
-      if DEBUG >= 2: print(f"Deregister {callback_id=} {deregistered_callback=}")
 
   async def handle_delete_model(self, request):
     try:
@@ -565,6 +575,9 @@ class ChatGPTAPI:
         {"detail": f"Error getting topology: {str(e)}"},
         status=500
       )
+
+  async def handle_token(self, request_id: str, token: int, is_finished: bool):
+    await self.token_queues[request_id].put((token, is_finished))
 
   async def run(self, host: str = "0.0.0.0", port: int = 52415):
     runner = web.AppRunner(self.app)
