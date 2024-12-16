@@ -16,7 +16,9 @@ from exo.models import model_cards, get_repo
 import aiohttp
 from aiofiles import os as aios
 
-from exo.localmodel.lh_helpers import get_exo_home
+from exo.localmodel.lh_helpers import (
+  get_exo_home, get_lh_weight_map, fetch_lh_file_list, download_model_dir
+)
 
 class HFShardDownloader(ShardDownloader):
   def __init__(self, quick_check: bool = False, max_parallel_downloads: int = 4):
@@ -40,7 +42,7 @@ class HFShardDownloader(ShardDownloader):
       if 'Local' in shard.model_id:
         model_name = shard.model_id.split('/')[1]
         snapshots_dir = Path(get_exo_home()/model_name)
-      else:
+      else: # HF model
         snapshots_dir = repo_root/"snapshots"
       
       if snapshots_dir.exists():
@@ -86,11 +88,16 @@ class HFShardDownloader(ShardDownloader):
   async def _download_shard(self, shard: Shard, repo_name: str) -> Path:
     async def wrapped_progress_callback(event: RepoProgressEvent):
       self._on_progress.trigger_all(shard, event)
-
-    weight_map = await get_weight_map(repo_name)
-    allow_patterns = get_allow_patterns(weight_map, shard)
-
-    return await download_repo_files(repo_name, progress_callback=wrapped_progress_callback, allow_patterns=allow_patterns, max_parallel_downloads=self.max_parallel_downloads)
+    
+    if 'Local' in repo_name: 
+      weight_map = await get_lh_weight_map(repo_name)
+      allow_patterns = get_allow_patterns(weight_map, shard)
+      return await download_model_dir(repo_name, progress_callback=wrapped_progress_callback, allow_patterns=allow_patterns, max_parallel_downloads=self.max_parallel_downloads)
+    else: # HF
+      weight_map = await get_weight_map(repo_name)
+      allow_patterns = get_allow_patterns(weight_map, shard)
+      return await download_repo_files(repo_name, progress_callback=wrapped_progress_callback, allow_patterns=allow_patterns, max_parallel_downloads=self.max_parallel_downloads)
+    
 
   @property
   def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
@@ -125,8 +132,13 @@ class HFShardDownloader(ShardDownloader):
       total_bytes = 0
       downloaded_bytes = 0
 
-      async with aiohttp.ClientSession() as session:
-        file_list = await fetch_file_list(session, self.current_repo_id, self.revision)
+      conn = aiohttp.TCPConnector(limit=100)
+      async with aiohttp.ClientSession(connector=conn) as session:
+        if self.current_repo_id.startswith("Local"):
+          file_list = await fetch_lh_file_list(session, self.current_repo_id)
+        else:
+          file_list = await fetch_file_list(session, self.current_repo_id, self.revision)
+        
         relevant_files = list(
             filter_repo_objects(
                 file_list, allow_patterns=patterns, key=lambda x: x["path"]))

@@ -19,16 +19,15 @@ from exo.inference.shard import Shard
 import aiofiles
 from aiofiles import os as aios
 
+import exo.main as exo
+# remove function : resolve_revision_to_commit_hash
+
 T = TypeVar("T")
 # Ori: get_local_snapshot_dir
-async def get_local_model_dir(repo_id: str, revision: str = "main") -> Optional[Path]:
-  refs_dir = get_repo_root(repo_id)/"refs"
-  refs_file = refs_dir/revision
-  if await aios.path.exists(refs_file):
-    async with aiofiles.open(refs_file, 'r') as f:
-      commit_hash = (await f.read()).strip()
-      snapshot_dir = get_repo_root(repo_id)/"snapshots"/commit_hash
-      return snapshot_dir
+async def get_local_model_dir(repo_id: str) -> Optional[Path]:
+  refs_dir = get_repo_root(repo_id)
+  if os.path.exists(refs_dir):
+      return refs_dir
   return None
 
 
@@ -73,10 +72,10 @@ def _add_wildcard_to_directories(pattern: str) -> str:
     return pattern + "*"
   return pattern
 
-
-def get_hf_endpoint() -> str:
-    #need http ip address 
-  return os.environ.get('HF_ENDPOINT', "http://huggingface.co")
+# Ori: get_hf_endpoint
+def get_lh_endpoint() -> str:
+  # http://<local_model_ip>:52525
+  return exo.local_model_api_endpoints[0]
 
 
 def get_exo_home() -> Path: # Ori: get_hf_home
@@ -98,7 +97,7 @@ async def get_lh_token(): # Ori: get_hf_token
 
 async def get_auth_headers():
   """Get/Custom authentication headers if a token is available."""
-  token = await get_hf_token()
+  token = await get_lh_token()
   if token:
     # custom auth header
     return {"Authorization": f"Bearer {token}"}
@@ -107,8 +106,8 @@ async def get_auth_headers():
 
 def get_repo_root(model_id: str) -> Path:
   """Get the model directory for a given model ID."""
-  sanitized_model_id = str(model_id).split("/")[-1]
-  return get_exo_home()/f"{sanitized_repo_id}"
+  sanitized_model_name = str(model_id).split("/")[-1]
+  return get_exo_home()/f"{sanitized_model_name}"
 
 async def move_models_to_exo(seed_dir: Union[str, Path]): # Ori: move_models_to_hf
   """Move model in resources folder of app to .cache/exo/"""
@@ -125,26 +124,35 @@ async def move_models_to_exo(seed_dir: Union[str, Path]): # Ori: move_models_to_
   
   print("Done Move")
 
-async def fetch_file_list(session, repo_id, revision, path=""):
-  api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
-  url = f"{api_url}/{path}" if path else api_url
-
+# Ori: fetch_file_list
+@retry(
+  stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=60)
+)
+async def fetch_lh_file_list(session, repo_id, path=""):
+  model_name = repo_id.split("/")[-1]
+  if path :
+    url = f"{get_lh_endpoint()}/models/{model_name}/{path}/list"   
+  else:
+    url = f"{get_lh_endpoint()}/models/{model_name}/list"
+  
   headers = await get_auth_headers()
-  async with session.get(url, headers=headers) as response:
+
+  async with session.get(url, headers=headers, timeout=10) as response:
     if response.status == 200:
       data = await response.json()
+      model_datas = data['items']
       files = []
-      for item in data:
+      for item in model_datas:
         if item["type"] == "file":
-          files.append({"path": item["path"], "size": item["size"]})
+          files.append({"path": item["name"], "size": item.get("size", "Unknow")})
         elif item["type"] == "directory":
-          subfiles = await fetch_file_list(session, repo_id, revision, item["path"])
+          subfolders_path = f'{path}/{item["name"]}'
+          subfiles = await fetch_lh_file_list(session, repo_id, subfolders_path)
           files.extend(subfiles)
       return files
     else:
       raise Exception(f"Failed to fetch file list: {response.status}")
-
-
+    
 @retry(
   stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=60), retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, aiohttp.ClientResponseError)), reraise=True
 )
@@ -226,62 +234,24 @@ async def download_file(
           await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, downloaded_size, downloaded_this_session, total_size, speed, eta, status))
     if DEBUG >= 2: print(f"Downloaded: {file_path}")
 
-
-async def resolve_revision_to_commit_hash(repo_id: str, revision: str) -> str:
-  repo_root = get_repo_root(repo_id)
-  refs_dir = repo_root/"refs"
-  refs_file = refs_dir/revision
-
-  # Check if we have a cached commit hash
-  if await aios.path.exists(refs_file):
-    async with aiofiles.open(refs_file, 'r') as f:
-      commit_hash = (await f.read()).strip()
-      if DEBUG >= 2: print(f"Commit hash is already cached at {refs_file}: {commit_hash}")
-      return commit_hash
-
-  # Fetch the commit hash for the given revision
-  async with aiohttp.ClientSession() as session:
-    api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/revision/{revision}"
-    headers = await get_auth_headers()
-    async with session.get(api_url, headers=headers) as response:
-      if response.status != 200:
-        raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
-      revision_info = await response.json()
-      commit_hash = revision_info['sha']
-
-  # Cache the commit hash
-  await aios.makedirs(refs_dir, exist_ok=True)
-  async with aiofiles.open(refs_file, 'w') as f:
-    await f.write(commit_hash)
-
-  return commit_hash
-
-
-async def download_repo_files(
+# Ori: download_repo_files
+async def download_model_dir(
   repo_id: str,
-  revision: str = "main",
+  revision: str = "Local",
   progress_callback: Optional[RepoProgressCallback] = None,
   allow_patterns: Optional[Union[List[str], str]] = None,
   ignore_patterns: Optional[Union[List[str], str]] = None,
   max_parallel_downloads: int = 4
 ) -> Path:
   repo_root = get_repo_root(repo_id)
-  snapshots_dir = repo_root/"snapshots"
   cachedreqs_dir = repo_root/"cachedreqs"
 
   # Ensure directories exist
-  await aios.makedirs(snapshots_dir, exist_ok=True)
+  await aios.makedirs(repo_root, exist_ok=True)
   await aios.makedirs(cachedreqs_dir, exist_ok=True)
 
-  # Resolve revision to commit hash
-  commit_hash = await resolve_revision_to_commit_hash(repo_id, revision)
-
-  # Set up the snapshot directory
-  snapshot_dir = snapshots_dir/commit_hash
-  await aios.makedirs(snapshot_dir, exist_ok=True)
-
   # Set up the cached file list directory
-  cached_file_list_dir = cachedreqs_dir/commit_hash
+  cached_file_list_dir = cachedreqs_dir
   await aios.makedirs(cached_file_list_dir, exist_ok=True)
   cached_file_list_path = cached_file_list_dir/"fetch_file_list.json"
 
@@ -292,23 +262,24 @@ async def download_repo_files(
         file_list = json.loads(await f.read())
       if DEBUG >= 2: print(f"Using cached file list from {cached_file_list_path}")
     else:
-      file_list = await fetch_file_list(session, repo_id, revision)
+      file_list = await fetch_lh_file_list(session, repo_id)
       # Cache the file list
       async with aiofiles.open(cached_file_list_path, 'w') as f:
         await f.write(json.dumps(file_list))
       if DEBUG >= 2: print(f"Cached file list at {cached_file_list_path}")
-
-    filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns, key=lambda x: x["path"]))
-    total_files = len(filtered_file_list)
-    total_bytes = sum(file["size"] for file in filtered_file_list)
+    
+    #filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns, key=lambda x: x["path"]))
+    
+    total_files = len(file_list)
+    total_bytes = sum(file["size"] for file in file_list)
     file_progress: Dict[str, RepoFileProgressEvent] = {
       file["path"]: RepoFileProgressEvent(repo_id, revision, file["path"], 0, 0, file["size"], 0, timedelta(0), "not_started")
-      for file in filtered_file_list
+      for file in file_list
     }
     start_time = datetime.now()
 
     async def download_with_progress(file_info, progress_state):
-      local_path = snapshot_dir/file_info["path"]
+      local_path = repo_root/file_info["path"]
       if await aios.path.exists(local_path) and (await aios.stat(local_path)).st_size == file_info["size"]:
         if DEBUG >= 2: print(f"File already fully downloaded: {file_info['path']}")
         progress_state['completed_files'] += 1
@@ -371,13 +342,13 @@ async def download_repo_files(
       async with semaphore:
         await download_with_progress(file_info, progress_state)
 
-    tasks = [asyncio.create_task(download_with_semaphore(file_info)) for file_info in filtered_file_list]
+    tasks = [asyncio.create_task(download_with_semaphore(file_info)) for file_info in file_list]
     await asyncio.gather(*tasks)
 
-  return snapshot_dir
+  return repo_root
 
-
-async def get_weight_map(repo_id: str, revision: str = "main") -> Optional[Dict[str, str]]:
+# Ori: get_weight_map
+async def get_lh_weight_map(repo_id: str) -> Optional[Dict[str, str]]:
   """
     Retrieve the weight map from the model.safetensors.index.json file.
 
@@ -390,16 +361,14 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Optional[Dict[
     """
 
   # Download the index file
-  await download_repo_files(repo_id=repo_id, revision=revision, allow_patterns="model.safetensors.index.json")
+  await download_model_dir(repo_id=repo_id, allow_patterns="model.safetensors.index.json")
 
   # Check if the file exists
   repo_root = get_repo_root(repo_id)
-  commit_hash = await resolve_revision_to_commit_hash(repo_id, revision)
-  snapshot_dir = repo_root/"snapshots"/commit_hash
-  index_file = next((f for f in await aios.listdir(snapshot_dir) if f.endswith("model.safetensors.index.json")), None)
+  index_file = next((f for f in await aios.listdir(repo_root) if f.endswith("model.safetensors.index.json")), None)
 
   if index_file:
-    index_file_path = snapshot_dir/index_file
+    index_file_path = repo_root/index_file
     if await aios.path.exists(index_file_path):
       async with aiofiles.open(index_file_path, 'r') as f:
         index_data = json.loads(await f.read())

@@ -12,7 +12,7 @@ class LocalModelAPI:
         self.app = web.Application()
         self.cache_dir = os.path.expanduser('~/.cache/exo')
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
-
+    
         # Setup CORS
         cors = aiohttp_cors.setup(self.app)
         cors_options = aiohttp_cors.ResourceOptions(
@@ -24,10 +24,11 @@ class LocalModelAPI:
 
         # Add routes with CORS
         routes = [
+            ('GET', '/health', self.health_check),
             ('GET', '/files/{filename}', self.handle_download_file),
             ('GET', '/files', self.handle_list_files),
             ('GET', '/models', self.handle_list_models),
-            ('GET', '/models/{foldername}/files', self.handle_list_model_files),
+            ('GET', '/models/{foldername:.*}/list', self.handle_list_model_items),
             ('GET', '/models/{model_name}/download', self.handle_model_download)
         ]
 
@@ -133,9 +134,10 @@ class LocalModelAPI:
                 })
         return web.json_response({'models': folders})
 
-    async def handle_list_model_files(self, request):
-        foldername = request.match_info['foldername']
-        folder_path = os.path.join(self.cache_dir, foldername)
+    async def handle_list_model_items(self, request):
+        # Get the full path including potential subfolders from URL
+        path_parts = request.match_info['foldername'].split('/')
+        folder_path = os.path.join(self.cache_dir, *path_parts)
         
         if not os.path.exists(folder_path):
             return web.json_response({"error": "Folder not found"}, status=404)
@@ -143,21 +145,32 @@ class LocalModelAPI:
         if not os.path.isdir(folder_path):
             return web.json_response({"error": "Not a valid folder"}, status=400)
 
-        files = []
-        for root, dirs, filenames in os.walk(folder_path):
-            dirs[:] = [d for d in dirs if not d.startswith('.')]
-            for filename in filenames:
-                if filename.startswith('.'):
-                    continue
-                file_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(file_path, folder_path)
-                files.append({
-                    'name': rel_path,
-                    'size': os.path.getsize(file_path),
-                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+        items = []
+        # List only immediate contents of current directory
+        for entry in os.scandir(folder_path):
+            if entry.name.startswith('.'):
+                continue
+                
+            if entry.is_dir():
+                items.append({
+                    'type': 'directory',
+                    'name': entry.name,
+                    'modified': datetime.fromtimestamp(entry.stat().st_mtime).isoformat()
+                })
+            else:
+                items.append({
+                    'type': 'file',
+                    'name': entry.name,
+                    'size': entry.stat().st_size,
+                    'modified': datetime.fromtimestamp(entry.stat().st_mtime).isoformat()
                 })
         
-        return web.json_response({'files': files})
+        return web.json_response({'items': items})
+
+
+    async def health_check(self, request):
+        """健康检查端点"""
+        return web.Response(text='OK', status=200)
 
     async def run(self, host: str = "0.0.0.0", port: int = 52525):
         runner = web.AppRunner(self.app)

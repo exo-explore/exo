@@ -95,14 +95,13 @@ print(f"Using inference engine: {inference_engine.__class__.__name__} with shard
 exo_home = get_exo_home()
 for folder_path in Path(exo_home).iterdir():
   if folder_path.is_dir():
-    model_path = f"http://{args.node_host}:{args.local_model_api_port}/models/{folder_path.name}"
     model_name = folder_path.name
     config_file_path = Path(folder_path/'config.json')
     if config_file_path.is_file():
       with open(config_file_path, 'r') as file:
         config = json.load(file)
         config_n_layers = config['num_hidden_layers']
-        build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, int(config_n_layers))
+        build_local_model_card(model_name, None, inference_engine.__class__.__name__, int(config_n_layers))
 print(f"Add Local Model Complete!!")
 
 if args.node_port is None:
@@ -193,8 +192,11 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
       
-      if "Local" in current_shard.model_id or os.path.isdir(current_shard.model_id):
+      if os.path.isdir(current_shard.model_id):
         print("Local model detected, skip download")
+        pass
+      elif "Local" in current_shard.model_id:
+        print("Local model detected, http download to other node")
         # borcast download model
         #asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
         pass
@@ -229,15 +231,17 @@ shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name_or_path: str, prompt: str):
   if model_cards.get(model_name_or_path):
     inference_class = inference_engine.__class__.__name__
+    print(f'model_card = {get_repo(model_name_or_path, inference_class)}')
     shard = build_base_shard(model_name_or_path, inference_class)
     if not shard:
       print(f"Error: exo Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
       return
+    print(f'model_id = {get_repo(shard.model_id, inference_class)}')
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   elif os.path.isdir(model_name_or_path):
     model_path = model_name_or_path.rstrip('/')
-    model_config_path = Path(model_path)/'config.json'
     model_name = str(model_path.split('/')[-1])
+    model_config_path = Path(model_path)/'config.json'
 
     if os.path.isfile(model_config_path):
       with open(model_config_path, 'r') as file:

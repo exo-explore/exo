@@ -133,13 +133,18 @@ def build_base_shard(model_id: str, inference_engine_classname: str) -> Optional
     return None
   return Shard(model_id, 0, 0, n_layers)
   
-def build_local_model_card(model_name: str, model_path: str, inference_engine: str, config_n_layers: int) -> None:
+def build_local_model_card(model_name: str, model_path: str|None, inference_engine: str, config_n_layers: int) -> None:
   short_model_name = f"Local/{model_name}"
   pretty_model_name = f"{model_name} (Local)".replace('-', ' ')
+  if model_path is None:
+    model_repo = short_model_name
+  else:
+    model_repo = model_path
+
   model_cards[short_model_name] = {
     "layers": config_n_layers,
     "repo": {
-      inference_engine: model_path
+      inference_engine: model_repo
     },
   }
   pretty_name[short_model_name]=pretty_model_name
