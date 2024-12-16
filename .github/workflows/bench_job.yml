@@ -150,13 +150,17 @@ jobs:
           trap 'kill $PID1' EXIT
 
           echo "Waiting for all nodes to connect..."
-          for i in {1..100}; do
+          for i in {1..20}; do
             echo "Attempt $i: Checking node count..."
             nodes=$(curl -s http://localhost:52415/topology | jq ".nodes | length")
             echo "Current node count: $nodes"
             if [ "$nodes" -eq "${{ strategy.job-total }}" ]; then
               echo "All nodes connected successfully!"
               break
+            fi
+            if [ $i -eq 20 ]; then
+              echo "ERROR: Failed to connect all nodes after 20 attempts. Expected ${{ strategy.job-total }} nodes, but got $nodes"
+              exit 1
             fi
             sleep 5
           done
