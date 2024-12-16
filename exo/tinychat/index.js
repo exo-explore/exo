@@ -39,6 +39,9 @@ document.addEventListener("alpine:init", () => {
     // Add models state alongside existing state
     models: {},
 
+    topology: null,
+    topologyInterval: null,
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -543,6 +546,58 @@ document.addEventListener("alpine:init", () => {
         console.error('Error starting download:', error);
         this.setError(error);
       }
+    },
+
+    async fetchTopology() {
+      try {
+        const response = await fetch(`${this.endpoint}/topology`);
+        if (!response.ok) throw new Error('Failed to fetch topology');
+        return await response.json();
+      } catch (error) {
+        console.error('Topology fetch error:', error);
+        return null;
+      }
+    },
+
+    initTopology() {
+      // Initial fetch
+      this.updateTopology();
+      
+      // Set up periodic updates
+      this.topologyInterval = setInterval(() => this.updateTopology(), 5000);
+      
+      // Cleanup on page unload
+      window.addEventListener('beforeunload', () => {
+        if (this.topologyInterval) {
+          clearInterval(this.topologyInterval);
+        }
+      });
+    },
+
+    async updateTopology() {
+      const topologyData = await this.fetchTopology();
+      if (!topologyData) return;
+      
+      const vizElement = this.$refs.topologyViz;
+      vizElement.innerHTML = ''; // Clear existing visualization
+      
+      // Create nodes from object
+      Object.entries(topologyData.nodes).forEach(([nodeId, node]) => {
+        const nodeElement = document.createElement('div');
+        nodeElement.className = 'topology-node';
+        nodeElement.innerHTML = `
+          <div class="node-info">
+            <span class="status ${nodeId === topologyData.active_node_id ? 'active' : 'inactive'}"></span>
+            <span>${node.model}</span>
+          </div>
+          <div class="node-details">
+            <span>${node.chip}</span>
+            <span>${(node.memory / 1024).toFixed(1)}GB RAM</span>
+            <span>${node.flops.fp32.toFixed(1)} TF</span>
+          </div>
+        `;
+        vizElement.appendChild(nodeElement);
+      });
     }
   }));
 });

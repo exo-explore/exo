@@ -655,3 +655,70 @@ main {
 .model-download-button i {
   font-size: 0.9em;
 }
+
+.topology-section {
+  margin-bottom: 30px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.topology-visualization {
+  min-height: 150px;
+  position: relative;
+  margin-top: 10px;
+}
+
+.topology-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.topology-node {
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.node-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+}
+
+.topology-node .status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.topology-node .status.active {
+  background: #4CAF50;
+}
+
+.topology-node .status.inactive {
+  background: #666;
+}
+
+.node-details {
+  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+.node-details span {
+  display: flex;
+  align-items: center;
+}

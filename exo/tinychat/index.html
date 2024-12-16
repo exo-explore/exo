@@ -26,6 +26,21 @@
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
   <div class="sidebar">
+    <!-- Add topology section -->
+    <div class="topology-section">
+      <h2 class="megrim-regular">Network Topology</h2>
+      <div class="topology-visualization" 
+           x-init="initTopology()"
+           x-ref="topologyViz">
+        <!-- Loading indicator for topology -->
+        <div class="topology-loading" x-show="!topology">
+          <i class="fas fa-spinner fa-spin"></i>
+          <span>Loading topology...</span>
+        </div>
+        <!-- Topology visualization will be rendered here -->
+      </div>
+    </div>
+
     <h2 class="megrim-regular" style="margin-bottom: 20px;">Models</h2>
     
     <!-- Loading indicator -->
