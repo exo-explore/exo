@@ -181,7 +181,7 @@ class Model(nn.Module):
         else:
             self.decoder = nn.Identity()            
 
-    def __call__(self,x, step= 0, cfg_weight: float = 7.5,total_steps=50,conditioning=None,mask=None,residual=None,x_t_prev=None,is_finished=False,is_step_finished=False, image=None, strength=0.7, start_step=None):
+    def __call__(self,x, step= 0, cfg_weight: float = 7.5,total_steps=50,conditioning=None,mask=None,residual=None,x_t_prev=None,is_finished=False,is_step_finished=False, image=None, strength=0.65, start_step=None):
         t, t_prev = self.sampler.current_timestep(step=step, total_steps=total_steps, start_time=start_step)
         is_finished = False
         is_step_finished = False
