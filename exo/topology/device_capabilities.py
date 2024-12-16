@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from exo import DEBUG
 import subprocess
 import psutil
+import asyncio
+from exo.helpers import get_mac_system_info, subprocess_pool
 
 TFLOPS = 1.00
 
@@ -144,11 +146,11 @@ CHIP_FLOPS.update({f"{key} LAPTOP GPU": value for key, value in CHIP_FLOPS.items
 CHIP_FLOPS.update({f"{key} Laptop GPU": value for key, value in CHIP_FLOPS.items()})
 
 
-def device_capabilities() -> DeviceCapabilities:
+async def device_capabilities() -> DeviceCapabilities:
   if psutil.MACOS:
-    return mac_device_capabilities()
+    return await mac_device_capabilities()
   elif psutil.LINUX:
-    return linux_device_capabilities()
+    return await linux_device_capabilities()
   else:
     return DeviceCapabilities(
       model="Unknown Device",
@@ -158,27 +160,18 @@ def device_capabilities() -> DeviceCapabilities:
     )
 
 
-def mac_device_capabilities() -> DeviceCapabilities:
-  # Fetch the model of the Mac using system_profiler
-  model = subprocess.check_output(["system_profiler", "SPHardwareDataType"]).decode("utf-8")
-  model_line = next((line for line in model.split("\n") if "Model Name" in line), None)
-  model_id = model_line.split(": ")[1] if model_line else "Unknown Model"
-  chip_line = next((line for line in model.split("\n") if "Chip" in line), None)
-  chip_id = chip_line.split(": ")[1] if chip_line else "Unknown Chip"
-  memory_line = next((line for line in model.split("\n") if "Memory" in line), None)
-  memory_str = memory_line.split(": ")[1] if memory_line else "Unknown Memory"
-  memory_units = memory_str.split()
-  memory_value = int(memory_units[0])
-  if memory_units[1] == "GB":
-    memory = memory_value*1024
-  else:
-    memory = memory_value
-
-  # Assuming static values for other attributes for demonstration
-  return DeviceCapabilities(model=model_id, chip=chip_id, memory=memory, flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0)))
+async def mac_device_capabilities() -> DeviceCapabilities:
+  model_id, chip_id, memory = await get_mac_system_info()
+  
+  return DeviceCapabilities(
+    model=model_id,
+    chip=chip_id,
+    memory=memory,
+    flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0))
+  )
 
 
-def linux_device_capabilities() -> DeviceCapabilities:
+async def linux_device_capabilities() -> DeviceCapabilities:
   import psutil
   from tinygrad import Device
 

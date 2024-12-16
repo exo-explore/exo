@@ -64,7 +64,7 @@ class UDPDiscovery(Discovery):
     self.cleanup_task = None
 
   async def start(self):
-    self.device_capabilities = device_capabilities()
+    self.device_capabilities = await device_capabilities()
     self.broadcast_task = asyncio.create_task(self.task_broadcast_presence())
     self.listen_task = asyncio.create_task(self.task_listen_for_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())

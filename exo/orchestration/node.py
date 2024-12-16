@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Tuple, Union, Set
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import device_capabilities
+from exo.topology.device_capabilities import device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
@@ -37,7 +37,7 @@ class Node:
     self.partitioning_strategy = partitioning_strategy
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
-    self.device_capabilities = device_capabilities()
+    self.device_capabilities = UNKNOWN_DEVICE_CAPABILITIES
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
@@ -56,6 +56,7 @@ class Node:
     self.outstanding_requests = {}
 
   async def start(self, wait_for_peers: int = 0) -> None:
+    self.device_capabilities = await device_capabilities()
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)
