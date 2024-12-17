@@ -519,8 +519,8 @@ class Node:
       try:
         did_peers_change = await self.update_peers()
         if DEBUG >= 2: print(f"{did_peers_change=}")
+        await self.collect_topology(set())
         if did_peers_change:
-          await self.collect_topology(set())
           await self.select_best_inference_engine()
       except Exception as e:
         print(f"Error collecting topology: {e}")
