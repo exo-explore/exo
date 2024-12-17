@@ -122,6 +122,7 @@ class Node:
     if request_id not in self.buffered_token_output:
       self.buffered_token_output[request_id] = ([], False)
     is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+    await asyncio.sleep(0.1)
     
     if shard.is_last_layer() and not is_finished:
       self.token_count += 1
