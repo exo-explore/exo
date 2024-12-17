@@ -13,6 +13,9 @@ on:
       calling_job_name:
         required: true
         type: string
+      network_interface:
+        required: true
+        type: string
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
@@ -122,7 +125,7 @@ jobs:
           sudo taskpolicy -d default -g default -a -t 0 -l 0 .venv/bin/exo \
             --node-id="${MY_NODE_ID}" \
             --node-id-filter="${ALL_NODE_IDS}" \
-            --interface-type-filter="Ethernet" \
+            --interface-type-filter="${{ inputs.network_interface }}" \
             --disable-tui \
             --max-generate-tokens 250 \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
