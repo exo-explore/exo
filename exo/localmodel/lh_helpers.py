@@ -159,7 +159,8 @@ async def fetch_lh_file_list(session, repo_id, path=""):
 async def download_file(
   session: aiohttp.ClientSession, repo_id: str, revision: str, file_path: str, save_directory: str, progress_callback: Optional[RepoFileProgressCallback] = None, use_range_request: bool = True
 ):
-  base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
+  #base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
+  base_url = f'{get_lh_endpoint()}/models/{repo_id}/download/'
   url = urljoin(base_url, file_path)
   local_path = os.path.join(save_directory, file_path)
 
@@ -316,7 +317,7 @@ async def download_model_dir(
             )
           )
 
-      await download_file(session, repo_id, revision, file_info["path"], snapshot_dir, file_progress_callback)
+      await download_file(session, repo_id, revision, file_info["path"], repo_root, file_progress_callback)
       progress_state['completed_files'] += 1
       file_progress[
         file_info["path"]

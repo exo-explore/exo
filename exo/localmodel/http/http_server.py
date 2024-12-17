@@ -29,7 +29,8 @@ class LocalModelAPI:
             ('GET', '/files', self.handle_list_files),
             ('GET', '/models', self.handle_list_models),
             ('GET', '/models/{foldername:.*}/list', self.handle_list_model_items),
-            ('GET', '/models/{model_name}/download', self.handle_model_download)
+            ('GET', '/models/{model_name}/download', self.handle_model_download),
+            ('GET', '/models/{model_name}/download/{filename:.*}', self.model_file_download)
         ]
 
         for method, path, handler in routes:
@@ -166,7 +167,20 @@ class LocalModelAPI:
                 })
         
         return web.json_response({'items': items})
+    
+    async def model_file_download(self, request):
+        model_name = request.match_info['model_name']
+        filename = request.match_info['filename']
+        
+        full_path = os.path.join(self.cache_dir, model_name, filename)  # Corrected to use 'filename'
+        
+        if not os.path.exists(full_path):
+            return web.json_response({"error": "File not found"}, status=404)
+            
+        if not os.path.isfile(full_path):
+            return web.json_response({"error": "Not a valid file"}, status=400)
 
+        return web.FileResponse(full_path)
 
     async def health_check(self, request):
         """健康检查端点"""

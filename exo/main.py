@@ -74,7 +74,8 @@ parser.add_argument("--default-temp", type=float, help="Default token sampling t
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
-parser.add_argument("--local-model-api-port", type=int, default=52525, help="Local Model API port")
+parser.add_argument("--stored-model-ip", type=str, default="0.0.0.0", help="Stored Local Model IP")
+parser.add_argument("--stored-model-port", type=int, default=52525, help="Local Model API port")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -92,6 +93,7 @@ shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
+print(f"Add Local Model To Model Card：")
 exo_home = get_exo_home()
 for folder_path in Path(exo_home).iterdir():
   if folder_path.is_dir():
@@ -102,7 +104,7 @@ for folder_path in Path(exo_home).iterdir():
         config = json.load(file)
         config_n_layers = config['num_hidden_layers']
         build_local_model_card(model_name, None, inference_engine.__class__.__name__, int(config_n_layers))
-print(f"Add Local Model Complete!!")
+        print(f"- Local/{model_name}")
 
 if args.node_port is None:
   args.node_port = find_available_port(args.node_host) 
@@ -113,12 +115,15 @@ args.node_id = args.node_id or get_or_create_node_id()
 
 if args.node_host == "0.0.0.0":
   chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip, _ in get_all_ip_addresses_and_interfaces()]
-  local_model_api_endpoints = [f"http://{ip}:{args.local_model_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
   web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
 else:
   chatgpt_api_endpoints = [f"http://{args.node_host}:{args.chatgpt_api_port}/v1/chat/completions"]
-  local_model_api_endpoints = [f"http://{args.node_host}:{args.local_model_api_port}"]
   web_chat_urls = [f"http://{args.node_host}:{args.chatgpt_api_port}"]
+
+if args.stored_model_ip == "0.0.0.0":
+  local_model_api_endpoints = [f"http://{ip}:{args.stored_model_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+else:
+  local_model_api_endpoints = [f"http://{args.stored_model_ip}:{args.stored_model_port}"]
 
 if DEBUG >= 0:
   print("Chat interface started:")
@@ -408,7 +413,8 @@ async def main():
     
   else:
     asyncio.create_task(chatgpt_api.run(host=args.node_host, port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
-    asyncio.create_task(local_model_api.run(host=args.node_host, port=args.local_model_api_port))  # Start the local model server as a non-blocking task
+    if any(ip == args.stored_model_ip for ip, _ in get_all_ip_addresses_and_interfaces()):
+      asyncio.create_task(local_model_api.run(host=args.stored_model_ip, port=args.stored_model_port))  # Start the local model server as a non-blocking task
     await asyncio.Event().wait()
   
   if args.wait_for_peers > 0:
