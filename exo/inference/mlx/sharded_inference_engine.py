@@ -5,7 +5,7 @@ from mlx_lm.sample_utils import top_p_sampling, make_sampler
 import mlx.optimizers as optim
 from ..inference_engine import InferenceEngine
 from .sharded_utils import load_shard, get_image_from_str
-from .losses import loss_fns 
+from .losses import loss_fns
 from ..shard import Shard
 from typing import Dict, Optional, Tuple
 from exo.download.shard_download import ShardDownloader
@@ -56,7 +56,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def load_checkpoint(self, shard: Shard, path: str):
     await self.ensure_shard(shard)
     self.model.load_weights(path)
-    
+
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     await self.ensure_shard(shard)
     state = await self.poll_state(request_id)
@@ -102,7 +102,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
     score, gradients = await loop.run_in_executor(self.executor, train_step, x, y, l)
     #print(f"{score=}")
-      
+
     layers = [{k: v["weight"] for k,v in l.items() if 'weight' in v} for l in gradients if l]
     #print(layers[0])
 
@@ -117,7 +117,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard != shard:
       model_shard, self.tokenizer = await load_shard(model_path, shard)
       self.shard = shard
-      self.model = model_shard 
+      self.model = model_shard
       self.caches = OrderedDict()
       self.session = {}
 

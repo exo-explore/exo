@@ -21,6 +21,19 @@ class GRPCPeerHandle(PeerHandle):
     self._device_capabilities = device_capabilities
     self.channel = None
     self.stub = None
+    self.channel_options = [
+      ("grpc.max_metadata_size", 64 * 1024 * 1024),
+      ("grpc.max_receive_message_length", 256 * 1024 * 1024),
+      ("grpc.max_send_message_length", 256 * 1024 * 1024),
+      ("grpc.max_concurrent_streams", 100),
+      ("grpc.http2.min_time_between_pings_ms", 10000),
+      ("grpc.keepalive_time_ms", 20000),
+      ("grpc.keepalive_timeout_ms", 10000),
+      ("grpc.keepalive_permit_without_calls", 1),
+      ("grpc.http2.max_pings_without_data", 0),
+      ("grpc.tcp_nodelay", 1),
+      ("grpc.optimization_target", "throughput"),
+    ]
 
   def id(self) -> str:
     return self._id
@@ -36,11 +49,11 @@ class GRPCPeerHandle(PeerHandle):
 
   async def connect(self):
     if self.channel is None:
-      self.channel = grpc.aio.insecure_channel(self.address, options=[
-        ("grpc.max_metadata_size", 32*1024*1024),
-        ('grpc.max_receive_message_length', 32*1024*1024),
-        ('grpc.max_send_message_length', 32*1024*1024)
-      ])
+      self.channel = grpc.aio.insecure_channel(
+        self.address,
+        options=self.channel_options,
+        compression=grpc.Compression.Gzip
+      )
       self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
     await self.channel.channel_ready()
 
@@ -54,7 +67,13 @@ class GRPCPeerHandle(PeerHandle):
     self.stub = None
 
   async def _ensure_connected(self):
-    if not await self.is_connected(): await asyncio.wait_for(self.connect(), timeout=5)
+    if not await self.is_connected():
+      try:
+        await asyncio.wait_for(self.connect(), timeout=10.0)
+      except asyncio.TimeoutError:
+        if DEBUG >= 2: print(f"Connection timeout for {self._id}@{self.address}")
+        await self.disconnect()
+        raise
 
   async def health_check(self) -> bool:
     try:
