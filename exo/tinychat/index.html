@@ -29,7 +29,7 @@
     <!-- Add topology section -->
     <div class="topology-section">
       <h2 class="megrim-regular">Network Topology</h2>
-      <div class="topology-visualization" 
+      <div class="topology-visualization"
            x-init="initTopology()"
            x-ref="topologyViz">
         <!-- Loading indicator for topology -->
@@ -42,20 +42,20 @@
     </div>
 
     <h2 class="megrim-regular" style="margin-bottom: 20px;">Models</h2>
-    
+
     <!-- Loading indicator -->
     <div class="loading-container" x-show="Object.keys(models).length === 0">
         <i class="fas fa-spinner fa-spin"></i>
         <span>Loading models...</span>
     </div>
-    
+
     <template x-for="(model, key) in models" :key="key">
-        <div class="model-option" 
+        <div class="model-option"
              :class="{ 'selected': cstate.selectedModel === key }"
              @click="cstate.selectedModel = key">
             <div class="model-header">
                 <div class="model-name" x-text="model.name"></div>
-                <button 
+                <button
                     @click.stop="deleteModel(key, model)"
                     class="model-delete-button"
                     x-show="model.download_percentage > 0">
@@ -71,7 +71,7 @@
                         <template x-if="!model.loading && model.download_percentage != null">
                             <span>
                                 <!-- Check if there's an active download for this model -->
-                                <template x-if="downloadProgress?.some(p => 
+                                <template x-if="downloadProgress?.some(p =>
                                     p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
                                 )">
                                     <i class="fas fa-circle-notch fa-spin"></i>
@@ -80,7 +80,7 @@
                             </span>
                         </template>
                         <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
-                            <button 
+                            <button
                                 @click.stop="handleDownload(key)"
                                 class="model-download-button">
                                 <i class="fas fa-download"></i>
@@ -90,22 +90,22 @@
                     </div>
                 </div>
                 <template x-if="model.total_size">
-                    <div class="model-size" x-text="model.total_downloaded ? 
-                        `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` : 
+                    <div class="model-size" x-text="model.total_downloaded ?
+                        `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` :
                         formatBytes(model.total_size)">
                     </div>
                 </template>
             </div>
         </div>
     </template>
-  </div> 
+  </div>
     <!-- Error Toast -->
     <div x-show="errorMessage !== null" x-transition.opacity class="toast">
         <div class="toast-header">
             <span class="toast-error-message" x-text="errorMessage?.basic || ''"></span>
             <div class="toast-header-buttons">
-                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }" 
-                        class="toast-expand-button" 
+                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }"
+                        class="toast-expand-button"
                         x-show="errorMessage?.stack">
                     <span x-text="errorExpanded ? 'Hide Details' : 'Show Details'"></span>
                 </button>
@@ -134,8 +134,8 @@
     " x-show="home === 0" x-transition="">
 <h1 class="title megrim-regular">tinychat</h1>
 <template x-if="histories.length">
-  <button 
-    @click="if(confirm('Are you sure you want to clear all history?')) clearAllHistory();" 
+  <button
+    @click="if(confirm('Are you sure you want to clear all history?')) clearAllHistory();"
     class="clear-history-button">
     <i class="fas fa-trash"></i> Clear All History
   </button>
@@ -177,14 +177,14 @@
 </template>
 </div>
 </div>
-<button 
+<button
     @click="
         home = 0;
         cstate = { time: null, messages: [], selectedModel: cstate.selectedModel };
         time_till_first = 0;
         tokens_per_second = 0;
         total_tokens = 0;
-    " 
+    "
     class="back-button"
     x-show="home === 2">
     <i class="fas fa-arrow-left"></i>
@@ -247,7 +247,7 @@
         <p><strong>Model:</strong> <span x-text="progress.repo_id + '@' + progress.repo_revision"></span></p>
         <p><strong>Status:</strong> <span x-text="progress.status"></span></p>
         <div class="progress-bar-container">
-          <div class="progress-bar" 
+          <div class="progress-bar"
                :class="progress.isComplete ? 'complete' : 'in-progress'"
                :style="`width: ${progress.percentage}%;`">
           </div>
@@ -291,10 +291,10 @@
 <i class="fas fa-times"></i>
 </button>
 </div>
-<textarea 
-    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
+<textarea
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))"
     :placeholder="
-        generating ? 'Generating...' : 
+        generating ? 'Generating...' :
         (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete)) ? 'Download in progress...' :
         'Say something'
     "
@@ -326,9 +326,9 @@
         });
     "
     x-ref="inputForm"></textarea>
-<button 
-    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
-    @click="await handleSend()" 
+<button
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))"
+    @click="await handleSend()"
     class="input-button">
     <i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
 </button>
