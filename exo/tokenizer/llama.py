@@ -20,8 +20,8 @@ class LlamaTokenizer(Tokenizer):
             self.chat_template = tokenizer_config["chat_template"]
             self.bos_token = tokenizer_config["bos_token"]
             self.eos_token = tokenizer_config["eos_token"]
-            self.add_bos_token = bool(tokenizer_config.get("add_bos_token", False))
-            self.add_eos_token = bool(tokenizer_config.get("add_eos_token", False))
+            # self.add_bos_token = tokenizer_config.get("add_bos_token", False) # or tokenizer_data["post_processor"]["single"][0]["SpecialToken"]["id"]
+            # self.add_eos_token = tokenizer_config.get("add_eos_token", False)
 
         self._bos_token_id, self._eos_token_id = self.get_bos_and_eos_ids()
         
@@ -54,10 +54,10 @@ class LlamaTokenizer(Tokenizer):
     def encode(self, text: str, allow_special: bool = True) -> List[int]:
         allowed_special = set(self.special_tokens.keys()) if allow_special else set()
         preprocessed_text = self.encode_chars(text)
-        if self.add_bos_token:
-            preprocessed_text = self.bos_token + preprocessed_text
-        if self.add_eos_token:
-            preprocessed_text = preprocessed_text + self.eos_token
+        # if self.add_bos_token:
+        #     preprocessed_text = self.bos_token + preprocessed_text
+        # if self.add_eos_token:
+        #     preprocessed_text = preprocessed_text + self.eos_token
         return self.encoding.encode(
             preprocessed_text,
             allowed_special=allowed_special,
@@ -92,15 +92,40 @@ class LlamaTokenizer(Tokenizer):
     def eos_token_id(self) -> int:
         return self._eos_token_id
     
-class PostProcessor:
-    def __init__(self, tokenizer_config: Dict[str, Any]):
-        self.add_bos_token = bool(tokenizer_config["add_bos_token"])
-        self.add_eos_token = bool(tokenizer_config["add_eos_token"])
+if __name__ == "__main__":
+    test_strings = [
+        # English with punctuation and numbers
+        "Hello, world! Testing 123...",
+        "This is a test-case with numbers: 42.5%",
+        
+        
+        # Mixed scripts and special cases
+        "Testing emoji: 👋 🌍 😊",
+        "Numbers & symbols: 123 + 456 = 579",
+        
+        # Special whitespace and formatting
+        "Multiple    spaces   test",
+        "New\nline\tand\ttabs",
+        
+        # URLs and technical text
+        "https://www.example.com",
+        "user@email.com",
+        "Python3.9 + TensorFlow2.0",
+        
+        # Mathematical expressions
+        "∑(x²) = 5π + β",
+        
+        # Long concatenated words
+        "SupercalifragilisticexpialidociousAndMore",
+    ]
+    from transformers import AutoTokenizer
+    hf_tokenizer = AutoTokenizer.from_pretrained("mlx-community/Llama-3.2-1B-Instruct-4bit")
+    exo_tokenizer = LlamaTokenizer("/Users/sebnico/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/e42dbdf018e0e870064622c8404d807ab1568631")
 
-    
-    def post_process(self, tokens: List[int]) -> List[int]:
-        if self.add_bos_token:
-            tokens.insert(0, self.bos_token_id)
-        if self.add_eos_token:
-            tokens.append(self.eos_token_id)
-        return tokens
+    # Test each string
+    for test_string in test_strings:
+        hf_tokens = hf_tokenizer.encode(test_string)
+        print(hf_tokens)
+        exo_tokens = exo_tokenizer.encode(test_string)
+        print(exo_tokens)
+        # print(f"{test_string} Success: {hf_tokens == exo_tokens}")
