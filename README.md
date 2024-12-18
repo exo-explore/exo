@@ -91,6 +91,31 @@ pip install -e .
 source install.sh
 ```
 
+### Using Docker
+
+You can also build and run exo using Docker.
+
+#### Build the Docker image
+
+```sh
+docker build -t exo:latest .
+```
+
+#### Run the Docker container
+
+```sh
+docker run -p 52415:52415 exo:latest
+```
+
+### Using Docker Compose
+
+You can use Docker Compose to run exo with multiple services.
+
+#### Build and run the services
+
+```sh
+docker-compose up --build
+```
 
 ### Troubleshooting
 

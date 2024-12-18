@@ -328,6 +328,30 @@ jobs:
       - store_test_results:
           path: test-results
 
+  build_docker_image:
+    docker:
+      - image: circleci/python:3.12
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 20.10.7
+      - run:
+          name: Build Docker image
+          command: |
+            docker build -t exo:latest .
+      - run:
+          name: Tag Docker image
+          command: |
+            docker tag exo:latest your-dockerhub-username/exo:latest
+      - run:
+          name: Login to DockerHub
+          command: |
+            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+      - run:
+          name: Push Docker image
+          command: |
+            docker push your-dockerhub-username/exo:latest
+
 workflows:
   version: 2
   build_and_test:
@@ -344,3 +368,4 @@ workflows:
       - chatgpt_api_integration_test_tinygrad
       - chatgpt_api_integration_test_dummy
       - measure_pip_sizes
+      - build_docker_image
