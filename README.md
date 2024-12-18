@@ -38,7 +38,7 @@ We also welcome contributions from the community. We have a list of bounties in 
 
 ### Wide Model Support
 
-exo supports different models including LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)), Mistral, LlaVA, Qwen and Deepseek.
+exo supports different models including LLaMA ([MLX](exo/inference/mlx/models/llama.py) and [tinygrad](exo/inference/tinygrad/models/llama.py)), Mistral, LlaVA, Qwen, and Deepseek.
 
 ### Dynamic Model Partitioning
 
@@ -100,13 +100,13 @@ source install.sh
 
 - There are a number of things users have empirically found to improve performance on Apple Silicon Macs:
 
-1. Upgrade to the latest version of MacOS 15.
+1. Upgrade to the latest version of macOS Sequoia.
 2. Run `./configure_mlx.sh`. This runs commands to optimize GPU memory allocation on Apple Silicon Macs.
 
 
 ## Documentation
 
-### Example Usage on Multiple MacOS Devices
+### Example Usage on Multiple macOS Devices
 
 #### Device 1:
 
@@ -177,9 +177,9 @@ curl http://localhost:52415/v1/chat/completions \
    }'
 ```
 
-### Example Usage on Multiple Heterogenous Devices (MacOS + Linux)
+### Example Usage on Multiple Heterogenous Devices (macOS + Linux)
 
-#### Device 1 (MacOS):
+#### Device 1 (macOS):
 
 ```sh
 exo
@@ -244,7 +244,7 @@ python3 format.py ./exo
 
 ## Known Issues
 
-- On some versions of MacOS/Python, certificates are not installed properly which can lead to SSL errors (e.g. SSL error with huggingface.co). To fix this, run the Install Certificates command, usually:
+- On some versions of macOS/Python, certificates are not installed properly which can lead to SSL errors (e.g., with huggingface.co). To fix this, run the Install Certificates command, usually:
 
 ```sh
 /Applications/Python 3.x/Install Certificates.command
