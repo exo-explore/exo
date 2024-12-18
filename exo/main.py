@@ -369,9 +369,8 @@ async def main():
     tracer_provider.add_span_processor(span_processor)
   else:
     print("Warning: Could not connect to Jaeger, tracing will be disabled")
-    # Use a no-op span processor if Jaeger is not available
-    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-    tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    # Use a no-op tracer provider instead
+    tracer_provider = trace.NoOpTracerProvider()
   
   # Set the tracer provider
   trace.set_tracer_provider(tracer_provider)
