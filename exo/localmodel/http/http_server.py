@@ -27,9 +27,8 @@ class LocalModelAPI:
             ('GET', '/health', self.health_check),
             ('GET', '/files/{filename}', self.handle_download_file),
             ('GET', '/files', self.handle_list_files),
-            ('GET', '/models', self.handle_list_models),
+            ('GET', '/models', self.handle_list_models), # models list
             ('GET', '/models/{foldername:.*}/list', self.handle_list_model_items),
-            ('GET', '/models/{model_name}/download', self.handle_model_download),
             ('GET', '/models/{model_name}/download/{filename:.*}', self.model_file_download)
         ]
 
@@ -66,60 +65,6 @@ class LocalModelAPI:
                     'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
                 })
         return web.json_response({'files': files})
-
-    async def handle_model_download(self, request):
-        model_name = request.match_info['model_name']
-        chunk_size = 32768  # 32KB chunks for better performance
-        model_path = os.path.join(self.cache_dir, model_name)
-
-        if not os.path.exists(model_path):
-            return web.json_response({"error": "Model not found"}, status=404)
-
-        if not os.path.isdir(model_path):
-            return web.json_response({"error": "Not a valid model directory"}, status=400)
-
-        # Setup streaming response
-        response = web.StreamResponse(
-            status=200,
-            reason='OK',
-            headers={
-                'Content-Type': 'application/octet-stream'
-            }
-        )
-        await response.prepare(request)
-
-        # Walk through directory and stream files
-        for root, _, files in os.walk(model_path):
-            for filename in files:
-                if filename.startswith('.'):
-                    continue
-                    
-                file_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(file_path, model_path)
-                
-                if DEBUG >= 2:
-                    print(f"Streaming file: {rel_path}")
-
-                # Send file metadata
-                metadata = {
-                    'filename': rel_path,
-                    'size': os.path.getsize(file_path)
-                }
-                await response.write(json.dumps(metadata).encode() + b'\n')
-
-                # Stream file content in chunks
-                with open(file_path, 'rb') as f:
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        await response.write(chunk)
-                
-                # Send end of file marker
-                await response.write(b'EOF\n')
-
-        await response.write_eof()
-        return response
 
     async def handle_list_models(self, request):
         folders = []

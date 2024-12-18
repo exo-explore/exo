@@ -132,9 +132,8 @@ class HFShardDownloader(ShardDownloader):
       total_bytes = 0
       downloaded_bytes = 0
 
-      conn = aiohttp.TCPConnector(limit=100)
-      async with aiohttp.ClientSession(connector=conn) as session:
-        if self.current_repo_id.startswith("Local"):
+      async with aiohttp.ClientSession() as session:
+        if self.current_repo_id.startswith("Local"): # 看要不要換 check_agent
           file_list = await fetch_lh_file_list(session, self.current_repo_id)
         else:
           file_list = await fetch_file_list(session, self.current_repo_id, self.revision)
