@@ -123,6 +123,7 @@ class Node:
       context = TraceContext(request_id=request_id or str(uuid.uuid4()), sequence_number=0)
       tracer.set_context(request_id, context)
 
+    is_finished = False
     try:
       with tracer.start_span(
         f"process_inference_result.{self.get_partition_index()}",
@@ -136,9 +137,10 @@ class Node:
       ):
         if request_id not in self.buffered_token_output:
           self.buffered_token_output[request_id] = ([], False)
-        is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
         
-        if shard.is_last_layer() and not is_finished:
+        if shard.is_last_layer():
+          is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+
           # Add span for sampling
           with tracer.start_span(
             "sample_token",
@@ -202,6 +204,7 @@ class Node:
             context.request_span = None
           self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
           self.outstanding_requests.pop(request_id)
+
 
         return np.array(self.buffered_token_output[request_id][0])
     except Exception as e:

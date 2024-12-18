@@ -235,11 +235,23 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     print(f"Processing prompt: {prompt}")
     await node.process_prompt(shard, prompt, request_id=request_id)
 
+    first_token_time = time.time()
     tokens = []
+    i = 0
     def on_token(_request_id, _token, _is_finished):
+      nonlocal i
+      i += 1
+      if i % 20 == 0:
+        print(f"TPS: {i / (time.time() - first_token_time)}")
+
       tokens.append(_token)
       return _request_id == request_id and _is_finished
     await callback.wait(on_token, timeout=300)
+
+    print("=== Stats ===")
+    print(f"Total time: {time.time() - first_token_time}")
+    print(f"Total tokens: {len(tokens)}")
+    print(f"Total tokens per second: {len(tokens) / (time.time() - first_token_time)}")
 
     print("\nGenerated response:")
     print(tokenizer.decode(tokens))

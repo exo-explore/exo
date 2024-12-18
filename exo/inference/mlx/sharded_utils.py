@@ -164,8 +164,8 @@ def load_model_shard(
 
   model.load_weights(list(weights.items()), strict=True)
 
-  if not lazy:
-    mx.eval(model.parameters())
+  # if not lazy:
+  #   mx.eval(model.parameters())
 
   model.eval()
   return model
