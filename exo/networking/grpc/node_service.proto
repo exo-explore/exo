@@ -3,10 +3,10 @@ syntax = "proto3";
 package node_service;
 
 service NodeService {
-  rpc SendPrompt (PromptRequest) returns (Empty) {}
-  rpc SendTensor (TensorRequest) returns (Empty) {}
-  rpc SendExample (ExampleRequest) returns (Loss) {}
-  rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
+  rpc SendPrompt (SendPromptRequest) returns (Empty) {}
+  rpc SendTensor (SendTensorRequest) returns (Empty) {}
+  rpc SendExample (SendExampleRequest) returns (Empty) {}
+  rpc CollectTopology (CollectTopologyRequest) returns (CollectTopologyResponse) {}
   rpc SendNewToken (SendNewTokenRequest) returns (Empty) {}
   rpc SendOpaqueStatus (SendOpaqueStatusRequest) returns (Empty) {}
   rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse) {}
@@ -19,25 +19,30 @@ message Shard {
   int32 n_layers = 4;
 }
 
-message PromptRequest {
+message SendPromptRequest {
   Shard shard = 1;
   string prompt = 2;
-  optional string request_id = 3;
+  string request_id = 3;
+  int32 sequence_number = 4;
+  string trace_parent = 5;
 }
 
-message TensorRequest {
+message SendTensorRequest {
   Shard shard = 1;
   Tensor tensor = 2;
-  optional string request_id = 3;
+  string request_id = 3;
+  int32 sequence_number = 4;
+  string trace_parent = 5;
 }
 
-message ExampleRequest {
+message SendExampleRequest {
   Shard shard = 1;
-  Tensor example = 2;
-  Tensor target = 3;
-  Tensor length = 4;
-  bool train = 5;
-  optional string request_id = 6;
+  bytes example = 2;
+  bytes target = 3;
+  bytes length = 4;
+  string request_id = 5;
+  bool train = 6;
+  string trace_parent = 7;
 }
 
 message Loss {
@@ -56,42 +61,51 @@ message CollectTopologyRequest {
   int32 max_depth = 2;
 }
 
-message Topology {
-  map<string, DeviceCapabilities> nodes = 1;
-  map<string, PeerConnections> peer_graph = 2;
-}
+message CollectTopologyResponse {
+  message DeviceFlops {
+    double fp32 = 1;
+    double fp16 = 2;
+    double int8 = 3;
+  }
 
-message PeerConnection {
-  string to_id = 1;
-  optional string description = 2;
-}
+  message DeviceCapabilities {
+    string model = 1;
+    string chip = 2;
+    int32 memory = 3;
+    DeviceFlops flops = 4;
+  }
 
-message PeerConnections {
-  repeated PeerConnection connections = 1;
-}
+  message PeerConnection {
+    string to_id = 1;
+    optional string description = 2;
+  }
 
-message DeviceFlops {
-  double fp32 = 1;
-  double fp16 = 2;
-  double int8 = 3;
-}
+  message Node {
+    string id = 1;
+    DeviceCapabilities capabilities = 2;
+    repeated PeerConnection connections = 3;
+  }
 
-message DeviceCapabilities {
-  string model = 1;
-  string chip = 2;
-  int32 memory = 3;
-  DeviceFlops flops = 4;
+  message Topology {
+    repeated Node nodes = 1;
+    optional string active_node_id = 2;
+  }
+
+  Topology topology = 1;
 }
 
 message SendNewTokenRequest {
   string request_id = 1;
   int32 token = 2;
   bool is_finished = 3;
+  int32 sequence_number = 4;
+  string trace_parent = 5;
 }
 
 message SendOpaqueStatusRequest {
   string request_id = 1;
   string status = 2;
+  string trace_parent = 3;
 }
 
 message HealthCheckRequest {}

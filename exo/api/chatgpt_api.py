@@ -314,13 +314,13 @@ class ChatGPTAPI:
 
   async def handle_post_chat_completions(self, request):
     data = await request.json()
-    if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
+    if DEBUG >= 2: print(f"[ChatGPTAPI] Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)
     chat_request = parse_chat_request(data, self.default_model)
     if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to default model
       chat_request.model = self.default_model
     if not chat_request.model or chat_request.model not in model_cards:
-      if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
+      if DEBUG >= 1: print(f"[ChatGPTAPI] Invalid model: {chat_request.model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
       chat_request.model = self.default_model
     shard = build_base_shard(chat_request.model, self.inference_engine_classname)
     if not shard:
@@ -331,7 +331,7 @@ class ChatGPTAPI:
       )
 
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
-    if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
+    if DEBUG >= 4: print(f"[ChatGPTAPI] Resolved tokenizer: {tokenizer}")
 
     prompt = build_prompt(tokenizer, chat_request.messages)
     request_id = str(uuid.uuid4())
@@ -340,25 +340,13 @@ class ChatGPTAPI:
         self.on_chat_completion_request(request_id, chat_request, prompt)
       except Exception as e:
         if DEBUG >= 2: traceback.print_exc()
-    # request_id = None
-    # match = self.prompts.find_longest_prefix(prompt)
-    # if match and len(prompt) > len(match[1].prompt):
-    #     if DEBUG >= 2:
-    #       print(f"Prompt for request starts with previous prompt {len(match[1].prompt)} of {len(prompt)}: {match[1].prompt}")
-    #     request_id = match[1].request_id
-    #     self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
-    #     # remove the matching prefix from the prompt
-    #     prompt = prompt[len(match[1].prompt):]
-    # else:
-    #   request_id = str(uuid.uuid4())
-    #   self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
 
-    if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=}")
+    if DEBUG >= 2: print(f"[ChatGPTAPI] Processing prompt: {request_id=} {shard=} {prompt=}")
 
     try:
       await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id))), timeout=self.response_timeout)
 
-      if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
+      if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for response to finish. timeout={self.response_timeout}s")
 
       if stream:
         response = web.StreamResponse(
@@ -374,10 +362,12 @@ class ChatGPTAPI:
         try:
           # Stream tokens while waiting for inference to complete
           while True:
+            if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for token from queue: {request_id=}")
             token, is_finished = await asyncio.wait_for(
               self.token_queues[request_id].get(),
               timeout=self.response_timeout
             )
+            if DEBUG >= 2: print(f"[ChatGPTAPI] Got token from queue: {request_id=} {token=} {is_finished=}")
 
             finish_reason = None
             eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") else getattr(tokenizer, "eos_token_id", None)
@@ -408,10 +398,13 @@ class ChatGPTAPI:
           return response
 
         except asyncio.TimeoutError:
+          if DEBUG >= 2: print(f"[ChatGPTAPI] Timeout waiting for token: {request_id=}")
           return web.json_response({"detail": "Response generation timed out"}, status=408)
 
         except Exception as e:
-          if DEBUG >= 2: traceback.print_exc()
+          if DEBUG >= 2: 
+            print(f"[ChatGPTAPI] Error processing prompt: {e}")
+            traceback.print_exc()
           return web.json_response(
             {"detail": f"Error processing prompt: {str(e)}"},
             status=500
@@ -420,6 +413,7 @@ class ChatGPTAPI:
         finally:
           # Clean up the queue for this request
           if request_id in self.token_queues:
+            if DEBUG >= 2: print(f"[ChatGPTAPI] Cleaning up token queue: {request_id=}")
             del self.token_queues[request_id]
       else:
         tokens = []

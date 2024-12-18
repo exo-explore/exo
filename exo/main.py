@@ -38,6 +38,7 @@ import concurrent.futures
 import socket
 import resource
 import psutil
+import grpc
 
 # Configure uvloop for maximum performance
 def configure_uvloop():
@@ -307,6 +308,61 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
 
 async def main():
   loop = asyncio.get_running_loop()
+
+  # Set up OpenTelemetry
+  from opentelemetry import trace
+  from opentelemetry.sdk.trace import TracerProvider
+  from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+  from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+  from opentelemetry.sdk.resources import Resource
+  
+  # Check if Jaeger is available
+  def check_jaeger_connection():
+    try:
+      # Try to connect to the OTLP gRPC port
+      sock = socket.create_connection(("localhost", 4317), timeout=1)
+      sock.close()
+      return True
+    except (socket.timeout, socket.error):
+      return False
+  
+  # Create and configure the tracer
+  resource = Resource.create({
+    "service.name": "exo-distributed",
+    "service.instance.id": args.node_id
+  })
+  
+  tracer_provider = TracerProvider(resource=resource)
+  
+  if check_jaeger_connection():
+    print("Jaeger connection successful, setting up tracing...")
+    # Configure the OTLP exporter with better defaults for high throughput
+    otlp_exporter = OTLPSpanExporter(
+      endpoint="http://localhost:4317",
+      # Increase timeout to handle larger batches
+      timeout=30.0,
+    )
+    
+    # Configure the BatchSpanProcessor with appropriate batch settings
+    span_processor = BatchSpanProcessor(
+      otlp_exporter,
+      # Reduce export frequency
+      schedule_delay_millis=5000,
+      # Increase max batch size
+      max_export_batch_size=512,
+      # Limit queue size to prevent memory issues
+      max_queue_size=2048,
+    )
+    
+    tracer_provider.add_span_processor(span_processor)
+  else:
+    print("Warning: Could not connect to Jaeger, tracing will be disabled")
+    # Use a no-op span processor if Jaeger is not available
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+    tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+  
+  # Set the tracer provider
+  trace.set_tracer_provider(tracer_provider)
 
   # Check HuggingFace directory permissions
   hf_home, has_read, has_write = get_hf_home(), await has_hf_home_read_access(), await has_hf_home_write_access()
