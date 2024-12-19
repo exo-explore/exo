@@ -207,18 +207,18 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name_or_path: str, prompt: str):
-  if model_cards.get(model_name_or_path):
-    inference_class = inference_engine.__class__.__name__
-    shard = build_base_shard(model_name_or_path, inference_class)
-    if not shard:
-      print(f"Error: exo Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
-      return
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  elif os.path.isdir(model_name_or_path):
-    model_path = model_name_or_path.rstrip('/')
-    model_config_path = Path(model_path)/'config.json'
-    model_name = str(model_path.split('/')[-1])
+  
+  if os.path.isdir(model_name_or_path) or model_name_or_path.startswith("Local/"):
+    if os.path.isdir(model_name_or_path): 
+      model_path = model_name_or_path.rstrip('/')
+      model_name = str(model_path.split('/')[-1])
+    else:
+      model_name = model_name_or_path.split("/")[-1]
+      exo_path = Path(Path.home()/".cache"/"exo")
+      model_path = f'{exo_path}/{model_name}'
 
+    model_config_path = Path(model_path)/'config.json'
+    print(model_config_path)
     if os.path.isfile(model_config_path):
       with open(model_config_path, 'r') as file:
         config = json.load(file)
@@ -229,6 +229,15 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     else:
       print(f"Error: Not Find Local model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
       return
+  
+  elif model_cards.get(model_name_or_path):
+    inference_class = inference_engine.__class__.__name__
+    shard = build_base_shard(model_name_or_path, inference_class)
+    if not shard:
+      print(f"Error: exo Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
+      return
+    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+
   else:
     print(f"Error: Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
     return
