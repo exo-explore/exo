@@ -326,3 +326,28 @@ def is_frozen():
   return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
     or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
     or '__nuitka__' in globals() or getattr(sys, '__compiled__', False)
+
+async def get_mac_system_info() -> Tuple[str, str, int]:
+    """Get Mac system information using system_profiler."""
+    try:
+        output = await asyncio.get_running_loop().run_in_executor(
+            subprocess_pool,
+            lambda: subprocess.check_output(["system_profiler", "SPHardwareDataType"]).decode("utf-8")
+        )
+        
+        model_line = next((line for line in output.split("\n") if "Model Name" in line), None)
+        model_id = model_line.split(": ")[1] if model_line else "Unknown Model"
+        
+        chip_line = next((line for line in output.split("\n") if "Chip" in line), None)
+        chip_id = chip_line.split(": ")[1] if chip_line else "Unknown Chip"
+        
+        memory_line = next((line for line in output.split("\n") if "Memory" in line), None)
+        memory_str = memory_line.split(": ")[1] if memory_line else "Unknown Memory"
+        memory_units = memory_str.split()
+        memory_value = int(memory_units[0])
+        memory = memory_value * 1024 if memory_units[1] == "GB" else memory_value
+        
+        return model_id, chip_id, memory
+    except Exception as e:
+        if DEBUG >= 2: print(f"Error getting Mac system info: {e}")
+        return "Unknown Model", "Unknown Chip", 0

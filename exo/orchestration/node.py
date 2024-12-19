@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Tuple, Union, Set
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import device_capabilities
+from exo.topology.device_capabilities import device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
@@ -16,6 +16,7 @@ from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
+from exo.orchestration.tracing import tracer, TraceContext
 
 class Node:
   def __init__(
@@ -37,7 +38,7 @@ class Node:
     self.partitioning_strategy = partitioning_strategy
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
-    self.device_capabilities = device_capabilities()
+    self.device_capabilities = UNKNOWN_DEVICE_CAPABILITIES
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
@@ -47,7 +48,7 @@ class Node:
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
     self.default_sample_temperature = default_sample_temperature
-    self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
+    self._on_token = AsyncCallbackSystem[str, Tuple[str, int, bool]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
@@ -56,6 +57,7 @@ class Node:
     self.outstanding_requests = {}
 
   async def start(self, wait_for_peers: int = 0) -> None:
+    self.device_capabilities = await device_capabilities()
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)
@@ -70,25 +72,28 @@ class Node:
   def on_node_status(self, request_id, opaque_status):
     try:
       status_data = json.loads(opaque_status)
-      if status_data.get("type", "") == "supported_inference_engines":
+      status_type = status_data.get("type", "")
+      if status_type == "supported_inference_engines":
         node_id = status_data.get("node_id")
         engines = status_data.get("engines", [])
         self.topology_inference_engines_pool.append(engines)
-      if status_data.get("type", "") == "node_status":
+      elif status_type == "node_status":
         if status_data.get("status", "").startswith("start_"):
           self.current_topology.active_node_id = status_data.get("node_id")
         elif status_data.get("status", "").startswith("end_"):
           if status_data.get("node_id") == self.current_topology.active_node_id:
             self.current_topology.active_node_id = None
+
       download_progress = None
-      if status_data.get("type", "") == "download_progress":
+      if status_type == "download_progress":
         if DEBUG >= 8: print(f"Download progress from {status_data.get('node_id')}: {status_data.get('progress')}")
         download_progress = RepoProgressEvent.from_dict(status_data.get('progress'))
         self.node_download_progress[status_data.get('node_id')] = download_progress
+
       if self.topology_viz:
         self.topology_viz.update_visualization(self.topology, self.partitioning_strategy.partition(self.topology), self.id, self.node_download_progress)
     except Exception as e:
-      if DEBUG >= 1: print(f"Error updating visualization: {e}")
+      if DEBUG >= 1: print(f"Error on_node_status: {e}")
       if DEBUG >= 1: traceback.print_exc()
 
   def get_supported_inference_engines(self):
@@ -113,38 +118,113 @@ class Node:
     result: np.ndarray,
     request_id: Optional[str] = None,
   ):
-    if request_id not in self.buffered_token_output:
-      self.buffered_token_output[request_id] = ([], False)
-    is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
-    if shard.is_last_layer() and not is_finished:
-      token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
-      await self.inference_engine.ensure_shard(shard)
-      self.buffered_token_output[request_id][0].append(token.item())
-      is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
-      if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
-      asyncio.create_task(self.broadcast_result(request_id, *self.buffered_token_output[request_id]))
-      forward = token.reshape(1, -1)
-      self.trigger_on_token_callbacks(request_id, self.buffered_token_output[request_id][0], is_finished)
-      asyncio.create_task(self.broadcast_result(request_id, self.buffered_token_output[request_id][0], is_finished))
-    else:
-      forward = result
+    context = tracer.get_context(request_id)
+    if not context:
+      context = TraceContext(request_id=request_id or str(uuid.uuid4()), sequence_number=0)
+      tracer.set_context(request_id, context)
 
-    if is_finished:
-      self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
-      self.outstanding_requests.pop(request_id)
-    else:
-      self.outstanding_requests[request_id] = "waiting"
-      asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1)))
+    is_finished = False
+    try:
+      with tracer.start_span(
+        f"process_inference_result.{self.get_partition_index()}",
+        context,
+        extra_attributes={
+          "partition_index": self.get_partition_index(),
+          "node_id": self.id,
+          "start_layer": shard.start_layer,
+          "end_layer": shard.end_layer
+        }
+      ):
+        if request_id not in self.buffered_token_output:
+          self.buffered_token_output[request_id] = ([], False)
+        
+        if shard.is_last_layer():
+          is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
 
-    return np.array(self.buffered_token_output[request_id][0])
+          # Add span for sampling
+          with tracer.start_span(
+            "sample_token",
+            context,
+            extra_attributes={
+              "temperature": self.default_sample_temperature,
+              "result_shape": str(result.shape)
+            }
+          ):
+            token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
+          
+          # Add span for tensor reshaping
+          with tracer.start_span(
+            "reshape_token",
+            context,
+            extra_attributes={
+              "input_shape": str(token.shape),
+              "target_shape": "(1, -1)"
+            }
+          ):
+            forward = token.reshape(1, -1)
+          
+          # Increment sequence number for next forward pass
+          next_sequence = context.sequence_number + 1
+          # Create new context but preserve request span
+          next_context = TraceContext(
+            request_id=context.request_id, 
+            sequence_number=next_sequence,
+            request_span=context.request_span  # Preserve request span
+          )
+          tracer.set_context(request_id, next_context)
+          
+          # Add span for token processing
+          with tracer.start_span(
+            "process_token",
+            context,
+            extra_attributes={
+              "token_value": token.item(),
+              "sequence_number": context.sequence_number
+            }
+          ):
+            self.buffered_token_output[request_id][0].append(token.item())
+            is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished
+            self.trigger_on_token_callbacks(request_id, token.item(), is_finished)
+            await self.broadcast_new_token(request_id, token.item(), is_finished)
+          
+          if not is_finished:
+            self.outstanding_requests[request_id] = "waiting"
+            asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1)))
+        else:
+          forward = result
+          if not is_finished:
+            self.outstanding_requests[request_id] = "waiting"
+            asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1)))
+
+        if is_finished:
+          # End the request span when generation is complete
+          if context.request_span:
+            context.request_span.set_attribute("total_tokens", len(self.buffered_token_output[request_id][0]))
+            context.request_span.end()
+            context.request_span = None
+          self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+          self.outstanding_requests.pop(request_id)
+
+
+        return np.array(self.buffered_token_output[request_id][0])
+    except Exception as e:
+      if request_id in self.outstanding_requests:
+        self.outstanding_requests.pop(request_id)
+      # End request span on error
+      if context and context.request_span:
+        context.request_span.set_status(Status(StatusCode.ERROR, str(e)))
+        context.request_span.end()
+        context.request_span = None
+      raise
 
   async def process_prompt(
     self,
     base_shard: Shard,
     prompt: str,
     request_id: Optional[str] = None,
-  ) -> Optional[np.ndarray]:
+  ) -> None:
     shard = self.get_current_shard(base_shard)
+    start_time = time.perf_counter_ns()
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -159,8 +239,7 @@ class Node:
         }),
       )
     )
-    start_time = time.perf_counter_ns()
-    resp = await self._process_prompt(base_shard, prompt, request_id)
+    await self._process_prompt(base_shard, prompt, request_id)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     asyncio.create_task(
@@ -175,28 +254,72 @@ class Node:
           "prompt": prompt,
           "request_id": request_id,
           "elapsed_time_ns": elapsed_time_ns,
-          "result_size": resp.size if resp is not None else 0,
         }),
       )
     )
-    return resp
+    if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {elapsed_time_ns=}")
 
   async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
+      
+    # Create or get trace context
+    context = tracer.get_context(request_id)
+    if not context:
+      # Create new context with request span
+      request_span = tracer.tracer.start_span(
+        "request",
+        attributes={
+          "request_id": request_id,
+          "prompt": prompt,
+          "node_id": self.id,
+          "request_type": "process_prompt"
+        }
+      )
+      context = TraceContext(
+        request_id=request_id,
+        sequence_number=0,
+        request_span=request_span,
+        current_span=request_span,
+        trace_parent=tracer.inject_context(request_span)
+      )
+      tracer.set_context(request_id, context)
+      
     shard = self.get_current_shard(base_shard)
-
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=}")
-    if not shard.is_first_layer():
-      if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
-      self.outstanding_requests[request_id] = "waiting"
-      resp = await self.forward_prompt(shard, prompt, request_id, 0)
-      return None
-    else:
+
+    try:
+      if not shard.is_first_layer():
+        if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
+        self.outstanding_requests[request_id] = "waiting"
+        await self.forward_prompt(shard, prompt, request_id, 0)
+        return None
+
       self.outstanding_requests[request_id] = "processing"
-      result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
-      ret = await self.process_inference_result(shard, result, request_id)
-      return result
+      # Add span for prompt inference
+      with tracer.start_span(
+        "infer_prompt",
+        context,
+        extra_attributes={
+          "prompt_length": len(prompt),
+          "shard_layers": f"{shard.start_layer}-{shard.end_layer}"
+        }
+      ):
+        result = await self.inference_engine.infer_prompt(request_id, shard, prompt)
+      
+      # Add span for prompt result processing
+      with tracer.start_span(
+        "process_prompt_result",
+        context,
+        extra_attributes={
+          "result_shape": str(result.shape)
+        }
+      ):
+        await self.process_inference_result(shard, result, request_id)
+    except Exception as e:
+      if context.request_span:
+        context.request_span.set_status(Status(StatusCode.ERROR, str(e)))
+      raise
 
   async def enqueue_example(
     self,
@@ -340,66 +463,54 @@ class Node:
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
-  ) -> Optional[np.ndarray]:
-    shard = self.get_current_shard(base_shard)
-    asyncio.create_task(
-      self.broadcast_opaque_status(
-        request_id,
-        json.dumps({
-          "type": "node_status",
-          "node_id": self.id,
-          "status": "start_process_tensor",
-          "base_shard": base_shard.to_dict(),
-          "shard": shard.to_dict(),
-          "tensor_size": tensor.size,
-          "tensor_shape": tensor.shape,
-          "request_id": request_id,
-        }),
-      )
-    )
-    start_time = time.perf_counter_ns()
-    resp = await self._process_tensor(shard, tensor, request_id)
-    end_time = time.perf_counter_ns()
-    elapsed_time_ns = end_time - start_time
-    asyncio.create_task(
-      self.broadcast_opaque_status(
-        request_id,
-        json.dumps({
-          "type": "node_status",
-          "node_id": self.id,
-          "status": "end_process_tensor",
-          "base_shard": base_shard.to_dict(),
-          "shard": shard.to_dict(),
-          "request_id": request_id,
-          "elapsed_time_ns": elapsed_time_ns,
-          "result_size": resp.size if resp is not None else 0,
-        }),
-      )
-    )
-    return resp
+  ):
+    context = tracer.get_context(request_id)
+    if not context:
+      context = TraceContext(request_id=request_id or str(uuid.uuid4()), sequence_number=0)
+      tracer.set_context(request_id, context)
 
-  async def _process_tensor(
-    self,
-    base_shard: Shard,
-    tensor: np.ndarray,
-    request_id: Optional[str] = None,
-  ) -> Optional[np.ndarray]:
-    if request_id is None:
-      request_id = str(uuid.uuid4())
-    shard = self.get_current_shard(base_shard)
-
-    if DEBUG >= 1: print(f"[{request_id}] process_tensor: {tensor.size=} {tensor.shape=}")
     try:
       self.outstanding_requests[request_id] = "processing"
-      result = await self.inference_engine.infer_tensor(request_id, shard, tensor)
-      ret = await self.process_inference_result(shard, result, request_id) 
-      return ret
+      with tracer.start_span(
+        f"process_tensor.{self.get_partition_index()}",
+        context,
+        extra_attributes={
+          "partition_index": self.get_partition_index(),
+          "node_id": self.id,
+          "start_layer": base_shard.start_layer,
+          "end_layer": base_shard.end_layer,
+          "tensor_shape": str(tensor.shape)
+        }
+      ):
+        # Add span for tensor inference
+        with tracer.start_span(
+          "infer_tensor",
+          context,
+          extra_attributes={
+            "input_shape": str(tensor.shape),
+            "shard_layers": f"{base_shard.start_layer}-{base_shard.end_layer}"
+          }
+        ):
+          result = await self.inference_engine.infer_tensor(request_id, base_shard, tensor)
+        
+        # Add span for inference result processing
+        with tracer.start_span(
+          "process_result",
+          context,
+          extra_attributes={
+            "result_shape": str(result.shape)
+          }
+        ):
+          await self.process_inference_result(base_shard, result, request_id)
     except Exception as e:
-      self.outstanding_requests.pop(request_id)
-      print(f"Error processing tensor for shard {shard}: {e}")
+      if request_id in self.outstanding_requests:
+        self.outstanding_requests.pop(request_id)
+      if context and context.request_span:
+        context.request_span.set_status(Status(StatusCode.ERROR, str(e)))
+      print(f"Error processing tensor for shard {base_shard}: {e}")
       traceback.print_exc()
-      return None
-  
+      raise
+
   async def forward_example(
     self,
     base_shard: Shard,
@@ -428,18 +539,39 @@ class Node:
     request_id: str,
     target_index: int,
   ) -> None:
-    if DEBUG >= 1: print(f"target partition index: {target_index}")
-    target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
-    next_shard = self.get_current_shard(base_shard, target_index)
-    if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. next shard: {next_shard}")
-    if target_id == self.id:
-      await self.process_prompt(next_shard, prompt, request_id)
-    else:
-      target_peer = next((p for p in self.peers if p.id() == target_id), None)
-      if not target_peer:
-        raise ValueError(f"Peer for {target_index} not found")
-      if DEBUG >= 1: print(f"Sending prompt to {target_peer.id()}: {prompt}")
-      await target_peer.send_prompt(next_shard, prompt, request_id=request_id)
+    context = tracer.get_context(request_id)
+    if not context:
+      context = TraceContext(request_id=request_id, sequence_number=0)
+      tracer.set_context(request_id, context)
+
+    with tracer.start_span(
+      "forward_prompt",
+      context,
+      extra_attributes={
+        "source_node": self.id,
+        "target_index": target_index,
+        "prompt": prompt
+      }
+    ) as span:
+      if DEBUG >= 1: print(f"target partition index: {target_index}")
+      target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
+      next_shard = self.get_current_shard(base_shard, target_index)
+      span.set_attribute("target_node", target_id)
+      
+      # Get trace context for propagation
+      trace_parent = tracer.inject_context(span)
+      
+      if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. next shard: {next_shard}")
+      if target_id == self.id:
+        # Update local context with trace parent
+        context.trace_parent = trace_parent
+        await self.process_prompt(next_shard, prompt, request_id)
+      else:
+        target_peer = next((p for p in self.peers if p.id() == target_id), None)
+        if not target_peer:
+          raise ValueError(f"Peer for {target_index} not found")
+        if DEBUG >= 1: print(f"Sending prompt to {target_peer.id()}: {prompt}")
+        await target_peer.send_prompt(next_shard, prompt, request_id=request_id, sequence_number=context.sequence_number, trace_parent=trace_parent)
   
   async def forward_tensor(
     self,
@@ -447,19 +579,39 @@ class Node:
     tensor: np.ndarray,
     request_id: str,
     target_index: int,
-  ) -> None:
-    if DEBUG >= 1: print(f"target partition index: {target_index}")
-    target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
-    next_shard = self.get_current_shard(base_shard, target_index)
-    if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. target shard: {next_shard}")
-    if target_id == self.id:
-      await self.process_tensor(next_shard, tensor, request_id)
-    else:
-      target_peer = next((p for p in self.peers if p.id() == target_id), None)
-      if not target_peer:
-        raise ValueError(f"Peer for {target_index} not found")
-      if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
-      await target_peer.send_tensor(next_shard, tensor, request_id=request_id)
+  ):
+    context = tracer.get_context(request_id)
+    if not context:
+      context = TraceContext(request_id=request_id, sequence_number=0)
+      tracer.set_context(request_id, context)
+
+    with tracer.start_span(
+      "forward_tensor",
+      context,
+      extra_attributes={
+        "source_node": self.id,
+        "target_index": target_index,
+        "tensor_shape": str(tensor.shape)
+      }
+    ) as span:
+      target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
+      next_shard = self.get_current_shard(base_shard, target_index)
+      span.set_attribute("target_node", target_id)
+      
+      # Get trace context for propagation
+      trace_parent = tracer.inject_context(context.request_span or span)
+      
+      if target_id == self.id:
+        # Update local context with trace parent
+        context.trace_parent = trace_parent
+        await self.process_tensor(next_shard, tensor, request_id)
+      else:
+        target_peer = next((p for p in self.peers if p.id() == target_id), None)
+        if not target_peer:
+          raise ValueError(f"Peer for {target_index} not found")
+        
+        if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
+        await target_peer.send_tensor(next_shard, tensor, request_id=request_id, sequence_number=context.sequence_number, trace_parent=trace_parent)
 
   def get_partition_index(self, offset: int = 0):
     if not self.partitioning_strategy:
@@ -542,17 +694,12 @@ class Node:
       try:
         did_peers_change = await self.update_peers()
         if DEBUG >= 2: print(f"{did_peers_change=}")
+        await self.collect_topology(set())
         if did_peers_change:
-          await self.collect_topology(set())
           await self.select_best_inference_engine()
       except Exception as e:
         print(f"Error collecting topology: {e}")
         traceback.print_exc()
-
-  async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
-    if request_id not in self.buffered_token_output:
-      return None, False
-    return np.array(self.buffered_token_output[request_id][0]), self.buffered_token_output[request_id][1]
 
   async def collect_topology(self, visited: set[str], max_depth: int = 4) -> Topology:
     next_topology = Topology()
@@ -590,28 +737,40 @@ class Node:
     return self.topology
 
   @property
-  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
+  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, int, bool]]:
     return self._on_token
 
   @property
   def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
     return self._on_opaque_status
 
-  def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
-    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} num_tokens={len(tokens)} {is_finished=}")
-    self.on_token.trigger_all(request_id, tokens, is_finished)
+  def trigger_on_token_callbacks(self, request_id: str, token: int, is_finished: bool) -> None:
+    if DEBUG >= 2: print(f"[Node] Triggering token callbacks: {request_id=} {token=} {is_finished=}")
+    self.on_token.trigger_all(request_id, token, is_finished)
   
-  async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
-    async def send_result_to_peer(peer):
-      try:
-        await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=15.0)
-      except asyncio.TimeoutError:
-        print(f"Timeout broadcasting result to {peer.id()}")
-      except Exception as e:
-        print(f"Error broadcasting result to {peer.id()}: {e}")
-        traceback.print_exc()
-
-    await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
+  async def broadcast_new_token(self, request_id: str, token: int, is_finished: bool):
+    """Broadcast a new token to all peers."""
+    context = tracer.get_context(request_id)
+    if context:
+      # Handle token in tracer for grouping
+      tracer.handle_token(context, token, is_finished)
+      # Get current trace context for propagation
+      trace_parent = ""
+      if context.current_span:
+        trace_parent = tracer.inject_context(context.current_span)
+    
+    tasks = []
+    for peer in self.peers:
+      tasks.append(
+        peer.send_new_token(
+          request_id,
+          token,
+          is_finished,
+          context.sequence_number if context else 0,
+          trace_parent if context else ""
+        )
+      )
+    await asyncio.gather(*tasks)
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
     if DEBUG >= 8: print(f"Broadcasting opaque status: {request_id=} {status=}")
@@ -627,7 +786,7 @@ class Node:
 
     await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)
     # in the case of opaque status, we also want to receive our own opaque statuses
-    self.on_opaque_status.trigger_all(request_id, status)
+    # self.on_opaque_status.trigger_all(request_id, status)
 
   @property
   def current_topology(self) -> Topology:

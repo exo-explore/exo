@@ -1,11 +1,11 @@
-import unittest
+import pytest
 from unittest.mock import patch
-from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapabilities, DeviceFlops, TFLOPS
+from exo.topology.device_capabilities import mac_device_capabilities, DeviceCapabilities, DeviceFlops, TFLOPS, device_capabilities
 
 
-class TestMacDeviceCapabilities(unittest.TestCase):
-  @patch("subprocess.check_output")
-  def test_mac_device_capabilities_pro(self, mock_check_output):
+@pytest.mark.asyncio
+@patch("subprocess.check_output")
+async def test_mac_device_capabilities_pro(mock_check_output):
     # Mock the subprocess output
     mock_check_output.return_value = b"""
 Hardware:
@@ -27,20 +27,19 @@ Activation Lock Status: Enabled
 """
 
     # Call the function
-    result = mac_device_capabilities()
+    result = await mac_device_capabilities()
 
     # Check the results
-    self.assertIsInstance(result, DeviceCapabilities)
-    self.assertEqual(result.model, "MacBook Pro")
-    self.assertEqual(result.chip, "Apple M3 Max")
-    self.assertEqual(result.memory, 131072)  # 16 GB in MB
-    self.assertEqual(
-      str(result),
-      "Model: MacBook Pro. Chip: Apple M3 Max. Memory: 131072MB. Flops: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS",
-    )
+    assert isinstance(result, DeviceCapabilities)
+    assert result.model == "MacBook Pro"
+    assert result.chip == "Apple M3 Max"
+    assert result.memory == 131072  # 128 GB in MB
+    assert str(result) == "Model: MacBook Pro. Chip: Apple M3 Max. Memory: 131072MB. Flops: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS"
 
-  @patch("subprocess.check_output")
-  def test_mac_device_capabilities_air(self, mock_check_output):
+
+@pytest.mark.asyncio
+@patch("subprocess.check_output")
+async def test_mac_device_capabilities_air(mock_check_output):
     # Mock the subprocess output
     mock_check_output.return_value = b"""
 Hardware:
@@ -62,30 +61,34 @@ Activation Lock Status: Disabled
 """
 
     # Call the function
-    result = mac_device_capabilities()
+    result = await mac_device_capabilities()
 
     # Check the results
-    self.assertIsInstance(result, DeviceCapabilities)
-    self.assertEqual(result.model, "MacBook Air")
-    self.assertEqual(result.chip, "Apple M2")
-    self.assertEqual(result.memory, 8192)  # 8 GB in MB
+    assert isinstance(result, DeviceCapabilities)
+    assert result.model == "MacBook Air"
+    assert result.chip == "Apple M2"
+    assert result.memory == 8192  # 8 GB in MB
 
-  @unittest.skip("Unskip this test when running on a MacBook Pro, Apple M3 Max, 128GB")
-  def test_mac_device_capabilities_real(self):
+
+@pytest.mark.skip(reason="Unskip this test when running on a MacBook Pro, Apple M3 Max, 128GB")
+@pytest.mark.asyncio
+async def test_mac_device_capabilities_real():
     # Call the function without mocking
-    result = mac_device_capabilities()
+    result = await mac_device_capabilities()
 
     # Check the results
-    self.assertIsInstance(result, DeviceCapabilities)
-    self.assertEqual(result.model, "MacBook Pro")
-    self.assertEqual(result.chip, "Apple M3 Max")
-    self.assertEqual(result.memory, 131072)  # 128 GB in MB
-    self.assertEqual(result.flops, DeviceFlops(fp32=14.20*TFLOPS, fp16=28.40*TFLOPS, int8=56.80*TFLOPS))
-    self.assertEqual(
-      str(result),
-      "Model: MacBook Pro. Chip: Apple M3 Max. Memory: 131072MB. Flops: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS",
-    )
+    assert isinstance(result, DeviceCapabilities)
+    assert result.model == "MacBook Pro"
+    assert result.chip == "Apple M3 Max"
+    assert result.memory == 131072  # 128 GB in MB
+    assert result.flops == DeviceFlops(fp32=14.20*TFLOPS, fp16=28.40*TFLOPS, int8=56.80*TFLOPS)
+    assert str(result) == "Model: MacBook Pro. Chip: Apple M3 Max. Memory: 131072MB. Flops: 14.20 TFLOPS, fp16: 28.40 TFLOPS, int8: 56.80 TFLOPS"
 
 
-if __name__ == "__main__":
-  unittest.main()
+@pytest.mark.asyncio
+async def test_device_capabilities():
+    caps = await device_capabilities()
+    assert caps.model != ""
+    assert caps.chip != ""
+    assert caps.memory > 0
+    assert caps.flops is not None

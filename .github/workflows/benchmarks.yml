@@ -1,0 +1,71 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ '*' ]
+    tags: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  single-m4-pro:
+    strategy:
+      matrix:
+        model: ['llama-3.2-1b', 'llama-3.2-3b', 'llama-3.1-8b']
+    uses: ./.github/workflows/bench_job.yml
+    with:
+      config: '{"M4PRO_GPU16_24GB": 1}'
+      model: ${{ matrix.model }}
+      calling_job_name: 'single-m4-pro'
+      network_interface: 'Ethernet'
+    secrets: inherit
+
+  two-m4-pro-cluster:
+    strategy:
+      matrix:
+        model: ['llama-3.2-1b', 'llama-3.2-3b', 'llama-3.1-8b']
+    uses: ./.github/workflows/bench_job.yml
+    with:
+      config: '{"M4PRO_GPU16_24GB": 2}'
+      model: ${{ matrix.model }}
+      calling_job_name: 'two-m4-pro-cluster'
+      network_interface: 'Ethernet'
+    secrets: inherit
+
+  # two-m4-pro-cluster-thunderbolt:
+  #   strategy:
+  #     matrix:
+  #       model: ['llama-3.2-1b', 'llama-3.2-3b', 'llama-3.1-8b']
+  #   uses: ./.github/workflows/bench_job.yml
+  #   with:
+  #     config: '{"M4PRO_GPU16_24GB": 2}'
+  #     model: ${{ matrix.model }}
+  #     calling_job_name: 'two-m4-pro-cluster-thunderbolt'
+  #     network_interface: 'Thunderbolt'
+  #   secrets: inherit
+
+  three-m4-pro-cluster:
+    strategy:
+      matrix:
+        model: ['llama-3.2-1b', 'llama-3.2-3b', 'llama-3.1-8b', 'llama-3.3-70b']
+      fail-fast: false
+    uses: ./.github/workflows/bench_job.yml
+    with:
+      config: '{"M4PRO_GPU16_24GB": 3}'
+      model: ${{ matrix.model }}
+      calling_job_name: 'three-m4-pro-cluster'
+      network_interface: 'Ethernet'
+    secrets: inherit
+
+  # test-m3-single-node:
+  #   strategy:
+  #     matrix:
+  #       model: ['llama-3.2-1b']
+  #     fail-fast: false
+  #   uses: ./.github/workflows/bench_job.yml
+  #   with:
+  #     config: '{"M3MAX_GPU40_128GB": 1}'
+  #     model: ${{ matrix.model }}
+  #     calling_job_name: 'test-m3-cluster'
+  #     network_interface: 'Ethernet'
+  #   secrets: inherit

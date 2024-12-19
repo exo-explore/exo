@@ -48,11 +48,7 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
-    pass
-
-  @abstractmethod
-  async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
+  async def send_new_token(self, request_id: str, token: int, is_finished: bool) -> None:
     pass
 
   @abstractmethod

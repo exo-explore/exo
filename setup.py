@@ -16,6 +16,10 @@ install_requires = [
   "nuitka==2.5.1",
   "nvidia-ml-py==12.560.30",
   "opencv-python==4.10.0.84",
+  "opentelemetry-api==1.29.0",
+  "opentelemetry-sdk==1.29.0",
+  "opentelemetry-exporter-otlp==1.29.0",
+  "opentelemetry-instrumentation==0.50b0",
   "pillow==10.4.0",
   "prometheus-client==0.20.0",
   "protobuf==5.28.1",
@@ -27,6 +31,7 @@ install_requires = [
   "tqdm==4.66.4",
   "transformers==4.46.3",
   "uuid==1.30",
+  "uvloop==0.21.0",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
 ]
 
@@ -35,8 +40,8 @@ extras_require = {
     "yapf==0.40.2",
   ],
   "apple_silicon": [
-    "mlx==0.20.0",
-    "mlx-lm==0.19.3",
+    "mlx==0.21.1",
+    "mlx-lm==0.20.4",
   ],
 }
 
