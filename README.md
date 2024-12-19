@@ -208,11 +208,48 @@ With a custom prompt:
 exo run llama-3.2-3b --prompt "What is the meaning of exo?"
 ```
 
+### Example Usage on a single device with Local Model 
+- Step1. Download the model from huggingface
+- Step2.   
+  ```shell
+  exo --add-local-model <model_name> <inference-engine>
+  ```
+- Step3.
+  ```shell
+  exo  --inference-engine mlx --run-model <model_path/model_name>
+  or 
+  exo  --inference-engine mlx --run-model <Local/step2's_model_name>
+  ```
+
+### Example Usage on Multiple Devices with Local Model
+#### Both devices are on MacOS:
+- Step1. Download the model from huggingface and put it in the exo folder(/.cache/exo)
+- Step2.   
+  ```shell
+  exo --add-local-model <model_name> <inference-engine>
+  ```
+#### Choose one device to run the following command:
+```shell
+curl http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "Local/<model_name>",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
+
 ### Model Storage
 
 Models by default are stored in `~/.cache/huggingface/hub`.
 
 You can set a different model storage location by setting the `HF_HOME` env var.
+
+### Local Model Storage
+
+Please stored models in `~/.cache/exo`.
+
+You can set a different model storage location by setting the `HOME` env var
 
 ## Debugging
 

@@ -241,14 +241,19 @@ class ChatGPTAPI:
                 if self.inference_engine_classname in model_info.get("repo", {}):
                     shard = build_base_shard(model_name, self.inference_engine_classname)
                     if shard:
-                        downloader = HFShardDownloader(quick_check=True)
-                        downloader.current_shard = shard
-                        downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
-                        status = await downloader.get_shard_download_status()
+                        if 'Local/' in model_name:
+                          download_percentage = 100.0
+                          total_size = "Unknown"
+                          total_downloaded = "Unknown"
+                        else:
+                          downloader = HFShardDownloader(quick_check=True)
+                          downloader.current_shard = shard
+                          downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
+                          status = await downloader.get_shard_download_status()
 
-                        download_percentage = status.get("overall") if status else None
-                        total_size = status.get("total_size") if status else None
-                        total_downloaded = status.get("total_downloaded") if status else False
+                          download_percentage = status.get("overall") if status else None
+                          total_size = status.get("total_size") if status else None
+                          total_downloaded = status.get("total_downloaded") if status else False
 
                         model_data = {
                             model_name: {
@@ -274,7 +279,24 @@ class ChatGPTAPI:
         )
 
   async def handle_get_models(self, request):
-    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()])
+    models_list = []
+    for model_name, _ in model_cards.items():
+      if "Local" in model_name:
+        model_data = {
+          "id": model_name,
+          "object": "model", 
+          "owned_by": "Local",
+          "ready": True
+        }
+      else:
+        model_data = {
+          "id": model_name,
+          "object": "model", 
+          "owned_by": "exo",
+          "ready": True
+        }
+      models_list.append(model_data)
+    return web.json_response(models_list)
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
@@ -286,7 +308,11 @@ class ChatGPTAPI:
       model = self.default_model
     shard = build_base_shard(model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    if "Local" in shard.model_id:
+      model_path = model_cards.get(shard.model_id, {}).get("repo", {}).get(self.inference_engine_classname,{})
+      tokenizer = await resolve_tokenizer(model_path)
+    else:
+      tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     prompt = build_prompt(tokenizer, messages)
     tokens = tokenizer.encode(prompt)
     return web.json_response({
@@ -323,7 +349,11 @@ class ChatGPTAPI:
         status=400,
       )
 
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    if "Local" in shard.model_id:
+      model_path = model_cards.get(shard.model_id, {}).get("repo", {}).get(self.inference_engine_classname,{})
+      tokenizer = await resolve_tokenizer(model_path)
+    else:
+      tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
     prompt = build_prompt(tokenizer, chat_request.messages)
