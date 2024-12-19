@@ -339,7 +339,7 @@ async def get_stored_model_config(stored_ip: str, stored_port: int, model_name: 
 def check_agent(store_ip: str) -> str:
   for ip, _ in get_all_ip_addresses_and_interfaces():
     if (store_ip == ip) or (store_ip == "0.0.0.0"):
-      return "master"
+      return "stored"
   else:
     return "client"
 

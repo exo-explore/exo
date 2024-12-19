@@ -37,7 +37,7 @@ from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 
 from exo.localmodel.http.http_server import LocalModelAPI 
-from exo.localmodel.lh_helpers import has_exo_home_read_access, has_exo_home_write_access, get_exo_home
+from exo.localmodel.lh_helpers import has_exo_home_read_access, has_exo_home_write_access, get_exo_home, downlaod_tokenizer_config
 from exo.helpers import check_agent, get_stored_models, get_stored_model_config
 
 # parse args
@@ -84,6 +84,9 @@ print_yellow_exo()
 
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
+
+node_agent = check_agent(args.stored_model_ip)
+print(f"Node Agent: {node_agent}")
 
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
@@ -199,12 +202,13 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
       if os.path.isdir(current_shard.model_id):
-        print("Local model detected, skip download")
+        if DEBUG >= 2: print("Local model detected, skip download")
         pass
       elif "Local" in current_shard.model_id:
-        print("Local model detected, http download to other node")
+        if DEBUG >= 2: print("Local model detected, http download to other node")
         # borcast download model
-        asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
+        if node_agent == "client":
+          asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
       else:
         if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
         asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
@@ -230,7 +234,6 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
     last_broadcast_time = current_time
     asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
 
-
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name_or_path: str, prompt: str):
@@ -240,6 +243,8 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     if not shard:
       print(f"Error: exo Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
       return
+    if "Local" in model_name_or_path:
+      await downlaod_tokenizer_config(model_name_or_path)
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
   elif os.path.isdir(model_name_or_path):
     model_path = model_name_or_path.rstrip('/')
@@ -252,7 +257,7 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
         config_n_layers = config['num_hidden_layers']
       build_local_model_card(model_name, model_path, inference_class, config_n_layers)
       shard = Shard(model_id=model_path, start_layer=0, end_layer=0, n_layers=config_n_layers)
-      tokenizer = await resolve_tokenizer(model_path)
+      tokenizer = await resolve_tokenizer(model_path) # transformer tokenizer
     else:
       print(f"Error: Not Find Local model '{model_name}' for inference engine {inference_class}")
       return
@@ -269,21 +274,22 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   if topology_viz:
     topology_viz.update_prompt(request_id, prompt)
   prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
-
+  
   try:
     print(f"Processing prompt: {prompt}")
-    await node.process_prompt(shard, prompt, request_id=request_id)
-
+    await node.process_prompt(shard, prompt, request_id=request_id) # download model entry
+    
     _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
 
     print("\nGenerated response:")
     print(tokenizer.decode(tokens))
+
   except Exception as e:
     print(f"Error processing prompt: {str(e)}")
     traceback.print_exc()
   finally:
     node.on_token.deregister(callback_id)
-
+  
 def clean_path(path):
     """Clean and resolve path"""
     if path.startswith("Optional("):
@@ -346,7 +352,7 @@ async def main():
 
   # Check HuggingFace directory permissions
   hf_home, has_read, has_write = get_hf_home(), await has_hf_home_read_access(), await has_hf_home_write_access()
-  if DEBUG >= 1: print(f"Model storage directory: {hf_home}")
+  if DEBUG >= 1: print(f"HF Model storage directory: {hf_home}")
   print(f"{has_read=}, {has_write=}")
   if not has_read or not has_write:
     print(f"""
@@ -357,7 +363,7 @@ async def main():
           """)
   # Check exo directory permissions
   exo_home, has_read, has_write = get_exo_home(), await has_exo_home_read_access(), await has_exo_home_write_access()
-  if DEBUG >= 1: print(f"Model storage directory: {exo_home}")
+  if DEBUG >= 1: print(f"Local Model storage directory: {exo_home}")
   print(f"{has_read=}, {has_write=}")
   if not has_read or not has_write:
     print(f"""
@@ -389,16 +395,17 @@ async def main():
     for s in [signal.SIGINT, signal.SIGTERM]:
       loop.add_signal_handler(s, handle_exit)
 
-  if check_agent(args.stored_model_ip) == "master": # Local model server
+  if node_agent == "stored": # Local model server
     asyncio.create_task(local_model_api.run(host=args.stored_model_ip, port=args.stored_model_port))
-  elif check_agent(args.stored_model_ip) == "client": # get local models from master
+  elif node_agent == "client": # get local models from master
     stored_models_data = await get_stored_models(args.stored_model_ip, args.stored_model_port)
-    for model in stored_models_data.get("models"):
-      model_name = model.get('name')
-      model_config_data = await get_stored_model_config(args.stored_model_ip, args.stored_model_port, model_name)
-      if model_config_data is not None:
-        model_layer = model_config_data.get('num_hidden_layers')
-        build_local_model_card(model_name, None, inference_engine.__class__.__name__, int(model_layer))
+    if stored_models_data != []:
+      for model in stored_models_data.get("models"):
+        model_name = model.get('name')
+        model_config_data = await get_stored_model_config(args.stored_model_ip, args.stored_model_port, model_name)
+        if model_config_data is not None:
+          model_layer = model_config_data.get('num_hidden_layers')
+          build_local_model_card(model_name, None, inference_engine.__class__.__name__, int(model_layer))
 
   await node.start(wait_for_peers=args.wait_for_peers)
 

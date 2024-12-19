@@ -160,6 +160,7 @@ async def download_file(
   session: aiohttp.ClientSession, repo_id: str, revision: str, file_path: str, save_directory: str, progress_callback: Optional[RepoFileProgressCallback] = None, use_range_request: bool = True
 ):
   #base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
+  repo_id = repo_id.split("/")[-1]
   base_url = f'{get_lh_endpoint()}/models/{repo_id}/download/'
   url = urljoin(base_url, file_path)
   local_path = os.path.join(save_directory, file_path)
@@ -245,7 +246,7 @@ async def download_model_dir(
   max_parallel_downloads: int = 4
 ) -> Path:
   repo_root = get_repo_root(repo_id)
-  cachedreqs_dir = repo_root/"cachedreqs"
+  cachedreqs_dir = get_exo_home()/"cachedreqs"/repo_root
 
   # Ensure directories exist
   await aios.makedirs(repo_root, exist_ok=True)
@@ -415,3 +416,5 @@ async def has_exo_home_write_access() -> bool: # Ori: has_hf_home_write_access
   try: return await aios.access(lh_home, os.W_OK)
   except OSError: return False
 
+async def downlaod_tokenizer_config(repo_id: str):
+  await download_model_dir(repo_id=repo_id, allow_patterns="tokenizer_config.json")
