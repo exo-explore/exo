@@ -17,7 +17,28 @@ model_cards = {
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
     },
   },
+  "llama-3.2-1b-8bit": {
+    "layers": 16,
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-8bit",
+      "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+    },
+  },
   "llama-3.2-3b": {
+    "layers": 28,
+    "repo": {
+       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+    },
+  },
+  "llama-3.2-3b-8bit": {
+    "layers": 28,
+    "repo": {
+       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-8bit",
+       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+    },
+  },
+  "llama-3.2-3b-bf16": {
     "layers": 28,
     "repo": {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct",
@@ -94,7 +115,10 @@ model_cards = {
 pretty_name = {
   "llama-3.3-70b": "Llama 3.3 70B",
   "llama-3.2-1b": "Llama 3.2 1B",
+  "llama-3.2-1b-8bit": "Llama 3.2 1B (8-bit)",
   "llama-3.2-3b": "Llama 3.2 3B",
+  "llama-3.2-3b-8bit": "Llama 3.2 3B (8-bit)",
+  "llama-3.2-3b-bf16": "Llama 3.2 3B (BF16)",
   "llama-3.1-8b": "Llama 3.1 8B",
   "llama-3.1-70b": "Llama 3.1 70B",
   "llama-3.1-70b-bf16": "Llama 3.1 70B (BF16)",
