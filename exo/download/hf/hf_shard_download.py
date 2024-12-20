@@ -16,7 +16,7 @@ from exo.models import model_cards, get_repo
 import aiohttp
 from aiofiles import os as aios
 
-from exo.localmodel.lh_helpers import (
+from exo.download.storedhost.sh_helpers import (
   get_exo_home, get_lh_weight_map, fetch_lh_file_list, download_model_dir
 )
 

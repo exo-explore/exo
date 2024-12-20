@@ -36,8 +36,8 @@ from exo.models import model_cards, build_local_model_card, build_base_shard, ge
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 
-from exo.localmodel.http.http_server import LocalModelAPI 
-from exo.localmodel.lh_helpers import has_exo_home_read_access, has_exo_home_write_access, get_exo_home, downlaod_tokenizer_config
+from exo.download.storedhost.http.http_server import StoredModelAPI 
+from exo.download.storedhost.sh_helpers import has_exo_home_read_access, has_exo_home_write_access, get_exo_home, downlaod_tokenizer_config
 from exo.helpers import check_agent, get_stored_models, get_stored_model_config
 
 # parse args
@@ -191,7 +191,7 @@ chatgpt_api = ChatGPTAPI(
   on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None,
   default_model=args.default_model
 )
-local_model_api = LocalModelAPI()
+local_model_api = StoredModelAPI()
 node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )

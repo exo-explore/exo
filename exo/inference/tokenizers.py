@@ -9,7 +9,7 @@ import numpy as np
 from exo.download.hf.hf_helpers import get_local_snapshot_dir
 from exo.helpers import DEBUG
 
-from exo.localmodel.lh_helpers import get_local_model_dir
+from exo.download.storedhost.sh_helpers import get_local_model_dir
 
 
 class DummyTokenizer:

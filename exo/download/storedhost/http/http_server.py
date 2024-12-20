@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict
 from exo import DEBUG
 
-class LocalModelAPI:
+class StoredModelAPI:
     def __init__(self):
         self.app = web.Application()
         self.cache_dir = os.path.expanduser('~/.cache/exo')
