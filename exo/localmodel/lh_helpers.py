@@ -159,7 +159,6 @@ async def fetch_lh_file_list(session, repo_id, path=""):
 async def download_file(
   session: aiohttp.ClientSession, repo_id: str, revision: str, file_path: str, save_directory: str, progress_callback: Optional[RepoFileProgressCallback] = None, use_range_request: bool = True
 ):
-  #base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
   repo_id = repo_id.split("/")[-1]
   base_url = f'{get_lh_endpoint()}/models/{repo_id}/download/'
   url = urljoin(base_url, file_path)
@@ -246,17 +245,11 @@ async def download_model_dir(
   max_parallel_downloads: int = 4
 ) -> Path:
   repo_root = get_repo_root(repo_id)
-  cachedreqs_dir = get_exo_home()/"cachedreqs"/repo_root
-
-  # Ensure directories exist
+  cachedreqs_model_dir = Path(get_exo_home()) / "cachedreqs" / repo_root
   await aios.makedirs(repo_root, exist_ok=True)
-  await aios.makedirs(cachedreqs_dir, exist_ok=True)
+  await aios.makedirs(cachedreqs_model_dir, exist_ok=True)
 
-  # Set up the cached file list directory
-  cached_file_list_dir = cachedreqs_dir
-  await aios.makedirs(cached_file_list_dir, exist_ok=True)
-  cached_file_list_path = cached_file_list_dir/"fetch_file_list.json"
-
+  cached_file_list_path = cachedreqs_model_dir / "fetch_file_list.json"
   async with aiohttp.ClientSession() as session:
     # Check if we have a cached file list
     if await aios.path.exists(cached_file_list_path):
