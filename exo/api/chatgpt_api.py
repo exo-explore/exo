@@ -22,6 +22,9 @@ import shutil
 from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
 from exo.apputil import create_animation_mp4
 
+if os.name == 'nt':
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
     self.role = role

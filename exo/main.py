@@ -33,6 +33,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
+import multiprocessing
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -353,4 +354,7 @@ def run():
 
 
 if __name__ == "__main__":
+  if platform.system() == "Windows":
+    multiprocessing.set_start_method("spawn", force=True)
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
   run()
