@@ -15,6 +15,7 @@ from .stateful_model import make_prompt_state
 from .losses import length_masked_ce_loss
 from collections import OrderedDict
 import asyncio
+from exo.inference.tinygrad.benchmark import tinygrad_benchmark_tflops
 
 Tensor.no_grad = True 
 # default settings
