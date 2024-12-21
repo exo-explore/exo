@@ -40,3 +40,6 @@ class DummyInferenceEngine(InferenceEngine):
 
   async def benchmark_tflops(self) -> DeviceFlops:
     return DeviceFlops(fp32=0.0, fp16=0.0, int8=0.0)
+  
+  async def load_checkpoint(self, shard: Shard, path: str):
+    await self.ensure_shard(shard)

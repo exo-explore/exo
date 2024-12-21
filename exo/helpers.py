@@ -8,8 +8,11 @@ import platform
 import psutil
 import uuid
 import netifaces
+import subprocess
 from pathlib import Path
 import tempfile
+import json
+from concurrent.futures import ThreadPoolExecutor
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -21,6 +24,9 @@ exo_text = r"""
 |  __/>  < (_) |
  \___/_/\_\___/ 
     """
+
+# Single shared thread pool for subprocess operations
+subprocess_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="subprocess_worker")
 
 
 def get_system_info():
@@ -236,7 +242,46 @@ def get_all_ip_addresses_and_interfaces():
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
     return [("localhost", "lo")]
 
-def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
+async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
+  try:
+    # Use the shared subprocess_pool
+    output = await asyncio.get_running_loop().run_in_executor(subprocess_pool, lambda: subprocess.run(
+      ['system_profiler', 'SPNetworkDataType', '-json'],
+      capture_output=True,
+      text=True,
+      close_fds=True
+    ).stdout)
+
+    data = json.loads(output)
+
+    for interface in data.get('SPNetworkDataType', []):
+      if interface.get('interface') == ifname:
+        hardware = interface.get('hardware', '').lower()
+        type_name = interface.get('type', '').lower()
+        name = interface.get('_name', '').lower()
+
+        if 'thunderbolt' in name:
+          return (5, "Thunderbolt")
+        if hardware == 'ethernet' or type_name == 'ethernet':
+          if 'usb' in name:
+            return (4, "Ethernet [USB]")
+          return (4, "Ethernet")
+        if hardware == 'airport' or type_name == 'airport' or 'wi-fi' in name:
+          return (3, "WiFi")
+        if type_name == 'vpn':
+          return (1, "External Virtual")
+
+  except Exception as e:
+    if DEBUG >= 2: print(f"Error detecting macOS interface type: {e}")
+
+  return None
+
+async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
+  # On macOS, try to get interface type using networksetup
+  if psutil.MACOS:
+    macos_type = await get_macos_interface_type(ifname)
+    if macos_type is not None: return macos_type
+
   # Local container/virtual interfaces
   if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
     'bridge' in ifname):
@@ -246,9 +291,9 @@ def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   if ifname.startswith('lo'):
     return (6, "Loopback")
 
-  # Thunderbolt/10GbE detection
+  # Traditional detection for non-macOS systems or fallback
   if ifname.startswith(('tb', 'nx', 'ten')):
-    return (5, "Thunderbolt/10GbE")
+    return (5, "Thunderbolt")
 
   # Regular ethernet detection
   if ifname.startswith(('eth', 'en')) and not ifname.startswith(('en1', 'en0')):
