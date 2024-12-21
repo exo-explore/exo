@@ -20,6 +20,7 @@ from typing import Callable, Optional
 from exo.download.hf.hf_shard_download import HFShardDownloader
 import shutil
 from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
+
 from exo.apputil import create_animation_mp4
 
 class Message:
@@ -33,13 +34,14 @@ class Message:
 
 
 class ChatCompletionRequest:
-  def __init__(self, model: str, messages: List[Message], temperature: float):
+  def __init__(self, model: str, messages: List[Message], temperature: float, use_gguf: bool = False):
     self.model = model
     self.messages = messages
     self.temperature = temperature
+    self.use_gguf = use_gguf
 
   def to_dict(self):
-    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature}
+    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature, "use_gguf": self.use_gguf}
 
 
 def generate_completion(
@@ -140,6 +142,7 @@ def parse_chat_request(data: dict, default_model: str):
     data.get("model", default_model),
     [parse_message(msg) for msg in data["messages"]],
     data.get("temperature", 0.0),
+    data.get("use_gguf", False),
   )
 
 

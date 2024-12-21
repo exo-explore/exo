@@ -17,6 +17,8 @@ from exo.helpers import DEBUG, is_frozen
 from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEvent, RepoProgressCallback, RepoFileProgressCallback
 from exo.inference.shard import Shard
 import aiofiles
+import numpy as np
+import pygguf
 
 T = TypeVar("T")
 
@@ -32,7 +34,7 @@ async def get_local_snapshot_dir(repo_id: str, revision: str = "main") -> Option
 
 
 def filter_repo_objects(
-  items: Iterable[T],
+  items: Iterable<T>,
   *,
   allow_patterns: Optional[Union[List[str], str]] = None,
   ignore_patterns: Optional[Union[List[str], str]] = None,
@@ -501,3 +503,23 @@ async def has_hf_home_write_access() -> bool:
   try: return await aios.access(hf_home, os.W_OK)
   except OSError: return False
 
+async def parse_gguf_file(file_path: str) -> Dict[str, np.ndarray]:
+    """
+    Parse a GGUF file and return a dictionary of tensor names and their corresponding numpy arrays.
+    """
+    with open(file_path, "rb") as f:
+        gguf_data = f.read()
+    gguf_parser = pygguf.GGUFParser(gguf_data)
+    tensor_dict = {}
+    for tensor_name, tensor_data in gguf_parser.tensors.items():
+        tensor_dict[tensor_name] = np.array(tensor_data)
+    return tensor_dict
+
+async def convert_gguf_to_torch_tensors(gguf_dict: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
+    """
+    Convert a dictionary of GGUF tensors to a dictionary of PyTorch tensors.
+    """
+    torch_dict = {}
+    for tensor_name, tensor_data in gguf_dict.items():
+        torch_dict[tensor_name] = torch.tensor(tensor_data)
+    return torch_dict

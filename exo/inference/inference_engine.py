@@ -49,6 +49,7 @@ inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
+  "huggingface": "HuggingfaceInferenceEngine",
 }
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
@@ -67,4 +68,7 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()
+  elif inference_engine_name == "huggingface":
+    from exo.inference.huggingface_inference_engine import HuggingfaceInferenceEngine
+    return HuggingfaceInferenceEngine(shard_downloader)
   raise ValueError(f"Unsupported inference engine: {inference_engine_name}")
