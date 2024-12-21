@@ -19,6 +19,11 @@ class Tokenizer(ABC):
     def eos_token_id(self) -> int:
         pass
 
+    @property
+    @abstractmethod
+    def bos_token_id(self) -> int:
+        pass
+
 # TOKENIZER_CLASSES = {
 #     ### llama
 #     "llama-3.2-1b": "LlamaTokenizer",
@@ -65,7 +70,8 @@ class Tokenizer(ABC):
 def resolve_tokenizer(model_id: str, model_path: str) -> Tokenizer:
     # tokenizer_class = TOKENIZER_CLASSES[model_id]
     # tokenizer_class = TOKENIZER_CLASSES_ALL_LLAMA[model_id]
-    tokenizer_class = "SpmTokenizer" if 'gemma' in model_id else "TiktokenTokenizer"
+    # tokenizer_class = "SpmTokenizer" if 'gemma' in model_id else "TikTokenizer"
+    tokenizer_class = "TikTokenizer"
     tokenizer_module = importlib.import_module("exo.tokenizer")
     tokenizer_class_obj = getattr(tokenizer_module, tokenizer_class)
     return tokenizer_class_obj(model_path)
