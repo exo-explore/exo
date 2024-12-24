@@ -210,35 +210,50 @@ exo run llama-3.2-3b --prompt "What is the meaning of exo?"
 
 ### Example Usage on a single device with Local Model 
 - Step1. Download the model from huggingface
-- Step2.   
-  ```shell
-  exo --add-local-model <model_name> <inference-engine>
-  ```
+- Step2. Put it in the exo folder(~/.cache/exo)
 - Step3.
   ```shell
-  exo  --inference-engine mlx --run-model <model_path/model_name>
+  exo  --inference-engine mlx --run-model <~/.cache/exo/'model_name'>
   or 
-  exo  --inference-engine mlx --run-model <Local/step2's_model_name>
+  exo  --inference-engine mlx --run-model <Local/'model_name'>
   ```
 
 ### Example Usage on Multiple Devices with Local Model
-#### Both devices are on MacOS:
-- Step1. Download the model from huggingface and put it in the exo folder(/.cache/exo)
+#### Manual Put Local Model:
+- Step1. Download the Hugging Face model and place it in the exo folder (~/.cache/exo) of each node.
 - Step2.   
   ```shell
-  exo --add-local-model <model_name> <inference-engine>
+  # Every node runs the following command
+  exo --inference-engine mlx
   ```
-#### Choose one device to run the following command:
-```shell
-curl http://localhost:52415/v1/chat/completions \
+- Step3.   
+  ```shell
+  curl http://localhost:52415/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
      "model": "Local/<model_name>",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
-```
+  ```
+#### Auto Download Local Model:
+- Step1. Download the Hugging Face model and place it in the exo folder (~/.cache/exo) of one node.
 
+- Step2.
+  ```shell
+  # Every node runs the following command
+  exo --stored-model-ip <stored_model_node_ip> --inference-engine mlx
+  ```
+- Step3.   
+  ```shell
+  curl http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "Local/<model_name>",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+  ```
 ### Model Storage
 
 Models by default are stored in `~/.cache/huggingface/hub`.
