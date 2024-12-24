@@ -17,7 +17,7 @@ class DummyTokenizer:
     self.eos_token_id = 69
     self.vocab_size = 1000
 
-  def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True):
+  def apply_chat_template(self, conversation, tokenize=True, add_generation_prompt=True, tools=None, **kwargs):
     return "dummy_tokenized_prompt"
 
   def encode(self, text):
