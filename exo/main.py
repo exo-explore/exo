@@ -246,7 +246,8 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     if "Local" in model_name_or_path:
       await downlaod_tokenizer_config(model_name_or_path)
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
-  elif os.path.isdir(model_name_or_path):
+  elif os.path.isdir(os.path.expanduser(model_name_or_path)):
+    model_name_or_path = os.path.expanduser(model_name_or_path)
     model_path = model_name_or_path.rstrip('/')
     model_name = str(model_path.split('/')[-1])
     model_config_path = Path(model_path)/'config.json'

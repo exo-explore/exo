@@ -29,7 +29,8 @@ class StoredModelAPI:
             ('GET', '/files', self.handle_list_files),
             ('GET', '/models', self.handle_list_models), # models list
             ('GET', '/models/{foldername:.*}/list', self.handle_list_model_items),
-            ('GET', '/models/{model_name}/download/{filename:.*}', self.model_file_download)
+            ('GET', '/models/{model_name}/download/{filename:.*}', self.model_file_download),
+            ('HEAD', '/models/{model_name}/info/{filename:.*}', self.model_file_info),
         ]
 
         for method, path, handler in routes:
@@ -126,6 +127,55 @@ class StoredModelAPI:
             return web.json_response({"error": "Not a valid file"}, status=400)
 
         return web.FileResponse(full_path)
+
+    async def model_file_info(self, request):
+        try:
+            model_name = request.match_info['model_name']
+            filename = request.match_info['filename']
+            full_path = os.path.join(self.cache_dir, model_name, filename)
+            
+            if not os.path.exists(full_path):
+                return web.json_response({
+                    "error": "File not found",
+                    "path": full_path,
+                    "model": model_name,
+                    "filename": filename
+                }, status=404)
+                
+            if not os.path.isfile(full_path):
+                return web.json_response({
+                    "error": "Not a valid file",
+                    "path": full_path,
+                    "type": "directory" if os.path.isdir(full_path) else "unknown"
+                }, status=400)
+                
+            stat = os.stat(full_path)
+            file_info = {
+                'name': filename,
+                'model': model_name,
+                'path': full_path,
+                'size': stat.st_size,
+                'content_length': stat.st_size,
+                'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'created': datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                'permissions': oct(stat.st_mode)[-3:],
+                'is_file': True,
+                'mime_type': self._get_mime_type(full_path),
+                'status': 'available'
+            }
+            
+            return web.json_response(file_info)
+            
+        except Exception as e:
+            return web.json_response({
+                "error": str(e),
+                "status": "error"
+            }, status=500)
+
+    def _get_mime_type(self, file_path):
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(file_path)
+        return mime_type or 'application/octet-stream'
 
     async def health_check(self, request):
         """健康检查端点"""
