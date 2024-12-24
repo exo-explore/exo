@@ -36,7 +36,7 @@ extras_require = {
   ],
   "apple_silicon": [
     "mlx==0.20.0",
-    "mlx-lm==0.19.3",
+    "mlx-lm==0.20.5",
   ],
 }
 
