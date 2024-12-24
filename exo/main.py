@@ -28,13 +28,17 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent, NoopShardDownloader
 from exo.download.hf.hf_shard_download import HFShardDownloader
-from exo.helpers import print_yellow_exo, init_exo_env, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import model_cards, build_local_model_card, build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
+
+from exo.download.storedhost.http.http_server import StoredModelAPI 
+from exo.download.storedhost.sh_helpers import has_exo_home_read_access, has_exo_home_write_access, get_exo_home, downlaod_tokenizer_config
+from exo.helpers import check_agent, get_stored_models, get_stored_model_config
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -71,15 +75,18 @@ parser.add_argument("--default-temp", type=float, help="Default token sampling t
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
+parser.add_argument("--stored-model-ip", type=str, default="0.0.0.0", help="Stored Local Model IP")
+parser.add_argument("--stored-model-port", type=int, default=52525, help="Local Model API port")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
 
-exo_path = init_exo_env()
-
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
+
+node_agent = check_agent(args.stored_model_ip)
+print(f"Node Agent: {node_agent}")
 
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
@@ -90,32 +97,51 @@ shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
-for folder_path in Path(exo_path).iterdir():
+# (Host) Local Model Card
+print(f"Add Local Model To Model Card：")
+exo_home = get_exo_home()
+for folder_path in Path(exo_home).iterdir():
   if folder_path.is_dir():
-    model_path = folder_path
     model_name = folder_path.name
     config_file_path = Path(folder_path/'config.json')
     if config_file_path.is_file():
       with open(config_file_path, 'r') as file:
         config = json.load(file)
         config_n_layers = config['num_hidden_layers']
-        build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, int(config_n_layers))
-print(f"Add Local Model Complete!!")
+        build_local_model_card(model_name, None, inference_engine.__class__.__name__, int(config_n_layers))
+        print(f"- Local/{model_name}")
 
 if args.node_port is None:
   args.node_port = find_available_port(args.node_host) 
   if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()
-chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip, _ in get_all_ip_addresses_and_interfaces()]
-web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+
+
+if args.node_host == "0.0.0.0":
+  chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip, _ in get_all_ip_addresses_and_interfaces()]
+  web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+else:
+  chatgpt_api_endpoints = [f"http://{args.node_host}:{args.chatgpt_api_port}/v1/chat/completions"]
+  web_chat_urls = [f"http://{args.node_host}:{args.chatgpt_api_port}"]
+
+if args.stored_model_ip == "0.0.0.0":
+  local_model_api_endpoints = [f"http://{ip}:{args.stored_model_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
+else:
+  local_model_api_endpoints = [f"http://{args.stored_model_ip}:{args.stored_model_port}"]
+
 if DEBUG >= 0:
   print("Chat interface started:")
   for web_chat_url in web_chat_urls:
     print(f" - {terminal_link(web_chat_url)}")
+  
   print("ChatGPT API endpoint served at:")
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
+
+  print("Local Model API endpoint served at:")
+  for local_model_api_endpoint in local_model_api_endpoints:
+    print(f" - {terminal_link(local_model_api_endpoint)}")
 
 # Convert node-id-filter to list if provided
 allowed_node_ids = args.node_id_filter.split(',') if args.node_id_filter else None
@@ -144,7 +170,7 @@ elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
   discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
-topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
+topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls, local_model_api_endpoints=local_model_api_endpoints) if not args.disable_tui else None
 node = Node(
   args.node_id,
   None,
@@ -158,13 +184,14 @@ node = Node(
 )
 server = GRPCServer(node, args.node_host, args.node_port)
 node.server = server
-api = ChatGPTAPI(
+chatgpt_api = ChatGPTAPI(
   node,
   inference_engine.__class__.__name__,
   response_timeout=args.chatgpt_api_response_timeout,
   on_chat_completion_request=lambda req_id, __, prompt: topology_viz.update_prompt(req_id, prompt) if topology_viz else None,
   default_model=args.default_model
 )
+local_model_api = StoredModelAPI()
 node.on_token.register("update_topology_viz").on_next(
   lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") else None
 )
@@ -174,10 +201,14 @@ def preemptively_start_download(request_id: str, opaque_status: str):
     status = json.loads(opaque_status)
     if status.get("type") == "node_status" and status.get("status") == "start_process_prompt":
       current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
-      
-      if "Local" in current_shard.model_id or os.path.isdir(current_shard.model_id):
-        print("Local model detected, skip download")
+      if os.path.isdir(current_shard.model_id):
+        if DEBUG >= 2: print("Local model detected, skip download")
         pass
+      elif "Local" in current_shard.model_id:
+        if DEBUG >= 2: print("Local model detected, http download to other node")
+        # borcast download model
+        if node_agent == "client":
+          asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
       else:
         if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
         asyncio.create_task(shard_downloader.ensure_shard(current_shard, inference_engine.__class__.__name__))
@@ -203,44 +234,40 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
     last_broadcast_time = current_time
     asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
 
-
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name_or_path: str, prompt: str):
-  
-  if os.path.isdir(model_name_or_path) or model_name_or_path.startswith("Local/"):
-    if os.path.isdir(model_name_or_path): 
-      model_path = model_name_or_path.rstrip('/')
-      model_name = str(model_path.split('/')[-1])
-    else:
-      model_name = model_name_or_path.split("/")[-1]
-      exo_path = Path(Path.home()/".cache"/"exo")
-      model_path = f'{exo_path}/{model_name}'
-
-    model_config_path = Path(model_path)/'config.json'
-    print(model_config_path)
-    if os.path.isfile(model_config_path):
-      with open(model_config_path, 'r') as file:
-        config = json.load(file)
-        config_n_layers = config['num_hidden_layers']
-      build_local_model_card(model_name, model_path, inference_engine.__class__.__name__, config_n_layers)
-      shard = Shard(model_id=model_path, start_layer=0, end_layer=0, n_layers=config_n_layers)
-      tokenizer = await resolve_tokenizer(model_path)
-    else:
-      print(f"Error: Not Find Local model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
-      return
-  
-  elif model_cards.get(model_name_or_path):
-    inference_class = inference_engine.__class__.__name__
+  inference_class = inference_engine.__class__.__name__
+  if model_cards.get(model_name_or_path):
     shard = build_base_shard(model_name_or_path, inference_class)
     if not shard:
       print(f"Error: exo Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
       return
+    if "Local" in model_name_or_path:
+      await downlaod_tokenizer_config(model_name_or_path)
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+  elif os.path.isdir(os.path.expanduser(model_name_or_path)):
+    model_name_or_path = os.path.expanduser(model_name_or_path)
+    model_path = model_name_or_path.rstrip('/')
+    model_name = str(model_path.split('/')[-1])
+    model_config_path = Path(model_path)/'config.json'
 
+    if os.path.isfile(model_config_path):
+      with open(model_config_path, 'r') as file:
+        config = json.load(file)
+        config_n_layers = config['num_hidden_layers']
+      build_local_model_card(model_name, model_path, inference_class, config_n_layers)
+      shard = Shard(model_id=model_path, start_layer=0, end_layer=0, n_layers=config_n_layers)
+      tokenizer = await resolve_tokenizer(model_path) # transformer tokenizer
+    else:
+      print(f"Error: Not Find Local model '{model_name}' for inference engine {inference_class}")
+      return
   else:
     print(f"Error: Unsupported model '{model_name_or_path}' for inference engine {inference_engine.__class__.__name__}")
     return
+  
+  print(f'model_card = {get_repo(model_name_or_path, inference_class)}')
+  print(f'model_id = {get_repo(shard.model_id, inference_class)}')
   
   request_id = str(uuid.uuid4())
   callback_id = f"cli-wait-response-{request_id}"
@@ -248,21 +275,22 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   if topology_viz:
     topology_viz.update_prompt(request_id, prompt)
   prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
-
+  
   try:
     print(f"Processing prompt: {prompt}")
-    await node.process_prompt(shard, prompt, request_id=request_id)
-
+    await node.process_prompt(shard, prompt, request_id=request_id) # download model entry
+    
     _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
 
     print("\nGenerated response:")
     print(tokenizer.decode(tokens))
+
   except Exception as e:
     print(f"Error processing prompt: {str(e)}")
     traceback.print_exc()
   finally:
     node.on_token.deregister(callback_id)
-
+  
 def clean_path(path):
     """Clean and resolve path"""
     if path.startswith("Optional("):
@@ -325,11 +353,22 @@ async def main():
 
   # Check HuggingFace directory permissions
   hf_home, has_read, has_write = get_hf_home(), await has_hf_home_read_access(), await has_hf_home_write_access()
-  if DEBUG >= 1: print(f"Model storage directory: {hf_home}")
+  if DEBUG >= 1: print(f"HF Model storage directory: {hf_home}")
   print(f"{has_read=}, {has_write=}")
   if not has_read or not has_write:
     print(f"""
           WARNING: Limited permissions for model storage directory: {hf_home}.
+          This may prevent model downloads from working correctly.
+          {"❌ No read access" if not has_read else ""}
+          {"❌ No write access" if not has_write else ""}
+          """)
+  # Check exo directory permissions
+  exo_home, has_read, has_write = get_exo_home(), await has_exo_home_read_access(), await has_exo_home_write_access()
+  if DEBUG >= 1: print(f"Local Model storage directory: {exo_home}")
+  print(f"{has_read=}, {has_write=}")
+  if not has_read or not has_write:
+    print(f"""
+          WARNING: Limited permissions for model storage directory: {exo_home}.
           This may prevent model downloads from working correctly.
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}
@@ -357,6 +396,18 @@ async def main():
     for s in [signal.SIGINT, signal.SIGTERM]:
       loop.add_signal_handler(s, handle_exit)
 
+  if node_agent == "stored": # Local model server
+    asyncio.create_task(local_model_api.run(host=args.stored_model_ip, port=args.stored_model_port))
+  elif node_agent == "client": # get local models from master
+    stored_models_data = await get_stored_models(args.stored_model_ip, args.stored_model_port)
+    if stored_models_data != []:
+      for model in stored_models_data.get("models"):
+        model_name = model.get('name')
+        model_config_data = await get_stored_model_config(args.stored_model_ip, args.stored_model_port, model_name)
+        if model_config_data is not None:
+          model_layer = model_config_data.get('num_hidden_layers')
+          build_local_model_card(model_name, None, inference_engine.__class__.__name__, int(model_layer))
+
   await node.start(wait_for_peers=args.wait_for_peers)
 
   if args.command == "run" or args.run_model:
@@ -381,7 +432,7 @@ async def main():
       await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters, save_interval=args.save_every, checkpoint_dir=args.save_checkpoint_dir)
     
   else:
-    asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
+    asyncio.create_task(chatgpt_api.run(host=args.node_host, port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
   
   if args.wait_for_peers > 0:

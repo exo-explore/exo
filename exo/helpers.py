@@ -14,6 +14,8 @@ import tempfile
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+import aiohttp
+
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
 VERSION = "0.0.1"
@@ -93,15 +95,8 @@ def terminal_link(uri, label=None):
 
   return escape_mask.format(parameters, uri, label)
 
-def init_exo_env():
-  exo_path = Path(Path.home()/".cache"/"exo")
-  os.makedirs(exo_path, exist_ok=True)
-  if DEBUG >= 1: print(f"Init exo folder: {exo_path}")
-  return exo_path
-
 T = TypeVar("T")
 K = TypeVar("K")
-
 
 class AsyncCallback(Generic[T]):
   def __init__(self) -> None:
@@ -314,6 +309,39 @@ async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
 
   # Other physical interfaces
   return (2, "Other")
+
+async def get_stored_models(stored_ip: str, stored_port: int):
+  url = f"http://{stored_ip}:{stored_port}/models"
+  try:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+              return await response.json()
+            else:
+              return []
+  except Exception as e:
+    print(f"Error getting models from store: {e}")
+    return []
+
+async def get_stored_model_config(stored_ip: str, stored_port: int, model_name: str):
+  url = f"http://{stored_ip}:{stored_port}/models/{model_name}/download/config.json"
+  try:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+              return await response.json()
+            else:
+              return None
+  except Exception as e:
+    print(f"Error getting models from store: {e}")
+    return None
+
+def check_agent(store_ip: str) -> str:
+  for ip, _ in get_all_ip_addresses_and_interfaces():
+    if (store_ip == ip) or (store_ip == "0.0.0.0"):
+      return "stored"
+  else:
+    return "client"
 
 async def shutdown(signal, loop, server):
   """Gracefully shutdown the server and close the asyncio loop."""
