@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import Mock, AsyncMock
 import numpy as np
+import pytest
 
 from .node import Node
 from exo.networking.peer_handle import PeerHandle
@@ -55,3 +56,11 @@ class TestNode(unittest.IsolatedAsyncioTestCase):
     await self.node.process_tensor(input_tensor, None)
 
     self.node.inference_engine.process_shard.assert_called_once_with(input_tensor)
+
+  @pytest.mark.asyncio
+  async def test_node_capabilities():
+    node = Node()
+    await node.initialize()
+    caps = await node.get_device_capabilities()
+    assert caps is not None
+    assert caps.model != ""

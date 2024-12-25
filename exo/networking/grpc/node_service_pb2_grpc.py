@@ -36,32 +36,27 @@ class NodeServiceStub(object):
         """
         self.SendPrompt = channel.unary_unary(
                 '/node_service.NodeService/SendPrompt',
-                request_serializer=node__service__pb2.PromptRequest.SerializeToString,
-                response_deserializer=node__service__pb2.Tensor.FromString,
+                request_serializer=node__service__pb2.SendPromptRequest.SerializeToString,
+                response_deserializer=node__service__pb2.Empty.FromString,
                 _registered_method=True)
         self.SendTensor = channel.unary_unary(
                 '/node_service.NodeService/SendTensor',
-                request_serializer=node__service__pb2.TensorRequest.SerializeToString,
-                response_deserializer=node__service__pb2.Tensor.FromString,
+                request_serializer=node__service__pb2.SendTensorRequest.SerializeToString,
+                response_deserializer=node__service__pb2.Empty.FromString,
                 _registered_method=True)
         self.SendExample = channel.unary_unary(
                 '/node_service.NodeService/SendExample',
-                request_serializer=node__service__pb2.ExampleRequest.SerializeToString,
-                response_deserializer=node__service__pb2.Loss.FromString,
-                _registered_method=True)
-        self.GetInferenceResult = channel.unary_unary(
-                '/node_service.NodeService/GetInferenceResult',
-                request_serializer=node__service__pb2.GetInferenceResultRequest.SerializeToString,
-                response_deserializer=node__service__pb2.InferenceResult.FromString,
+                request_serializer=node__service__pb2.SendExampleRequest.SerializeToString,
+                response_deserializer=node__service__pb2.Empty.FromString,
                 _registered_method=True)
         self.CollectTopology = channel.unary_unary(
                 '/node_service.NodeService/CollectTopology',
                 request_serializer=node__service__pb2.CollectTopologyRequest.SerializeToString,
-                response_deserializer=node__service__pb2.Topology.FromString,
+                response_deserializer=node__service__pb2.CollectTopologyResponse.FromString,
                 _registered_method=True)
-        self.SendResult = channel.unary_unary(
-                '/node_service.NodeService/SendResult',
-                request_serializer=node__service__pb2.SendResultRequest.SerializeToString,
+        self.SendNewToken = channel.unary_unary(
+                '/node_service.NodeService/SendNewToken',
+                request_serializer=node__service__pb2.SendNewTokenRequest.SerializeToString,
                 response_deserializer=node__service__pb2.Empty.FromString,
                 _registered_method=True)
         self.SendOpaqueStatus = channel.unary_unary(
@@ -97,19 +92,13 @@ class NodeServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetInferenceResult(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def CollectTopology(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def SendResult(self, request, context):
+    def SendNewToken(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -132,32 +121,27 @@ def add_NodeServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'SendPrompt': grpc.unary_unary_rpc_method_handler(
                     servicer.SendPrompt,
-                    request_deserializer=node__service__pb2.PromptRequest.FromString,
-                    response_serializer=node__service__pb2.Tensor.SerializeToString,
+                    request_deserializer=node__service__pb2.SendPromptRequest.FromString,
+                    response_serializer=node__service__pb2.Empty.SerializeToString,
             ),
             'SendTensor': grpc.unary_unary_rpc_method_handler(
                     servicer.SendTensor,
-                    request_deserializer=node__service__pb2.TensorRequest.FromString,
-                    response_serializer=node__service__pb2.Tensor.SerializeToString,
+                    request_deserializer=node__service__pb2.SendTensorRequest.FromString,
+                    response_serializer=node__service__pb2.Empty.SerializeToString,
             ),
             'SendExample': grpc.unary_unary_rpc_method_handler(
                     servicer.SendExample,
-                    request_deserializer=node__service__pb2.ExampleRequest.FromString,
-                    response_serializer=node__service__pb2.Loss.SerializeToString,
-            ),
-            'GetInferenceResult': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetInferenceResult,
-                    request_deserializer=node__service__pb2.GetInferenceResultRequest.FromString,
-                    response_serializer=node__service__pb2.InferenceResult.SerializeToString,
+                    request_deserializer=node__service__pb2.SendExampleRequest.FromString,
+                    response_serializer=node__service__pb2.Empty.SerializeToString,
             ),
             'CollectTopology': grpc.unary_unary_rpc_method_handler(
                     servicer.CollectTopology,
                     request_deserializer=node__service__pb2.CollectTopologyRequest.FromString,
-                    response_serializer=node__service__pb2.Topology.SerializeToString,
+                    response_serializer=node__service__pb2.CollectTopologyResponse.SerializeToString,
             ),
-            'SendResult': grpc.unary_unary_rpc_method_handler(
-                    servicer.SendResult,
-                    request_deserializer=node__service__pb2.SendResultRequest.FromString,
+            'SendNewToken': grpc.unary_unary_rpc_method_handler(
+                    servicer.SendNewToken,
+                    request_deserializer=node__service__pb2.SendNewTokenRequest.FromString,
                     response_serializer=node__service__pb2.Empty.SerializeToString,
             ),
             'SendOpaqueStatus': grpc.unary_unary_rpc_method_handler(
@@ -196,8 +180,8 @@ class NodeService(object):
             request,
             target,
             '/node_service.NodeService/SendPrompt',
-            node__service__pb2.PromptRequest.SerializeToString,
-            node__service__pb2.Tensor.FromString,
+            node__service__pb2.SendPromptRequest.SerializeToString,
+            node__service__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -223,8 +207,8 @@ class NodeService(object):
             request,
             target,
             '/node_service.NodeService/SendTensor',
-            node__service__pb2.TensorRequest.SerializeToString,
-            node__service__pb2.Tensor.FromString,
+            node__service__pb2.SendTensorRequest.SerializeToString,
+            node__service__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -250,35 +234,8 @@ class NodeService(object):
             request,
             target,
             '/node_service.NodeService/SendExample',
-            node__service__pb2.ExampleRequest.SerializeToString,
-            node__service__pb2.Loss.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetInferenceResult(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/node_service.NodeService/GetInferenceResult',
-            node__service__pb2.GetInferenceResultRequest.SerializeToString,
-            node__service__pb2.InferenceResult.FromString,
+            node__service__pb2.SendExampleRequest.SerializeToString,
+            node__service__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -305,7 +262,7 @@ class NodeService(object):
             target,
             '/node_service.NodeService/CollectTopology',
             node__service__pb2.CollectTopologyRequest.SerializeToString,
-            node__service__pb2.Topology.FromString,
+            node__service__pb2.CollectTopologyResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -317,7 +274,7 @@ class NodeService(object):
             _registered_method=True)
 
     @staticmethod
-    def SendResult(request,
+    def SendNewToken(request,
             target,
             options=(),
             channel_credentials=None,
@@ -330,8 +287,8 @@ class NodeService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/node_service.NodeService/SendResult',
-            node__service__pb2.SendResultRequest.SerializeToString,
+            '/node_service.NodeService/SendNewToken',
+            node__service__pb2.SendNewTokenRequest.SerializeToString,
             node__service__pb2.Empty.FromString,
             options,
             channel_credentials,

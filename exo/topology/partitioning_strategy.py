@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Dict
 from dataclasses import dataclass
 from .topology import Topology
 from exo.inference.shard import Shard
+from exo.topology.device_capabilities import device_capabilities
+import asyncio
 
 
 # Partitions shard-space into pieces of contiguous shards, represented by floating point range [start, end) between 0 and 1

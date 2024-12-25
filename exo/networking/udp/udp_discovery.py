@@ -3,7 +3,7 @@ import json
 import socket
 import time
 import traceback
-from typing import List, Dict, Callable, Tuple, Coroutine
+from typing import List, Dict, Callable, Tuple, Coroutine, Optional
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
@@ -23,15 +23,29 @@ class ListenProtocol(asyncio.DatagramProtocol):
     asyncio.create_task(self.on_message(data, addr))
 
 
+def get_broadcast_address(ip_addr: str) -> str:
+  try:
+    # Split IP into octets and create broadcast address for the subnet
+    ip_parts = ip_addr.split('.')
+    return f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.255"
+  except:
+    return "255.255.255.255"
+
+
 class BroadcastProtocol(asyncio.DatagramProtocol):
-  def __init__(self, message: str, broadcast_port: int):
+  def __init__(self, message: str, broadcast_port: int, source_ip: str):
     self.message = message
     self.broadcast_port = broadcast_port
+    self.source_ip = source_ip
 
   def connection_made(self, transport):
     sock = transport.get_extra_info("socket")
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    transport.sendto(self.message.encode("utf-8"), ("<broadcast>", self.broadcast_port))
+    # Try both subnet-specific and global broadcast
+    broadcast_addr = get_broadcast_address(self.source_ip)
+    transport.sendto(self.message.encode("utf-8"), (broadcast_addr, self.broadcast_port))
+    if broadcast_addr != "255.255.255.255":
+      transport.sendto(self.message.encode("utf-8"), ("255.255.255.255", self.broadcast_port))
 
 
 class UDPDiscovery(Discovery):
@@ -45,7 +59,8 @@ class UDPDiscovery(Discovery):
     broadcast_interval: int = 2.5,
     discovery_timeout: int = 30,
     device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
-    allowed_node_ids: List[str] = None,
+    allowed_node_ids: Optional[List[str]] = None,
+    allowed_interface_types: Optional[List[str]] = None,
   ):
     self.node_id = node_id
     self.node_port = node_port
@@ -56,13 +71,14 @@ class UDPDiscovery(Discovery):
     self.discovery_timeout = discovery_timeout
     self.device_capabilities = device_capabilities
     self.allowed_node_ids = allowed_node_ids
+    self.allowed_interface_types = allowed_interface_types
     self.known_peers: Dict[str, Tuple[PeerHandle, float, float, int]] = {}
     self.broadcast_task = None
     self.listen_task = None
     self.cleanup_task = None
 
   async def start(self):
-    self.device_capabilities = device_capabilities()
+    self.device_capabilities = await device_capabilities()
     self.broadcast_task = asyncio.create_task(self.task_broadcast_presence())
     self.listen_task = asyncio.create_task(self.task_listen_for_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
@@ -82,11 +98,7 @@ class UDPDiscovery(Discovery):
     return [peer_handle for peer_handle, _, _, _ in self.known_peers.values()]
 
   async def task_broadcast_presence(self):
-    if DEBUG_DISCOVERY >= 2: print("Starting task_broadcast_presence...")
-
     while True:
-      # Explicitly broadcasting on all assigned ips since broadcasting on `0.0.0.0` on MacOS does not broadcast over
-      # the Thunderbolt bridge when other connection modalities exist such as WiFi or Ethernet
       for addr, interface_name in get_all_ip_addresses_and_interfaces():
         interface_priority, interface_type = await get_interface_priority_and_type(interface_name)
         message = json.dumps({
@@ -94,16 +106,26 @@ class UDPDiscovery(Discovery):
           "node_id": self.node_id,
           "grpc_port": self.node_port,
           "device_capabilities": self.device_capabilities.to_dict(),
-          "priority": interface_priority, # TODO: Prioritise interfaces based on bandwidth, latency, and jitter e.g. prioritise Thunderbolt over WiFi.
+          "priority": interface_priority,
           "interface_name": interface_name,
           "interface_type": interface_type,
         })
-        if DEBUG_DISCOVERY >= 3: print(f"Broadcasting presence at ({addr} - {interface_name} - {interface_priority}): {message}")
 
         transport = None
         try:
-          transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(lambda: BroadcastProtocol(message, self.broadcast_port), local_addr=(addr, 0), family=socket.AF_INET)
-          if DEBUG_DISCOVERY >= 3: print(f"Broadcasting presence at ({addr} - {interface_name} - {interface_priority})")
+          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+          sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+          except AttributeError:
+            pass
+          sock.bind((addr, 0))
+          
+          transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(
+            lambda: BroadcastProtocol(message, self.broadcast_port, addr),
+            sock=sock
+          )
         except Exception as e:
           print(f"Error in broadcast presence ({addr} - {interface_name} - {interface_priority}): {e}")
         finally:
@@ -111,7 +133,7 @@ class UDPDiscovery(Discovery):
             try: transport.close()
             except Exception as e:
               if DEBUG_DISCOVERY >= 2: print(f"Error closing transport: {e}")
-              if DEBUG_DISCOVERY >= 2: traceback.print_exc()
+
       await asyncio.sleep(self.broadcast_interval)
 
   async def on_listen_message(self, data, addr):
@@ -147,6 +169,12 @@ class UDPDiscovery(Discovery):
       peer_prio = message["priority"]
       peer_interface_name = message["interface_name"]
       peer_interface_type = message["interface_type"]
+
+      # Skip if interface type is not in allowed list
+      if self.allowed_interface_types and peer_interface_type not in self.allowed_interface_types:
+        if DEBUG_DISCOVERY >= 2: print(f"Ignoring peer {peer_id} as its interface type {peer_interface_type} is not in the allowed interface types list")
+        return
+
       device_capabilities = DeviceCapabilities(**message["device_capabilities"])
 
       if peer_id not in self.known_peers or self.known_peers[peer_id][0].addr() != f"{peer_host}:{peer_port}":
