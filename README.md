@@ -104,6 +104,115 @@ source install.sh
 2. Run `./configure_mlx.sh`. This runs commands to optimize GPU memory allocation on Apple Silicon Macs.
 
 
+## Usage
+
+```sh
+exo [-h] [OPTIONS] [COMMAND: {run,eval,train}] [model_name]
+```
+
+```sh
+positional arguments:
+  {run,eval,train}      Command to run
+  model_name            Model name to run
+
+options:
+  -h, --help            show this help message and exit
+  --default-model DEFAULT_MODEL
+                        Default model
+  --iters ITERS         Training iterations
+  --save-every SAVE_EVERY
+                        Save the model every N iterations.
+  --data DATA           Directory where training data lives
+  --batch-size BATCH_SIZE
+                        Minibatch size.
+  --resume-checkpoint RESUME_CHECKPOINT
+                        Path to a custom checkpoint to load
+  --save-checkpoint-dir SAVE_CHECKPOINT_DIR
+                        Path to a folder where checkpoints are stored
+  --node-id NODE_ID     Node ID
+  --node-host NODE_HOST
+                        Node host
+  --node-port NODE_PORT
+                        Node port
+  --models-seed-dir MODELS_SEED_DIR
+                        Model seed directory
+  --listen-port LISTEN_PORT
+                        Listening port for discovery
+  --download-quick-check
+                        Quick check local path for model shards download
+  --max-parallel-downloads MAX_PARALLEL_DOWNLOADS
+                        Max parallel downloads for model shards download
+  --prometheus-client-port PROMETHEUS_CLIENT_PORT
+                        Prometheus client port
+  --broadcast-port BROADCAST_PORT
+                        Broadcast port for discovery
+  --discovery-module {udp,tailscale,manual}
+                        Discovery module to use
+  --discovery-timeout DISCOVERY_TIMEOUT
+                        Discovery timeout in seconds
+  --discovery-config-path DISCOVERY_CONFIG_PATH
+                        Path to discovery config json file
+  --wait-for-peers WAIT_FOR_PEERS
+                        Number of peers to wait to connect to before starting
+  --chatgpt-api-port CHATGPT_API_PORT
+                        ChatGPT API port
+  --chatgpt-api-response-timeout CHATGPT_API_RESPONSE_TIMEOUT
+                        ChatGPT API response timeout in seconds
+  --max-generate-tokens MAX_GENERATE_TOKENS
+                        Max tokens to generate in each request
+  --inference-engine INFERENCE_ENGINE
+                        Inference engine to use (mlx, tinygrad, or dummy)
+  --disable-tui, --no-disable-tui
+                        Disable TUI
+  --run-model RUN_MODEL
+                        Specify a model to run directly
+  --prompt PROMPT       Prompt for the model when using --run-model
+  --default-temp DEFAULT_TEMP
+                        Default token sampling temperature
+  --tailscale-api-key TAILSCALE_API_KEY
+                        Tailscale API key
+  --tailnet-name TAILNET_NAME
+                        Tailnet name
+  --node-id-filter NODE_ID_FILTER
+                        Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)
+```
+
+Here are some examples of how to use exo effectively:
+
+### Running a Model
+
+To run a specific model, use the following command:
+
+```sh
+exo run llama-3.2-3b
+```
+
+### Custom Prompt
+
+You can also run a model with a custom prompt:
+
+```sh
+exo run llama-3.2-3b --prompt "What is the meaning of exo?"
+```
+
+### Accessing the API
+
+To interact with the API, you can use `curl` commands. For example, to query the Llama 3.2 3B model:
+
+```sh
+curl http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "llama-3.2-3b",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+}'
+```
+
+This will return a response from the model based on your input.
+
+
 ## Documentation
 
 ### Example Usage on Multiple macOS Devices
