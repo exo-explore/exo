@@ -69,23 +69,33 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     if DEBUG >= 5: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
     tensor_data = result.tobytes() if result is not None else None
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
-
-  async def GetInferenceResult(self, request, context):
-    request_id = request.request_id
-    result = await self.node.get_inference_result(request_id)
-    if DEBUG >= 5: print(f"GetInferenceResult {request_id=}: {result}")
-    tensor_data = result[0].tobytes() if result[0] is not None else None
-    return (
-      node_service_pb2.InferenceResult(
-        tensor=node_service_pb2.Tensor(tensor_data=tensor_data, shape=result[0].shape, dtype=str(result[0].dtype)),
-        is_finished=result[1],
-      ) if result[0] is not None else node_service_pb2.InferenceResult(is_finished=result[1])
+  
+  async def SendExample(self, request, context):
+    shard = Shard(
+      model_id=request.shard.model_id,
+      start_layer=request.shard.start_layer,
+      end_layer=request.shard.end_layer,
+      n_layers=request.shard.n_layers,
     )
+    example = np.frombuffer(request.example.tensor_data, dtype=np.dtype(request.example.dtype)).reshape(request.example.shape)
+    target = np.frombuffer(request.target.tensor_data, dtype=np.dtype(request.target.dtype)).reshape(request.target.shape)
+    length = np.frombuffer(request.length.tensor_data, dtype=np.dtype(request.length.dtype)).reshape(request.length.shape)
+    train = request.train
+    request_id = request.request_id
 
+    if train and not shard.is_first_layer():
+      loss, grad = await self.node.process_example(shard, example, target, length, train, request_id)
+      tensor_data = grad.tobytes()
+      grad_tensor = node_service_pb2.Tensor(tensor_data=tensor_data, shape=grad.shape, dtype=str(grad.dtype))
+      return node_service_pb2.Loss(loss=loss, grads=grad_tensor)
+    else:
+      loss = await self.node.process_example(shard, example, target, length, train, request_id)
+      return node_service_pb2.Loss(loss=loss, grads=None)
+    
   async def CollectTopology(self, request, context):
     max_depth = request.max_depth
     visited = set(request.visited)
-    topology = await self.node.collect_topology(visited, max_depth)
+    topology = self.node.current_topology
     nodes = {
       node_id:
         node_service_pb2.DeviceCapabilities(
@@ -96,7 +106,15 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         )
       for node_id, cap in topology.nodes.items()
     }
-    peer_graph = {node_id: node_service_pb2.Peers(peer_ids=peers) for node_id, peers in topology.peer_graph.items()}
+    peer_graph = {
+      node_id: node_service_pb2.PeerConnections(
+        connections=[
+          node_service_pb2.PeerConnection(to_id=conn.to_id, description=conn.description)
+          for conn in connections
+        ]
+      )
+      for node_id, connections in topology.peer_graph.items()
+    }
     if DEBUG >= 5: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
     return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 
