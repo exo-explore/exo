@@ -14,7 +14,7 @@ from torchtune.models.llama3_1 import Llama3ScaledRoPE
 from torchtune.modules.attention_utils import _MaskType
 
 from exo.inference.shard import Shard
-from exo.inference.torch.models.llm_utils import MultiLayerPreceptron, RMSNorm, get_torch_dtype
+from exo.inference.torch.models.llm_utils import MultiLayerPreceptron, RMSNorm
 from exo.helpers import DEBUG
 
 
@@ -90,6 +90,8 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       for layer in self.layers:
         if layer is not None:
           return layer.caches_are_enabled()
+
+    return False
 
   def forward(
     self,
@@ -284,8 +286,9 @@ class ShardedLlamaModel(nn.Module):
     with torch.no_grad():
       self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
 
-    print(f"model loaded: {self.model}\n")
-    print(f"device: {self.device}\n")
+    if DEBUG >= 8:
+      print(f"model loaded: {self.model}\n")
+      print(f"device: {self.device}\n")
 
   def generate(
     self,

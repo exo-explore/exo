@@ -13,7 +13,7 @@ class TestTailscaleDiscovery(unittest.IsolatedAsyncioTestCase):
     self.discovery = TailscaleDiscovery(
       node_id="test_node",
       node_port=50051,
-      create_peer_handle=lambda peer_id, address, device_capabilities: unittest.mock.Mock(spec=PeerHandle, id=lambda: peer_id),
+      create_peer_handle=lambda peer_id, address, description, device_capabilities: unittest.mock.Mock(spec=PeerHandle, id=lambda: peer_id),
       tailscale_api_key=self.tailscale_api_key,
       tailnet=self.tailnet
     )
