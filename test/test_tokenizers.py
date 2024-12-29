@@ -24,6 +24,7 @@ def test_tokenizer(name, tokenizer, verbose=False):
     strip_tokens = lambda s: s.lstrip(tokenizer.decode([tokenizer.bos_token_id])).rstrip(tokenizer.decode([tokenizer.eos_token_id]))
     assert text == strip_tokens(decoded) == strip_tokens(reconstructed)
 
+enable_trust_remote_code_models = ['mlx-community/EXAONE-3.5-2.4B-Instruct-4bit', 'mlx-community/EXAONE-3.5-7.8B-Instruct-4bit']
 ignore = ["TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", "mlx-community/DeepSeek-V2.5-MLX-AQ4_1_64", "llava-hf/llava-1.5-7b-hf", "mlx-community/Qwen*", "dummy", "mlx-community/Meta-Llama-3.1-405B-Instruct-8bit"]
 ignore_pattern = re.compile(r"^(" + "|".join(model.replace("*", ".*") for model in ignore) + r")")
 models = []
@@ -34,8 +35,10 @@ for model_id in model_cards:
 models = list(set(models))
 
 verbose = os.environ.get("VERBOSE", "0").lower() == "1"
+
 for m in models:
+    enable_trust_remote_code = m in enable_trust_remote_code_models
     # TODO: figure out why use_fast=False is giving inconsistent behaviour (no spaces decoding invididual tokens) for Mistral-Large-Instruct-2407-4bit
     # test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=False), verbose)
-    test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=True), verbose)
-    test_tokenizer(m, AutoTokenizer.from_pretrained(m), verbose)
+    test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=True, trust_remote_code=enable_trust_remote_code), verbose)
+    test_tokenizer(m, AutoTokenizer.from_pretrained(m, trust_remote_code=enable_trust_remote_code), verbose)

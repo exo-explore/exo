@@ -110,6 +110,8 @@ model_cards = {
   "gemma2-27b": { "layers": 46, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/gemma-2-27b-it-4bit", }, },
   # dummy
   "dummy": { "layers": 8, "repo": { "DummyInferenceEngine": "dummy", }, },
+  "exaone-3.5-7.8b": {"layers": 32, "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/EXAONE-3.5-7.8B-Instruct-4bit"}, },
+  "exaone-3.5-2.4b": {"layers": 30, "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/EXAONE-3.5-2.4B-Instruct-4bit"}, },
 }
 
 pretty_name = {
@@ -145,6 +147,8 @@ pretty_name = {
   "qwen-2.5-math-72b": "Qwen 2.5 72B (Math)",
   "llama-3-8b": "Llama 3 8B",
   "llama-3-70b": "Llama 3 70B",
+  "exaone-3.5-2.4b": "EXAONE-3.5 2.4B",
+  "exaone-3.5-7.8b": "EXAONE-3.5 7.8B",
 }
 
 def get_repo(model_id: str, inference_engine_classname: str) -> Optional[str]:
