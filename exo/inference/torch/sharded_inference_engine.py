@@ -199,3 +199,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         self.sharded_model
       )
     )
+
+  async def load_checkpoint(self, shard: Shard, path: str):
+    await self.ensure_shard(shard)
