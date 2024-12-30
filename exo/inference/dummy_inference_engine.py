@@ -32,3 +32,6 @@ class DummyInferenceEngine(InferenceEngine):
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard: return
     self.shard = shard
+  
+  async def load_checkpoint(self, shard: Shard, path: str):
+    await self.ensure_shard(shard)

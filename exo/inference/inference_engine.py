@@ -8,6 +8,8 @@ from .shard import Shard
 
 
 class InferenceEngine(ABC):
+  session = {}
+
   @abstractmethod
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     pass
@@ -23,6 +25,19 @@ class InferenceEngine(ABC):
   @abstractmethod
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     pass
+
+  @abstractmethod
+  async def load_checkpoint(self, shard: Shard, path: str):
+    pass
+
+  async def save_checkpoint(self, shard: Shard, path: str):
+    pass
+  
+  async def save_session(self, key, value):
+    self.session[key] = value
+  
+  async def clear_session(self):
+    self.session.empty()
   
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[dict] = None) -> np.ndarray:
     tokens = await self.encode(shard, prompt)

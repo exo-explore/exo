@@ -10,9 +10,14 @@ import sys
 import time
 import traceback
 import uuid
+import numpy as np
+from functools import partial
+from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio
+from exo.train.dataset import load_dataset, iterate_batches, compose
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.manual.network_topology_config import NetworkTopology
-from exo.orchestration.standard_node import StandardNode
+from exo.orchestration.node import Node
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
@@ -21,20 +26,25 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, RepoProgressEvent, NoopShardDownloader
 from exo.download.hf.hf_shard_download import HFShardDownloader
-from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses, terminal_link, shutdown
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
-from exo.orchestration.node import Node
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
-parser.add_argument("command", nargs="?", choices=["run"], help="Command to run")
+parser.add_argument("command", nargs="?", choices=["run", "eval", "train"], help="Command to run")
 parser.add_argument("model_name", nargs="?", help="Model name to run")
 parser.add_argument("--default-model", type=str, default=None, help="Default model")
+parser.add_argument("--iters", type=int, default=100, help="Training iterations")
+parser.add_argument("--save-every", type=int, default=5, help="Save the model every N iterations.")
+parser.add_argument("--data", type=str, default="exo/train/data/lora", help="Directory where training data lives")
+parser.add_argument("--batch-size", type=int, default=1, help="Minibatch size.")
+parser.add_argument("--resume-checkpoint", type=str, default=None, help="Path to a custom checkpoint to load")
+parser.add_argument("--save-checkpoint-dir", type=str, default="checkpoints", help="Path to a folder where checkpoints are stored")
 parser.add_argument("--node-id", type=str, default=None, help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=None, help="Node port")
@@ -80,8 +90,8 @@ if args.node_port is None:
   if DEBUG >= 1: print(f"Using available port: {args.node_port}")
 
 args.node_id = args.node_id or get_or_create_node_id()
-chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip in get_all_ip_addresses()]
-web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip in get_all_ip_addresses()]
+chatgpt_api_endpoints = [f"http://{ip}:{args.chatgpt_api_port}/v1/chat/completions" for ip, _ in get_all_ip_addresses_and_interfaces()]
+web_chat_urls = [f"http://{ip}:{args.chatgpt_api_port}" for ip, _ in get_all_ip_addresses_and_interfaces()]
 if DEBUG >= 0:
   print("Chat interface started:")
   for web_chat_url in web_chat_urls:
@@ -99,7 +109,7 @@ if args.discovery_module == "udp":
     args.node_port,
     args.listen_port,
     args.broadcast_port,
-    lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
+    lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
     discovery_timeout=args.discovery_timeout,
     allowed_node_ids=allowed_node_ids
   )
@@ -107,7 +117,7 @@ elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(
     args.node_id,
     args.node_port,
-    lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities),
+    lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
     discovery_timeout=args.discovery_timeout,
     tailscale_api_key=args.tailscale_api_key,
     tailnet=args.tailnet_name,
@@ -116,9 +126,9 @@ elif args.discovery_module == "tailscale":
 elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
-  discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, device_capabilities: GRPCPeerHandle(peer_id, address, device_capabilities))
+  discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
-node = StandardNode(
+node = Node(
   args.node_id,
   None,
   inference_engine,
@@ -208,6 +218,57 @@ def clean_path(path):
         path = path.strip('Optional("').rstrip('")')
     return os.path.expanduser(path)
 
+async def hold_outstanding(node: Node):
+  while node.outstanding_requests:
+    await asyncio.sleep(.5)
+  return 
+
+async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
+  losses = []
+  tokens = []
+  for batch in tqdm(iterate_batches(data, batch_size), total=len(data) // batch_size):
+    _, _, lengths = batch
+    losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch, train=train)))
+    tokens.append(np.sum(lengths))
+  total_tokens = np.sum(tokens)
+  total_loss = np.sum(losses) / total_tokens
+  
+  return total_loss, total_tokens
+
+async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, num_batches=-1):
+  inference_class = inference_engine.__class__.__name__
+  shard = build_base_shard(model_name, inference_class)
+  if not shard:
+    print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+    return
+  tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+  train, val, test = dataloader(tokenizer.encode)
+  print(f"Evaluating {len(test)} examples with batch_size {batch_size}")
+  loss, tokens = await run_iter(node, shard, False, test, batch_size)
+  print(f"total | {loss=}, {tokens=}")
+  print("Waiting for outstanding tasks")
+  await hold_outstanding(node)
+
+async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, iters, save_interval=0, checkpoint_dir=None):
+  inference_class = inference_engine.__class__.__name__
+  shard = build_base_shard(model_name, inference_class)
+  if not shard:
+    print(f"Error: Unsupported model '{model_name}' for inference engine {inference_engine.__class__.__name__}")
+    return
+  tokenizer = await resolve_tokenizer(get_repo(shard.model_id, inference_class))
+  train, val, test = dataloader(tokenizer.encode)
+  print(f"Training on {len(train)} examples with batch_size {batch_size} for {iters} epochs")
+  for i in tqdm(range(3)):
+    await asyncio.sleep(1)
+  for epoch in range(iters):
+    loss, tokens = await run_iter(node, shard, True, train, batch_size)
+    print(f"epoch {epoch + 1}/{iters}\t| loss: {loss}, tokens: {tokens}")
+    if save_interval > 0 and epoch > 0 and (epoch % save_interval) == 0 and checkpoint_dir is not None:
+      await node.coordinate_save(shard, epoch, checkpoint_dir)
+      await hold_outstanding(node)
+  await hold_outstanding(node)
+
+  
 async def main():
   loop = asyncio.get_running_loop()
 
@@ -253,9 +314,29 @@ async def main():
       print("Error: Model name is required when using 'run' command or --run-model")
       return
     await run_model_cli(node, inference_engine, model_name, args.prompt)
+  elif args.command == "eval" or args.command == 'train':
+    model_name = args.model_name
+    dataloader = lambda tok: load_dataset(args.data, preprocess=lambda item: tok(item)
+                                                   , loadline=lambda line: json.loads(line).get("text",""))
+    if args.command == 'eval':
+      if not model_name:
+        print("Error: Much like a human, I can't evaluate anything without a model")
+        return
+      await eval_model_cli(node, inference_engine, model_name, dataloader, args.batch_size)
+    else:
+      if not model_name:
+        print("Error: This train ain't leaving the station without a model")
+        return
+      await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters, save_interval=args.save_every, checkpoint_dir=args.save_checkpoint_dir)
+    
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
+  
+  if args.wait_for_peers > 0:
+    print("Cooldown to allow peers to exit gracefully")
+    for i in tqdm(range(50)):
+      await asyncio.sleep(.1)
 
 
 def run():
@@ -263,6 +344,7 @@ def run():
   asyncio.set_event_loop(loop)
   try:
     loop.run_until_complete(main())
+      
   except KeyboardInterrupt:
     print("Received keyboard interrupt. Shutting down...")
   finally:

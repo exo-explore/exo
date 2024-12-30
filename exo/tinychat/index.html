@@ -25,14 +25,73 @@
 </head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
-     <!-- Error Toast -->
-    <div x-show="errorMessage" x-transition.opacity class="toast">
+  <div class="sidebar">
+    <h2 class="megrim-regular" style="margin-bottom: 20px;">Models</h2>
+    
+    <!-- Loading indicator -->
+    <div class="loading-container" x-show="Object.keys(models).length === 0">
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Loading models...</span>
+    </div>
+    
+    <template x-for="(model, key) in models" :key="key">
+        <div class="model-option" 
+             :class="{ 'selected': cstate.selectedModel === key }"
+             @click="cstate.selectedModel = key">
+            <div class="model-header">
+                <div class="model-name" x-text="model.name"></div>
+                <button 
+                    @click.stop="deleteModel(key, model)"
+                    class="model-delete-button"
+                    x-show="model.download_percentage > 0">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+            <div class="model-info">
+                <div class="model-progress">
+                    <template x-if="model.loading">
+                        <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
+                    </template>
+                    <div class="model-progress-info">
+                        <template x-if="!model.loading && model.download_percentage != null">
+                            <span>
+                                <!-- Check if there's an active download for this model -->
+                                <template x-if="downloadProgress?.some(p => 
+                                    p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
+                                )">
+                                    <i class="fas fa-circle-notch fa-spin"></i>
+                                </template>
+                                <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
+                            </span>
+                        </template>
+                        <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
+                            <button 
+                                @click.stop="handleDownload(key)"
+                                class="model-download-button">
+                                <i class="fas fa-download"></i>
+                                <span x-text="(model.download_percentage > 0 && model.download_percentage < 100) ? 'Continue Downloading' : 'Download'"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                <template x-if="model.total_size">
+                    <div class="model-size" x-text="model.total_downloaded ? 
+                        `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` : 
+                        formatBytes(model.total_size)">
+                    </div>
+                </template>
+            </div>
+        </div>
+    </template>
+  </div> 
+    <!-- Error Toast -->
+    <div x-show="errorMessage !== null" x-transition.opacity class="toast">
         <div class="toast-header">
-            <span class="toast-error-message" x-text="errorMessage.basic"></span>
+            <span class="toast-error-message" x-text="errorMessage?.basic || ''"></span>
             <div class="toast-header-buttons">
                 <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }" 
                         class="toast-expand-button" 
-                        x-show="errorMessage.stack">
+                        x-show="errorMessage?.stack">
                     <span x-text="errorExpanded ? 'Hide Details' : 'Show Details'"></span>
                 </button>
                 <button @click="errorMessage = null; errorExpanded = false;" class="toast-close-button">
@@ -41,13 +100,10 @@
             </div>
         </div>
         <div class="toast-content" x-show="errorExpanded" x-transition>
-            <span x-text="errorMessage.stack"></span>
+            <span x-text="errorMessage?.stack || ''"></span>
         </div>
     </div>
-<div class="model-selector">
-  <select @change="if (cstate) cstate.selectedModel = $event.target.value" x-model="cstate.selectedModel" x-init="await populateSelector()" class='model-select'>
-  </select>
-</div>
+
 <div @popstate.window="
       if (home === 2) {
         home = -1;
@@ -79,10 +135,8 @@
 <template x-for="_state in histories.toSorted((a, b) =&gt; b.time - a.time)">
 <div @click="
             cstate = _state;
-            if (cstate) cstate.selectedModel = document.querySelector('.model-selector select').value
-            // updateTotalTokens(cstate.messages);
-            home = 1;
-            // ensure that going back in history will go back to home
+            if (!cstate.selectedModel) cstate.selectedModel = 'llama-3.2-1b';
+            home = 2;
             window.history.pushState({}, '', '/');
           " @touchend="
             if (Math.abs($event.changedTouches[0].clientX - otx) &gt; trigger) removeHistory(_state);
@@ -108,6 +162,19 @@
 </template>
 </div>
 </div>
+<button 
+    @click="
+        home = 0;
+        cstate = { time: null, messages: [], selectedModel: cstate.selectedModel };
+        time_till_first = 0;
+        tokens_per_second = 0;
+        total_tokens = 0;
+    " 
+    class="back-button"
+    x-show="home === 2">
+    <i class="fas fa-arrow-left"></i>
+    Back to Chats
+</button>
 <div class="messages" x-init="
       $watch('cstate', value =&gt; {
         $el.innerHTML = '';
@@ -227,27 +294,46 @@
 <i class="fas fa-times"></i>
 </button>
 </div>
-<textarea :disabled="generating" :placeholder="generating ? 'Generating...' : 'Say something'" @input="
-            home = (home === 0) ? 1 : home
-            if (cstate.messages.length === 0 &amp;&amp; $el.value === '') home = -1;
+<textarea 
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
+    :placeholder="
+        generating ? 'Generating...' : 
+        (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete)) ? 'Download in progress...' :
+        'Say something'
+    "
+    @input="
+        home = (home === 0) ? 1 : home
+        if (cstate.messages.length === 0 && $el.value === '') home = -1;
 
-            if ($el.value !== '') {
-              const messages = [...cstate.messages];
-              messages.push({ role: 'user', content: $el.value });
-              // updateTotalTokens(messages);
-            } else {
-              if (cstate.messages.length === 0) total_tokens = 0;
-              // else updateTotalTokens(cstate.messages);
-            }
-          " @keydown.enter="await handleEnter($event)" @keydown.escape.window="$focus.focus($el)" autofocus="" class="input-form" id="input-form" rows="1" x-autosize="" x-effect="
-            console.log(generating);
-            if (!generating) $nextTick(() =&gt; {
-              $el.focus();
-              setTimeout(() =&gt; $refs.messages.scrollTo({ top: $refs.messages.scrollHeight, behavior: 'smooth' }), 100);
-            });
-          " x-ref="inputForm"></textarea>
-<button :disabled="generating" @click="await handleSend()" class="input-button">
-<i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
+        if ($el.value !== '') {
+            const messages = [...cstate.messages];
+            messages.push({ role: 'user', content: $el.value });
+            // updateTotalTokens(messages);
+        } else {
+            if (cstate.messages.length === 0) total_tokens = 0;
+            // else updateTotalTokens(cstate.messages);
+        }
+    "
+    @keydown.enter="await handleEnter($event)"
+    @keydown.escape.window="$focus.focus($el)"
+    autofocus=""
+    class="input-form"
+    id="input-form"
+    rows="1"
+    x-autosize=""
+    x-effect="
+        console.log(generating);
+        if (!generating) $nextTick(() => {
+            $el.focus();
+            setTimeout(() => $refs.messages.scrollTo({ top: $refs.messages.scrollHeight, behavior: 'smooth' }), 100);
+        });
+    "
+    x-ref="inputForm"></textarea>
+<button 
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
+    @click="await handleSend()" 
+    class="input-button">
+    <i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
 </button>
 </div>
 </div>
