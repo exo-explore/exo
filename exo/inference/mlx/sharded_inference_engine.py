@@ -82,7 +82,10 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     loop = asyncio.get_running_loop()
     state = await self.poll_state(request_id) if self.model.model_type != 'StableDiffusionPipeline' else {}
     x = mx.array(input_data)
-    output_data,inference_state = await loop.run_in_executor(self.executor, lambda: self.model(x, **state, **inference_state))
+    if self.model.model_type != 'StableDiffusionPipeline':
+      output_data = await loop.run_in_executor(self.executor, lambda: self.model(x, **state, **inference_state))
+    else:
+      output_data, inference_state = await loop.run_in_executor(self.executor, lambda: self.model(x, **state, **inference_state))
     output_data = np.array(output_data)
     return output_data, inference_state
 
