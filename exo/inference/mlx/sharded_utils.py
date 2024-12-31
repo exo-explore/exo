@@ -254,6 +254,4 @@ def load_model_index(model_path: Path, model_index_path: Path):
         m = {}
         m[model] = model_config
         models_config.update(m)
-  models_config = json.dumps(models_config)
-  models_config = json.loads(models_config)
   return models_config

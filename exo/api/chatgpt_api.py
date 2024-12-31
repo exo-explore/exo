@@ -463,9 +463,9 @@ class ChatGPTAPI:
     model = data.get("model", "")
     prompt = data.get("prompt", "")
     image_url = data.get("image_url", "")
-    print(f"model: {model}, prompt: {prompt}, stream: {stream}")
+    if DEBUG >= 2: print(f"model: {model}, prompt: {prompt}, stream: {stream}")
     shard = build_base_shard(model, self.inference_engine_classname)
-    print(f"shard: {shard}")
+    if DEBUG >= 2: print(f"shard: {shard}")
     if not shard:
         return web.json_response({"error": f"Unsupported model: {model} with inference engine {self.inference_engine_classname}"}, status=400)
 
@@ -683,7 +683,7 @@ class ChatGPTAPI:
     img = Image.open(BytesIO(image_data))
     W, H = (dim - dim % 64 for dim in (img.width, img.height))
     if W != img.width or H != img.height:
-        print(f"Warning: image shape is not divisible by 64, downsampling to {W}x{H}")
+        if DEBUG >= 2: print(f"Warning: image shape is not divisible by 64, downsampling to {W}x{H}")
         img = img.resize((W, H), Image.NEAREST)  # use desired downsampling filter
     img = mx.array(np.array(img))
     img = (img[:, :, :3].astype(mx.float32) / 255) * 2 - 1
