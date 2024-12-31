@@ -43,10 +43,9 @@ class InferenceEngine(ABC):
     tokens = await self.encode(shard, prompt)
     if shard.model_id != 'stable-diffusion-2-1-base':
       x = tokens.reshape(1, -1)
-      output_data, inference_state = await self.infer_tensor(request_id, shard, x, inference_state)
     else:
       x = tokens
-      output_data, inference_state = await self.infer_tensor(request_id, shard, x, inference_state)
+    output_data, inference_state = await self.infer_tensor(request_id, shard, x, inference_state)
 
     return output_data, inference_state
 
