@@ -5,6 +5,7 @@ from exo.helpers import DEBUG  # Make sure to import DEBUG
 from typing import Tuple, Optional
 from abc import ABC, abstractmethod
 from .shard import Shard
+from exo.inference.llama_cpp_inference_engine import LlamaCppInferenceEngine
 
 
 class InferenceEngine(ABC):
@@ -49,6 +50,7 @@ inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
+  "llama_cpp": "LlamaCppInferenceEngine",
 }
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDownloader'):
@@ -67,4 +69,6 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: 'ShardDow
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()
+  elif inference_engine_name == "llama_cpp":
+    return LlamaCppInferenceEngine()
   raise ValueError(f"Unsupported inference engine: {inference_engine_name}")
