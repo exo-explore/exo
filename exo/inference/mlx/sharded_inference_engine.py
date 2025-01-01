@@ -1,7 +1,9 @@
+import os
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.sample_utils import top_p_sampling
+from pathlib import Path
 import mlx.optimizers as optim
 from ..inference_engine import InferenceEngine
 from .sharded_utils import load_shard, get_image_from_str
@@ -14,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from collections import OrderedDict
 from mlx_lm.models.cache import make_prompt_cache
+
+from exo.models import get_repo
 
 def sample_logits(
   logits: mx.array,
@@ -136,8 +140,13 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     if self.shard == shard:
       return
 
-    model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
-
+    if os.path.isdir(shard.model_id): # path mode
+      model_path = Path(shard.model_id) 
+    elif "Local" in shard.model_id: # Local card mode
+      model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+    else:
+      model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+      
     if self.shard != shard:
 
       def load_shard_wrapper():

@@ -22,6 +22,9 @@ import shutil
 from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
 from exo.apputil import create_animation_mp4
 
+from exo.download.storedhost.sh_shard_download import SHShardDownloader
+from exo.download.storedhost.sh_helpers import get_repo_root, downlaod_tokenizer_config
+
 class Message:
   def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]], tools: Optional[List[Dict]] = None):
     self.role = role
@@ -251,10 +254,16 @@ class ChatGPTAPI:
                 if self.inference_engine_classname in model_info.get("repo", {}):
                     shard = build_base_shard(model_name, self.inference_engine_classname)
                     if shard:
-                        downloader = HFShardDownloader(quick_check=True)
-                        downloader.current_shard = shard
-                        downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
-                        status = await downloader.get_shard_download_status()
+                        if 'Local/' in model_name:
+                          downloader = SHShardDownloader(quick_check=True)
+                          downloader.current_shard = shard
+                          downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
+                          status = await downloader.get_shard_download_status()
+                        else:
+                          downloader = HFShardDownloader(quick_check=True)
+                          downloader.current_shard = shard
+                          downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
+                          status = await downloader.get_shard_download_status()
 
                         download_percentage = status.get("overall") if status else None
                         total_size = status.get("total_size") if status else None
@@ -284,7 +293,24 @@ class ChatGPTAPI:
         )
 
   async def handle_get_models(self, request):
-    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()])
+    models_list = []
+    for model_name, _ in model_cards.items():
+      if "Local" in model_name:
+        model_data = {
+          "id": model_name,
+          "object": "model", 
+          "owned_by": "Local",
+          "ready": True
+        }
+      else:
+        model_data = {
+          "id": model_name,
+          "object": "model", 
+          "owned_by": "exo",
+          "ready": True
+        }
+      models_list.append(model_data)
+    return web.json_response(models_list)
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
@@ -296,7 +322,11 @@ class ChatGPTAPI:
       model = self.default_model
     shard = build_base_shard(model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    if "Local" in shard.model_id:
+      model_path = model_cards.get(shard.model_id, {}).get("repo", {}).get(self.inference_engine_classname,{})
+      tokenizer = await resolve_tokenizer(model_path)
+    else:
+      tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     prompt = build_prompt(tokenizer, messages, data.get("tools", None))
     tokens = tokenizer.encode(prompt)
     return web.json_response({
@@ -325,6 +355,7 @@ class ChatGPTAPI:
     if not chat_request.model or chat_request.model not in model_cards:
       if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
       chat_request.model = self.default_model
+
     shard = build_base_shard(chat_request.model, self.inference_engine_classname)
     if not shard:
       supported_models = [model for model, info in model_cards.items() if self.inference_engine_classname in info.get("repo", {})]
@@ -333,7 +364,13 @@ class ChatGPTAPI:
         status=400,
       )
 
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    if os.path.isfile(chat_request.model):
+      model_path = model_cards.get(shard.model_id, {}).get("repo", {}).get(self.inference_engine_classname,{})
+      tokenizer = await resolve_tokenizer(model_path)
+    else:
+      if shard.model_id.startswith("Local"):
+        await downlaod_tokenizer_config(shard.model_id)
+      tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
     prompt = build_prompt(tokenizer, chat_request.messages, chat_request.tools)
@@ -465,30 +502,54 @@ class ChatGPTAPI:
 
       repo_id = get_repo(shard.model_id, self.inference_engine_classname)
       if DEBUG >= 2: print(f"Repo ID for model: {repo_id}")
+      
+      if repo_id.startswith("local"):
+        lm_dir = get_repo_root(repo_id)
+        print(lm_dir)
+        if DEBUG >= 2: print(f"Looking for model files in: {lm_dir}")
 
-      # Get the HF cache directory using the helper function
-      hf_home = get_hf_home()
-      cache_dir = get_repo_root(repo_id)
-
-      if DEBUG >= 2: print(f"Looking for model files in: {cache_dir}")
-
-      if os.path.exists(cache_dir):
-        if DEBUG >= 2: print(f"Found model files at {cache_dir}, deleting...")
-        try:
-          shutil.rmtree(cache_dir)
+        if os.path.exists(lm_dir):
+          if DEBUG >= 2: print(f"Found model files at {lm_dir}, deleting...")
+          try:
+            shutil.rmtree(lm_dir)
+            return web.json_response({
+              "status": "success",
+              "message": f"Model {model_name} deleted successfully",
+              "path": str(lm_dir)
+            })
+          except Exception as e:
+            return web.json_response({
+              "detail": f"Failed to delete model files: {str(e)}"
+            }, status=500)
+        else:
           return web.json_response({
-            "status": "success",
-            "message": f"Model {model_name} deleted successfully",
-            "path": str(cache_dir)
-          })
-        except Exception as e:
-          return web.json_response({
-            "detail": f"Failed to delete model files: {str(e)}"
-          }, status=500)
+            "detail": f"Model files not found at {lm_dir}"
+          }, status=404)
+      
       else:
-        return web.json_response({
-          "detail": f"Model files not found at {cache_dir}"
-        }, status=404)
+        # Get the HF cache directory using the helper function
+        hf_home = get_hf_home()
+        cache_dir = get_repo_root(repo_id)
+
+        if DEBUG >= 2: print(f"Looking for model files in: {cache_dir}")
+
+        if os.path.exists(cache_dir):
+          if DEBUG >= 2: print(f"Found model files at {cache_dir}, deleting...")
+          try:
+            shutil.rmtree(cache_dir)
+            return web.json_response({
+              "status": "success",
+              "message": f"Model {model_name} deleted successfully",
+              "path": str(cache_dir)
+            })
+          except Exception as e:
+            return web.json_response({
+              "detail": f"Failed to delete model files: {str(e)}"
+            }, status=500)
+        else:
+          return web.json_response({
+            "detail": f"Model files not found at {cache_dir}"
+          }, status=404)
 
     except Exception as e:
         print(f"Error in handle_delete_model: {str(e)}")

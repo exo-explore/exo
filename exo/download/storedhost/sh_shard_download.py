@@ -19,8 +19,13 @@ from aiofiles import os as aios
 from exo.download.storedhost.sh_helpers import (
   get_exo_home, get_lh_weight_map, fetch_lh_file_list, download_model_dir
 )
+from exo.download.storedhost.sh_helpers import (
+    download_model_dir, RepoProgressEvent, get_lh_weight_map, 
+    get_allow_patterns, get_repo_root, fetch_lh_file_list, 
+    get_local_model_dir, get_sh_model_file_download_percentage
+)
 
-class HFShardDownloader(ShardDownloader):
+class SHShardDownloader(ShardDownloader):
   def __init__(self, quick_check: bool = False, max_parallel_downloads: int = 4):
     self.quick_check = quick_check
     self.max_parallel_downloads = max_parallel_downloads
@@ -111,14 +116,14 @@ class HFShardDownloader(ShardDownloader):
 
     try:
       # If no snapshot directory exists, return None - no need to check remote files
-      snapshot_dir = await get_local_snapshot_dir(self.current_repo_id, self.revision)
+      snapshot_dir = await get_local_model_dir(self.current_repo_id)
       if not snapshot_dir:
         if DEBUG >= 2:
           print(f"No snapshot directory found for {self.current_repo_id}")
         return None
 
       # Get the weight map to know what files we need
-      weight_map = await get_weight_map(self.current_repo_id, self.revision)
+      weight_map = await get_lh_weight_map(self.current_repo_id)
       if not weight_map:
         if DEBUG >= 2:
           print(f"No weight map found for {self.current_repo_id}")
@@ -146,10 +151,9 @@ class HFShardDownloader(ShardDownloader):
           file_size = file["size"]
           total_bytes += file_size
 
-          percentage = await get_file_download_percentage(
+          percentage = await get_sh_model_file_download_percentage(
               session,
               self.current_repo_id,
-              self.revision,
               file["path"],
               snapshot_dir,
           )
