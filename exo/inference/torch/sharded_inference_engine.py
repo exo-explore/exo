@@ -2,14 +2,16 @@
 TorchDynamicShardInferenceEngine
 Sharded inference engine using PyTorch based torchtune models
 """
+
 import os
 import functools
 from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
 import numpy as np
-import asyncio
 import torch
 from torchtune.generation import sample as tt_sample
+from transformers import AutoTokenizer
 
 from exo.inference.inference_engine import InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
@@ -25,9 +27,13 @@ from exo.inference.torch.models.llm_utils import (
 from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
 TEMP = 0.6
-TOP_K = 25
+TOP_K = 300
+
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
+  """
+  Pytorch based inferece engine for sharded models
+  """
   def __init__(self, shard_downloader: HFShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
@@ -55,11 +61,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     tokens = await asyncio.get_event_loop().run_in_executor(
       self.executor,
-      functools.partial(
-        self.tokenizer.encode,
-        prompt,
-        return_tensors="np"
-      )
+      functools.partial(self.tokenizer.encode, prompt, return_tensors="np"),
     )
 
     if DEBUG >= 4:
@@ -72,16 +74,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print("decode called")
       print(f"shard: {shard}")
       print(f"tokens: {tokens}")
-    
+
     await self.ensure_shard(shard)
-    
-    return await asyncio.get_running_loop().run_in_executor(
-      self.executor,
-      functools.partial(
-        self.tokenizer.decode,
-        tokens.tolist()
-      )
-    )
+
+    return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(self.tokenizer.decode, tokens.tolist()))
 
   async def sample(self, x: np.ndarray, temp=TEMP, top_k=TOP_K) -> np.ndarray:
     if DEBUG >= 4:
@@ -91,19 +87,12 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"top_k: {top_k}")
 
     logits = torch.tensor(x).to(self.device)
-    def sample_wrapper():
-      tokens = tt_sample(
-        logits,
-        temperature=temp,
-        top_k=top_k
-      ) 
 
+    def sample_wrapper():
+      tokens = tt_sample(logits, temperature=temp, top_k=top_k)
       return tokens.numpy(force=True)
 
-    return await asyncio.get_running_loop().run_in_executor(
-      self.executor,
-      functools.partial(sample_wrapper)
-    )
+    return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
 
   async def infer_tensor(
     self,
@@ -117,6 +106,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"shard: {shard}")
       print(f"input_data: {input_data}")
       print(f"self.past_tokens: {self.past_tokens}")
+
     await self.ensure_shard(shard)
 
     self.request_id = request_id if not self.request_id else self.request_id
@@ -139,13 +129,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"hidden_state: {hidden_state}")
 
       if hidden_state is not None:
-        model_hs, model_logits = self.sharded_model.generate(
-          hidden_state=hidden_state
-        )
+        model_hs, model_logits = self.sharded_model.generate(hidden_state=hidden_state)
       else:
-        model_hs, model_logits = self.sharded_model.generate(
-          tokens=self.past_tokens
-        )
+        model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
 
       if model_hs is not None:
         # model_hs = model_hs.detach().cpu()
@@ -165,18 +151,23 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     if self.shard == shard:
       return
-    
+
     self.shard = shard
 
     # download model safetensors and shard
-    model_path = await self.shard_downloader.ensure_shard(
-      shard,
-      self.__class__.__name__
-    )
-    model_config = load_model_config(model_path / "config.json")
+    model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+    model_config = load_model_config(model_path/"config.json")
 
     # self.tokenizer = await _resolve_tokenizer(model_path)
     self.tokenizer = await _resolve_tokenizer(model_path)
+    eot_token = (
+      self.tokenizer.special_tokens_map.get("eos_token_id")
+      if hasattr(self.tokenizer, "_tokenizer") and isinstance(self.tokenizer._tokenizer, AutoTokenizer) else getattr(self.tokenizer, "eos_token_id", None)
+    )
+
+    print(f"eot_token: {eot_token}")
+    print(self.tokenizer.special_tokens_map)
+    print(self.tokenizer.eos_token_id)
 
     self.sharded_model = await asyncio.get_running_loop().run_in_executor(
       self.executor,
@@ -185,19 +176,14 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         config=model_config,
         shard=shard,
         device=self.device,
-        use_cache=True
-      )
+        use_cache=True,
+      ),
     )
 
     # load sharded weights
     await asyncio.get_running_loop().run_in_executor(
       self.executor,
-      functools.partial(
-        load_model_weights_torchtune,
-        model_path,
-        shard,
-        self.sharded_model
-      )
+      functools.partial(load_model_weights_torchtune, model_path, shard, self.sharded_model),
     )
 
   async def load_checkpoint(self, shard: Shard, path: str):

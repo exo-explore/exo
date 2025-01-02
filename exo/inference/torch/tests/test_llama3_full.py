@@ -21,13 +21,13 @@ from exo.inference.torch.models.llm_utils import (
   load_model_weights_torchtune,
 )
 
+MODEL_NAME = "unsloth/Llama-3.2-3B-Instruct"
+TEMP = 0.6
+TOP_K = 35
+MAX_NEW_TOKENS = 300
 
-MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
-TEMP = 0.0
-TOP_K = 25
-MAX_NEW_TOKENS = 40
 
-def main(model, prompt: str, device: torch.device=torch.device("cpu")):
+def main(model, prompt: str, device: torch.device = torch.device("cpu")):
   # Tokenize input text
   # messages = []
   # messages.extend([
@@ -36,16 +36,9 @@ def main(model, prompt: str, device: torch.device=torch.device("cpu")):
   #   # Empty assistant message to kick-start generation
   #   Message(role="assistant", content=""),
   # ])
-  messages = [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": prompt}
-  ]
+  messages = [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": prompt}]
 
-  text = llama_tokenizer.apply_chat_template(
-      messages,
-      tokenize=False,
-      add_generation_prompt=True
-  )
+  text = llama_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
   tok_out = llama_tokenizer([text], return_tensors="pt")
   tokens = tok_out.input_ids.to(device=device)
 
@@ -72,11 +65,11 @@ def main(model, prompt: str, device: torch.device=torch.device("cpu")):
     print(f"generated_tokens: {generated_tokens}")
 
     tokens = generated_tokens.clone()
-  
+
   print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens.tolist()[0])}\n\n\n")
 
 
-def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu")):
+def normal_full(model, user_prompt: str, device: torch.device = torch.device("cpu")):
   # Tokenize input text
   messages = []
   messages.extend([
@@ -91,7 +84,6 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
   print(f"tokens prompt: {prompt}")
   print(f"pad_id: {llama_tokenizer.pad_id}")
 
-  
   generated_tokens, _ = ttg.generate(
     model=model.model,
     prompt=prompt,
@@ -108,18 +100,19 @@ def normal_full(model, user_prompt: str, device: torch.device=torch.device("cpu"
 
   print(f"\n\n[resp from model]\n\n{llama_tokenizer.decode(generated_tokens[0])}\n\n\n")
 
+
 if __name__ == "__main__":
   # prompt = "hello"
-  prompt = "In a single word only, What is the capital of france?"
+  # prompt = "What is the meaning of exo?"
   # prompt = "Tell me a short 4 line haiku"
-  # prompt = "In a single word only, what is the last name of the current president of the USA?"
+  prompt = "In a single word only, what is the last name of the current president of the USA?"
 
   # Get the path to the model files from the Hugging Face cache
   cache_dir = Path(snapshot_download(MODEL_NAME))
   print(f"Cache directory: {cache_dir}")
 
   # Load model configuration
-  config = load_model_config(cache_dir / "config.json")
+  config = load_model_config(cache_dir/"config.json")
 
   print(f"current config\n{config}")
 
@@ -128,7 +121,7 @@ if __name__ == "__main__":
   shard_1 = Shard(
     model_id=MODEL_NAME,
     start_layer=0,
-    end_layer=n_layers-1,
+    end_layer=n_layers - 1,
     n_layers=n_layers,
   )
 
@@ -139,12 +132,7 @@ if __name__ == "__main__":
 
   # Initialize LlamaModel with config and tokenizer
   device = torch.device("cuda")
-  shard_model_1 = ShardedLlamaModel(
-    config=config,
-    shard=shard_1,
-    device=device,
-    use_cache=True
-  )
+  shard_model_1 = ShardedLlamaModel(config=config, shard=shard_1, device=device, use_cache=True)
   print(f"\nshard_model_1: {shard_model_1}")
 
   load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
