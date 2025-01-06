@@ -32,8 +32,24 @@ class HFShardDownloader(ShardDownloader):
     self.current_shard = shard
     self.current_repo_id = get_repo(shard.model_id, inference_engine_name)
     repo_name = get_repo(shard.model_id, inference_engine_name)
+    
+    # First check if we already have this shard downloaded
     if shard in self.completed_downloads:
       return self.completed_downloads[shard]
+
+    # If a download is already in progress for this shard, wait for it
+    if shard in self.active_downloads:
+      if DEBUG >= 2: print(f"Download already in progress for {shard}. Waiting for it to complete.")
+      try:
+        path = await self.active_downloads[shard]
+        self.completed_downloads[shard] = path
+        return path
+      except asyncio.CancelledError:
+        # If the task was cancelled, remove it and continue to new download
+        if DEBUG >= 2: print(f"Previous download for {shard} was cancelled. Starting new download.")
+        self.active_downloads.pop(shard)
+
+    # If quick_check is True, look for existing snapshots
     if self.quick_check:
       repo_root = get_repo_root(repo_name)
       snapshots_dir = repo_root/"snapshots"
@@ -41,13 +57,37 @@ class HFShardDownloader(ShardDownloader):
         visible_dirs = [d for d in snapshots_dir.iterdir() if not d.name.startswith('.')]
         if visible_dirs:
           most_recent_dir = max(visible_dirs, key=lambda x: x.stat().st_mtime)
-          return most_recent_dir
-
-    # If a download on this shard is already in progress, keep that one
-    for active_shard in self.active_downloads:
-      if active_shard == shard:
-        if DEBUG >= 2: print(f"Download already in progress for {shard}. Keeping that one.")
-        return await self.active_downloads[shard]
+          
+          # Verify that all required files are present
+          try:
+            weight_map = await get_weight_map(repo_name)
+            if weight_map:
+              allow_patterns = get_allow_patterns(weight_map, shard)
+              async with aiohttp.ClientSession() as session:
+                file_list = await fetch_file_list(session, repo_name, self.revision)
+                required_files = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, key=lambda x: x["path"]))
+                
+                # Check if all required files exist and have the correct size
+                all_files_present = True
+                for file_info in required_files:
+                  file_path = most_recent_dir/file_info["path"]
+                  if not await aios.path.exists(file_path):
+                    if DEBUG >= 2: print(f"Missing required file: {file_path}")
+                    all_files_present = False
+                    break
+                  file_size = (await aios.stat(file_path)).st_size
+                  if file_size != file_info["size"]:
+                    if DEBUG >= 2: print(f"File size mismatch for {file_path}: expected {file_info['size']}, got {file_size}")
+                    all_files_present = False
+                    break
+                
+                if all_files_present:
+                  self.completed_downloads[shard] = most_recent_dir
+                  return most_recent_dir
+                elif DEBUG >= 2:
+                  print("Found snapshot directory but it was incomplete or corrupted. Starting fresh download.")
+          except Exception as e:
+            if DEBUG >= 2: print(f"Error verifying snapshot: {e}")
 
     # Cancel any downloads for this model_id on a different shard
     existing_active_shards = [active_shard for active_shard in self.active_downloads.keys() if active_shard.model_id == shard.model_id]
@@ -73,7 +113,7 @@ class HFShardDownloader(ShardDownloader):
       return path
     finally:
       # Ensure the task is removed even if an exception occurs
-      print(f"Removing download task for {shard}: {shard in self.active_downloads}")
+      if DEBUG >= 2: print(f"Removing download task for {shard}: {shard in self.active_downloads}")
       if shard in self.active_downloads:
         self.active_downloads.pop(shard)
 
