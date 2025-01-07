@@ -291,7 +291,8 @@ class ChatGPTAPI:
         )
 
   async def handle_get_models(self, request):
-    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()])
+    models_list = [{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()]
+    return web.json_response({"object": "list", "data": models_list})
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
