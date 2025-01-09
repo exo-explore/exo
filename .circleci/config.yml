@@ -10,19 +10,40 @@ commands:
         type: string
       model_id:
         type: string
+      expected_output:
+        type: string
+      prompt:
+        type: string
     steps:
       - run:
           name: Run chatgpt api integration test (<<parameters.inference_engine>>, <<parameters.model_id>>)
           command: |
             source env/bin/activate
 
+            # Set CLANG=1 for tinygrad only
+            if [ "<<parameters.inference_engine>>" = "tinygrad" ]; then
+              pip install llvmlite
+              export TOKENIZERS_PARALLELISM=true SUPPORT_BF16=0 CLANG=1
+            fi
+
             # Start first instance
-            HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --chatgpt-api-response-timeout-secs 900 > output1.log 2>&1 &
+            HF_HOME="$(pwd)/.hf_cache_node1" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> \
+              --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 \
+              --chatgpt-api-response-timeout 900 --disable-tui > output1.log &
             PID1=$!
+            tail -f output1.log &
+            TAIL1=$!
 
             # Start second instance
-            HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --inference-engine <<parameters.inference_engine>> --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --chatgpt-api-response-timeout-secs 900 > output2.log 2>&1 &
+            HF_HOME="$(pwd)/.hf_cache_node2" DEBUG_DISCOVERY=7 DEBUG=7 exo --inference-engine <<parameters.inference_engine>> \
+              --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 \
+              --chatgpt-api-response-timeout 900 --disable-tui > output2.log &
             PID2=$!
+            tail -f output2.log &
+            TAIL2=$!
+
+            # Remember to kill the tail processes at the end
+            trap 'kill $TAIL1 $TAIL2' EXIT
 
             # Wait for discovery
             sleep 10
@@ -49,7 +70,7 @@ commands:
               -H "Content-Type: application/json" \
               -d '{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }')
             echo "Response 1: $response_1"
@@ -62,7 +83,7 @@ commands:
               -H "Content-Type: application/json" \
               -d '{
                 "model": "<<parameters.model_id>>",
-                "messages": [{"role": "user", "content": "Keep responses concise. Who was the king of pop?"}],
+                "messages": [{"role": "user", "content": "<<parameters.prompt>>"}],
                 "temperature": 0.7
               }')
             echo "Response 2: $response_2"
@@ -74,25 +95,29 @@ commands:
             kill $PID1 $PID2
 
             echo ""
-            if ! echo "$response_1" | grep -q "Michael Jackson" || ! echo "$response_2" | grep -q "Michael Jackson"; then
-              echo "Test failed: Response does not contain 'Michael Jackson'"
-              echo "Response 1: $response_1"
+            # Extract content using jq and check if it contains expected output
+            content1=$(echo "$response_1" | jq -r '.choices[0].message.content')
+            content2=$(echo "$response_2" | jq -r '.choices[0].message.content')
+
+            if [[ "$content1" != *"<<parameters.expected_output>>"* ]] || [[ "$content2" != *"<<parameters.expected_output>>"* ]]; then
+              echo "Test failed: Response does not match '<<parameters.expected_output>>'"
+              echo "Response 1 content: $content1"
               echo ""
-              echo "Response 2: $response_2"
+              echo "Response 2 content: $content2"
               echo "Output of first instance:"
               cat output1.log
               echo "Output of second instance:"
               cat output2.log
               exit 1
             else
-              echo "Test passed: Response from both nodes contains 'Michael Jackson'"
+              echo "Test passed: Response from both nodes matches '<<parameters.expected_output>>'"
             fi
 
 jobs:
   unit_test:
     macos:
-      xcode: "15.4.0"
-    resource_class: macos.m1.medium.gen1
+      xcode: "16.0.0"
+    resource_class: m2pro.large
     steps:
       - checkout
       - run:
@@ -113,13 +138,14 @@ jobs:
             source env/bin/activate
             # set TEMPERATURE to 0 for deterministic sampling
             echo "Running inference engine tests..."
-            METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
+            METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 METAL_XCODE=1 TEMPERATURE=0 python3 -m exo.inference.test_inference_engine
             echo "Running tokenizer tests..."
             python3 ./test/test_tokenizers.py
+            python3 ./test/test_model_helpers.py
 
   discovery_integration_test:
     macos:
-      xcode: "15.4.0"
+      xcode: "16.0.0"
     steps:
       - checkout
       - run:
@@ -138,13 +164,13 @@ jobs:
           name: Run discovery integration test
           command: |
             source env/bin/activate
-            DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 > output1.log 2>&1 &
+            DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id "node1" --listen-port 5678 --broadcast-port 5679 --chatgpt-api-port 8000 --disable-tui > output1.log 2>&1 &
             PID1=$!
-            DEBUG_DISCOVERY=7 DEBUG=7 python3 main.py --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 > output2.log 2>&1 &
+            DEBUG_DISCOVERY=7 DEBUG=7 exo --node-id "node2" --listen-port 5679 --broadcast-port 5678 --chatgpt-api-port 8001 --disable-tui > output2.log 2>&1 &
             PID2=$!
             sleep 10
             kill $PID1 $PID2
-            if grep -q "Connected to peer" output1.log && grep -q "Connected to peer" output2.log; then
+            if grep -q "Peer statuses: {\\'node2\\': \\'is_connected=True, health_check=True" output1.log && ! grep -q "Failed to connect peers:" output1.log && grep -q "Peer statuses: {\\'node1\\': \\'is_connected=True, health_check=True" output2.log && ! grep -q "Failed to connect peers:" output2.log; then
               echo "Test passed: Both instances discovered each other"
               exit 0
             else
@@ -158,7 +184,8 @@ jobs:
 
   chatgpt_api_integration_test_mlx:
     macos:
-      xcode: "15.4.0"
+      xcode: "16.0.0"
+    resource_class: m2pro.large
     steps:
       - checkout
       - run:
@@ -175,44 +202,145 @@ jobs:
             pip install .
       - run_chatgpt_api_test:
           inference_engine: mlx
-          model_id: llama-3.1-8b
+          model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
 
-  test_macos_m1:
+  chatgpt_api_integration_test_dummy:
     macos:
-      xcode: "15.4.0"
-    resource_class: macos.m1.large.gen1
+      xcode: "16.0.0"
+    resource_class: m2pro.large
     steps:
       - checkout
-      - run: system_profiler SPHardwareDataType
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: dummy
+          model_id: dummy
+          prompt: "Dummy prompt."
+          expected_output: "dummy"
 
-  # chatgpt_api_integration_test_tinygrad:
-  #   macos:
-  #     xcode: "15.4.0"
-  #   resource_class: macos.m1.large.gen1
-  #   steps:
-  #     - checkout
-  #     - run:
-  #         name: Set up Python
-  #         command: |
-  #           brew install python@3.12
-  #           python3.12 -m venv env
-  #           source env/bin/activate
-  #     - run:
-  #         name: Install dependencies
-  #         command: |
-  #           source env/bin/activate
-  #           pip install --upgrade pip
-  #           pip install .
-  #     - run_chatgpt_api_test:
-  #         inference_engine: tinygrad
-  #         model_id: llama-3-8b
+  chatgpt_api_integration_test_tinygrad:
+    macos:
+      xcode: "16.0.0"
+    resource_class: m2pro.large
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: tinygrad
+          model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
+
+  measure_pip_sizes:
+    macos:
+      xcode: "16.0.0"
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            brew install python@3.12
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies and measure sizes
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+            python ./extra/pipsize.py --json ./pipsize.json
+      - store_artifacts:
+          path: ./pipsize.json
+          destination: pip-sizes.json
+
+  check_line_count:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+
+      - run:
+          name: Setup git for PR comparison
+          command: |
+            if [[ -n "$CIRCLE_PULL_REQUEST" ]]; then
+              PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d'/' -f1 | rev)
+              BASE_BRANCH=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
+                "https://circleci.com/api/v2/project/github/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pipeline/$CIRCLE_WORKFLOW_ID" \
+                | jq -r '.target_branch')
+
+              git clone -b $BASE_BRANCH --single-branch \
+                https://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git \
+                base_branch
+            fi
+
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install tabulate
+
+      - run:
+          name: Run line count check
+          command: |
+            if [[ -n "$CIRCLE_PULL_REQUEST" ]]; then
+              python extra/line_counter.py base_branch .
+            else
+              python extra/line_counter.py .
+            fi
+
+      - store_artifacts:
+          path: line-count-snapshot.json
+          destination: line-count-snapshot.json
+
+      - store_artifacts:
+          path: line-count-diff.json
+          destination: line-count-diff.json
+
+      - run:
+          name: Create test results directory
+          command: |
+            mkdir -p test-results/line-count
+            cp line-count-*.json test-results/line-count/
+
+      - store_test_results:
+          path: test-results
 
 workflows:
   version: 2
   build_and_test:
     jobs:
+      - check_line_count:
+          filters:
+            branches:
+              only: /.*/
+            tags:
+              only: /.*/
       - unit_test
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
-      - test_macos_m1
-      # - chatgpt_api_integration_test_tinygrad
+      - chatgpt_api_integration_test_tinygrad
+      - chatgpt_api_integration_test_dummy
+      - measure_pip_sizes

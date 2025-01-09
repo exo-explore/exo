@@ -12,15 +12,16 @@ from typing import Optional, Tuple, Union, List, Callable
 from PIL import Image
 from io import BytesIO
 import base64
+import traceback
 
 import mlx.core as mx
 import mlx.nn as nn
 from transformers import AutoProcessor
 
 from mlx_lm.tokenizer_utils import load_tokenizer, TokenizerWrapper
-from mlx_lm.tuner.utils import apply_lora_layers
 
 from exo import DEBUG
+from exo.inference.tokenizers import resolve_tokenizer
 from ..shard import Shard
 
 
@@ -53,6 +54,7 @@ def _get_classes(config: dict):
   except ImportError:
     msg = f"Model type {model_type} not supported."
     logging.error(msg)
+    traceback.print_exc()
     raise ValueError(msg)
 
   return arch.Model, arch.ModelArgs
@@ -66,7 +68,6 @@ def load_config(model_path: Path) -> dict:
     logging.error(f"Config file not found in {model_path}")
     raise
   return config
-
 
 def load_model_shard(
   model_path: Path,
@@ -130,11 +131,22 @@ def load_model_shard(
 
   model_class, model_args_class = _get_classes(config=config)
 
+  class ShardedModel(model_class):
+    def __init__(self, args):
+      super().__init__(args)
+      self.shard = Shard(args.shard.model_id, args.shard.start_layer, args.shard.end_layer, args.shard.n_layers)
+
+    def __call__(self, x, *args, **kwargs):
+      y = super().__call__(x, *args, **kwargs)
+      return y
+
   model_args = model_args_class.from_dict(config)
-  model = model_class(model_args)
+  model = ShardedModel(model_args)
 
   if hasattr(model, "sanitize"):
     weights = model.sanitize(weights)
+  if DEBUG >= 8:
+    print(f"\n|| {config=} ||\n")
 
   if (quantization := config.get("quantization", None)) is not None:
     # Handle legacy models which may not have everything quantized
@@ -142,6 +154,7 @@ def load_model_shard(
       if not hasattr(m, "to_quantized"):
         return False
       return f"{p}.scales" in weights
+
 
     nn.quantize(
       model,
@@ -157,7 +170,6 @@ def load_model_shard(
   model.eval()
   return model
 
-
 async def load_shard(
   model_path: str,
   shard: Shard,
@@ -167,9 +179,6 @@ async def load_shard(
   lazy: bool = False,
 ) -> Tuple[nn.Module, TokenizerWrapper]:
   model = load_model_shard(model_path, shard, lazy, model_config)
-  if adapter_path is not None:
-    model = apply_lora_layers(model, adapter_path)
-    model.eval()
 
   # TODO: figure out a generic solution
   if model.model_type == "llava":
@@ -178,7 +187,7 @@ async def load_shard(
     processor.encode = processor.tokenizer.encode
     return model, processor
   else:
-    tokenizer = load_tokenizer(model_path, tokenizer_config)
+    tokenizer = await resolve_tokenizer(model_path)
     return model, tokenizer
 
 

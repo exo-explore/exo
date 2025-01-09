@@ -1,7 +1,11 @@
+import aiofiles.os as aios
+from typing import Union
 import asyncio
 import aiohttp
 import json
 import os
+import sys
+import shutil
 from urllib.parse import urljoin
 from typing import Callable, Optional, Coroutine, Any, Dict, List, Union, Literal
 from datetime import datetime, timedelta
@@ -9,11 +13,10 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Generator, Iterable, TypeVar, TypedDict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from exo.helpers import DEBUG
+from exo.helpers import DEBUG, is_frozen
 from exo.download.download_progress import RepoProgressEvent, RepoFileProgressEvent, RepoProgressCallback, RepoFileProgressCallback
 from exo.inference.shard import Shard
 import aiofiles
-from aiofiles import os as aios
 
 T = TypeVar("T")
 
@@ -70,6 +73,10 @@ def _add_wildcard_to_directories(pattern: str) -> str:
   return pattern
 
 
+def get_hf_endpoint() -> str:
+  return os.environ.get('HF_ENDPOINT', "https://huggingface.co")
+
+
 def get_hf_home() -> Path:
   """Get the Hugging Face home directory."""
   return Path(os.environ.get("HF_HOME", Path.home()/".cache"/"huggingface"))
@@ -94,12 +101,29 @@ async def get_auth_headers():
 
 def get_repo_root(repo_id: str) -> Path:
   """Get the root directory for a given repo ID in the Hugging Face cache."""
-  sanitized_repo_id = repo_id.replace("/", "--")
+  sanitized_repo_id = str(repo_id).replace("/", "--")
   return get_hf_home()/"hub"/f"models--{sanitized_repo_id}"
 
-
+async def move_models_to_hf(seed_dir: Union[str, Path]):
+  """Move model in resources folder of app to .cache/huggingface/hub"""
+  source_dir = Path(seed_dir)
+  dest_dir = get_hf_home()/"hub"
+  await aios.makedirs(dest_dir, exist_ok=True)  
+  for path in source_dir.iterdir():
+    if path.is_dir() and path.name.startswith("models--"):
+      dest_path = dest_dir / path.name
+      if await aios.path.exists(dest_path):
+        print('Skipping moving model to .cache directory')
+      else:
+        try:
+          await aios.rename(str(path), str(dest_path))
+        except Exception as e:
+          print(f'Error moving model to .cache: {e}')
+    
+    
+    
 async def fetch_file_list(session, repo_id, revision, path=""):
-  api_url = f"https://huggingface.co/api/models/{repo_id}/tree/{revision}"
+  api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
   url = f"{api_url}/{path}" if path else api_url
 
   headers = await get_auth_headers()
@@ -124,7 +148,7 @@ async def fetch_file_list(session, repo_id, revision, path=""):
 async def download_file(
   session: aiohttp.ClientSession, repo_id: str, revision: str, file_path: str, save_directory: str, progress_callback: Optional[RepoFileProgressCallback] = None, use_range_request: bool = True
 ):
-  base_url = f"https://huggingface.co/{repo_id}/resolve/{revision}/"
+  base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
   url = urljoin(base_url, file_path)
   local_path = os.path.join(save_directory, file_path)
 
@@ -142,10 +166,18 @@ async def download_file(
     downloaded_size = local_file_size
     downloaded_this_session = 0
     mode = 'ab' if use_range_request else 'wb'
-    if downloaded_size == total_size:
+    percentage = await get_file_download_percentage(
+      session,
+      repo_id,
+      revision,
+      file_path,
+      Path(save_directory)
+    )
+    
+    if percentage == 100:
       if DEBUG >= 2: print(f"File already downloaded: {file_path}")
       if progress_callback:
-        await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
+        await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, total_size, 0, total_size, 0, timedelta(0), "complete"))
       return
 
     if response.status == 200:
@@ -200,6 +232,36 @@ async def download_file(
     if DEBUG >= 2: print(f"Downloaded: {file_path}")
 
 
+async def resolve_revision_to_commit_hash(repo_id: str, revision: str) -> str:
+  repo_root = get_repo_root(repo_id)
+  refs_dir = repo_root/"refs"
+  refs_file = refs_dir/revision
+
+  # Check if we have a cached commit hash
+  if await aios.path.exists(refs_file):
+    async with aiofiles.open(refs_file, 'r') as f:
+      commit_hash = (await f.read()).strip()
+      if DEBUG >= 2: print(f"Commit hash is already cached at {refs_file}: {commit_hash}")
+      return commit_hash
+
+  # Fetch the commit hash for the given revision
+  async with aiohttp.ClientSession() as session:
+    api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/revision/{revision}"
+    headers = await get_auth_headers()
+    async with session.get(api_url, headers=headers) as response:
+      if response.status != 200:
+        raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
+      revision_info = await response.json()
+      commit_hash = revision_info['sha']
+
+  # Cache the commit hash
+  await aios.makedirs(refs_dir, exist_ok=True)
+  async with aiofiles.open(refs_file, 'w') as f:
+    await f.write(commit_hash)
+
+  return commit_hash
+
+
 async def download_repo_files(
   repo_id: str,
   revision: str = "main",
@@ -209,35 +271,15 @@ async def download_repo_files(
   max_parallel_downloads: int = 4
 ) -> Path:
   repo_root = get_repo_root(repo_id)
-  refs_dir = repo_root/"refs"
   snapshots_dir = repo_root/"snapshots"
   cachedreqs_dir = repo_root/"cachedreqs"
 
   # Ensure directories exist
-  await aios.makedirs(refs_dir, exist_ok=True)
   await aios.makedirs(snapshots_dir, exist_ok=True)
   await aios.makedirs(cachedreqs_dir, exist_ok=True)
 
-  # Check if we have a cached commit hash
-  refs_file = refs_dir/revision
-  if await aios.path.exists(refs_file):
-    async with aiofiles.open(refs_file, 'r') as f:
-      commit_hash = (await f.read()).strip()
-      if DEBUG >= 2: print(f"Commit hash is already hashed at {refs_file}: {commit_hash}")
-  else:
-    async with aiohttp.ClientSession() as session:
-      # Fetch the commit hash for the given revision
-      api_url = f"https://huggingface.co/api/models/{repo_id}/revision/{revision}"
-      headers = await get_auth_headers()
-      async with session.get(api_url, headers=headers) as response:
-        if response.status != 200:
-          raise Exception(f"Failed to fetch revision info from {api_url}: {response.status}")
-        revision_info = await response.json()
-        commit_hash = revision_info['sha']
-
-      # Cache the commit hash
-      async with aiofiles.open(refs_file, 'w') as f:
-        await f.write(commit_hash)
+  # Resolve revision to commit hash
+  commit_hash = await resolve_revision_to_commit_hash(repo_id, revision)
 
   # Set up the snapshot directory
   snapshot_dir = snapshots_dir/commit_hash
@@ -357,7 +399,8 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Optional[Dict[
 
   # Check if the file exists
   repo_root = get_repo_root(repo_id)
-  snapshot_dir = repo_root/"snapshots"
+  commit_hash = await resolve_revision_to_commit_hash(repo_id, revision)
+  snapshot_dir = repo_root/"snapshots"/commit_hash
   index_file = next((f for f in await aios.listdir(snapshot_dir) if f.endswith("model.safetensors.index.json")), None)
 
   if index_file:
@@ -380,24 +423,81 @@ def extract_layer_num(tensor_name: str) -> Optional[int]:
 
 
 def get_allow_patterns(weight_map: Dict[str, str], shard: Shard) -> List[str]:
-  default_patterns = [
-    "*.json",
-    "*.py",
-    "tokenizer.model",
-    "*.tiktoken",
-    "*.txt",
-  ]
-  shard_specific_patterns = []
+  default_patterns = set(["*.json", "*.py", "tokenizer.model", "*.tiktoken", "*.txt"])
+  shard_specific_patterns = set()
   if weight_map:
     for tensor_name, filename in weight_map.items():
       layer_num = extract_layer_num(tensor_name)
       if layer_num is not None and shard.start_layer <= layer_num <= shard.end_layer:
-        shard_specific_patterns.append(filename)
+        shard_specific_patterns.add(filename)
     sorted_file_names = sorted(weight_map.values())
     if shard.is_first_layer():
-      shard_specific_patterns.append(sorted_file_names[0])
+      shard_specific_patterns.add(sorted_file_names[0])
     elif shard.is_last_layer():
-      shard_specific_patterns.append(sorted_file_names[-1])
+      shard_specific_patterns.add(sorted_file_names[-1])
   else:
-    shard_specific_patterns = ["*.safetensors"]
-  return list(set(default_patterns + shard_specific_patterns))  # Remove duplicates
+    shard_specific_patterns = set(["*.safetensors"])
+  if DEBUG >= 2: print(f"get_allow_patterns {weight_map=} {shard=} {shard_specific_patterns=}")
+  return list(default_patterns | shard_specific_patterns)
+
+async def get_file_download_percentage(
+    session: aiohttp.ClientSession,
+    repo_id: str,
+    revision: str,
+    file_path: str,
+    snapshot_dir: Path,
+) -> float:
+  """
+    Calculate the download percentage for a file by comparing local and remote sizes.
+    """
+  try:
+    local_path = snapshot_dir / file_path
+    if not await aios.path.exists(local_path):
+      return 0
+
+    # Get local file size first
+    local_size = await aios.path.getsize(local_path)
+    if local_size == 0:
+      return 0
+
+    # Check remote size
+    base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
+    url = urljoin(base_url, file_path)
+    headers = await get_auth_headers()
+
+    # Use HEAD request with redirect following for all files
+    async with session.head(url, headers=headers, allow_redirects=True) as response:
+      if response.status != 200:
+        if DEBUG >= 2:
+          print(f"Failed to get remote file info for {file_path}: {response.status}")
+        return 0
+
+      remote_size = int(response.headers.get('Content-Length', 0))
+
+      if remote_size == 0:
+        if DEBUG >= 2:
+          print(f"Remote size is 0 for {file_path}")
+        return 0
+
+      # Only return 100% if sizes match exactly
+      if local_size == remote_size:
+        return 100.0
+
+      # Calculate percentage based on sizes
+      return (local_size / remote_size) * 100 if remote_size > 0 else 0
+
+  except Exception as e:
+    if DEBUG >= 2:
+      print(f"Error checking file download status for {file_path}: {e}")
+    return 0
+
+async def has_hf_home_read_access() -> bool:
+  hf_home = get_hf_home()
+  try: return await aios.access(hf_home, os.R_OK)
+  except OSError: return False
+
+async def has_hf_home_write_access() -> bool:
+  hf_home = get_hf_home()
+  try: return await aios.access(hf_home, os.W_OK)
+  except OSError: return False
+

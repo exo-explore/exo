@@ -12,6 +12,14 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
+  def addr(self) -> str:
+    pass
+
+  @abstractmethod
+  def description(self) -> str:
+    pass
+
+  @abstractmethod
   def device_capabilities(self) -> DeviceCapabilities:
     pass
 
@@ -28,11 +36,19 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
-  async def send_prompt(self, shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def health_check(self) -> bool:
     pass
 
   @abstractmethod
-  async def send_tensor(self, shard: Shard, tensor: np.array, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def send_prompt(self, shard: Shard, prompt: str, request_id: Optional[str] = None) -> Optional[np.array]:
+    pass
+
+  @abstractmethod
+  async def send_tensor(self, shard: Shard, tensor: np.array, request_id: Optional[str] = None) -> Optional[np.array]:
+    pass
+
+  @abstractmethod
+  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     pass
 
   @abstractmethod
@@ -41,8 +57,4 @@ class PeerHandle(ABC):
 
   @abstractmethod
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
-    pass
-
-  @abstractmethod
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     pass

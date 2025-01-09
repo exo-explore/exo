@@ -1,21 +1,23 @@
 import grpc
 import numpy as np
+import asyncio
 from typing import Optional, Tuple, List
 
-# These would be generated from the .proto file
 from . import node_service_pb2
 from . import node_service_pb2_grpc
 
 from ..peer_handle import PeerHandle
 from exo.inference.shard import Shard
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import DeviceCapabilities
+from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
+from exo.helpers import DEBUG
 
 
 class GRPCPeerHandle(PeerHandle):
-  def __init__(self, _id: str, address: str, device_capabilities: DeviceCapabilities):
+  def __init__(self, _id: str, address: str, desc: str, device_capabilities: DeviceCapabilities):
     self._id = _id
     self.address = address
+    self.desc = desc
     self._device_capabilities = device_capabilities
     self.channel = None
     self.stub = None
@@ -23,12 +25,24 @@ class GRPCPeerHandle(PeerHandle):
   def id(self) -> str:
     return self._id
 
+  def addr(self) -> str:
+    return self.address
+
+  def description(self) -> str:
+    return self.desc
+
   def device_capabilities(self) -> DeviceCapabilities:
     return self._device_capabilities
 
   async def connect(self):
-    self.channel = grpc.aio.insecure_channel(self.address, options=[("grpc.max_metadata_size", 32*1024*1024)])
-    self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
+    if self.channel is None:
+      self.channel = grpc.aio.insecure_channel(self.address, options=[
+        ("grpc.max_metadata_size", 32*1024*1024),
+        ('grpc.max_receive_message_length', 32*1024*1024),
+        ('grpc.max_send_message_length', 32*1024*1024)
+      ])
+      self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
+    await self.channel.channel_ready()
 
   async def is_connected(self) -> bool:
     return self.channel is not None and self.channel.get_state() == grpc.ChannelConnectivity.READY
@@ -39,10 +53,27 @@ class GRPCPeerHandle(PeerHandle):
     self.channel = None
     self.stub = None
 
-  async def send_prompt(self, shard: Shard, prompt: str, image_str: Optional[str] = None, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def _ensure_connected(self):
+    if not await self.is_connected(): await asyncio.wait_for(self.connect(), timeout=5)
+
+  async def health_check(self) -> bool:
+    try:
+      await self._ensure_connected()
+      request = node_service_pb2.HealthCheckRequest()
+      response = await asyncio.wait_for(self.stub.HealthCheck(request), timeout=5)
+      return response.is_healthy
+    except asyncio.TimeoutError:
+      return False
+    except Exception:
+      if DEBUG >= 4:
+        print(f"Health check failed for {self._id}@{self.address}.")
+        import traceback
+        traceback.print_exc()
+      return False
+
+  async def send_prompt(self, shard: Shard, prompt: str, request_id: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.PromptRequest(
       prompt=prompt,
-      image_str=image_str,
       shard=node_service_pb2.Shard(
         model_id=shard.model_id,
         start_layer=shard.start_layer,
@@ -50,7 +81,6 @@ class GRPCPeerHandle(PeerHandle):
         n_layers=shard.n_layers,
       ),
       request_id=request_id,
-      inference_state=inference_state,
     )
     response = await self.stub.SendPrompt(request)
 
@@ -59,7 +89,7 @@ class GRPCPeerHandle(PeerHandle):
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
-  async def send_tensor(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None, inference_state: Optional[str] = None) -> Optional[np.array]:
+  async def send_tensor(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.TensorRequest(
       shard=node_service_pb2.Shard(
         model_id=shard.model_id,
@@ -69,9 +99,48 @@ class GRPCPeerHandle(PeerHandle):
       ),
       tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
       request_id=request_id,
-      inference_state=inference_state,
     )
     response = await self.stub.SendTensor(request)
+
+    if not response.tensor_data or not response.shape or not response.dtype:
+      return None
+
+    return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
+  
+  async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, train: bool, request_id: Optional[str] = None) -> Optional[np.array]:
+    request = node_service_pb2.ExampleRequest(
+      shard=node_service_pb2.Shard(
+        model_id=shard.model_id,
+        start_layer=shard.start_layer,
+        end_layer=shard.end_layer,
+        n_layers=shard.n_layers,
+      ),
+      example=node_service_pb2.Tensor(tensor_data=example.tobytes(), shape=example.shape, dtype=str(example.dtype)),
+      target=node_service_pb2.Tensor(tensor_data=target.tobytes(), shape=target.shape, dtype=str(target.dtype)),
+      length=node_service_pb2.Tensor(tensor_data=length.tobytes(), shape=length.shape, dtype=str(length.dtype)),
+      train=train,
+      request_id=request_id,
+    )
+    response = await self.stub.SendExample(request)
+    loss = response.loss
+    if train and not shard.is_first_layer():
+      grads = np.frombuffer(response.grads.tensor_data, dtype=np.dtype(response.grads.dtype)).reshape(response.grads.shape)
+      return loss, grads
+    else:
+      return loss
+  
+  async def send_loss(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None) -> Optional[np.array]:
+    request = node_service_pb2.TensorRequest(
+      shard=node_service_pb2.Shard(
+        model_id=shard.model_id,
+        start_layer=shard.start_layer,
+        end_layer=shard.end_layer,
+        n_layers=shard.n_layers,
+      ),
+      tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
+      request_id=request_id,
+    )
+    response = await self.stub.SendLoss(request)
 
     if not response.tensor_data or not response.shape or not response.dtype:
       return None
@@ -93,11 +162,16 @@ class GRPCPeerHandle(PeerHandle):
     response = await self.stub.CollectTopology(request)
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
-      device_capabilities = DeviceCapabilities(model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory, flops=capabilities.flops)
+      device_capabilities = DeviceCapabilities(
+        model=capabilities.model,
+        chip=capabilities.chip,
+        memory=capabilities.memory,
+        flops=DeviceFlops(fp16=capabilities.flops.fp16, fp32=capabilities.flops.fp32, int8=capabilities.flops.int8)
+      )
       topology.update_node(node_id, device_capabilities)
-    for node_id, peers in response.peer_graph.items():
-      for peer_id in peers.peer_ids:
-        topology.add_edge(node_id, peer_id)
+    for node_id, peer_connections in response.peer_graph.items():
+      for conn in peer_connections.connections:
+        topology.add_edge(node_id, conn.to_id, conn.description)
     return topology
 
   async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:

@@ -91,25 +91,70 @@ class TopologyViz:
     content = []
     requests = list(self.requests.values())[-3:]  # Get the 3 most recent requests
     max_width = self.console.width - 6  # Full width minus padding and icon
-    max_lines = 13  # Maximum number of lines for the entire panel content
+
+    # Calculate available height for content
+    panel_height = 15  # Fixed panel height
+    available_lines = panel_height - 2  # Subtract 2 for panel borders
+    lines_per_entry = available_lines // len(requests) if requests else 0
 
     for (prompt, output) in reversed(requests):
       prompt_icon, output_icon = "💬️", "🤖"
 
-      # Process prompt
-      prompt_lines = prompt.split('\n')
-      if len(prompt_lines) > max_lines // 2:
-        prompt_lines = prompt_lines[:max_lines//2 - 1] + ['...']
-      prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
-      prompt_text.append('\n'.join(line[:max_width] for line in prompt_lines), style="white")
+      # Calculate max lines for prompt and output
+      max_prompt_lines = lines_per_entry // 3  # Allocate 1/3 for prompt
+      max_output_lines = lines_per_entry - max_prompt_lines - 1  # Remaining space minus spacing
 
-      # Process output
-      output_lines = output.split('\n')
-      remaining_lines = max_lines - len(prompt_lines) - 2  # -2 for spacing
-      if len(output_lines) > remaining_lines:
-        output_lines = output_lines[:remaining_lines - 1] + ['...']
+      # Process prompt
+      prompt_lines = []
+      for line in prompt.split('\n'):
+        words = line.split()
+        current_line = []
+        current_length = 0
+
+        for word in words:
+          if current_length + len(word) + 1 <= max_width:
+            current_line.append(word)
+            current_length += len(word) + 1
+          else:
+            if current_line:
+              prompt_lines.append(' '.join(current_line))
+            current_line = [word]
+            current_length = len(word)
+
+        if current_line:
+          prompt_lines.append(' '.join(current_line))
+
+      if len(prompt_lines) > max_prompt_lines:
+        prompt_lines = prompt_lines[:max_prompt_lines - 1] + ['...']
+
+      prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
+      prompt_text.append('\n'.join(prompt_lines), style="white")
+
+      # Process output - same word-aware wrapping
+      output_lines = []
+      for line in output.split('\n'):
+        words = line.split()
+        current_line = []
+        current_length = 0
+
+        for word in words:
+          if current_length + len(word) + 1 <= max_width:
+            current_line.append(word)
+            current_length += len(word) + 1
+          else:
+            if current_line:
+              output_lines.append(' '.join(current_line))
+            current_line = [word]
+            current_length = len(word)
+
+        if current_line:
+          output_lines.append(' '.join(current_line))
+
+      if len(output_lines) > max_output_lines:
+        output_lines = output_lines[:max_output_lines - 1] + ['...']
+
       output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
-      output_text.append('\n'.join(line[:max_width] for line in output_lines), style="white")
+      output_text.append('\n'.join(output_lines), style="white")
 
       content.append(prompt_text)
       content.append(output_text)
@@ -119,8 +164,8 @@ class TopologyViz:
       Group(*content),
       title="",
       border_style="cyan",
-      height=15,  # Increased height to accommodate multiple lines
-      expand=True  # Allow the panel to expand to full width
+      height=panel_height,
+      expand=True
     )
 
   def _generate_main_layout(self) -> str:
@@ -161,7 +206,7 @@ class TopologyViz:
 
     # Calculate total FLOPS and position on the bar
     total_flops = sum(self.topology.nodes.get(partition.node_id, UNKNOWN_DEVICE_CAPABILITIES).flops.fp16 for partition in self.partitions)
-    bar_pos = (math.tanh(total_flops/20 - 2) + 1)/2
+    bar_pos = (math.tanh(total_flops**(1/3)/2.5 - 2) + 1)
 
     # Add GPU poor/rich bar
     bar_width = 30
@@ -242,11 +287,18 @@ class TopologyViz:
             if info_y + j != y or info_x + k != x:
               visualization[info_y + j][info_x + k] = char
 
-      # Draw line to next node
+      # Draw line to next node and add connection description
       next_i = (i+1) % num_partitions
       next_angle = 2*math.pi*next_i/num_partitions
       next_x = int(center_x + radius_x*math.cos(next_angle))
       next_y = int(center_y + radius_y*math.sin(next_angle))
+
+      # Get connection descriptions
+      conn1 = self.topology.peer_graph.get(partition.node_id, set())
+      conn2 = self.topology.peer_graph.get(self.partitions[next_i].node_id, set())
+      description1 = next((c.description for c in conn1 if c.to_id == self.partitions[next_i].node_id), "")
+      description2 = next((c.description for c in conn2 if c.to_id == partition.node_id), "")
+      connection_description = f"{description1}/{description2}"
 
       # Simple line drawing
       steps = max(abs(next_x - x), abs(next_y - y))
@@ -255,6 +307,15 @@ class TopologyViz:
         line_y = int(y + (next_y-y)*step/steps)
         if 0 <= line_y < 48 and 0 <= line_x < 100:
           visualization[line_y][line_x] = "-"
+
+      # Add connection description near the midpoint of the line
+      mid_x = (x + next_x) // 2
+      mid_y = (y + next_y) // 2
+      # Center the description text around the midpoint
+      desc_start_x = mid_x - len(connection_description) // 2
+      for j, char in enumerate(connection_description):
+        if 0 <= mid_y < 48 and 0 <= desc_start_x + j < 100:
+          visualization[mid_y][desc_start_x + j] = char
 
     # Convert to string
     return "\n".join("".join(str(char) for char in row) for row in visualization)

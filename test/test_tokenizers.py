@@ -1,5 +1,7 @@
+import os
+import re
 from transformers import AutoTokenizer, AutoProcessor
-from exo.models import model_base_shards
+from exo.models import model_cards
 
 
 def test_tokenizer(name, tokenizer, verbose=False):
@@ -22,10 +24,15 @@ def test_tokenizer(name, tokenizer, verbose=False):
     strip_tokens = lambda s: s.lstrip(tokenizer.decode([tokenizer.bos_token_id])).rstrip(tokenizer.decode([tokenizer.eos_token_id]))
     assert text == strip_tokens(decoded) == strip_tokens(reconstructed)
 
-ignore = ["TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", "llava-hf/llava-1.5-7b-hf"]
-models = [shard.model_id for shards in model_base_shards.values() for shard in shards.values() if shard.model_id not in ignore]
+ignore = ["TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R", "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", "mlx-community/DeepSeek-V2.5-MLX-AQ4_1_64", "llava-hf/llava-1.5-7b-hf", "mlx-community/Qwen*", "dummy", "mlx-community/Meta-Llama-3.1-405B-Instruct-8bit", "mlx-community/Phi-3.5-mini-instruct-4bit", "mlx-community/phi-4-4bit"]
+ignore_pattern = re.compile(r"^(" + "|".join(model.replace("*", ".*") for model in ignore) + r")")
+models = []
+for model_id in model_cards:
+  for engine_type, repo_id in model_cards[model_id].get("repo", {}).items():
+    if not ignore_pattern.match(repo_id):
+      models.append(repo_id)
+models = list(set(models))
 
-import os
 verbose = os.environ.get("VERBOSE", "0").lower() == "1"
 for m in models:
     # TODO: figure out why use_fast=False is giving inconsistent behaviour (no spaces decoding invididual tokens) for Mistral-Large-Instruct-2407-4bit
