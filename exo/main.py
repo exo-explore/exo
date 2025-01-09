@@ -33,6 +33,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
+from aiohttp import web
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -70,6 +71,10 @@ parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailsca
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
+# Add the Allora mode argument
+parser.add_argument("--allora-mode", action='store_true', help="Enable Allora mode")
+parser.add_argument("--allora-dir", type=str, help="absolute directory location of allora node")
+
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -80,7 +85,10 @@ print(f"Detected system: {system_info}")
 
 shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_quick_check,
                                                       max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
-inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
+if args.allora_mode:
+  inference_engine_name = 'allora'
+else:
+  inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
 
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
@@ -185,6 +193,23 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
 
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
+
+async def start_allora_node(dir):
+  print(f"starting allora node")
+  cmd = f"cd {dir} && ./start.local"
+  proc = await asyncio.create_subprocess_shell(
+      cmd=cmd,
+      shell=True,
+      stdout=asyncio.subprocess.PIPE,
+      stderr=asyncio.subprocess.PIPE
+  )
+  stdout, stderr = await proc.communicate()
+
+  print(f'[{cmd!r} exited with {proc.returncode}]')
+  if stdout:
+      print(f'[stdout]\n{stdout.decode()}')
+  if stderr:
+      print(f'[stderr]\n{stderr.decode()}')
 
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   inference_class = inference_engine.__class__.__name__
@@ -339,6 +364,28 @@ async def main():
     print("Cooldown to allow peers to exit gracefully")
     for i in tqdm(range(50)):
       await asyncio.sleep(.1)
+  
+  if args.allora_dir:
+    asyncio.create_task(
+      start_allora_node(args.allora_dir)
+    )
+    # Add the inference endpoint when in Allora mode
+  if args.allora_mode:
+      
+      async def inference_endpoint(request):
+        # Use the inference_engine to process the token
+        token = request.match_info.get('token')
+        request_id = str(uuid.uuid4())
+        shard = Shard(model_id="LinearRegression", start_layer=1, end_layer=1, n_layers=1)
+        output_data, inference_state, completed = await inference_engine.infer_prompt(
+            request_id, shard, token
+        )
+        return web.json_response({
+            "token": token,
+            "prediction": output_data.tolist(),
+            "completed": completed
+        })
+      api.app.router.add_get("/inference/{token}", inference_endpoint)
 
 
 def run():
