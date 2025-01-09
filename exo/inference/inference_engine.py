@@ -5,7 +5,7 @@ from exo.helpers import DEBUG  # Make sure to import DEBUG
 from typing import Tuple, Optional
 from abc import ABC, abstractmethod
 from .shard import Shard
-
+from exo.topology.device_flops import DeviceFlops
 
 class InferenceEngine(ABC):
   session = {}
@@ -23,6 +23,9 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
+  async def benchmark_tflops(self) -> DeviceFlops:
+    pass
+
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
     pass
 
