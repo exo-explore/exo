@@ -91,25 +91,70 @@ class TopologyViz:
     content = []
     requests = list(self.requests.values())[-3:]  # Get the 3 most recent requests
     max_width = self.console.width - 6  # Full width minus padding and icon
-    max_lines = 13  # Maximum number of lines for the entire panel content
+
+    # Calculate available height for content
+    panel_height = 15  # Fixed panel height
+    available_lines = panel_height - 2  # Subtract 2 for panel borders
+    lines_per_entry = available_lines // len(requests) if requests else 0
 
     for (prompt, output) in reversed(requests):
       prompt_icon, output_icon = "💬️", "🤖"
 
-      # Process prompt
-      prompt_lines = prompt.split('\n')
-      if len(prompt_lines) > max_lines // 2:
-        prompt_lines = prompt_lines[:max_lines//2 - 1] + ['...']
-      prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
-      prompt_text.append('\n'.join(line[:max_width] for line in prompt_lines), style="white")
+      # Calculate max lines for prompt and output
+      max_prompt_lines = lines_per_entry // 3  # Allocate 1/3 for prompt
+      max_output_lines = lines_per_entry - max_prompt_lines - 1  # Remaining space minus spacing
 
-      # Process output
-      output_lines = output.split('\n')
-      remaining_lines = max_lines - len(prompt_lines) - 2  # -2 for spacing
-      if len(output_lines) > remaining_lines:
-        output_lines = output_lines[:remaining_lines - 1] + ['...']
+      # Process prompt
+      prompt_lines = []
+      for line in prompt.split('\n'):
+        words = line.split()
+        current_line = []
+        current_length = 0
+
+        for word in words:
+          if current_length + len(word) + 1 <= max_width:
+            current_line.append(word)
+            current_length += len(word) + 1
+          else:
+            if current_line:
+              prompt_lines.append(' '.join(current_line))
+            current_line = [word]
+            current_length = len(word)
+
+        if current_line:
+          prompt_lines.append(' '.join(current_line))
+
+      if len(prompt_lines) > max_prompt_lines:
+        prompt_lines = prompt_lines[:max_prompt_lines - 1] + ['...']
+
+      prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
+      prompt_text.append('\n'.join(prompt_lines), style="white")
+
+      # Process output - same word-aware wrapping
+      output_lines = []
+      for line in output.split('\n'):
+        words = line.split()
+        current_line = []
+        current_length = 0
+
+        for word in words:
+          if current_length + len(word) + 1 <= max_width:
+            current_line.append(word)
+            current_length += len(word) + 1
+          else:
+            if current_line:
+              output_lines.append(' '.join(current_line))
+            current_line = [word]
+            current_length = len(word)
+
+        if current_line:
+          output_lines.append(' '.join(current_line))
+
+      if len(output_lines) > max_output_lines:
+        output_lines = output_lines[:max_output_lines - 1] + ['...']
+
       output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
-      output_text.append('\n'.join(line[:max_width] for line in output_lines), style="white")
+      output_text.append('\n'.join(output_lines), style="white")
 
       content.append(prompt_text)
       content.append(output_text)
@@ -119,8 +164,8 @@ class TopologyViz:
       Group(*content),
       title="",
       border_style="cyan",
-      height=15,  # Increased height to accommodate multiple lines
-      expand=True  # Allow the panel to expand to full width
+      height=panel_height,
+      expand=True
     )
 
   def _generate_main_layout(self) -> str:

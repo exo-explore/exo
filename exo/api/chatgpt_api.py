@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 from transformers import AutoTokenizer
-from typing import List, Literal, Union, Dict
+from typing import List, Literal, Union, Dict, Optional
 from aiohttp import web
 import aiohttp_cors
 import traceback
@@ -23,23 +23,28 @@ from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
 from exo.apputil import create_animation_mp4
 
 class Message:
-  def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]):
+  def __init__(self, role: str, content: Union[str, List[Dict[str, Union[str, Dict[str, str]]]]], tools: Optional[List[Dict]] = None):
     self.role = role
     self.content = content
+    self.tools = tools
 
   def to_dict(self):
-    return {"role": self.role, "content": self.content}
+    data = {"role": self.role, "content": self.content}
+    if self.tools:
+      data["tools"] = self.tools
+    return data
 
 
 
 class ChatCompletionRequest:
-  def __init__(self, model: str, messages: List[Message], temperature: float):
+  def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None):
     self.model = model
     self.messages = messages
     self.temperature = temperature
+    self.tools = tools
 
   def to_dict(self):
-    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature}
+    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature, "tools": self.tools}
 
 
 def generate_completion(
@@ -119,20 +124,24 @@ def remap_messages(messages: List[Message]) -> List[Message]:
   return remapped_messages
 
 
-def build_prompt(tokenizer, _messages: List[Message]):
+def build_prompt(tokenizer, _messages: List[Message], tools: Optional[List[Dict]] = None):
   messages = remap_messages(_messages)
-  prompt = tokenizer.apply_chat_template([m.to_dict() for m in messages], tokenize=False, add_generation_prompt=True)
-  for message in messages:
-    if not isinstance(message.content, list):
-      continue
+  chat_template_args = {
+    "conversation": [m.to_dict() for m in messages],
+    "tokenize": False,
+    "add_generation_prompt": True
+  }
+  if tools: chat_template_args["tools"] = tools
 
+  prompt = tokenizer.apply_chat_template(**chat_template_args)
+  print(f"!!! Prompt: {prompt}")
   return prompt
 
 
 def parse_message(data: dict):
   if "role" not in data or "content" not in data:
     raise ValueError(f"Invalid message: {data}. Must have 'role' and 'content'")
-  return Message(data["role"], data["content"])
+  return Message(data["role"], data["content"], data.get("tools"))
 
 
 def parse_chat_request(data: dict, default_model: str):
@@ -140,6 +149,7 @@ def parse_chat_request(data: dict, default_model: str):
     data.get("model", default_model),
     [parse_message(msg) for msg in data["messages"]],
     data.get("temperature", 0.0),
+    data.get("tools", None),
   )
 
 
@@ -150,7 +160,7 @@ class PromptSession:
     self.prompt = prompt
 
 class ChatGPTAPI:
-  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None, default_model: Optional[str] = None):
+  def __init__(self, node: Node, inference_engine_classname: str, response_timeout: int = 90, on_chat_completion_request: Callable[[str, ChatCompletionRequest, str], None] = None, default_model: Optional[str] = None, system_prompt: Optional[str] = None):
     self.node = node
     self.inference_engine_classname = inference_engine_classname
     self.response_timeout = response_timeout
@@ -160,6 +170,7 @@ class ChatGPTAPI:
     self.prev_token_lens: Dict[str, int] = {}
     self.stream_tasks: Dict[str, asyncio.Task] = {}
     self.default_model = default_model or "llama-3.2-1b"
+    self.system_prompt = system_prompt
 
     cors = aiohttp_cors.setup(self.app)
     cors_options = aiohttp_cors.ResourceOptions(
@@ -234,7 +245,7 @@ class ChatGPTAPI:
         )
         await response.prepare(request)
 
-        for model_name, pretty in pretty_name.items():
+        async def process_model(model_name, pretty):
             if model_name in model_cards:
                 model_info = model_cards[model_name]
 
@@ -262,6 +273,12 @@ class ChatGPTAPI:
 
                         await response.write(f"data: {json.dumps(model_data)}\n\n".encode())
 
+        # Process all models in parallel
+        await asyncio.gather(*[
+            process_model(model_name, pretty)
+            for model_name, pretty in pretty_name.items()
+        ])
+
         await response.write(b"data: [DONE]\n\n")
         return response
 
@@ -274,7 +291,8 @@ class ChatGPTAPI:
         )
 
   async def handle_get_models(self, request):
-    return web.json_response([{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()])
+    models_list = [{"id": model_name, "object": "model", "owned_by": "exo", "ready": True} for model_name, _ in model_cards.items()]
+    return web.json_response({"object": "list", "data": models_list})
 
   async def handle_post_chat_token_encode(self, request):
     data = await request.json()
@@ -287,7 +305,7 @@ class ChatGPTAPI:
     shard = build_base_shard(model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
-    prompt = build_prompt(tokenizer, messages)
+    prompt = build_prompt(tokenizer, messages, data.get("tools", None))
     tokens = tokenizer.encode(prompt)
     return web.json_response({
       "length": len(prompt),
@@ -326,7 +344,11 @@ class ChatGPTAPI:
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
 
-    prompt = build_prompt(tokenizer, chat_request.messages)
+    # Add system prompt if set
+    if self.system_prompt and not any(msg.role == "system" for msg in chat_request.messages):
+      chat_request.messages.insert(0, Message("system", self.system_prompt))
+
+    prompt = build_prompt(tokenizer, chat_request.messages, chat_request.tools)
     request_id = str(uuid.uuid4())
     if self.on_chat_completion_request:
       try:
@@ -547,7 +569,7 @@ class ChatGPTAPI:
       if model_name not in model_cards: return web.json_response({"error": f"Invalid model: {model_name}. Supported models: {list(model_cards.keys())}"}, status=400)
       shard = build_base_shard(model_name, self.inference_engine_classname)
       if not shard: return web.json_response({"error": f"Could not build shard for model {model_name}"}, status=400)
-      asyncio.create_task(self.node.inference_engine.ensure_shard(shard))
+      asyncio.create_task(self.node.inference_engine.shard_downloader.ensure_shard(shard, self.inference_engine_classname))
 
       return web.json_response({
         "status": "success",
