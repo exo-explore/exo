@@ -78,7 +78,10 @@ def download_binance_daily_data(pair, training_days, region, download_path):
     with ThreadPoolExecutor() as executor:
         print(f"Downloading data for {pair}")
         for single_date in daterange(start_date, end_date):
-            url = f"{base_url}/{pair}/1m/{pair}-1m-{single_date}.zip"
+            fname = f"{pair}-1m-{single_date}.zip"
+            url = f"{base_url}/{pair}/1m/{fname}"
+            print(f"downloading binance data from url: {url}")
+            files.append(f"{download_path}{fname}")
             executor.submit(download_url, url, download_path)
     
     return files

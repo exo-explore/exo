@@ -84,6 +84,7 @@ class CoinPredictionInferenceEngine(InferenceEngine):
 
     def update_data(self):
         """Download price data, format data and train model."""
+        print("downloading price data")
         files = self.download_data(self.token, self.training_days, self.region, self.data_provider)
         self.format_data(files, self.data_provider)
         self.train_model(self.timeframe)
@@ -148,7 +149,7 @@ class CoinPredictionInferenceEngine(InferenceEngine):
                     "taker_volume",
                     "taker_volume_usd",
                 ]
-                df.index = [pd.Timestamp(x + 1, unit="ms").to_datetime64() for x in df["end_time"]]
+                df.index = [pd.Timestamp(x + 1, unit="us").to_datetime64() for x in df["end_time"]]
                 df.index.name = "date"
                 price_df = pd.concat([price_df, df])
 
