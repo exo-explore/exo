@@ -326,3 +326,22 @@ def is_frozen():
   return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
     or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
     or '__nuitka__' in globals() or getattr(sys, '__compiled__', False)
+
+
+def get_exo_home() -> Path:
+  if os.name == "nt":  # Check if the OS is Windows
+    docs_folder = Path(os.environ["USERPROFILE"]) / "Documents"
+  else:
+    docs_folder = Path.home() / "Documents"
+  exo_folder = docs_folder / "Exo"
+  if not exo_folder.exists():
+    exo_folder.mkdir()
+  return exo_folder
+
+def get_exo_images_dir() -> Path:
+  exo_home = get_exo_home()
+  images_dir = exo_home / "Images"
+  if not images_dir.exists():
+    images_dir.mkdir()
+  return images_dir
+  
