@@ -206,7 +206,7 @@ class Node:
       return None
     else:
       self.outstanding_requests[request_id] = "processing"
-      result,inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
+      result, inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
       ret = await self.process_inference_result(shard, result, request_id, inference_state)
       return result
 
@@ -320,7 +320,7 @@ class Node:
           loss, grad = await self.inference_engine.train(request_id, shard, example, target, length)
         else:
           self.outstanding_requests[request_id] = "preprocessing"
-          step = await self.inference_engine.infer_tensor(request_id, shard, example)
+          step, _ = await self.inference_engine.infer_tensor(request_id, shard, example)
           self.outstanding_requests[request_id] = "waiting"
           loss, backgrad = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
           self.outstanding_requests[request_id] = "training"
@@ -336,7 +336,7 @@ class Node:
           loss = await self.inference_engine.evaluate(request_id, shard, example, target, length)
         else:
           self.outstanding_requests[request_id] = "preprocessing"
-          step = await self.inference_engine.infer_tensor(request_id, shard, example)
+          step, _ = await self.inference_engine.infer_tensor(request_id, shard, example)
           self.outstanding_requests[request_id] = "waiting"
           loss = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
         self.outstanding_requests.pop(request_id)

@@ -329,19 +329,16 @@ def is_frozen():
 
 
 def get_exo_home() -> Path:
-  if os.name == "nt":  # Check if the OS is Windows
-    docs_folder = Path(os.environ["USERPROFILE"]) / "Documents"
-  else:
-    docs_folder = Path.home() / "Documents"
+  if psutil.WINDOWS: docs_folder = Path(os.environ["USERPROFILE"]) / "Documents"
+  else: docs_folder = Path.home() / "Documents"
+  if not docs_folder.exists(): docs_folder.mkdir(exist_ok=True)
   exo_folder = docs_folder / "Exo"
-  if not exo_folder.exists():
-    exo_folder.mkdir()
+  if not exo_folder.exists(): exo_folder.mkdir(exist_ok=True)
   return exo_folder
 
 def get_exo_images_dir() -> Path:
   exo_home = get_exo_home()
   images_dir = exo_home / "Images"
-  if not images_dir.exists():
-    images_dir.mkdir()
+  if not images_dir.exists(): images_dir.mkdir(exist_ok=True)
   return images_dir
   
