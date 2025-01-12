@@ -196,8 +196,9 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 async def start_allora_node(dir):
-  print(f"starting allora node")
+  print(f"starting allora node at {dir}")
   cmd = f"cd {dir} && ./start.local"
+  print(f"running cd {dir} && ./start.local")
   proc = await asyncio.create_subprocess_shell(
       cmd=cmd,
       shell=True,
@@ -334,13 +335,11 @@ async def main():
       loop.add_signal_handler(s, handle_exit)
 
   await node.start(wait_for_peers=args.wait_for_peers)
-  print("up in here 1")
   if args.allora_dir:
     asyncio.create_task(
       start_allora_node(args.allora_dir)
     )
     # Add the inference endpoint when in Allora mode
-  print("up in here 4")
   if args.allora_mode:
       
       async def inference_endpoint(request):
