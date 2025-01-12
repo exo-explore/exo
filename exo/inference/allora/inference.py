@@ -36,8 +36,22 @@ class CoinPredictionInferenceEngine(InferenceEngine):
         self.region = 'US'  # Default region
         self.data_provider = 'binance'  # Default data provider
         self.CG_API_KEY = ''
+
+    async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
+        return False
+
+    async def sample(self, x: np.ndarray) -> np.ndarray:
+        return False
+
+    async def decode(self, shard: Shard, tokens: np.ndarray) -> str:
+        return False
+
+    async def load_checkpoint(self, shard: Shard, path: str):
+        return False
+
     async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[str] = None) -> (bool):
         return False
+        
 
     async def infer_prompt(
         self,

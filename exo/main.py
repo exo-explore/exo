@@ -87,6 +87,7 @@ shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_
                                                       max_parallel_downloads=args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 if args.allora_mode:
   inference_engine_name = 'allora'
+  print(f"allora dir {args.allora_dir}")
 else:
   inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
@@ -298,7 +299,6 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
   
 async def main():
   loop = asyncio.get_running_loop()
-
   # Check HuggingFace directory permissions
   hf_home, has_read, has_write = get_hf_home(), await has_hf_home_read_access(), await has_hf_home_write_access()
   if DEBUG >= 1: print(f"Model storage directory: {hf_home}")
@@ -334,6 +334,29 @@ async def main():
       loop.add_signal_handler(s, handle_exit)
 
   await node.start(wait_for_peers=args.wait_for_peers)
+  print("up in here 1")
+  if args.allora_dir:
+    asyncio.create_task(
+      start_allora_node(args.allora_dir)
+    )
+    # Add the inference endpoint when in Allora mode
+  print("up in here 4")
+  if args.allora_mode:
+      
+      async def inference_endpoint(request):
+        # Use the inference_engine to process the token
+        token = request.match_info.get('token')
+        request_id = str(uuid.uuid4())
+        shard = Shard(model_id="LinearRegression", start_layer=1, end_layer=1, n_layers=1)
+        output_data, inference_state, completed = await inference_engine.infer_prompt(
+            request_id, shard, token
+        )
+        return web.json_response({
+            "token": token,
+            "prediction": output_data.tolist(),
+            "completed": completed
+        })
+      api.app.router.add_get("/inference/{token}", inference_endpoint)
 
   if args.command == "run" or args.run_model:
     model_name = args.model_name or args.run_model
@@ -359,35 +382,11 @@ async def main():
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
-  
+
   if args.wait_for_peers > 0:
     print("Cooldown to allow peers to exit gracefully")
     for i in tqdm(range(50)):
       await asyncio.sleep(.1)
-  
-  if args.allora_dir:
-    asyncio.create_task(
-      start_allora_node(args.allora_dir)
-    )
-    # Add the inference endpoint when in Allora mode
-  if args.allora_mode:
-      
-      async def inference_endpoint(request):
-        # Use the inference_engine to process the token
-        token = request.match_info.get('token')
-        request_id = str(uuid.uuid4())
-        shard = Shard(model_id="LinearRegression", start_layer=1, end_layer=1, n_layers=1)
-        output_data, inference_state, completed = await inference_engine.infer_prompt(
-            request_id, shard, token
-        )
-        return web.json_response({
-            "token": token,
-            "prediction": output_data.tolist(),
-            "completed": completed
-        })
-      api.app.router.add_get("/inference/{token}", inference_endpoint)
-
-
 def run():
   loop = asyncio.new_event_loop()
   asyncio.set_event_loop(loop)
