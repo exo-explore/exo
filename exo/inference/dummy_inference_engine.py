@@ -25,9 +25,9 @@ class DummyInferenceEngine(InferenceEngine):
   async def decode(self, shard: Shard, tokens: np.ndarray) -> str:
     return self.tokenizer.decode(tokens)
 
-  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: dict = {}) -> np.ndarray:
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: dict = {}) -> tuple[np.ndarray, Optional[dict]]:
     await self.ensure_shard(shard)
-    return input_data + 1 if self.shard.is_last_layer() else input_data
+    return input_data + 1 if self.shard.is_last_layer() else input_data, None
 
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard: return

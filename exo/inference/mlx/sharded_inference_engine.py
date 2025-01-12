@@ -84,7 +84,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     x = mx.array(input_data)
     if self.model.model_type != 'StableDiffusionPipeline':
       output_data = await loop.run_in_executor(self.executor, lambda: self.model(x, **state, **inference_state))
-      inference_state = {}
     else:
       output_data, inference_state = await loop.run_in_executor(self.executor, lambda: self.model(x, **state, **inference_state))
     output_data = np.array(output_data)
