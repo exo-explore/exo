@@ -4,7 +4,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from mlx_lm.models.base import create_attention_mask
-from mlx_lm.models.qwen2 import TransformerBlock, ModelArgs
+from mlx_lm.models.phi3 import TransformerBlock, ModelArgs
 
 from ...shard import Shard
 from .base import IdentityBlock
@@ -23,24 +23,24 @@ class ModelArgs(ModelArgs):
 
     self.shard = Shard(**self.shard)
 
-class Qwen2Model(nn.Module):
+class Phi3Model(nn.Module):
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
     self.vocab_size = args.vocab_size
     self.num_hidden_layers = args.num_hidden_layers
     assert self.vocab_size > 0
-
+    
     if self.args.shard.is_first_layer():
       self.embed_tokens = nn.Embedding(args.vocab_size, args.hidden_size)
-
+    
     self.layers = []
     for i in range(self.num_hidden_layers):
       if self.args.shard.start_layer <= i <= self.args.shard.end_layer:
         self.layers.append(TransformerBlock(args=args))
       else:
         self.layers.append(IdentityBlock())
-
+        
     if self.args.shard.is_last_layer():
       self.norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
 
@@ -59,7 +59,7 @@ class Qwen2Model(nn.Module):
       mask = create_attention_mask(h, cache)
 
     if cache is None:
-      cache = [None]*len(self.layers)
+      cache = [None] * len(self.layers)
 
     for layer, c in zip(self.layers, cache):
       h = layer(h, mask, c)
@@ -68,16 +68,14 @@ class Qwen2Model(nn.Module):
       h = self.norm(h)
     return h
 
-
 class Model(nn.Module):
   def __init__(self, args: ModelArgs):
     super().__init__()
     self.args = args
     self.model_type = args.model_type
-    self.model = Qwen2Model(args)
+    self.model = Phi3Model(args)
     if self.args.shard.is_last_layer():
-      if not args.tie_word_embeddings:
-        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
+      self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
 
   def __call__(
     self,
@@ -86,17 +84,14 @@ class Model(nn.Module):
   ):
     out = self.model(inputs, cache)
     if self.args.shard.is_last_layer():
-      if self.args.tie_word_embeddings:
-        out = self.model.embed_tokens.as_linear(out)
-      else:
-        out = self.lm_head(out)
+      out = self.lm_head(out)
     return out
 
   def sanitize(self, weights):
     shard_state_dict = {}
 
     for key, value in weights.items():
-      if "self_attn.rotary_emb.inv_freq" in key:
+      if "self_attn.rope.inv_freq" in key:
         continue
       if key.startswith('model.layers.'):
         layer_num = int(key.split('.')[2])
@@ -104,15 +99,8 @@ class Model(nn.Module):
           shard_state_dict[key] = value
       elif self.args.shard.is_first_layer() and key.startswith('model.embed_tokens'):
         shard_state_dict[key] = value
-      elif (self.args.shard.is_last_layer() and self.args.tie_word_embeddings) and key.startswith('model.embed_tokens'):
+      elif self.args.shard.is_last_layer() and (key.startswith('lm_head') or key.startswith('model.norm')):
         shard_state_dict[key] = value
-      elif (self.args.shard.is_last_layer() and not self.args.tie_word_embeddings) and key.startswith('lm_head'):
-        shard_state_dict[key] = value
-      elif self.args.shard.is_last_layer() and (key.startswith('model.norm')):
-        shard_state_dict[key] = value
-
-    if self.args.tie_word_embeddings:
-      shard_state_dict.pop("lm_head.weight", None)
 
     return shard_state_dict
 
