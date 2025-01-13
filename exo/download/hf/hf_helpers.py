@@ -303,6 +303,10 @@ async def download_repo_files(
         await f.write(json.dumps(file_list))
       if DEBUG >= 2: print(f"Cached file list at {cached_file_list_path}")
 
+    model_index_exists = any(file["path"] == "model_index.json" for file in file_list)
+    if model_index_exists:
+      allow_patterns = ["**/*.json", "**/*.txt", "**/*model.safetensors", "*.json"]
+
     filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns, key=lambda x: x["path"]))
     total_files = len(filtered_file_list)
     total_bytes = sum(file["size"] for file in filtered_file_list)

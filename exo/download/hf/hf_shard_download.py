@@ -104,15 +104,19 @@ class HFShardDownloader(ShardDownloader):
           print(f"No snapshot directory found for {self.current_repo_id}")
         return None
 
+      if not await aios.path.exists(snapshot_dir/"model_index.json"):
       # Get the weight map to know what files we need
-      weight_map = await get_weight_map(self.current_repo_id, self.revision)
-      if not weight_map:
-        if DEBUG >= 2:
-          print(f"No weight map found for {self.current_repo_id}")
-        return None
+        weight_map = await get_weight_map(self.current_repo_id, self.revision)
+        if not weight_map:
+          if DEBUG >= 2:
+            print(f"No weight map found for {self.current_repo_id}")
+          return None
 
-      # Get all files needed for this shard
-      patterns = get_allow_patterns(weight_map, self.current_shard)
+        # Get all files needed for this shard
+        patterns = get_allow_patterns(weight_map, self.current_shard)
+      else:
+        patterns = ["**/*.json", "**/*.txt", "**/*model.safetensors", "*.json"]
+
 
       # Check download status for all relevant files
       status = {}

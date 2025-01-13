@@ -23,7 +23,7 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
-  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray) -> np.ndarray:
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
     pass
 
   @abstractmethod
@@ -39,11 +39,15 @@ class InferenceEngine(ABC):
   async def clear_session(self):
     self.session.empty()
   
-  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str) -> np.ndarray:
+  async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
     tokens = await self.encode(shard, prompt)
-    x = tokens.reshape(1, -1)
-    output_data = await self.infer_tensor(request_id, shard, x)
-    return output_data 
+    if shard.model_id != 'stable-diffusion-2-1-base':
+      x = tokens.reshape(1, -1)
+    else:
+      x = tokens
+    output_data, inference_state = await self.infer_tensor(request_id, shard, x, inference_state)
+
+    return output_data, inference_state
 
 inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
