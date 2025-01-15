@@ -3,13 +3,19 @@ from concurrent import futures
 import numpy as np
 from asyncio import CancelledError
 
+import platform
+
 from . import node_service_pb2
 from . import node_service_pb2_grpc
 from exo import DEBUG
 from exo.inference.shard import Shard
 from exo.orchestration import Node
 import json
-import mlx.core as mx
+
+if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
+  import mlx.core as mx
+else:
+  import numpy as mx
 
 
 class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):

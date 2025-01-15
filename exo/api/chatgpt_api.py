@@ -21,7 +21,13 @@ from PIL import Image
 import numpy as np
 import base64
 from io import BytesIO
-import mlx.core as mx
+import platform
+
+if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
+  import mlx.core as mx
+else:
+  import numpy as mx
+
 import tempfile
 from exo.download.hf.hf_shard_download import HFShardDownloader
 import shutil
