@@ -10,11 +10,20 @@ import torch
 import torch.nn as nn
 import torchtune.modules as ttm
 import torchtune.generation as ttg
-from torchtune.models.llama3_1._position_embeddings import Llama3ScaledRoPE
+
 from torchtune.modules.attention_utils import _MaskType
+from torchtune.modules import RMSNorm
+# llama3 torchtune
+from torchtune.models.llama3_1._position_embeddings import Llama3ScaledRoPE
+# from torchtune.models.llama3._model_utils import scale_hidden_dim_for_mlp
 
 from exo.inference.shard import Shard
-from exo.inference.torch.models.llm_utils import MultiLayerPreceptron, RMSNorm
+from exo.inference.torch.models.llm_utils import (
+  llama3_mlp,
+  MultiLayerPreceptron,
+  # RMSNorm,
+)
+
 from exo.helpers import DEBUG
 
 
@@ -251,7 +260,10 @@ def LlamaModel(config: dict, shard: Shard):
       pos_embeddings=rope,
     )
 
-    mlp = MultiLayerPreceptron(config["embed_dim"], config["intermediate_dim"], config["hidden_act"])
+    mlp = llama3_mlp(
+      dim=config["embed_dim"],
+      hidden_dim=config["intermediate_dim"],
+    )
 
     layer = ttm.TransformerSelfAttentionLayer(
       attn=self_attn,
@@ -266,6 +278,8 @@ def LlamaModel(config: dict, shard: Shard):
   tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
   output_proj = ttm.TiedLinear(tok_embeddings)
 
+  norm = RMSNorm(config["embed_dim"], eps=config["norm_eps"])
+
   return ShardTransformerDecoder(
     tok_embeddings=tok_embeddings,
     shard=shard,
@@ -273,7 +287,7 @@ def LlamaModel(config: dict, shard: Shard):
     max_seq_len=config["max_seq_len"],
     num_heads=config["num_heads"],
     head_dim=config["head_dim"],
-    norm=RMSNorm(config["embed_dim"], eps=config["norm_eps"]),
+    norm=norm,
     output=output_proj,
     num_layers=config["num_layers"],
   )
@@ -361,7 +375,11 @@ class ShardedLlamaModel(nn.Module):
       # masking for proper attention
       padding_masks = generated_tokens != self.pad_id
       if not padding_masks.all():
-        padding_masks = torch.nn.functional.pad(padding_masks, (0, self.max_generated_tokens), value=True)
+        padding_masks = torch.nn.functional.pad(
+          padding_masks,
+          (0, self.max_generated_tokens),
+          value=True,
+        )
 
         self.masks = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=max_seq_len)
 

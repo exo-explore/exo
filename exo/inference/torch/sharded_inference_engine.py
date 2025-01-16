@@ -27,8 +27,8 @@ from exo.inference.torch.models.llm_utils import (
 # supported models
 from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
-TEMP = 0.6
-TOP_K = 35
+TEMP = 0.8
+TOP_K = 10
 
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
@@ -79,10 +79,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     await self.ensure_shard(shard)
 
-    self.sharded_model.model.reset_caches()
-    self.past_tokens = None
-
-    return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(self.tokenizer.decode, tokens.tolist()))
+    return await asyncio.get_running_loop().run_in_executor(
+      self.executor,
+      functools.partial(self.tokenizer.decode, tokens.tolist()),
+    )
 
   async def sample(self, x: np.ndarray, temp=TEMP, top_k=TOP_K) -> np.ndarray:
     if DEBUG >= 4:
@@ -140,7 +140,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
         else:
           model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
-        # model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
 
       if model_hs is not None:
         # model_hs = model_hs.detach().cpu()
@@ -189,7 +188,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         config=model_config,
         shard=shard,
         device=self.device,
-        use_cache=True,
+        use_cache=os.environ.get("TORCH_USE_CACHE", True),
       ),
     )
 

@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torchtune.modules import FeedForward
 
 from safetensors.torch import load_file as load_safetensors
 
@@ -50,8 +51,8 @@ def load_model_config(model_config_path: Path) -> dict:
       "hidden_act": base_config.get("hidden_act", "silu")
     }
 
-    # if model_config.get("rope_scaling", None) is not None:
-    #   model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
+    if model_config.get("rope_scaling", None) is not None:
+      model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
 
   return model_config
 
@@ -78,6 +79,9 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   """
   Loads weights from huggingface and changes it to match torchtune naming structure
   """
+  model_state_dict = model.state_dict()
+  for name, _ in model_state_dict.items():
+    print(f"name {name}")
   # Load weights from safetensors files in the cache directory
   safetensors_files = list(cache_dir.glob("*.safetensors"))
   if not safetensors_files:
@@ -104,7 +108,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # change input layer norm to sa_norm for torchtune
         re_iln = re.findall(rf"model.layers\.{layer_num}\.(input_layernorm)\.weight", key)
         if len(re_iln) != 0:
-          new_key = f"model.layers.{layer_num}.sa_norm.weight"
+          new_key = f"model.layers.{layer_num}.sa_norm.scale"
           remapped_state_dict[new_key] = value
           if DEBUG >= 8:
             print(f"{key} == {new_key}")
@@ -112,7 +116,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # change post attention layernorm to mlp_norm for torchtune
         re_pal = re.findall(rf"model.layers\.{layer_num}\.(post_attention_layernorm)\.weight", key)
         if len(re_pal) != 0:
-          new_key = f"model.layers.{layer_num}.mlp_norm.weight"
+          new_key = f"model.layers.{layer_num}.mlp_norm.scale"
           remapped_state_dict[new_key] = value
           if DEBUG >= 8:
             print(f"{key} == {new_key}")
@@ -133,7 +137,14 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # set mlp weights
         re_mlp = re.findall(rf"model\.layers\.{layer_num}.mlp.(\w+)\.(\w+)", key)
         if len(re_mlp) != 0:
-          new_key = f"model.layers.{layer_num}.mlp.{re_mlp[0][0]}.{re_mlp[0][1]}"
+          proj_name = re_mlp[0][0]
+          if proj_name == "up_proj":
+            proj_name = "w3"
+          elif proj_name == "down_proj":
+            proj_name = "w2"
+          elif proj_name == "gate_proj":
+            proj_name = "w1"
+          new_key = f"model.layers.{layer_num}.mlp.{proj_name}.weight"
           remapped_state_dict[new_key] = value
           if DEBUG >= 8:
             print(f"{key} == {new_key}")
@@ -143,6 +154,13 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         remapped_state_dict["model.tok_embeddings.weight"] = value
         if DEBUG >= 8:
           print("model.embed_tokens.weight == model.tok_embeddings.weight")
+
+      if key == "model.norm.weight":
+        remapped_state_dict["model.norm.scale"] = value
+
+      if key == "lm_head.weight":
+        remapped_state_dict["output.weight"] = value
+
   else:
     print(f"{shard.model_id} not supported for sharding, loading weights normally")
 
@@ -210,3 +228,14 @@ class RMSNorm(nn.Module):
     variance = hidden_states.pow(2).mean(-1, keepdim=True)
     hidden_states = hidden_states*torch.rsqrt(variance + self.eps)
     return self.weight*hidden_states.to(input_dtype)
+
+
+def llama3_mlp(dim: int, hidden_dim: int) -> FeedForward:
+  """
+  Build the MLP layer associated with the Llama model.
+  """
+  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
+  down_proj = nn.Linear(hidden_dim, dim, bias=False)
+  up_proj = nn.Linear(dim, hidden_dim, bias=False)
+
+  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
