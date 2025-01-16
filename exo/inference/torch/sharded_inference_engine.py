@@ -8,6 +8,7 @@ import functools
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import uuid
+from typing import Optional
 
 import numpy as np
 import torch
@@ -102,20 +103,18 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
 
-  async def infer_tensor(
-    self,
-    request_id: str,
-    shard: Shard,
-    input_data: np.ndarray,
-  ) -> np.ndarray:
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
     # ensure shard
     if DEBUG >= 4:
       print("infer_tensor called")
       print(f"shard: {shard}")
       print(f"input_data: {input_data}")
-      print(f"self.past_tokens: {self.past_tokens}")
+      print(f"inference_state: {inference_state}")
 
     await self.ensure_shard(shard)
+
+    if inference_state.get("past_tokens") is not None:
+      self.past_tokens = torch.tensor(inference_state["past_tokens"])
 
     self.request_id = request_id if not self.request_id else self.request_id
 
@@ -144,16 +143,20 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         else:
           model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
 
+      curr_inference_state = {
+        "past_tokens": self.past_tokens.numpy(force=True).tolist(),
+      }
+
       if model_hs is not None:
         # model_hs = model_hs.detach().cpu()
 
         # possibly make this into a tensor that has past_tokens also
         # to pass to node, currently only hidden state is
-        return model_hs.numpy(force=True)
+        return model_hs.numpy(force=True), curr_inference_state
 
       # model_logits = model_logits.detach().cpu()
       # token = await self.sample(model_logits, TEMP, TOP_K)
-      return model_logits[:, -1].numpy(force=True)
+      return model_logits[:, -1].numpy(force=True), curr_inference_state
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
 
