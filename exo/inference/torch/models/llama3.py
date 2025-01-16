@@ -92,6 +92,26 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
 
     return False
 
+  def reset_caches(self):
+    for layer in self.layers:
+      if layer is not None:
+        layer.reset_cache()
+
+  def check_maxed_cache(self, tokens: torch.Tensor) -> bool:
+    """
+    Check if cached is maxed out and needs to be reset
+    """
+    active_layers = [x for x in self.layers if x is not None]
+    kv_cache = active_layers[0].attn.kv_cache
+    current_pos = kv_cache.cache_pos[0] + tokens.numel() + self.max_seq_len
+    k_shape = kv_cache.k_cache.shape[2]
+    print(f"current_pos: {current_pos}\nk_shape: {k_shape}")
+    if current_pos <= k_shape:
+      print("====== MAX CACHE REACHED CLEAR ==============")
+      return True
+
+    return False
+
   def forward(
     self,
     tokens: torch.Tensor,
@@ -102,7 +122,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     # Determine the type of input and shape
     if DEBUG >= 4:
       print("forward called")
-      print(f"tokens [{tokens.shape()}]: {tokens}")
+      print(f"tokens [{tokens.shape}]: {tokens}")
       print(f"mask: {mask}")
 
     if tokens.ndim == 3:
@@ -132,13 +152,23 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
 
       # Process through each transformer layer
       with torch.no_grad():
-        if self.layers[self.shard.start_layer].caches_are_enabled():
+        if layer.caches_are_enabled():
+          try:
+            h = layer(
+              h,
+              mask=mask,
+              input_pos=input_pos,
+            )
+          except AssertionError:
+            # assume due to cache
+            self.reset_caches()
 
-          h = layer(
-            h,
-            mask=mask,
-            input_pos=input_pos,
-          )
+            h = layer(
+              h,
+              mask=mask,
+              input_pos=input_pos,
+            )
+
         else:
           h = layer(h)
 

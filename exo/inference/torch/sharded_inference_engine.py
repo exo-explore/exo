@@ -7,6 +7,7 @@ import os
 import functools
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import uuid
 
 import numpy as np
 import torch
@@ -27,7 +28,7 @@ from exo.inference.torch.models.llm_utils import (
 from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
 TEMP = 0.6
-TOP_K = 300
+TOP_K = 35
 
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
@@ -40,6 +41,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
     self.past_tokens = None
+    self.uuid = str(uuid.uuid4())
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -76,6 +78,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"tokens: {tokens}")
 
     await self.ensure_shard(shard)
+
+    self.sharded_model.model.reset_caches()
+    self.past_tokens = None
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(self.tokenizer.decode, tokens.tolist()))
 
@@ -132,9 +137,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         model_hs, model_logits = self.sharded_model.generate(hidden_state=hidden_state)
       else:
         model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
+        # model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
 
       if model_hs is not None:
         # model_hs = model_hs.detach().cpu()
+
+        # possibly make this into a tensor that has past_tokens also
+        # to pass to node, currently only hidden state is
         return model_hs.numpy(force=True)
 
       # model_logits = model_logits.detach().cpu()
@@ -148,6 +157,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print("shard ensured\n")
       print(f"shard: {shard}")
       print(f"class shard: {self.shard}")
+      print(f"uuid: {self.uuid}")
 
     if self.shard == shard:
       return

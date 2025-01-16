@@ -47,8 +47,8 @@ def load_model_config(model_config_path: Path) -> dict:
       "hidden_act": base_config.get("hidden_act", "silu")
     }
 
-    if model_config.get("rope_scaling", None) is not None:
-      model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
+    # if model_config.get("rope_scaling", None) is not None:
+    #   model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
 
   return model_config
 
@@ -81,7 +81,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
     raise FileNotFoundError("No safetensors files found in the cache directory.")
 
   # Load weights from each found safetensors file
-  
+
   full_state_dict = {}
   for safetensor_file in safetensors_files:
     state_dict = load_safetensors(safetensor_file)
@@ -150,7 +150,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
       print("\nRemapped state dict\n")
       for rsdk in remapped_state_dict.keys():
         print(f"--  {rsdk}")
-  
+
     # load new weight map
     model.load_state_dict(remapped_state_dict, strict=False)
 
@@ -158,6 +158,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
       print("\n--- checking weights ----\n")
       print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
       check_weights(model, remapped_state_dict)
+
 
 class MultiLayerPreceptron(nn.Module):
   def __init__(self, input_dim, hidden_dim, activation="silu", use_bias=False):
@@ -174,19 +175,11 @@ class MultiLayerPreceptron(nn.Module):
     super(MultiLayerPreceptron, self).__init__()
 
     # Activation function mapping
-    activations = {
-      "relu": nn.ReLU(),
-      "gelu": nn.GELU(),
-      "tanh": nn.Tanh(),
-      "sigmoid": nn.Sigmoid(),
-      "leaky_relu": nn.LeakyReLU(0.2),
-      "silu": nn.SiLU()
-    }
+    activations = {"relu": nn.ReLU(), "gelu": nn.GELU(), "tanh": nn.Tanh(), "sigmoid": nn.Sigmoid(), "leaky_relu": nn.LeakyReLU(0.2), "silu": nn.SiLU()}
 
     # Ensure valid activation
     if activation not in activations:
-      raise ValueError(
-        f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
+      raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
 
     # Construct MLP layers
     self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
@@ -195,7 +188,7 @@ class MultiLayerPreceptron(nn.Module):
     self.act_fn = activations[activation]
 
   def forward(self, x) -> torch.Tensor:
-    return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+    return self.down_proj(self.act_fn(self.gate_proj(x))*self.up_proj(x))
 
 
 class RMSNorm(nn.Module):
@@ -212,5 +205,5 @@ class RMSNorm(nn.Module):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
     variance = hidden_states.pow(2).mean(-1, keepdim=True)
-    hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
-    return self.weight * hidden_states.to(input_dtype)
+    hidden_states = hidden_states*torch.rsqrt(variance + self.eps)
+    return self.weight*hidden_states.to(input_dtype)

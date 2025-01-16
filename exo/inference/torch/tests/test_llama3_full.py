@@ -22,7 +22,8 @@ from exo.inference.torch.models.llm_utils import (
 )
 
 MODEL_NAME = "unsloth/Llama-3.2-3B-Instruct"
-TEMP = 0.6
+# MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
+TEMP = 0.8
 TOP_K = 35
 MAX_NEW_TOKENS = 300
 
@@ -104,8 +105,8 @@ def normal_full(model, user_prompt: str, device: torch.device = torch.device("cp
 if __name__ == "__main__":
   # prompt = "hello"
   # prompt = "What is the meaning of exo?"
-  # prompt = "Tell me a short 4 line haiku"
-  prompt = "In a single word only, what is the last name of the current president of the USA?"
+  prompt = "Tell me a short 4 line haiku"
+  # prompt = "In a single word only, what is the last name of the current president of the USA?"
 
   # Get the path to the model files from the Hugging Face cache
   cache_dir = Path(snapshot_download(MODEL_NAME))
@@ -132,6 +133,7 @@ if __name__ == "__main__":
 
   # Initialize LlamaModel with config and tokenizer
   device = torch.device("cuda")
+  # device = torch.device("cpu")
   shard_model_1 = ShardedLlamaModel(config=config, shard=shard_1, device=device, use_cache=True)
   print(f"\nshard_model_1: {shard_model_1}")
 
