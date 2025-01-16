@@ -27,8 +27,8 @@ from exo.inference.torch.models.llm_utils import (
 # supported models
 from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
-TEMP = 0.8
-TOP_K = 10
+TEMP = 0.0
+TOP_K = 35
 
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
@@ -95,6 +95,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     def sample_wrapper():
       tokens = tt_sample(logits, temperature=temp, top_k=top_k)
+      if DEBUG >= 4:
+        print(f"tokens: {tokens}")
+
       return tokens.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))

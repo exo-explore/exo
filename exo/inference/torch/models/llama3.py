@@ -102,6 +102,8 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     return False
 
   def reset_caches(self):
+    torch.cuda.empty_cache()
+
     for layer in self.layers:
       if layer is not None:
         layer.reset_cache()

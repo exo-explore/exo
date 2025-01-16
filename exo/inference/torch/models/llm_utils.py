@@ -1,7 +1,7 @@
 """
 Utility methods used by LLMs
 """
-
+import os
 import re
 import json
 from pathlib import Path
@@ -51,7 +51,7 @@ def load_model_config(model_config_path: Path) -> dict:
       "hidden_act": base_config.get("hidden_act", "silu")
     }
 
-    if model_config.get("rope_scaling", None) is not None:
+    if (os.environ.get("TORCH_USE_ORG_SEQ", True) and model_config.get("rope_scaling", None) is not None):
       model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
 
   return model_config

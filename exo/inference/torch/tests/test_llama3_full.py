@@ -123,10 +123,10 @@ def normal_full(model, user_prompt: str, device: torch.device = torch.device("cp
 
 
 if __name__ == "__main__":
-  # prompt = "Tell me a joke."
+  prompt = "Tell me a joke."
   # prompt = "What is the meaning of exo?"
   # prompt = "Tell me a short 4 line haiku"
-  prompt = "In a single word only, what is the last name of the current president of the USA?"
+  # prompt = "In a single word only, what is the last name of the current president of the USA?"
 
   # Get the path to the model files from the Hugging Face cache
   cache_dir = Path(snapshot_download(MODEL_NAME))
