@@ -114,7 +114,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     await self.ensure_shard(shard)
 
     if inference_state.get("past_tokens") is not None:
-      self.past_tokens = torch.tensor(inference_state["past_tokens"])
+      self.past_tokens = torch.tensor(inference_state["past_tokens"]).to(self.device)
 
     self.request_id = request_id if not self.request_id else self.request_id
 

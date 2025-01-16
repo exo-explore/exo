@@ -17,6 +17,7 @@ from exo.download.hf.hf_helpers import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.hf.hf_shard_download import HFShardDownloader
 
+
 class Node:
   def __init__(
     self,
@@ -43,7 +44,7 @@ class Node:
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
     self.buffered_partials: Dict[str, List[np.ndarray]] = {}
     self.checkpoints: Dict[str, Dict[str, int]] = {}
-    
+
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
     self.default_sample_temperature = default_sample_temperature
@@ -98,6 +99,9 @@ class Node:
       supported_engine_names.append('tinygrad')
     else:
       supported_engine_names.append('tinygrad')
+
+    supported_engine_names.append('torch')
+
     return supported_engine_names
 
   async def broadcast_supported_engines(self, supported_engines_names: List[str]):
@@ -106,7 +110,7 @@ class Node:
 
   def get_topology_inference_engines(self) -> List[List[str]]:
     return self.topology_inference_engines_pool
-  
+
   async def process_inference_result(
     self,
     shard,
@@ -144,10 +148,9 @@ class Node:
       self.outstanding_requests.pop(request_id)
     else:
       self.outstanding_requests[request_id] = "waiting"
-      asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1), inference_state))
+      asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset=1), inference_state))
 
-    return  np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
-
+    return np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
 
   async def process_prompt(
     self,
@@ -214,7 +217,7 @@ class Node:
     self,
     base_shard: Shard,
     example: np.ndarray,
-    target: np.ndarray, 
+    target: np.ndarray,
     length: np.ndarray,
     request_id: Optional[str] = None,
     train: bool = False,
@@ -227,7 +230,7 @@ class Node:
       if request_id is None:
         request_id = str(uuid.uuid4())
       self.outstanding_requests[request_id] = "waiting"
-      loss = await self.forward_example(shard, example, target, length, train, request_id, 0) 
+      loss = await self.forward_example(shard, example, target, length, train, request_id, 0)
     return loss
 
   async def coordinate_save(
@@ -258,7 +261,7 @@ class Node:
     self,
     base_shard: Shard,
     example: np.ndarray,
-    target: np.ndarray, 
+    target: np.ndarray,
     length: np.ndarray,
     train: bool = False,
     request_id: Optional[str] = None,
@@ -303,7 +306,7 @@ class Node:
     self,
     base_shard: Shard,
     example: np.ndarray,
-    target: np.ndarray, 
+    target: np.ndarray,
     length: np.ndarray,
     train: bool = False,
     request_id: Optional[str] = None,
@@ -322,7 +325,7 @@ class Node:
           self.outstanding_requests[request_id] = "preprocessing"
           step, _ = await self.inference_engine.infer_tensor(request_id, shard, example)
           self.outstanding_requests[request_id] = "waiting"
-          loss, backgrad = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
+          loss, backgrad = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset=1))
           self.outstanding_requests[request_id] = "training"
           partial_loss, grad = await self.inference_engine.train(request_id, shard, example, backgrad, length, loss="back_gradient")
         self.outstanding_requests.pop(request_id)
@@ -338,7 +341,7 @@ class Node:
           self.outstanding_requests[request_id] = "preprocessing"
           step, _ = await self.inference_engine.infer_tensor(request_id, shard, example)
           self.outstanding_requests[request_id] = "waiting"
-          loss = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset = 1))
+          loss = await self.forward_example(shard, step, target, length, train, request_id, self.get_partition_index(offset=1))
         self.outstanding_requests.pop(request_id)
         return loss
     except Exception as e:
@@ -346,7 +349,7 @@ class Node:
       print(f"Error processing example for shard {shard}: {e}")
       traceback.print_exc()
       return None
-        
+
   async def process_tensor(
     self,
     base_shard: Shard,
@@ -406,14 +409,14 @@ class Node:
     try:
       self.outstanding_requests[request_id] = "processing"
       result, inference_state = await self.inference_engine.infer_tensor(request_id, shard, tensor, inference_state)
-      ret = await self.process_inference_result(shard, result, request_id, inference_state) 
+      ret = await self.process_inference_result(shard, result, request_id, inference_state)
       return ret
     except Exception as e:
       self.outstanding_requests.pop(request_id)
       print(f"Error processing tensor for shard {shard}: {e}")
       traceback.print_exc()
       return None
-  
+
   async def forward_example(
     self,
     base_shard: Shard,
@@ -455,7 +458,7 @@ class Node:
         raise ValueError(f"Peer for {target_index} not found")
       if DEBUG >= 1: print(f"Sending prompt to {target_peer.id()}: {prompt}")
       await target_peer.send_prompt(next_shard, prompt, request_id=request_id, inference_state=inference_state)
-  
+
   async def forward_tensor(
     self,
     base_shard: Shard,
@@ -485,7 +488,7 @@ class Node:
     current_partition_index = next((i for i, p in enumerate(partitions) if p.node_id == self.id), None)
     if current_partition_index is None:
       raise ValueError(f"No current partition found for node: {self.id}")
-    return (current_partition_index + offset) % len(partitions)
+    return (current_partition_index+offset) % len(partitions)
 
   def get_current_shard(self, base_shard: Shard, index: Optional[int] = None) -> Shard:
     if index is None:
@@ -616,7 +619,7 @@ class Node:
   def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
     if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} num_tokens={len(tokens)} {is_finished=}")
     self.on_token.trigger_all(request_id, tokens, is_finished)
-  
+
   async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     async def send_result_to_peer(peer):
       try:
@@ -651,8 +654,8 @@ class Node:
 
   def handle_stable_diffusion(self, inference_state, result):
     if inference_state['is_step_finished']:
-      inference_state['step']+=1
-    progress = [inference_state['step'],inference_state['total_steps']]
+      inference_state['step'] += 1
+    progress = [inference_state['step'], inference_state['total_steps']]
     intermediate_result = result
     if progress[0] == progress[1]:
       intermediate_result = result

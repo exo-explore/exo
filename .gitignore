@@ -176,3 +176,4 @@ cython_debug/
 .aider*
 
 exo/tinychat/images/*.png
+.vscode/
