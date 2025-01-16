@@ -1,7 +1,7 @@
 """
 Utility methods used by LLMs
 """
-
+import os
 import re
 import json
 from pathlib import Path
@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torchtune.modules import FeedForward
 
 from safetensors.torch import load_file as load_safetensors
 
@@ -34,7 +35,10 @@ def load_model_config(model_config_path: Path) -> dict:
       "rope_scaling": base_config.get("rope_scaling"),
       "embed_dim": base_config["hidden_size"],
       "num_heads": base_config["num_attention_heads"],
-      "head_dim": base_config["hidden_size"] // base_config["num_attention_heads"],  # Assuming embed_dim = hidden_size
+      "head_dim": base_config.get(
+        "head_dim",
+        base_config["hidden_size"] // base_config["num_attention_heads"],
+      ),  # Assuming embed_dim = hidden_size
       "num_kv_heads": base_config["num_key_value_heads"],
       "max_seq_len": base_config["max_position_embeddings"],
       "intermediate_dim": base_config["intermediate_size"],
@@ -47,7 +51,7 @@ def load_model_config(model_config_path: Path) -> dict:
       "hidden_act": base_config.get("hidden_act", "silu")
     }
 
-    if model_config.get("rope_scaling", None) is not None:
+    if (os.environ.get("TORCH_USE_ORG_SEQ", True) and model_config.get("rope_scaling", None) is not None):
       model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
 
   return model_config
@@ -75,13 +79,16 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   """
   Loads weights from huggingface and changes it to match torchtune naming structure
   """
+  model_state_dict = model.state_dict()
+  for name, _ in model_state_dict.items():
+    print(f"name {name}")
   # Load weights from safetensors files in the cache directory
   safetensors_files = list(cache_dir.glob("*.safetensors"))
   if not safetensors_files:
     raise FileNotFoundError("No safetensors files found in the cache directory.")
 
   # Load weights from each found safetensors file
-  
+
   full_state_dict = {}
   for safetensor_file in safetensors_files:
     state_dict = load_safetensors(safetensor_file)
@@ -101,7 +108,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # change input layer norm to sa_norm for torchtune
         re_iln = re.findall(rf"model.layers\.{layer_num}\.(input_layernorm)\.weight", key)
         if len(re_iln) != 0:
-          new_key = f"model.layers.{layer_num}.sa_norm.weight"
+          new_key = f"model.layers.{layer_num}.sa_norm.scale"
           remapped_state_dict[new_key] = value
           if DEBUG >= 8:
             print(f"{key} == {new_key}")
@@ -109,7 +116,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # change post attention layernorm to mlp_norm for torchtune
         re_pal = re.findall(rf"model.layers\.{layer_num}\.(post_attention_layernorm)\.weight", key)
         if len(re_pal) != 0:
-          new_key = f"model.layers.{layer_num}.mlp_norm.weight"
+          new_key = f"model.layers.{layer_num}.mlp_norm.scale"
           remapped_state_dict[new_key] = value
           if DEBUG >= 8:
             print(f"{key} == {new_key}")
@@ -130,7 +137,14 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # set mlp weights
         re_mlp = re.findall(rf"model\.layers\.{layer_num}.mlp.(\w+)\.(\w+)", key)
         if len(re_mlp) != 0:
-          new_key = f"model.layers.{layer_num}.mlp.{re_mlp[0][0]}.{re_mlp[0][1]}"
+          proj_name = re_mlp[0][0]
+          if proj_name == "up_proj":
+            proj_name = "w3"
+          elif proj_name == "down_proj":
+            proj_name = "w2"
+          elif proj_name == "gate_proj":
+            proj_name = "w1"
+          new_key = f"model.layers.{layer_num}.mlp.{proj_name}.weight"
           remapped_state_dict[new_key] = value
           if DEBUG >= 8:
             print(f"{key} == {new_key}")
@@ -140,6 +154,13 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         remapped_state_dict["model.tok_embeddings.weight"] = value
         if DEBUG >= 8:
           print("model.embed_tokens.weight == model.tok_embeddings.weight")
+
+      if key == "model.norm.weight":
+        remapped_state_dict["model.norm.scale"] = value
+
+      if key == "lm_head.weight":
+        remapped_state_dict["output.weight"] = value
+
   else:
     print(f"{shard.model_id} not supported for sharding, loading weights normally")
 
@@ -150,14 +171,15 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
       print("\nRemapped state dict\n")
       for rsdk in remapped_state_dict.keys():
         print(f"--  {rsdk}")
-  
+
     # load new weight map
     model.load_state_dict(remapped_state_dict, strict=False)
 
-    if DEBUG >= 8:
-      print("\n--- checking weights ----\n")
-      print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
-      check_weights(model, remapped_state_dict)
+    # if DEBUG >= 8:
+    print("\n--- checking weights ----\n")
+    print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
+    check_weights(model, remapped_state_dict)
+
 
 class MultiLayerPreceptron(nn.Module):
   def __init__(self, input_dim, hidden_dim, activation="silu", use_bias=False):
@@ -174,19 +196,11 @@ class MultiLayerPreceptron(nn.Module):
     super(MultiLayerPreceptron, self).__init__()
 
     # Activation function mapping
-    activations = {
-      "relu": nn.ReLU(),
-      "gelu": nn.GELU(),
-      "tanh": nn.Tanh(),
-      "sigmoid": nn.Sigmoid(),
-      "leaky_relu": nn.LeakyReLU(0.2),
-      "silu": nn.SiLU()
-    }
+    activations = {"relu": nn.ReLU(), "gelu": nn.GELU(), "tanh": nn.Tanh(), "sigmoid": nn.Sigmoid(), "leaky_relu": nn.LeakyReLU(0.2), "silu": nn.SiLU()}
 
     # Ensure valid activation
     if activation not in activations:
-      raise ValueError(
-        f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
+      raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
 
     # Construct MLP layers
     self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
@@ -195,7 +209,7 @@ class MultiLayerPreceptron(nn.Module):
     self.act_fn = activations[activation]
 
   def forward(self, x) -> torch.Tensor:
-    return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+    return self.down_proj(self.act_fn(self.gate_proj(x))*self.up_proj(x))
 
 
 class RMSNorm(nn.Module):
@@ -212,5 +226,16 @@ class RMSNorm(nn.Module):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
     variance = hidden_states.pow(2).mean(-1, keepdim=True)
-    hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
-    return self.weight * hidden_states.to(input_dtype)
+    hidden_states = hidden_states*torch.rsqrt(variance + self.eps)
+    return self.weight*hidden_states.to(input_dtype)
+
+
+def llama3_mlp(dim: int, hidden_dim: int) -> FeedForward:
+  """
+  Build the MLP layer associated with the Llama model.
+  """
+  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
+  down_proj = nn.Linear(hidden_dim, dim, bias=False)
+  up_proj = nn.Linear(dim, hidden_dim, bias=False)
+
+  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)

@@ -28,18 +28,16 @@ install_requires = [
   "transformers==4.46.3",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
-  "torch==2.4.0",
+  "torch==2.5.1",
   "accelerate==0.34.2",
-  "torchtune==0.4.0",
+  "torchtune==0.5.0",
   "torchao==0.6.1",
   "pytest==8.3.3",
-  "pytest-asyncio==0.24.0"
+  "pytest-asyncio==0.24.0",
 ]
 
 extras_require = {
-  "formatting": [
-    "yapf==0.40.2",
-  ],
+  "formatting": ["yapf==0.40.2",],
   "apple_silicon": [
     "mlx==0.20.0",
     "mlx-lm==0.19.3",

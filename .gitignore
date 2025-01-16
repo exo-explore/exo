@@ -175,8 +175,4 @@ cython_debug/
 # Aider
 .aider*
 
-# PyTorch interface
-.offload
-
-# neovim/vim settings 
-.vimrc
+exo/tinychat/images/*.png
