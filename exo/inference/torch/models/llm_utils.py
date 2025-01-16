@@ -34,7 +34,10 @@ def load_model_config(model_config_path: Path) -> dict:
       "rope_scaling": base_config.get("rope_scaling"),
       "embed_dim": base_config["hidden_size"],
       "num_heads": base_config["num_attention_heads"],
-      "head_dim": base_config["hidden_size"] // base_config["num_attention_heads"],  # Assuming embed_dim = hidden_size
+      "head_dim": base_config.get(
+        "head_dim",
+        base_config["hidden_size"] // base_config["num_attention_heads"],
+      ),  # Assuming embed_dim = hidden_size
       "num_kv_heads": base_config["num_key_value_heads"],
       "max_seq_len": base_config["max_position_embeddings"],
       "intermediate_dim": base_config["intermediate_size"],
@@ -154,10 +157,10 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
     # load new weight map
     model.load_state_dict(remapped_state_dict, strict=False)
 
-    if DEBUG >= 8:
-      print("\n--- checking weights ----\n")
-      print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
-      check_weights(model, remapped_state_dict)
+    # if DEBUG >= 8:
+    print("\n--- checking weights ----\n")
+    print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
+    check_weights(model, remapped_state_dict)
 
 
 class MultiLayerPreceptron(nn.Module):

@@ -136,7 +136,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if hidden_state is not None:
         model_hs, model_logits = self.sharded_model.generate(hidden_state=hidden_state)
       else:
-        model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
+        if not self.sharded_model.model.caches_are_enabled():
+          model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
+        else:
+          model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
         # model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
 
       if model_hs is not None:
