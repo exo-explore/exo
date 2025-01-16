@@ -1,7 +1,16 @@
 # PyTorch inference engine
 
 ## Devs
-- [Vincent Castro](https://github.com/risingsunomi)
+- [Vincent Castro](https://x.com/t0kenl1mit)
+
+## ENV Vars
+```bash
+# Use the original max position embeddings amount, if present in the rope_scaling - default is False
+TORCH_USE_ORG_SEQ = True or False
+
+# Use cache - default is True
+TORCH_USE_CACHE = True or False
+```
 
 ## Notes/Issues
 ### 10/10/2024
@@ -23,19 +32,21 @@ Still working on llama3 model but wanted to note that a better KVCache needs to 
 #### 11/17/2024
 Llama sharded model now working and next step is inference engine. Still testing on small llama 3.2 1B but will try larger models.
 
+### 01/16/2024
+Torchtune has replaced huggingface transformers except for the tokenizer. Inferencing on Meta 3.2 1B seems okay but my GPU runs into a wall quickly. Will be trying on a bigger VM and LAN server to split up model.
+
 ## Tech
-
-Tested on
-
 ```bash
 # Laptop/PC
-Distributor ID: Pop
-Description:    Pop!_OS 22.04 LTS
-Release:        22.04
-Codename:       jammy
+Distributor ID:	Ubuntu
+Description:	Ubuntu 24.04.1 LTS
+Release:	24.04
+Codename:	noble
 CUDA Version: 12.4 
 Nvidia Driver Version: 550.107.02
 
+CPU: 11th Gen Intel® Core™ i7-11800H × 16
+RAM: 16GB
 GPU 1: Nvidia GeForce RTX 3060 6GB Laptop
 ```
 ```bash
@@ -73,11 +84,11 @@ ShardedLlamaModel(
           (output_proj): Linear(in_features=2048, out_features=2048, bias=False)
           (pos_embeddings): Llama3ScaledRoPE()
         )
-        (mlp): MultiLayerPreceptron(
-          (gate_proj): Linear(in_features=2048, out_features=8192, bias=False)
-          (up_proj): Linear(in_features=2048, out_features=8192, bias=False)
-          (down_proj): Linear(in_features=8192, out_features=2048, bias=False)
-          (act_fn): SiLU()
+        (mlp): FeedForward(
+          (w1): Linear(in_features=2048, out_features=8192, bias=False)
+          (w2): Linear(in_features=8192, out_features=2048, bias=False)
+          (w3): Linear(in_features=2048, out_features=8192, bias=False)
+          (activation): SiLU()
         )
         (sa_norm): RMSNorm()
         (mlp_norm): RMSNorm()
