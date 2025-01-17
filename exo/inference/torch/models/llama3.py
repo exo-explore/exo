@@ -348,6 +348,7 @@ class ShardedLlamaModel(nn.Module):
     self,
     tokens: Optional[torch.Tensor] = None,
     hidden_state: Optional[torch.Tensor] = None,
+    inference_state: Optional[dict] = None,
   ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
     """
     Generate logits and/or hidden_states from llama model
@@ -414,6 +415,10 @@ class ShardedLlamaModel(nn.Module):
 
         self.input_pos = torch.arange(0, total_response_length, device=self.device).unsqueeze(0)
 
+      if inference_state is not None:
+        inference_state["masks"] = self.masks.numpy(force=True).tolist()
+        inference_state["input_pos"] = self.input_pos.numpy(force=True).tolist()
+
       if self.model.caches_are_enabled():
         self.curr_masks = self.masks[:, :tokens_length]
       else:
@@ -421,6 +426,12 @@ class ShardedLlamaModel(nn.Module):
 
       self.curr_input_pos = self.input_pos[:, :tokens_length].squeeze()
     else:
+      if inference_state is not None:
+        if self.input_pos is None:
+          self.input_pos = torch.tensor(inference_state["input_pos"]).to(self.device)
+        if self.masks is None:
+          self.masks = torch.tensor(inference_state["masks"]).to(self.device)
+
       if self.model.caches_are_enabled():
         self.curr_input_pos = self.input_pos[:, self.curr_pos].contiguous()
         self.curr_masks = self.masks[:, self.curr_pos, None, :].contiguous()

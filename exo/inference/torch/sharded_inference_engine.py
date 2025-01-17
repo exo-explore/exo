@@ -146,18 +146,27 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"self.past_tokens: {self.past_tokens}")
         print(f"hidden_state: {hidden_state}")
 
-      curr_inference_state = {"past_tokens": self.past_tokens.numpy(force=True).tolist()}
+      curr_inference_state = {
+        "past_tokens": self.past_tokens.numpy(force=True).tolist(),
+      }
 
       if hidden_state is not None:
         model_hs, model_logits = self.sharded_model.generate(
           tokens=self.past_tokens,
           hidden_state=hidden_state,
+          inference_state=curr_inference_state,
         )
       else:
         if not os.environ.get("TORCH_USE_CACHE", True):
-          model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
+          model_hs, model_logits = self.sharded_model.generate(
+            tokens=self.past_tokens,
+            inference_state=curr_inference_state,
+          )
         else:
-          model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
+          model_hs, model_logits = self.sharded_model.generate(
+            tokens=input_tensor,
+            inference_state=curr_inference_state,
+          )
 
       if model_hs is not None:
         return (
