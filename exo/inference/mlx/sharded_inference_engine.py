@@ -1,3 +1,5 @@
+from exo.inference.mlx.benchmark import mlx_benchmark_tflops
+from exo.topology.device_flops import DeviceFlops
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
@@ -152,4 +154,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       self.model = model_shard 
       self.caches = OrderedDict()
       self.session = {}
-
+  
+  async def benchmark_tflops(self) -> DeviceFlops:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(self.executor, mlx_benchmark_tflops)

@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Tuple, Union, Set
 from exo.networking import Discovery, PeerHandle, Server
 from exo.inference.inference_engine import InferenceEngine, Shard
 from exo.topology.topology import Topology
-from exo.topology.device_capabilities import device_capabilities
+from exo.topology.device_capabilities import LazyDeviceCapabilities
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
@@ -24,6 +24,7 @@ class Node:
     server: Server,
     inference_engine: InferenceEngine,
     discovery: Discovery,
+    lazy_device_capabilities: LazyDeviceCapabilities,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
     default_sample_temperature: float = 0.0,
@@ -37,7 +38,7 @@ class Node:
     self.partitioning_strategy = partitioning_strategy
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
-    self.device_capabilities = device_capabilities()
+    self.lazy_device_capabilities = lazy_device_capabilities
     self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
@@ -572,7 +573,7 @@ class Node:
 
   async def collect_topology(self, visited: set[str], max_depth: int = 4) -> Topology:
     next_topology = Topology()
-    next_topology.update_node(self.id, self.device_capabilities)
+    next_topology.update_node(self.id, await self.lazy_device_capabilities.caps)
 
     if DEBUG >= 2: print(f"Collecting topology {max_depth=} {visited=}")
 

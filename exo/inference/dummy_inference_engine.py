@@ -1,8 +1,13 @@
-from typing import Optional, Tuple, TYPE_CHECKING
 import numpy as np
+import random
+import string
 from exo.inference.inference_engine import InferenceEngine
 from exo.inference.shard import Shard
+from exo.topology.device_flops import DeviceFlops
 from exo.inference.tokenizers import DummyTokenizer
+
+def random_string(length: int):
+  return ''.join([random.choice(string.ascii_lowercase) for i in range(length)])
 
 class DummyInferenceEngine(InferenceEngine):
   def __init__(self):
@@ -32,6 +37,9 @@ class DummyInferenceEngine(InferenceEngine):
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard: return
     self.shard = shard
+
+  async def benchmark_tflops(self) -> DeviceFlops:
+    return DeviceFlops(fp32=0.0, fp16=0.0, int8=0.0)
   
   async def load_checkpoint(self, shard: Shard, path: str):
     await self.ensure_shard(shard)

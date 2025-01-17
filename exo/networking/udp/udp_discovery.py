@@ -6,7 +6,7 @@ import traceback
 from typing import List, Dict, Callable, Tuple, Coroutine
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
-from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
+from exo.topology.device_capabilities import DeviceCapabilities, LazyDeviceCapabilities
 from exo.helpers import DEBUG, DEBUG_DISCOVERY, get_all_ip_addresses_and_interfaces, get_interface_priority_and_type
 
 
@@ -41,10 +41,10 @@ class UDPDiscovery(Discovery):
     node_port: int,
     listen_port: int,
     broadcast_port: int,
+    lazy_device_capabilities: LazyDeviceCapabilities,
     create_peer_handle: Callable[[str, str, str, DeviceCapabilities], PeerHandle],
     broadcast_interval: int = 2.5,
     discovery_timeout: int = 30,
-    device_capabilities: DeviceCapabilities = UNKNOWN_DEVICE_CAPABILITIES,
     allowed_node_ids: List[str] = None,
   ):
     self.node_id = node_id
@@ -54,7 +54,7 @@ class UDPDiscovery(Discovery):
     self.create_peer_handle = create_peer_handle
     self.broadcast_interval = broadcast_interval
     self.discovery_timeout = discovery_timeout
-    self.device_capabilities = device_capabilities
+    self.lazy_device_capabilities = lazy_device_capabilities
     self.allowed_node_ids = allowed_node_ids
     self.known_peers: Dict[str, Tuple[PeerHandle, float, float, int]] = {}
     self.broadcast_task = None
@@ -62,7 +62,6 @@ class UDPDiscovery(Discovery):
     self.cleanup_task = None
 
   async def start(self):
-    self.device_capabilities = device_capabilities()
     self.broadcast_task = asyncio.create_task(self.task_broadcast_presence())
     self.listen_task = asyncio.create_task(self.task_listen_for_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
@@ -93,7 +92,7 @@ class UDPDiscovery(Discovery):
           "type": "discovery",
           "node_id": self.node_id,
           "grpc_port": self.node_port,
-          "device_capabilities": self.device_capabilities.to_dict(),
+          "device_capabilities": await self.lazy_device_capabilities.caps.to_dict(),
           "priority": interface_priority, # TODO: Prioritise interfaces based on bandwidth, latency, and jitter e.g. prioritise Thunderbolt over WiFi.
           "interface_name": interface_name,
           "interface_type": interface_type,
