@@ -140,9 +140,13 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     # Determine the type of input and shape
     if DEBUG >= 4:
       print("forward called")
-      print(f"tokens [{tokens.shape}]: {tokens}")
-      print(f"mask: {mask}")
-      print(f"input_pos: {input_pos}")
+      if tokens is not None:
+        print(f"tokens [{tokens.shape}]: {tokens}")
+        print(f"mask: {mask}")
+        print(f"input_pos: {input_pos}")
+
+      if hidden_state is not None:
+        print(f"hidden_state [{hidden_state.shape}]: {hidden_state}")
 
     if hidden_state is not None:
       h = hidden_state  # Use directly as hidden states

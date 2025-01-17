@@ -117,7 +117,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     await self.ensure_shard(shard)
 
-    infer_cached = os.environ.get("TORCH_USE_CACHE", True)
+    infer_cached = 
 
     # ensure shard
     if DEBUG >= 4:
@@ -127,7 +127,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"inference_state: {inference_state}")
       print(f"infer_cached: {infer_cached}")
 
-    if inference_state.get("past_tokens") is not None and not infer_cached:
+    if inference_state.get("past_tokens") is not None:
       self.past_tokens = torch.tensor(inference_state["past_tokens"]).to(self.device)
 
     self.request_id = request_id if not self.request_id else self.request_id
@@ -138,11 +138,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     elif input_data.ndim == 2:
       input_tensor = torch.tensor(input_data).to(self.device)
 
-      if not infer_cached:
-        if self.past_tokens is not None:
-          self.past_tokens = torch.cat([self.past_tokens, input_tensor], dim=-1).to(self.device)
-        else:
-          self.past_tokens = input_tensor.clone()
+      if self.past_tokens is not None:
+        self.past_tokens = torch.cat([self.past_tokens, input_tensor], dim=-1).to(self.device)
+      else:
+        self.past_tokens = input_tensor.clone()
 
     def infer_wrapper():
       if DEBUG >= 4:
@@ -150,28 +149,31 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"self.past_tokens: {self.past_tokens}")
         print(f"hidden_state: {hidden_state}")
 
-      curr_inference_state = {}
+      curr_inference_state = {
+        "past_tokens": self.past_tokens.numpy(force=True).tolist()
+      }
 
       if hidden_state is not None:
-        model_hs, model_logits = self.sharded_model.generate(hidden_state=hidden_state)
+        model_hs, model_logits = self.sharded_model.generate(
+          tokens=self.past_tokens,
+          hidden_state=hidden_state,
+        )
       else:
-        if not infer_cached:
+        if not os.environ.get("TORCH_USE_CACHE", True):
           model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
-
-          curr_inference_state["past_tokens"] = self.past_tokens.numpy(force=True).tolist()
         else:
           model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
 
       if model_hs is not None:
-        # model_hs = model_hs.detach().cpu()
-
-        # possibly make this into a tensor that has past_tokens also
-        # to pass to node, currently only hidden state is
-        return model_hs.numpy(force=True), curr_inference_state
-
-      # model_logits = model_logits.detach().cpu()
-      # token = await self.sample(model_logits, TEMP, TOP_K)
-      return model_logits[:, -1].numpy(force=True), curr_inference_state
+        return (
+          model_hs.numpy(force=True),
+          curr_inference_state,
+        )
+      
+      return (
+        model_logits[:, -1].numpy(force=True),
+        curr_inference_state,
+      )
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
 
