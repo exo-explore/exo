@@ -31,7 +31,7 @@ install_requires = [
   "torch==2.5.1",
   "accelerate==0.34.2",
   "torchtune==0.5.0",
-  "torchao==0.6.1",
+  "torchao==0.8.0",
   "pytest==8.3.3",
   "pytest-asyncio==0.24.0",
 ]
