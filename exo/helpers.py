@@ -7,7 +7,8 @@ import random
 import platform
 import psutil
 import uuid
-import netifaces
+from scapy.all import get_if_addr, get_if_list
+import re
 import subprocess
 from pathlib import Path
 import tempfile
@@ -231,12 +232,14 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
 def get_all_ip_addresses_and_interfaces():
   try:
     ip_addresses = []
-    for interface in netifaces.interfaces():
-      ifaddresses = netifaces.ifaddresses(interface)
-      if netifaces.AF_INET in ifaddresses:
-        for link in ifaddresses[netifaces.AF_INET]:
-          ip = link['addr']
-          ip_addresses.append((ip, interface))
+    for interface in get_if_list():
+      ip = get_if_addr(interface)
+      # Include all addresses, including loopback
+      # Filter out link-local addresses
+      if not ip.startswith('169.254.') and not ip.startswith('0.0.'):
+        # Remove "\\Device\\NPF_" prefix from interface name
+        simplified_interface = re.sub(r'^\\Device\\NPF_', '', interface)
+        ip_addresses.append((ip, simplified_interface))
     return list(set(ip_addresses))
   except:
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
