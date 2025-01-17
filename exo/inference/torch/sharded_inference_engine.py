@@ -117,15 +117,12 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     await self.ensure_shard(shard)
 
-    infer_cached = 
-
     # ensure shard
     if DEBUG >= 4:
       print("infer_tensor called")
       print(f"shard: {shard}")
       print(f"input_data: {input_data}")
       print(f"inference_state: {inference_state}")
-      print(f"infer_cached: {infer_cached}")
 
     if inference_state.get("past_tokens") is not None:
       self.past_tokens = torch.tensor(inference_state["past_tokens"]).to(self.device)
@@ -149,9 +146,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"self.past_tokens: {self.past_tokens}")
         print(f"hidden_state: {hidden_state}")
 
-      curr_inference_state = {
-        "past_tokens": self.past_tokens.numpy(force=True).tolist()
-      }
+      curr_inference_state = {"past_tokens": self.past_tokens.numpy(force=True).tolist()}
 
       if hidden_state is not None:
         model_hs, model_logits = self.sharded_model.generate(
@@ -169,7 +164,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           model_hs.numpy(force=True),
           curr_inference_state,
         )
-      
+
       return (
         model_logits[:, -1].numpy(force=True),
         curr_inference_state,
