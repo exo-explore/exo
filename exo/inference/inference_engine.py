@@ -14,7 +14,7 @@ class InferenceEngine(ABC):
   @abstractmethod
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     pass
-  
+
   @abstractmethod
   async def sample(self, x: np.ndarray) -> np.ndarray:
     pass
@@ -33,13 +33,13 @@ class InferenceEngine(ABC):
 
   async def save_checkpoint(self, shard: Shard, path: str):
     pass
-  
+
   async def save_session(self, key, value):
     self.session[key] = value
-  
+
   async def clear_session(self):
     self.session.empty()
-  
+
   async def infer_prompt(self, request_id: str, shard: Shard, prompt: str, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
     tokens = await self.encode(shard, prompt)
     if shard.model_id != 'stable-diffusion-2-1-base':
@@ -50,11 +50,13 @@ class InferenceEngine(ABC):
 
     return output_data, inference_state
 
+
 inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
 }
+
 
 def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDownloader):
   if DEBUG >= 2:
