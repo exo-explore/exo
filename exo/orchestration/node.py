@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import json
 import asyncio
@@ -98,9 +99,7 @@ class Node:
       supported_engine_names.append('mlx')
       supported_engine_names.append('tinygrad')
     else:
-      supported_engine_names.append('tinygrad')
-
-    supported_engine_names.append('torch')
+      supported_engine_names.append(os.environ.get("EXO_INFER_ENGINE", 'tinygrad'))
 
     return supported_engine_names
 

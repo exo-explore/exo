@@ -83,6 +83,8 @@ shard_downloader: ShardDownloader = HFShardDownloader(quick_check=args.download_
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
 
+os.environ["EXO_INFER_ENGINE"] = inference_engine_name
+
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
@@ -127,7 +129,9 @@ elif args.discovery_module == "tailscale":
 elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
-  discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
+  discovery = ManualDiscovery(
+    args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities)
+  )
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
 node = Node(
   args.node_id,
@@ -151,8 +155,10 @@ api = ChatGPTAPI(
   system_prompt=args.system_prompt
 )
 node.on_token.register("update_topology_viz").on_next(
-  lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") and inference_engine.shard.model_id != 'stable-diffusion-2-1-base' else None
+  lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens))
+  if topology_viz and hasattr(inference_engine, "tokenizer") and inference_engine.shard.model_id != 'stable-diffusion-2-1-base' else None
 )
+
 
 def preemptively_start_download(request_id: str, opaque_status: str):
   try:
@@ -186,6 +192,7 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
 
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
+
 async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_name: str, prompt: str):
   inference_class = inference_engine.__class__.__name__
   shard = build_base_shard(model_name, inference_class)
@@ -214,28 +221,32 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
   finally:
     node.on_token.deregister(callback_id)
 
+
 def clean_path(path):
-    """Clean and resolve path"""
-    if path.startswith("Optional("):
-        path = path.strip('Optional("').rstrip('")')
-    return os.path.expanduser(path)
+  """Clean and resolve path"""
+  if path.startswith("Optional("):
+    path = path.strip('Optional("').rstrip('")')
+  return os.path.expanduser(path)
+
 
 async def hold_outstanding(node: Node):
   while node.outstanding_requests:
     await asyncio.sleep(.5)
-  return 
+  return
+
 
 async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
   losses = []
   tokens = []
   for batch in tqdm(iterate_batches(data, batch_size), total=len(data) // batch_size):
     _, _, lengths = batch
-    losses.append(np.sum(lengths * await node.enqueue_example(shard, *batch, train=train)))
+    losses.append(np.sum(lengths*await node.enqueue_example(shard, *batch, train=train)))
     tokens.append(np.sum(lengths))
   total_tokens = np.sum(tokens)
-  total_loss = np.sum(losses) / total_tokens
-  
+  total_loss = np.sum(losses)/total_tokens
+
   return total_loss, total_tokens
+
 
 async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, num_batches=-1):
   inference_class = inference_engine.__class__.__name__
@@ -250,6 +261,7 @@ async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_na
   print(f"total | {loss=}, {tokens=}")
   print("Waiting for outstanding tasks")
   await hold_outstanding(node)
+
 
 async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, iters, save_interval=0, checkpoint_dir=None):
   inference_class = inference_engine.__class__.__name__
@@ -270,7 +282,7 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
       await hold_outstanding(node)
   await hold_outstanding(node)
 
-  
+
 async def main():
   loop = asyncio.get_running_loop()
 
@@ -279,13 +291,15 @@ async def main():
   if DEBUG >= 1: print(f"Model storage directory: {hf_home}")
   print(f"{has_read=}, {has_write=}")
   if not has_read or not has_write:
-    print(f"""
+    print(
+      f"""
           WARNING: Limited permissions for model storage directory: {hf_home}.
           This may prevent model downloads from working correctly.
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}
-          """)
-    
+          """
+    )
+
   if not args.models_seed_dir is None:
     try:
       models_seed_dir = clean_path(args.models_seed_dir)
@@ -295,7 +309,7 @@ async def main():
 
   def restore_cursor():
     if platform.system() != "Windows":
-        os.system("tput cnorm")  # Show cursor
+      os.system("tput cnorm")  # Show cursor
 
   # Restore the cursor when the program exits
   atexit.register(restore_cursor)
@@ -318,8 +332,7 @@ async def main():
     await run_model_cli(node, inference_engine, model_name, args.prompt)
   elif args.command == "eval" or args.command == 'train':
     model_name = args.model_name
-    dataloader = lambda tok: load_dataset(args.data, preprocess=lambda item: tok(item)
-                                                   , loadline=lambda line: json.loads(line).get("text",""))
+    dataloader = lambda tok: load_dataset(args.data, preprocess=lambda item: tok(item), loadline=lambda line: json.loads(line).get("text", ""))
     if args.command == 'eval':
       if not model_name:
         print("Error: Much like a human, I can't evaluate anything without a model")
@@ -330,11 +343,11 @@ async def main():
         print("Error: This train ain't leaving the station without a model")
         return
       await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters, save_interval=args.save_every, checkpoint_dir=args.save_checkpoint_dir)
-    
+
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
-  
+
   if args.wait_for_peers > 0:
     print("Cooldown to allow peers to exit gracefully")
     for i in tqdm(range(50)):
@@ -346,7 +359,7 @@ def run():
   asyncio.set_event_loop(loop)
   try:
     loop.run_until_complete(main())
-      
+
   except KeyboardInterrupt:
     print("Received keyboard interrupt. Shutting down...")
   finally:
