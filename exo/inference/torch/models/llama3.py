@@ -3,6 +3,7 @@ llama3 model
 
 Written with pytorch using torchtune and other methods
 """
+import re
 
 from typing import Optional, Any, Tuple, List, Union, Callable
 
@@ -134,6 +135,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     *,
     mask: Optional[_MaskType] = None,
     input_pos: Optional[torch.Tensor] = None,
+    hidden_state: Optional[torch.Tensor] = None,
   ) -> Union[torch.Tensor, List[torch.Tensor]]:
     # Determine the type of input and shape
     if DEBUG >= 4:
@@ -142,8 +144,8 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       print(f"mask: {mask}")
       print(f"input_pos: {input_pos}")
 
-    if tokens.ndim == 3:
-      h = tokens  # Use directly as hidden states
+    if hidden_state is not None:
+      h = hidden_state  # Use directly as hidden states
     else:
       seq_len = tokens.shape[1]
 
@@ -170,6 +172,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       # Process through each transformer layer
       # with torch.no_grad():
       if layer.caches_are_enabled():
+        self.check_maxed_cache(tokens=h)
         try:
           h = layer(
             h,
@@ -195,19 +198,22 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       if DEBUG >= 8:
         print(f"\nhidden layer out H[{i}]->H[{i + 1}]\n{h}\n")
 
-    # Apply normalization
-    h = self.norm(h)
+    if self.shard.is_last_layer():
+      # Apply normalization
+      h = self.norm(h)
 
-    # Handle chunked output if needed
-    output = self.output(h).float()
+      # Handle chunked output if needed
+      output = self.output(h).float()
 
-    # Return list if hidden states are requested
-    output = [hidden[-1], output] if hidden else output
+      if DEBUG >= 4:
+        print(f"\n\noutput {output}\n\n")
 
-    if DEBUG >= 4:
-      print(f"\n\noutput {output}\n\n")
+      return output
+    else:
+      if DEBUG >= 4:
+        print(f"\n\nhidden output {hidden[-1]}\n\n")
 
-    return output
+      return hidden[-1]
 
 
 def LlamaModel(config: dict, shard: Shard):
@@ -278,7 +284,11 @@ def LlamaModel(config: dict, shard: Shard):
 
   layers = nn.ModuleList(layers)
   tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
-  output_proj = ttm.TiedLinear(tok_embeddings)
+
+  if len(re.findall(r"3\.2", shard.model_id)) > 0:
+    output_proj = ttm.TiedLinear(tok_embeddings)
+  else:
+    output_proj = nn.Linear(config["embed_dim"], config["vocab_size"], bias=False)
 
   norm = RMSNorm(config["embed_dim"], eps=config["norm_eps"])
 
@@ -302,7 +312,7 @@ class ShardedLlamaModel(nn.Module):
     shard: Shard,
     device: Optional[torch.device] = None,
     use_cache: Optional[bool] = False,
-    max_generated_tokens: int = 300,
+    max_generated_tokens: int = 1024,
   ):
     super(ShardedLlamaModel, self).__init__()
 
@@ -317,6 +327,10 @@ class ShardedLlamaModel(nn.Module):
     self.pad_id = 128004  # from <|finetune_right_pad_id|>
 
     self.model = LlamaModel(config, self.shard).to(dtype=self.dtype, device=self.device)
+
+    if DEBUG >= 4:
+      print("ShardedLlamaModel called")
+      print(f"self.model {self.model}")
 
     # keep track of current position in generation
     self.max_generated_tokens = max_generated_tokens
@@ -343,6 +357,9 @@ class ShardedLlamaModel(nn.Module):
       print(f"tokens: {tokens}")
       print(f"hidden_state: {hidden_state}")
       print(f"curr_pos: {self.curr_pos}")
+
+    model_hs = None
+    model_logits = None
 
     bsz, tokens_length = tokens.size()
 
@@ -371,11 +388,8 @@ class ShardedLlamaModel(nn.Module):
       else:
         max_seq_len = self.model.decoder_max_cache_seq_len
 
-      # clone tokens
-      generated_tokens = tokens.clone().to(device=self.device)
-
       # masking for proper attention
-      padding_masks = generated_tokens != self.pad_id
+      padding_masks = tokens != self.pad_id
       if not padding_masks.all():
         padding_masks = torch.nn.functional.pad(
           padding_masks,
@@ -420,9 +434,10 @@ class ShardedLlamaModel(nn.Module):
       print(f"input_pos: {self.curr_input_pos}")
 
     model_output = self.model(
-      tokens=hidden_state if hidden_state is not None else tokens,
+      tokens=tokens,
       mask=self.curr_masks,
       input_pos=self.curr_input_pos,
+      hidden_state=hidden_state,
     )
 
     self.curr_pos += 1
@@ -430,12 +445,9 @@ class ShardedLlamaModel(nn.Module):
     if DEBUG >= 4:
       print(f"model_output\n{model_output}")
 
-    if isinstance(model_output, list):
-      model_logits = model_output[1]
-      model_output.pop()  # remove logits
-      model_hs = model_output[0]  # get last hidden state
-    else:
+    if self.shard.is_last_layer():
       model_logits = model_output
-      model_hs = None
+    else:
+      model_hs = model_output
 
     return model_hs, model_logits

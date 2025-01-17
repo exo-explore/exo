@@ -8,6 +8,7 @@ import functools
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import uuid
+import re
 from typing import Optional
 
 import numpy as np
@@ -28,8 +29,10 @@ from exo.inference.torch.models.llm_utils import (
 # supported models
 from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
-TEMP = 0.0
-TOP_K = 35
+# from torchtune generate recipe
+# https://github.com/pytorch/torchtune/blob/main/recipes/configs/generation.yaml#L40
+TEMP = 0.6
+TOP_K = 300
 
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
@@ -43,6 +46,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.executor = ThreadPoolExecutor(max_workers=1)
     self.past_tokens = None
     self.uuid = str(uuid.uuid4())
+    self.model_path = None
+    self.model_config = None
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -99,21 +104,30 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
+        if tokens.item() == self.tokenizer.eos_token_id:
+          if self.device == torch.device("cuda"):
+            torch.cuda.empty_cache()
+          self.sharded_model = None
+          self.shard = None
       return tokens.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
 
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
+
+    await self.ensure_shard(shard)
+
+    infer_cached = os.environ.get("TORCH_USE_CACHE", True)
+
     # ensure shard
     if DEBUG >= 4:
       print("infer_tensor called")
       print(f"shard: {shard}")
       print(f"input_data: {input_data}")
       print(f"inference_state: {inference_state}")
+      print(f"infer_cached: {infer_cached}")
 
-    await self.ensure_shard(shard)
-
-    if inference_state.get("past_tokens") is not None:
+    if inference_state.get("past_tokens") is not None and not infer_cached:
       self.past_tokens = torch.tensor(inference_state["past_tokens"]).to(self.device)
 
     self.request_id = request_id if not self.request_id else self.request_id
@@ -124,10 +138,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     elif input_data.ndim == 2:
       input_tensor = torch.tensor(input_data).to(self.device)
 
-      if self.past_tokens is not None:
-        self.past_tokens = torch.cat([self.past_tokens, input_tensor], dim=-1).to(self.device)
-      else:
-        self.past_tokens = input_tensor.clone()
+      if not infer_cached:
+        if self.past_tokens is not None:
+          self.past_tokens = torch.cat([self.past_tokens, input_tensor], dim=-1).to(self.device)
+        else:
+          self.past_tokens = input_tensor.clone()
 
     def infer_wrapper():
       if DEBUG >= 4:
@@ -135,17 +150,17 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"self.past_tokens: {self.past_tokens}")
         print(f"hidden_state: {hidden_state}")
 
+      curr_inference_state = {}
+
       if hidden_state is not None:
         model_hs, model_logits = self.sharded_model.generate(hidden_state=hidden_state)
       else:
-        if not self.sharded_model.model.caches_are_enabled():
+        if not infer_cached:
           model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens)
+
+          curr_inference_state["past_tokens"] = self.past_tokens.numpy(force=True).tolist()
         else:
           model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
-
-      curr_inference_state = {
-        "past_tokens": self.past_tokens.numpy(force=True).tolist(),
-      }
 
       if model_hs is not None:
         # model_hs = model_hs.detach().cpu()
@@ -167,31 +182,29 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"class shard: {self.shard}")
       print(f"uuid: {self.uuid}")
 
+    # reset model after last layer to fix OOM
     if self.shard == shard:
       return
 
     self.shard = shard
 
     # download model safetensors and shard
-    model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
-    model_config = load_model_config(model_path/"config.json")
+
+    self.model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+    self.model_config = load_model_config(self.model_path/"config.json")
 
     # self.tokenizer = await _resolve_tokenizer(model_path)
-    self.tokenizer = await _resolve_tokenizer(model_path)
+    self.tokenizer = await _resolve_tokenizer(self.model_path)
     eot_token = (
       self.tokenizer.special_tokens_map.get("eos_token_id")
       if hasattr(self.tokenizer, "_tokenizer") and isinstance(self.tokenizer._tokenizer, AutoTokenizer) else getattr(self.tokenizer, "eos_token_id", None)
     )
 
-    print(f"eot_token: {eot_token}")
-    print(self.tokenizer.special_tokens_map)
-    print(self.tokenizer.eos_token_id)
-
     self.sharded_model = await asyncio.get_running_loop().run_in_executor(
       self.executor,
       functools.partial(
         ShardedLlamaModel,
-        config=model_config,
+        config=self.model_config,
         shard=shard,
         device=self.device,
         use_cache=os.environ.get("TORCH_USE_CACHE", True),
@@ -201,7 +214,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     # load sharded weights
     await asyncio.get_running_loop().run_in_executor(
       self.executor,
-      functools.partial(load_model_weights_torchtune, model_path, shard, self.sharded_model),
+      functools.partial(load_model_weights_torchtune, self.model_path, shard, self.sharded_model),
     )
 
   async def load_checkpoint(self, shard: Shard, path: str):
