@@ -348,6 +348,7 @@ class ShardedLlamaModel(nn.Module):
     self,
     tokens: Optional[torch.Tensor] = None,
     hidden_state: Optional[torch.Tensor] = None,
+    past_tokens: Optional[torch.Tensor] = None,
   ) -> Tuple[
     Optional[torch.Tensor],
     torch.Tensor,
@@ -371,7 +372,10 @@ class ShardedLlamaModel(nn.Module):
 
     bsz, tokens_length = tokens.size()
 
-    if tokens_length > 1:
+    if tokens_length > 1 or (self.input_pos is None and self.masks is None):
+
+      if tokens_length == 1:
+        tokens = past_tokens
 
       tokens = tokens.view(1, -1).to(device=self.device) if tokens.ndim == 1 else tokens
 

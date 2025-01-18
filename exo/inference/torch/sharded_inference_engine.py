@@ -31,8 +31,8 @@ from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
 # from torchtune generate recipe
 # https://github.com/pytorch/torchtune/blob/main/recipes/configs/generation.yaml#L40
-TEMP = 0.6
-TOP_K = 300
+TEMP = 0.0
+TOP_K = 35
 
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
@@ -42,6 +42,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: HFShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
+    self.sharded_model = None
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
     self.past_tokens = None
@@ -64,6 +65,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print("encode called")
       print(f"shard: {shard}")
       print(f"prompt: {prompt}")
+
+    if self.sharded_model is not None:
+      self.sharded_model.model.reset_caches()
+      self.sharded_model = None
+      self.shard = None
 
     await self.ensure_shard(shard)
 
@@ -104,11 +110,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
-        if tokens.item() == self.tokenizer.eos_token_id:
-          if self.device == torch.device("cuda"):
-            torch.cuda.empty_cache()
-          self.sharded_model = None
-          self.shard = None
+        # if tokens.item() == self.tokenizer.eos_token_id:
+        #   if self.device == torch.device("cuda"):
+        #     torch.cuda.empty_cache()
+        #   self.sharded_model = None
+        #   self.shard = None
       return tokens.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
@@ -158,11 +164,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       else:
         if not self.sharded_model.model.caches_are_enabled():
           model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens,)
+        elif (self.sharded_model.input_pos is None and self.sharded_model.masks is None):
+          model_hs, model_logits = self.sharded_model.generate(
+            tokens=input_tensor,
+            past_tokens=self.past_tokens,
+          )
         else:
-          if self.past_tokens is not None and self.shard.is_first_layer():
-            model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens,)
-          else:
-            model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor,)
+          model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
 
       if model_hs is not None:
         return (
