@@ -362,6 +362,7 @@ class ShardedLlamaModel(nn.Module):
       print(f"tokens: {tokens}")
       print(f"hidden_state: {hidden_state}")
       print(f"curr_pos: {self.curr_pos}")
+      print(f"cached? {self.model.caches_are_enabled()}")
 
     model_hs = None
     model_logits = None
