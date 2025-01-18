@@ -163,16 +163,22 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           inference_state=curr_inference_state,
         )
       else:
-        if not os.environ.get("TORCH_USE_CACHE", True):
+        if not self.sharded_model.model.caches_are_enabled():
           model_hs, model_logits, curr_inference_state = self.sharded_model.generate(
             tokens=self.past_tokens,
             inference_state=curr_inference_state,
           )
         else:
-          model_hs, model_logits, curr_inference_state = self.sharded_model.generate(
-            tokens=input_tensor,
-            inference_state=curr_inference_state,
-          )
+          if self.past_tokens is not None and self.shard.is_first_layer():
+            model_hs, model_logits, curr_inference_state = self.sharded_model.generate(
+              tokens=self.past_tokens,
+              inference_state=curr_inference_state,
+            )
+          else:
+            model_hs, model_logits, curr_inference_state = self.sharded_model.generate(
+              tokens=input_tensor,
+              inference_state=curr_inference_state,
+            )
 
       if model_hs is not None:
         return (
