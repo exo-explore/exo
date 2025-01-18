@@ -430,8 +430,16 @@ class ShardedLlamaModel(nn.Module):
       if inference_state is not None:
         if inference_state.get("input_pos") is not None:
           self.input_pos = torch.tensor(inference_state["input_pos"]).to(self.device)
+
+          if DEBUG >= 8:
+            print("using input_pos from inference state")
+            print(f"{self.input_pos}")
         if inference_state.get("masks") is not None:
           self.masks = torch.tensor(inference_state["masks"]).to(self.device)
+
+          if DEBUG >= 8:
+            print("using masks from inference state")
+            print(f"{self.masks}")
 
       if self.model.caches_are_enabled():
         self.curr_input_pos = self.input_pos[:, self.curr_pos].contiguous()
