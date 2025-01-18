@@ -159,7 +159,7 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         remapped_state_dict["model.norm.scale"] = value
 
       if key == "lm_head.weight":
-        remapped_state_dict["output.weight"] = value
+        remapped_state_dict["model.output.weight"] = value
 
   else:
     print(f"{shard.model_id} not supported for sharding, loading weights normally")
