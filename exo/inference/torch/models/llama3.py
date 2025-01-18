@@ -348,8 +348,10 @@ class ShardedLlamaModel(nn.Module):
     self,
     tokens: Optional[torch.Tensor] = None,
     hidden_state: Optional[torch.Tensor] = None,
-    inference_state: Optional[dict] = None,
-  ) -> Tuple[Optional[torch.Tensor], torch.Tensor, Optional[dict]]:
+  ) -> Tuple[
+    Optional[torch.Tensor],
+    torch.Tensor,
+  ]:
     """
     Generate logits and/or hidden_states from llama model
 
@@ -417,10 +419,6 @@ class ShardedLlamaModel(nn.Module):
 
         self.input_pos = torch.arange(0, total_response_length, device=self.device).unsqueeze(0)
 
-      if inference_state is not None:
-        inference_state["masks"] = self.masks.numpy(force=True).tolist()
-        inference_state["input_pos"] = self.input_pos.numpy(force=True).tolist()
-
       if self.model.caches_are_enabled():
         self.curr_masks = self.masks[:, :tokens_length]
       else:
@@ -428,20 +426,6 @@ class ShardedLlamaModel(nn.Module):
 
       self.curr_input_pos = self.input_pos[:, :tokens_length].squeeze()
     else:
-      if inference_state is not None:
-        if inference_state.get("input_pos") is not None:
-          self.input_pos = torch.tensor(inference_state["input_pos"]).to(self.device)
-
-          if DEBUG >= 8:
-            print("using input_pos from inference state")
-            print(f"{self.input_pos}")
-        if inference_state.get("masks") is not None:
-          self.masks = torch.tensor(inference_state["masks"]).to(self.device)
-
-          if DEBUG >= 8:
-            print("using masks from inference state")
-            print(f"{self.masks}")
-
       if self.model.caches_are_enabled():
         self.curr_input_pos = self.input_pos[:, self.curr_pos].contiguous()
         self.curr_masks = self.masks[:, self.curr_pos, None, :].contiguous()
@@ -475,7 +459,4 @@ class ShardedLlamaModel(nn.Module):
     else:
       model_hs = model_output
 
-    if inference_state is not None:
-      return model_hs, model_logits, inference_state
-    else:
-      return model_hs, model_logits, {}
+    return model_hs, model_logits
