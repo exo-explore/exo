@@ -230,7 +230,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"shard: {shard}")
       print(f"class shard: {self.shard}")
       print(f"uuid: {self.uuid}")
-      print(f"use cache? {bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true")}")
 
     # reset model after last layer to fix OOM
     if self.shard == shard:
