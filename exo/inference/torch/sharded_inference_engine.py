@@ -31,8 +31,8 @@ from exo.inference.torch.models.llama3 import ShardedLlamaModel
 
 # from torchtune generate recipe
 # https://github.com/pytorch/torchtune/blob/main/recipes/configs/generation.yaml#L40
-TEMP = 0.0
-TOP_K = 25
+TEMP = 0.6
+TOP_K = 35
 
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
@@ -60,6 +60,27 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     else:
       self.device = torch.device("cpu")
 
+    self.rng = torch.Generator(device=self.device)
+    self.rng.manual_seed(1234)
+
+  def clear_model(self):
+    """
+    Clear out model and shard
+    A way to avoid OOM as more prompts will just
+    stack in memory. OOM will be hit eventually for longer prompts.
+    """
+    if self.sharded_model.model.caches_are_enabled():
+      self.sharded_model.model.reset_caches()
+    
+    del self.sharded_model
+    self.sharded_model = None
+    
+    if self.device == torch.device("cuda"):
+      torch.cuda.empty_cache()
+    
+    self.shard = None
+    self.past_tokens = None
+
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     if DEBUG >= 4:
       print("encode called")
@@ -67,12 +88,8 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"prompt: {prompt}")
 
     if self.sharded_model is not None:
-      print("CLEARING SHARD AND MODEL")
-      if self.device == torch.device("cuda"):
-        torch.cuda.empty_cache()
-      self.sharded_model = None
-      self.shard = None
-      self.past_tokens = None
+      print("CLEARING SHARD AND MODEL - ENCODING")
+      self.clear_model()
 
     await self.ensure_shard(shard)
 
@@ -80,6 +97,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       self.executor,
       functools.partial(self.tokenizer.encode, prompt, return_tensors="np"),
     )
+
+    # if going past max, just take from max onward
+    if len(tokens) > self.sharded_model.max_generated_tokens:
+      max_gen_tokens = self.sharded_model.max_generated_tokens
+      tokens = tokens[-max_gen_tokens:]
 
     if DEBUG >= 4:
       print(f"tokens: {tokens}")
@@ -105,11 +127,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"x: {x}")
       print(f"temp: {temp}")
       print(f"top_k: {top_k}")
-
+      print(self.device)
     logits = torch.tensor(x).to(self.device)
 
     def sample_wrapper():
-      tokens = tt_sample(logits, temperature=temp, top_k=top_k)
+
+      q = torch.empty((logits.size(0), self.sharded_model.model.tok_embeddings.num_embeddings), device=logits.device).exponential_(1, generator=self.rng)
+      tokens = tt_sample(logits.clone(), temperature=temp, top_k=top_k, q=q.to(self.device))
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
@@ -117,7 +141,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
 
-  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
+  async def infer_tensor(
+    self,
+    request_id: str,
+    shard: Shard,
+    input_data: np.ndarray,
+    inference_state: Optional[dict] = None
+  ) -> tuple[np.ndarray, Optional[dict]]:
 
     await self.ensure_shard(shard)
 
@@ -150,6 +180,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"self.past_tokens: {self.past_tokens}")
         print(f"hidden_state: {hidden_state}")
 
+      model_input_pos = self.sharded_model.input_pos
+      model_masks = self.sharded_model.masks
+      model_cache = self.sharded_model.model.caches_are_enabled()
+
       curr_inference_state = {
         "past_tokens": self.past_tokens.numpy(force=True).tolist(),
       }
@@ -160,9 +194,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           hidden_state=hidden_state,
         )
       else:
-        if not self.sharded_model.model.caches_are_enabled():
+        if not model_cache:
           model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens,)
-        elif (self.sharded_model.input_pos is None and self.sharded_model.masks is None):
+        elif (model_input_pos is None and model_masks is None and model_cache):
+          # this is for nodes that are just getting the hidden state
+          # to do caching and positioning correctly
           model_hs, model_logits = self.sharded_model.generate(
             tokens=input_tensor,
             past_tokens=self.past_tokens,
@@ -175,6 +211,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           model_hs.numpy(force=True),
           curr_inference_state,
         )
+
+      # clearing for non-primary nodes at end of processing
+      if not self.shard.is_first_layer() and self.shard.is_last_layer():
+        print("CLEARING MODEL - INFER TENSOR NODE")
+        self.clear_model()
 
       return (
         model_logits[:, -1].numpy(force=True),
@@ -189,6 +230,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"shard: {shard}")
       print(f"class shard: {self.shard}")
       print(f"uuid: {self.uuid}")
+      print(f"use cache? {bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true")}")
 
     # reset model after last layer to fix OOM
     if self.shard == shard:
@@ -215,7 +257,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         config=self.model_config,
         shard=shard,
         device=self.device,
-        use_cache=os.environ.get("TORCH_USE_CACHE", True),
+        use_cache=bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true"),
       ),
     )
 
