@@ -137,6 +137,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
+       # clearing for non-primary nodes at end of processing
+      # if not self.shard.is_first_layer() and self.shard.is_last_layer():
+      #   print("CLEARING MODEL - INFER TENSOR NODE")
+      #   self.clear_model()
+
       return tokens.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
@@ -211,11 +216,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           model_hs.numpy(force=True),
           curr_inference_state,
         )
-
-      # clearing for non-primary nodes at end of processing
-      if not self.shard.is_first_layer() and self.shard.is_last_layer():
-        print("CLEARING MODEL - INFER TENSOR NODE")
-        self.clear_model()
 
       return (
         model_logits[:, -1].numpy(force=True),
