@@ -52,7 +52,7 @@ def load_model_config(model_config_path: Path) -> dict:
     }
 
     use_org_seq = bool(os.getenv("TORCH_USE_ORG_SEQ", "False").lower() == "true")
-    if use_org_seq and model_config.get("rope_scaling", None) is not None):
+    if use_org_seq and model_config.get("rope_scaling", None) is not None:
       model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
 
   return model_config
