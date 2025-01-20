@@ -23,12 +23,14 @@ message PromptRequest {
   Shard shard = 1;
   string prompt = 2;
   optional string request_id = 3;
+  optional InferenceState inference_state = 4;
 }
 
 message TensorRequest {
   Shard shard = 1;
   Tensor tensor = 2;
   optional string request_id = 3;
+  optional InferenceState inference_state = 4;
 }
 
 message ExampleRequest {
@@ -49,6 +51,16 @@ message Tensor {
   bytes tensor_data = 1;
   repeated int32 shape = 2;
   string dtype = 3;
+}
+
+message TensorList {
+  repeated Tensor tensors = 1;
+}
+
+message InferenceState {
+  map<string, Tensor> tensor_data = 1;
+  map<string, TensorList> tensor_list_data = 2;
+  string other_data_json = 3;
 }
 
 message CollectTopologyRequest {
@@ -85,8 +97,9 @@ message DeviceCapabilities {
 
 message SendNewTokenRequest {
   string request_id = 1;
-  int32 token = 2;
-  bool is_finished = 3;
+  repeated int32 result = 2;
+  optional Tensor tensor = 3;
+  bool is_finished = 4;
 }
 
 message SendOpaqueStatusRequest {

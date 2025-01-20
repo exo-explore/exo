@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Get the total memory in MB
 TOTAL_MEM_MB=$(($(sysctl -n hw.memsize) / 1024 / 1024))

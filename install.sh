@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 if command -v python3.12 &>/dev/null; then
     echo "Python 3.12 is installed, proceeding with python3.12..."

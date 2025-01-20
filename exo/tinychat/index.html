@@ -197,7 +197,25 @@
           const div = document.createElement('div');
           div.className = `message message-role-${role}`;
           try {
-            div.innerHTML = DOMPurify.sanitize(marked.parse(content));
+              if (content.includes('![Generated Image]')) {
+                const imageUrl = content.match(/\((.*?)\)/)[1];
+                const img = document.createElement('img');
+                img.src = imageUrl;
+                img.alt = 'Generated Image';
+                img.onclick = async () => {
+                  try {
+                    const response = await fetch(img.src);
+                    const blob = await response.blob();
+                    const file = new File([blob], 'image.png', { type: 'image/png' });
+                    handleImageUpload({ target: { files: [file] } });
+                  } catch (error) {
+                    console.error('Error fetching image:', error);
+                  }
+                };
+                div.appendChild(img);
+              } else {
+                div.innerHTML = DOMPurify.sanitize(marked.parse(content));
+              }
           } catch (e) {
             console.log(content);
             console.error(e);
@@ -281,7 +299,7 @@
 </span>
 </div>
 <div class="input">
-<button @click="$refs.imageUpload.click()" class="image-input-button" x-show="cstate.selectedModel === 'llava-1.5-7b-hf'">
+<button @click="$refs.imageUpload.click()" class="image-input-button" x-show="cstate.selectedModel === 'llava-1.5-7b-hf' || cstate.selectedModel === 'stable-diffusion-2-1-base'">
 <i class="fas fa-image"></i>
 </button>
 <input @change="$data.handleImageUpload($event)" accept="image/*" id="image-upload" style="display: none;" type="file" x-ref="imageUpload"/>
