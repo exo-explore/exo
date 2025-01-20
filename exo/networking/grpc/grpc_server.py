@@ -131,9 +131,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     if DEBUG >= 5: print(f"CollectTopology {max_depth=} {visited=} {nodes=} {peer_graph=}")
     return node_service_pb2.Topology(nodes=nodes, peer_graph=peer_graph)
 
-  async def SendNewToken(self, request, context):
+  async def SendResult(self, request, context):
     request_id = request.request_id
-    token = request.token
+    result = request.result
     is_finished = request.is_finished
     img = request.tensor
     if DEBUG >= 5: print(f"Received SendResult request: {request_id=} {result=} {is_finished=}")
