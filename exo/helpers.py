@@ -7,7 +7,8 @@ import random
 import platform
 import psutil
 import uuid
-import netifaces
+from scapy.all import get_if_addr, get_if_list
+import re
 import subprocess
 from pathlib import Path
 import tempfile
@@ -231,26 +232,26 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
 def get_all_ip_addresses_and_interfaces():
   try:
     ip_addresses = []
-    for interface in netifaces.interfaces():
-      ifaddresses = netifaces.ifaddresses(interface)
-      if netifaces.AF_INET in ifaddresses:
-        for link in ifaddresses[netifaces.AF_INET]:
-          ip = link['addr']
-          ip_addresses.append((ip, interface))
+    for interface in get_if_list():
+      ip = get_if_addr(interface)
+      # Include all addresses, including loopback
+      # Filter out link-local addresses
+      if not ip.startswith('169.254.') and not ip.startswith('0.0.'):
+        # Remove "\\Device\\NPF_" prefix from interface name
+        simplified_interface = re.sub(r'^\\Device\\NPF_', '', interface)
+        ip_addresses.append((ip, simplified_interface))
     return list(set(ip_addresses))
   except:
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
     return [("localhost", "lo")]
 
+
 async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
   try:
     # Use the shared subprocess_pool
-    output = await asyncio.get_running_loop().run_in_executor(subprocess_pool, lambda: subprocess.run(
-      ['system_profiler', 'SPNetworkDataType', '-json'],
-      capture_output=True,
-      text=True,
-      close_fds=True
-    ).stdout)
+    output = await asyncio.get_running_loop().run_in_executor(
+      subprocess_pool, lambda: subprocess.run(['system_profiler', 'SPNetworkDataType', '-json'], capture_output=True, text=True, close_fds=True).stdout
+    )
 
     data = json.loads(output)
 
@@ -276,6 +277,7 @@ async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
 
   return None
 
+
 async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   # On macOS, try to get interface type using networksetup
   if psutil.MACOS:
@@ -283,8 +285,7 @@ async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
     if macos_type is not None: return macos_type
 
   # Local container/virtual interfaces
-  if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
-    'bridge' in ifname):
+  if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or 'bridge' in ifname):
     return (7, "Container Virtual")
 
   # Loopback interface
@@ -310,6 +311,7 @@ async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   # Other physical interfaces
   return (2, "Other")
 
+
 async def shutdown(signal, loop, server):
   """Gracefully shutdown the server and close the asyncio loop."""
   print(f"Received exit signal {signal.name}...")
@@ -329,16 +331,16 @@ def is_frozen():
 
 
 def get_exo_home() -> Path:
-  if psutil.WINDOWS: docs_folder = Path(os.environ["USERPROFILE"]) / "Documents"
-  else: docs_folder = Path.home() / "Documents"
+  if psutil.WINDOWS: docs_folder = Path(os.environ["USERPROFILE"])/"Documents"
+  else: docs_folder = Path.home()/"Documents"
   if not docs_folder.exists(): docs_folder.mkdir(exist_ok=True)
-  exo_folder = docs_folder / "Exo"
+  exo_folder = docs_folder/"Exo"
   if not exo_folder.exists(): exo_folder.mkdir(exist_ok=True)
   return exo_folder
 
+
 def get_exo_images_dir() -> Path:
   exo_home = get_exo_home()
-  images_dir = exo_home / "Images"
+  images_dir = exo_home/"Images"
   if not images_dir.exists(): images_dir.mkdir(exist_ok=True)
   return images_dir
-  
