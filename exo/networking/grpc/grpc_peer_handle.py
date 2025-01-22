@@ -12,7 +12,13 @@ from exo.topology.topology import Topology
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
 from exo.helpers import DEBUG
 import json
-import mlx.core as mx
+import platform
+
+if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
+  import mlx.core as mx
+else:
+  import numpy as mx
+
 
 class GRPCPeerHandle(PeerHandle):
   def __init__(self, _id: str, address: str, desc: str, device_capabilities: DeviceCapabilities):
@@ -101,7 +107,7 @@ class GRPCPeerHandle(PeerHandle):
         n_layers=shard.n_layers,
       ),
       request_id=request_id,
-      inference_state=self.serialize_inference_state(inference_state)
+      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
     )
     await self.stub.SendPrompt(request)
 
@@ -115,7 +121,7 @@ class GRPCPeerHandle(PeerHandle):
       ),
       tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
       request_id=request_id,
-      inference_state=self.serialize_inference_state(inference_state)
+      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
     )
     response =await self.stub.SendTensor(request)
 
@@ -123,7 +129,7 @@ class GRPCPeerHandle(PeerHandle):
       return None
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
-  
+
   async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, train: bool, request_id: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.ExampleRequest(
       shard=node_service_pb2.Shard(
@@ -145,7 +151,7 @@ class GRPCPeerHandle(PeerHandle):
       return loss, grads
     else:
       return loss
-  
+
   async def send_loss(self, shard: Shard, tensor: np.ndarray, request_id: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.TensorRequest(
       shard=node_service_pb2.Shard(
@@ -170,10 +176,7 @@ class GRPCPeerHandle(PeerHandle):
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
       device_capabilities = DeviceCapabilities(
-        model=capabilities.model,
-        chip=capabilities.chip,
-        memory=capabilities.memory,
-        flops=DeviceFlops(fp16=capabilities.flops.fp16, fp32=capabilities.flops.fp32, int8=capabilities.flops.int8)
+        model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory, flops=DeviceFlops(fp16=capabilities.flops.fp16, fp32=capabilities.flops.fp32, int8=capabilities.flops.int8)
       )
       topology.update_node(node_id, device_capabilities)
     for node_id, peer_connections in response.peer_graph.items():
@@ -197,28 +200,20 @@ class GRPCPeerHandle(PeerHandle):
     proto_inference_state = node_service_pb2.InferenceState()
     other_data = {}
     for k, v in inference_state.items():
-        if isinstance(v, mx.array):
-            np_array = np.array(v)
-            tensor_data = node_service_pb2.Tensor(
-                tensor_data=np_array.tobytes(),
-                shape=list(np_array.shape),
-                dtype=str(np_array.dtype)
-            )
-            proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
-        elif isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
-            tensor_list = node_service_pb2.TensorList()
-            for tensor in v:
-                np_array = np.array(tensor)
-                tensor_data = node_service_pb2.Tensor(
-                    tensor_data=np_array.tobytes(),
-                    shape=list(np_array.shape),
-                    dtype=str(np_array.dtype)
-                )
-                tensor_list.tensors.append(tensor_data)
-            proto_inference_state.tensor_list_data[k].CopyFrom(tensor_list)
-        else:
-            # For non-tensor data, we'll still use JSON
-            other_data[k] = v
+      if isinstance(v, mx.array):
+        np_array = np.array(v)
+        tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
+        proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
+      elif isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
+        tensor_list = node_service_pb2.TensorList()
+        for tensor in v:
+          np_array = np.array(tensor)
+          tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
+          tensor_list.tensors.append(tensor_data)
+        proto_inference_state.tensor_list_data[k].CopyFrom(tensor_list)
+      else:
+        # For non-tensor data, we'll still use JSON
+        other_data[k] = v
     if other_data:
       proto_inference_state.other_data_json = json.dumps(other_data)
     return proto_inference_state
