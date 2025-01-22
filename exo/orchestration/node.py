@@ -611,7 +611,7 @@ class Node:
 
     await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)
     # in the case of opaque status, we also want to receive our own opaque statuses
-    # self.on_opaque_status.trigger_all(request_id, status)
+    self.on_opaque_status.trigger_all(request_id, status)
 
   @property
   def current_topology(self) -> Topology:
