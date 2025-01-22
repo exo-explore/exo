@@ -189,7 +189,8 @@ api = ChatGPTAPI(
 buffered_token_output = {}
 def update_topology_viz(req_id, tokens, __):
   if not topology_viz: return
-  if inference_engine.shard and inference_engine.shard.model_id == 'stable-diffusion-2-1-base': return
+  if not inference_engine.shard: return
+  if inference_engine.shard.model_id == 'stable-diffusion-2-1-base': return
 
   if req_id in buffered_token_output: buffered_token_output[req_id].extend(tokens)
   else: buffered_token_output[req_id] = tokens
