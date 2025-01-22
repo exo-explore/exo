@@ -408,16 +408,16 @@ class ChatGPTAPI:
           # Stream tokens while waiting for inference to complete
           while True:
             if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for token from queue: {request_id=}")
-            token, is_finished = await asyncio.wait_for(
+            tokens, is_finished = await asyncio.wait_for(
               self.token_queues[request_id].get(),
               timeout=self.response_timeout
             )
-            if DEBUG >= 2: print(f"[ChatGPTAPI] Got token from queue: {request_id=} {token=} {is_finished=}")
+            if DEBUG >= 2: print(f"[ChatGPTAPI] Got token from queue: {request_id=} {tokens=} {is_finished=}")
 
             finish_reason = None
             eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") else getattr(tokenizer, "eos_token_id", None)
 
-            if token == eos_token_id:
+            if tokens[-1] == eos_token_id:
               if is_finished:
                 finish_reason = "stop"
             if is_finished and not finish_reason:
@@ -428,7 +428,7 @@ class ChatGPTAPI:
               tokenizer,
               prompt,
               request_id,
-              [token],
+              tokens,
               stream,
               finish_reason,
               "chat.completion",

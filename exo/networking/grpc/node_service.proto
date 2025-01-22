@@ -3,11 +3,11 @@ syntax = "proto3";
 package node_service;
 
 service NodeService {
-  rpc SendPrompt (PromptRequest) returns (Empty) {}
-  rpc SendTensor (TensorRequest) returns (Empty) {}
+  rpc SendPrompt (PromptRequest) returns (Tensor) {}
+  rpc SendTensor (TensorRequest) returns (Tensor) {}
   rpc SendExample (ExampleRequest) returns (Loss) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
-  rpc SendNewToken (SendNewTokenRequest) returns (Empty) {}
+  rpc SendResult (SendResultRequest) returns (Empty) {}
   rpc SendOpaqueStatus (SendOpaqueStatusRequest) returns (Empty) {}
   rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse) {}
 }
@@ -95,7 +95,7 @@ message DeviceCapabilities {
   DeviceFlops flops = 4;
 }
 
-message SendNewTokenRequest {
+message SendResultRequest {
   string request_id = 1;
   repeated int32 result = 2;
   optional Tensor tensor = 3;

@@ -123,7 +123,7 @@ class GRPCPeerHandle(PeerHandle):
       request_id=request_id,
       inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
     )
-    response =await self.stub.SendTensor(request)
+    response = await self.stub.SendTensor(request)
 
     if not response.tensor_data or not response.shape or not response.dtype:
       return None
