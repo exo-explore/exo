@@ -1,11 +1,11 @@
 name: Build and Test
 
-on:
-  push:
-    branches: [ '*' ]
-    tags: [ '*' ]
-  pull_request:
-    branches: [ '*' ]
+# on:
+  # push:
+  #   branches: [ '*' ]
+  #   tags: [ '*' ]
+  # pull_request:
+  #   branches: [ '*' ]
 
 jobs:
   single-m4-pro:

@@ -1,21 +1,21 @@
 # This is the reusable workflow file
 name: Distributed Job Runner
 
-on:
-  workflow_call:
-    inputs:
-      config:
-        required: true
-        type: string
-      model:
-        required: true
-        type: string
-      calling_job_name:
-        required: true
-        type: string
-      network_interface:
-        required: true
-        type: string
+# on:
+#   workflow_call:
+#     inputs:
+#       config:
+#         required: true
+#         type: string
+#       model:
+#         required: true
+#         type: string
+#       calling_job_name:
+#         required: true
+#         type: string
+#       network_interface:
+#         required: true
+#         type: string
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
