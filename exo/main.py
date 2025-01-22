@@ -189,11 +189,11 @@ api = ChatGPTAPI(
 buffered_token_output = {}
 def update_topology_viz(req_id, tokens, __):
   if not topology_viz: return
+  if inference_engine.shard.model_id == 'stable-diffusion-2-1-base': return
+
   if req_id in buffered_token_output: buffered_token_output[req_id].extend(tokens)
   else: buffered_token_output[req_id] = tokens
-
-  if inference_engine.shard.model_id != 'stable-diffusion-2-1-base':
-    topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(buffered_token_output[req_id]))
+  topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(buffered_token_output[req_id]))
 node.on_token.register("update_topology_viz").on_next(update_topology_viz)
 
 def preemptively_start_download(request_id: str, opaque_status: str):
