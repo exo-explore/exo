@@ -2,6 +2,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import os
 import numpy as np
 import cv2
+import sys
 
 def draw_rounded_rectangle(draw, coords, radius, fill):
   left, top, right, bottom = coords
@@ -80,14 +81,20 @@ def create_animation_mp4(
     font = ImageFont.load_default()
     promptfont = ImageFont.load_default()
 
+  # Get the base directory for images when running as a bundled app
+  if hasattr(sys, '_MEIPASS'):
+    base_dir = os.path.join(sys._MEIPASS, "exo", "apputil", "baseimages")
+  else:
+    base_dir = os.path.join(os.path.dirname(__file__), "baseimages")
+
   # Process first frame
-  base_img = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", "image1.png"))
+  base_img = Image.open(os.path.join(base_dir, "image1.png"))
   draw = ImageDraw.Draw(base_img)
   draw_centered_text_rounded(draw, device_name, font, device_coords)
   frames.extend([crop_image(base_img)] * 30)  # 1 second at 30fps
 
   # Process second frame with typing animation
-  base_img2 = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", "image2.png"))
+  base_img2 = Image.open(os.path.join(base_dir, "image2.png"))
   for i in range(len(prompt_text) + 1):
     current_frame = base_img2.copy()
     draw = ImageDraw.Draw(current_frame)
@@ -101,7 +108,7 @@ def create_animation_mp4(
 
   # Create blur sequence
   replacement_img = Image.open(replacement_image_path)
-  base_img = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", "image3.png"))
+  base_img = Image.open(os.path.join(base_dir, "image3.png"))
   blur_steps = [int(80 * (1 - i/8)) for i in range(9)]
 
   for i, blur_amount in enumerate(blur_steps):
@@ -123,7 +130,7 @@ def create_animation_mp4(
     frames.extend([crop_image(new_frame)] * 15)  # 0.5 seconds at 30fps
 
   # Create and add final frame (image4)
-  final_base = Image.open(os.path.join(os.path.dirname(__file__), "baseimages", "image4.png"))
+  final_base = Image.open(os.path.join(base_dir, "image4.png"))
   draw = ImageDraw.Draw(final_base)
 
   draw_centered_text_rounded(draw, device_name, font, device_coords)
