@@ -5,6 +5,7 @@ test_weights.npz
 .exo_node_id
 .idea
 .DS_Store
+build
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
