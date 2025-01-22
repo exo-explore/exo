@@ -14,6 +14,7 @@ from pathlib import Path
 import tempfile
 import json
 from concurrent.futures import ThreadPoolExecutor
+import traceback
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -230,20 +231,21 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
 
 
 def get_all_ip_addresses_and_interfaces():
-  try:
     ip_addresses = []
     for interface in get_if_list():
-      ip = get_if_addr(interface)
-      # Include all addresses, including loopback
-      # Filter out link-local addresses
-      if not ip.startswith('169.254.') and not ip.startswith('0.0.'):
-        # Remove "\\Device\\NPF_" prefix from interface name
+      try:
+        ip = get_if_addr(interface)
+        if ip.startswith("0.0."): continue
         simplified_interface = re.sub(r'^\\Device\\NPF_', '', interface)
         ip_addresses.append((ip, simplified_interface))
+      except:
+        if DEBUG >= 1: print(f"Failed to get IP address for interface {interface}")
+        if DEBUG >= 1: traceback.print_exc()
+    if not ip_addresses:
+      if DEBUG >= 1: print("Failed to get any IP addresses. Defaulting to localhost.")
+      return [("localhost", "lo")]
     return list(set(ip_addresses))
-  except:
-    if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
-    return [("localhost", "lo")]
+
 
 
 async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:

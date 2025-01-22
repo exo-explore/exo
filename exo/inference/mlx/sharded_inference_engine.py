@@ -165,4 +165,3 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
   async def cleanup(self):
     self._mlx_thread.shutdown(wait=True)
-
