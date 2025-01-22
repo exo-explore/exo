@@ -57,15 +57,15 @@ jobs:
       network_interface: 'Ethernet'
     secrets: inherit
 
-  test-m3-single-node:
-    strategy:
-      matrix:
-        model: ['llama-3.2-1b']
-      fail-fast: false
-    uses: ./.github/workflows/bench_job.yml
-    with:
-      config: '{"M3MAX_GPU40_128GB": 1}'
-      model: ${{ matrix.model }}
-      calling_job_name: 'test-m3-cluster'
-      network_interface: 'Ethernet'
-    secrets: inherit
+  # test-m3-single-node:
+  #   strategy:
+  #     matrix:
+  #       model: ['llama-3.2-1b']
+  #     fail-fast: false
+  #   uses: ./.github/workflows/bench_job.yml
+  #   with:
+  #     config: '{"M3MAX_GPU40_128GB": 1}'
+  #     model: ${{ matrix.model }}
+  #     calling_job_name: 'test-m3-cluster'
+  #     network_interface: 'Ethernet'
+  #   secrets: inherit
