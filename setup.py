@@ -26,15 +26,15 @@ install_requires = [
   "scapy==2.6.1",
   "tenacity==9.0.0",
   "tqdm==4.66.4",
-  "transformers==4.46.3",
+  "transformers==4.48.1",
   "uuid==1.30",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
 ]
 
 extras_require = {
   "formatting": ["yapf==0.40.2",], "apple_silicon": [
-    "mlx==0.20.0",
-    "mlx-lm==0.19.3",
+    "mlx==0.22.0",
+    "mlx-lm==0.21.1",
   ], "windows": ["pywin32==308",], "nvidia-gpu": ["nvidia-ml-py==12.560.30",], "amd-gpu": ["pyrsmi==0.2.0"]
 }
 
