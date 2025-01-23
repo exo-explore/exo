@@ -257,7 +257,7 @@ jobs:
   chatgpt_api_integration_test_tinygrad_linux:
     machine:
       image: ubuntu-2204:current
-    resource_class: large
+    resource_class: 2xlarge
     steps:
       - checkout
       - run:
