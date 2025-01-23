@@ -202,9 +202,6 @@ sudo sysctl -w kern.timer_coalesce_tier3_scale=-5
 sudo sysctl -w kern.timer_coalesce_tier3_ns_max=1000
 sudo sysctl -w kern.timer_coalesce_tier4_scale=-5
 sudo sysctl -w kern.timer_coalesce_tier4_ns_max=1000
-# Set minimum allowed scan intervals
-sudo sysctl -w kern.timer.longterm.scan_interval=100000
-sudo sysctl -w kern.cpu_checkin_interval=5000
 # Disable QoS restrictions
 sudo sysctl -w net.qos.policy.restricted=0
 sudo sysctl -w net.qos.policy.restrict_avapps=0
