@@ -54,7 +54,7 @@ def run():
         ])
     try:
         subprocess.run(command, check=True)
-        print("Build completed!")
+        print("Build DONE!")
     except subprocess.CalledProcessError as e:
         print(f"An error occurred: {e}")
 
