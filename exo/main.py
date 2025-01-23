@@ -42,6 +42,7 @@ import psutil
 # TODO: figure out why this is happening
 os.environ["GRPC_VERBOSITY"] = "error"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Configure uvloop for maximum performance
 def configure_uvloop():
