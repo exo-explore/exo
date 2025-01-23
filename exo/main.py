@@ -13,7 +13,6 @@ import uuid
 import numpy as np
 from functools import partial
 from tqdm import tqdm
-from tqdm.asyncio import tqdm_asyncio
 from exo.train.dataset import load_dataset, iterate_batches, compose
 from exo.networking.manual.manual_discovery import ManualDiscovery
 from exo.networking.manual.network_topology_config import NetworkTopology
@@ -33,6 +32,46 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
+import uvloop
+from contextlib import asynccontextmanager
+import concurrent.futures
+import socket
+import resource
+import psutil
+
+# TODO: figure out why this is happening
+os.environ["GRPC_VERBOSITY"] = "error"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
+# Configure uvloop for maximum performance
+def configure_uvloop():
+    # Install uvloop as event loop policy
+    uvloop.install()
+
+    # Create new event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # Increase file descriptor limits on Unix systems
+    if not psutil.WINDOWS:
+      soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+      try:
+          resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+      except ValueError:
+        try:
+          resource.setrlimit(resource.RLIMIT_NOFILE, (8192, hard))
+        except ValueError:
+          pass
+
+    # Configure thread pool for blocking operations
+    loop.set_default_executor(
+      concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(32, (os.cpu_count() or 1) * 4)
+      )
+    )
+
+    return loop
 
 # parse args
 parser = argparse.ArgumentParser(description="Initialize GRPC Discovery")
@@ -52,7 +91,6 @@ parser.add_argument("--models-seed-dir", type=str, default=None, help="Model see
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--download-quick-check", action="store_true", help="Quick check local path for model shards download")
 parser.add_argument("--max-parallel-downloads", type=int, default=4, help="Max parallel downloads for model shards download")
-parser.add_argument("--prometheus-client-port", type=int, default=None, help="Prometheus client port")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
 parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale", "manual"], default="udp", help="Discovery module to use")
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
@@ -69,6 +107,7 @@ parser.add_argument("--default-temp", type=float, help="Default token sampling t
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
+parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
@@ -101,8 +140,9 @@ if DEBUG >= 0:
   for chatgpt_api_endpoint in chatgpt_api_endpoints:
     print(f" - {terminal_link(chatgpt_api_endpoint)}")
 
-# Convert node-id-filter to list if provided
+# Convert node-id-filter and interface-type-filter to lists if provided
 allowed_node_ids = args.node_id_filter.split(',') if args.node_id_filter else None
+allowed_interface_types = args.interface_type_filter.split(',') if args.interface_type_filter else None
 
 if args.discovery_module == "udp":
   discovery = UDPDiscovery(
@@ -112,7 +152,8 @@ if args.discovery_module == "udp":
     args.broadcast_port,
     lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
     discovery_timeout=args.discovery_timeout,
-    allowed_node_ids=allowed_node_ids
+    allowed_node_ids=allowed_node_ids,
+    allowed_interface_types=allowed_interface_types
   )
 elif args.discovery_module == "tailscale":
   discovery = TailscaleDiscovery(
@@ -150,9 +191,16 @@ api = ChatGPTAPI(
   default_model=args.default_model,
   system_prompt=args.system_prompt
 )
-node.on_token.register("update_topology_viz").on_next(
-  lambda req_id, tokens, __: topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(tokens)) if topology_viz and hasattr(inference_engine, "tokenizer") and inference_engine.shard.model_id != 'stable-diffusion-2-1-base' else None
-)
+buffered_token_output = {}
+def update_topology_viz(req_id, tokens, __):
+  if not topology_viz: return
+  if not inference_engine.shard: return
+  if inference_engine.shard.model_id == 'stable-diffusion-2-1-base': return
+
+  if req_id in buffered_token_output: buffered_token_output[req_id].extend(tokens)
+  else: buffered_token_output[req_id] = tokens
+  topology_viz.update_prompt_output(req_id, inference_engine.tokenizer.decode(buffered_token_output[req_id]))
+node.on_token.register("update_topology_viz").on_next(update_topology_viz)
 
 def preemptively_start_download(request_id: str, opaque_status: str):
   try:
@@ -168,10 +216,6 @@ def preemptively_start_download(request_id: str, opaque_status: str):
 
 
 node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
-
-if args.prometheus_client_port:
-  from exo.stats.metrics import start_metrics_server
-  start_metrics_server(node, args.prometheus_client_port)
 
 last_broadcast_time = 0
 
@@ -204,7 +248,11 @@ async def run_model_cli(node: Node, inference_engine: InferenceEngine, model_nam
     print(f"Processing prompt: {prompt}")
     await node.process_prompt(shard, prompt, request_id=request_id)
 
-    _, tokens, _ = await callback.wait(lambda _request_id, tokens, is_finished: _request_id == request_id and is_finished, timeout=300)
+    tokens = []
+    def on_token(_request_id, _tokens, _is_finished):
+      tokens.extend(_tokens)
+      return _request_id == request_id and _is_finished
+    await callback.wait(on_token, timeout=300)
 
     print("\nGenerated response:")
     print(tokenizer.decode(tokens))
@@ -223,7 +271,7 @@ def clean_path(path):
 async def hold_outstanding(node: Node):
   while node.outstanding_requests:
     await asyncio.sleep(.5)
-  return 
+  return
 
 async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
   losses = []
@@ -234,7 +282,7 @@ async def run_iter(node: Node, shard: Shard, train: bool, data, batch_size=1):
     tokens.append(np.sum(lengths))
   total_tokens = np.sum(tokens)
   total_loss = np.sum(losses) / total_tokens
-  
+
   return total_loss, total_tokens
 
 async def eval_model_cli(node: Node, inference_engine: InferenceEngine, model_name, dataloader, batch_size, num_batches=-1):
@@ -270,7 +318,7 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
       await hold_outstanding(node)
   await hold_outstanding(node)
 
-  
+
 async def main():
   loop = asyncio.get_running_loop()
 
@@ -285,7 +333,7 @@ async def main():
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}
           """)
-    
+
   if not args.models_seed_dir is None:
     try:
       models_seed_dir = clean_path(args.models_seed_dir)
@@ -330,29 +378,31 @@ async def main():
         print("Error: This train ain't leaving the station without a model")
         return
       await train_model_cli(node, inference_engine, model_name, dataloader, args.batch_size, args.iters, save_interval=args.save_every, checkpoint_dir=args.save_checkpoint_dir)
-    
+
   else:
     asyncio.create_task(api.run(port=args.chatgpt_api_port))  # Start the API server as a non-blocking task
     await asyncio.Event().wait()
-  
+
   if args.wait_for_peers > 0:
     print("Cooldown to allow peers to exit gracefully")
     for i in tqdm(range(50)):
       await asyncio.sleep(.1)
 
+@asynccontextmanager
+async def setup_node(args):
+    # Rest of setup_node implementation...
+    pass
 
 def run():
-  loop = asyncio.new_event_loop()
-  asyncio.set_event_loop(loop)
-  try:
-    loop.run_until_complete(main())
-      
-  except KeyboardInterrupt:
-    print("Received keyboard interrupt. Shutting down...")
-  finally:
-    loop.run_until_complete(shutdown(signal.SIGTERM, loop, node.server))
-    loop.close()
-
+    loop = None
+    try:
+        loop = configure_uvloop()
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\nShutdown requested... exiting")
+    finally:
+        if loop:
+            loop.close()
 
 if __name__ == "__main__":
   run()

@@ -27,11 +27,19 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
 
   async def start(self) -> None:
     self.server = grpc.aio.server(
-      futures.ThreadPoolExecutor(max_workers=10),
+      futures.ThreadPoolExecutor(max_workers=32),
       options=[
         ("grpc.max_metadata_size", 32*1024*1024),
-        ("grpc.max_send_message_length", 128*1024*1024),
-        ("grpc.max_receive_message_length", 128*1024*1024),
+        ("grpc.max_send_message_length", 256*1024*1024),
+        ("grpc.max_receive_message_length", 256*1024*1024),
+        ("grpc.keepalive_time_ms", 10000),
+        ("grpc.keepalive_timeout_ms", 5000),
+        ("grpc.http2.max_pings_without_data", 0),
+        ("grpc.http2.min_time_between_pings_ms", 10000),
+        ("grpc.http2.min_ping_interval_without_data_ms", 5000),
+        ("grpc.max_concurrent_streams", 100),
+        ("grpc.tcp_nodelay", 1),
+        ("grpc.optimization_target", "throughput"),
       ],
     )
     node_service_pb2_grpc.add_NodeServiceServicer_to_server(self, self.server)

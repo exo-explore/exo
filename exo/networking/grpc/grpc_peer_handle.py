@@ -28,6 +28,19 @@ class GRPCPeerHandle(PeerHandle):
     self._device_capabilities = device_capabilities
     self.channel = None
     self.stub = None
+    self.channel_options = [
+      ("grpc.max_metadata_size", 64 * 1024 * 1024),
+      ("grpc.max_receive_message_length", 256 * 1024 * 1024),
+      ("grpc.max_send_message_length", 256 * 1024 * 1024),
+      ("grpc.max_concurrent_streams", 100),
+      ("grpc.http2.min_time_between_pings_ms", 10000),
+      ("grpc.keepalive_time_ms", 20000),
+      ("grpc.keepalive_timeout_ms", 10000),
+      ("grpc.keepalive_permit_without_calls", 1),
+      ("grpc.http2.max_pings_without_data", 0),
+      ("grpc.tcp_nodelay", 1),
+      ("grpc.optimization_target", "throughput"),
+    ]
 
   def id(self) -> str:
     return self._id
@@ -44,7 +57,9 @@ class GRPCPeerHandle(PeerHandle):
   async def connect(self):
     if self.channel is None:
       self.channel = grpc.aio.insecure_channel(
-        self.address, options=[("grpc.max_metadata_size", 32*1024*1024), ('grpc.max_receive_message_length', 32*1024*1024), ('grpc.max_send_message_length', 32*1024*1024)]
+        self.address,
+        options=self.channel_options,
+        compression=grpc.Compression.Gzip
       )
       self.stub = node_service_pb2_grpc.NodeServiceStub(self.channel)
     await self.channel.channel_ready()
@@ -59,7 +74,13 @@ class GRPCPeerHandle(PeerHandle):
     self.stub = None
 
   async def _ensure_connected(self):
-    if not await self.is_connected(): await asyncio.wait_for(self.connect(), timeout=5)
+    if not await self.is_connected():
+      try:
+        await asyncio.wait_for(self.connect(), timeout=10.0)
+      except asyncio.TimeoutError:
+        if DEBUG >= 2: print(f"Connection timeout for {self._id}@{self.address}")
+        await self.disconnect()
+        raise
 
   async def health_check(self) -> bool:
     try:
@@ -88,12 +109,7 @@ class GRPCPeerHandle(PeerHandle):
       request_id=request_id,
       inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
     )
-    response = await self.stub.SendPrompt(request)
-
-    if not response.tensor_data or not response.shape or not response.dtype:
-      return None
-
-    return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
+    await self.stub.SendPrompt(request)
 
   async def send_tensor(self, shard: Shard, tensor: np.ndarray, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
     request = node_service_pb2.TensorRequest(
@@ -153,16 +169,6 @@ class GRPCPeerHandle(PeerHandle):
       return None
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
-
-  async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
-    request = node_service_pb2.GetInferenceResultRequest(request_id=request_id)
-    response = await self.stub.GetInferenceResult(request)
-    if response.tensor is None:
-      return None, response.is_finished
-    return (
-      np.frombuffer(response.tensor.tensor_data, dtype=np.dtype(response.tensor.dtype)).reshape(response.tensor.shape),
-      response.is_finished,
-    )
 
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
     request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)

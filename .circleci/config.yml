@@ -254,6 +254,33 @@ jobs:
           prompt: "Keep responses concise. Who was the king of pop?"
           expected_output: "Michael Jackson"
 
+  chatgpt_api_integration_test_tinygrad_linux:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            sudo apt-get update
+            sudo add-apt-repository -y ppa:deadsnakes/ppa
+            sudo apt-get update
+            sudo apt-get install -y python3.12 python3.12-venv clang
+            python3.12 -m venv env
+            source env/bin/activate
+      - run:
+          name: Install dependencies
+          command: |
+            source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: tinygrad
+          model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
+
   measure_pip_sizes:
     macos:
       xcode: "16.0.0"
@@ -342,5 +369,6 @@ workflows:
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
       - chatgpt_api_integration_test_tinygrad
+      - chatgpt_api_integration_test_tinygrad_linux
       - chatgpt_api_integration_test_dummy
       - measure_pip_sizes
