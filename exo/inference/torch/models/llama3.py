@@ -136,6 +136,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     mask: Optional[_MaskType] = None,
     input_pos: Optional[torch.Tensor] = None,
     hidden_state: Optional[torch.Tensor] = None,
+    dtype: torch.dtype = torch.float16
   ) -> Union[torch.Tensor, List[torch.Tensor]]:
     # Determine the type of input and shape
     if DEBUG >= 4:
@@ -153,51 +154,39 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     else:
       seq_len = tokens.shape[1]
 
-      h = self.tok_embeddings(tokens)  # Apply token tok_embeddings
-
       self._validate_inputs(
         seq_len,
         mask=mask,
         input_pos=input_pos,
       )
 
+      fl_tokens = tokens.clone()
+      h = self.tok_embeddings(fl_tokens).to(dtype=dtype)  # Apply token tok_embeddings
+
     # Initialize a list to capture hidden states if requested
     # for captured hidden states
     hidden = []
-
-    for i in range(self.shard.start_layer, self.shard.end_layer + 1):
-      layer = self.layers[i]
-
+    curr_layers = [self.layers[i] for i in range(self.shard.start_layer, self.shard.end_layer + 1)]
+    for i, layer in enumerate(curr_layers):
       if DEBUG >= 8:
         print(f"\nhidden layer in H[{i}]\n{h}")
         print(f"\nmask\n{mask}\ninput_pos\n{input_pos}")
         print(f"\noutput_hidden_states\n{self.output_hidden_states}\n")
 
-      # Process through each transformer layer
-      # with torch.no_grad():
-      if layer.caches_are_enabled():
-        self.check_maxed_cache(tokens=h)
-        try:
-          h = layer(
-            h,
-            mask=mask,
-            input_pos=input_pos,
-          )
-        except AssertionError:
-          # assume due to cache
-          self.reset_caches()
-
-          h = layer(
-            h,
-            mask=mask,
-            input_pos=input_pos,
-          )
-
-      else:
-        h = layer(h)
-
       if i in self.output_hidden_states:
         hidden.append(h)
+
+      # Process through each transformer layer
+      # with torch.no_grad():
+      h = layer(
+        h,
+        mask=mask,
+        input_pos=input_pos,
+      )
+
+
+      # if i in self.output_hidden_states:
+      #   hidden.append(h)
 
       if DEBUG >= 8:
         print(f"\nhidden layer out H[{i}]->H[{i + 1}]\n{h}\n")
@@ -224,16 +213,13 @@ def LlamaModel(config: dict, shard: Shard):
   """
   LlamaModel using torchtune
   """
-  # rope scaling config
-  scale_factor = 32
-  if config["rope_scaling"] is not None:
-    scale_factor = config["rope_scaling"].get("factor", 32)
 
+  # rope scaling config
   rope = Llama3ScaledRoPE(
     dim=config["head_dim"],
     max_seq_len=config["max_seq_len"],
     base=config["rope_base"],
-    scale_factor=scale_factor,
+    scale_factor=config["rope_scaling_factor"],
   )
 
   # hack to align sharded weights with layers
@@ -287,10 +273,10 @@ def LlamaModel(config: dict, shard: Shard):
     layers[i] = layer
 
   layers = nn.ModuleList(layers)
-  tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
 
   if len(re.findall(r"3\.2", shard.model_id)) > 0:
     print("Using TiedLinear")
+    tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
     output_proj = ttm.TiedLinear(tok_embeddings)
   else:
     output_proj = nn.Linear(config["embed_dim"], config["vocab_size"], bias=False)
@@ -316,6 +302,7 @@ class ShardedLlamaModel(nn.Module):
     config: dict,
     shard: Shard,
     device: Optional[torch.device] = None,
+    dtype: torch.dtype = torch.float16,
     use_cache: Optional[bool] = False,
     max_generated_tokens: int = 1024,
   ):
@@ -323,7 +310,7 @@ class ShardedLlamaModel(nn.Module):
 
     self.shard = shard
     self.config = config
-    self.dtype = torch.float16
+    self.dtype = dtype
     self.device = device if device is not None else torch.device("cpu")
     self.max_seq_len = self.config["max_seq_len"]
     self.use_cache = use_cache
@@ -339,17 +326,16 @@ class ShardedLlamaModel(nn.Module):
 
     # keep track of current position in generation
     self.max_generated_tokens = max_generated_tokens
-    self.curr_pos = 0
-    self.masks = None
-    self.curr_masks = None
     self.input_pos = None
-    self.curr_input_pos = None
+    self.mask = None
 
   def generate(
     self,
     tokens: Optional[torch.Tensor] = None,
+    mask: Optional[torch.Tensor] = None,
+    input_pos: Optional[torch.Tensor] = None,
     hidden_state: Optional[torch.Tensor] = None,
-    past_tokens: Optional[torch.Tensor] = None,
+    curr_pos: Optional[int] = 0
   ) -> Tuple[
     Optional[torch.Tensor],
     torch.Tensor,
@@ -364,79 +350,28 @@ class ShardedLlamaModel(nn.Module):
     if DEBUG >= 4:
       print("generate called")
       print(f"tokens: {tokens}")
+      if mask is not None:
+        print(f"mask: {mask}")
+        print(f"input_pos: {input_pos}") 
+      else:
+        print(f"self.mask: {self.mask}")
+        print(f"self.input_pos: {self.input_pos}")
       print(f"hidden_state: {hidden_state}")
-      print(f"curr_pos: {self.curr_pos}")
+      print(f"curr_pos: {curr_pos}")
       print(f"cached? {self.model.caches_are_enabled()}")
 
     model_hs = None
     model_logits = None
 
-    bsz, tokens_length = tokens.size()
-
-    if tokens_length > 1 or (self.input_pos is None and self.masks is None):
-
-      if tokens_length == 1:
-        tokens = past_tokens
-
-      tokens = tokens.view(1, -1).to(device=self.device) if tokens.ndim == 1 else tokens
-
-      self.curr_pos = tokens_length
-
-      # using self.max_seq_len will take up alot of VRAM
-      total_response_length = tokens_length + self.max_generated_tokens
-
-      # setup cache
-      if not self.model.caches_are_enabled() and self.use_cache:
-        with self.device:
-          self.model.setup_caches(
-            bsz,
-            self.dtype,
-            decoder_max_seq_len=tokens.numel() + self.max_generated_tokens,
-          )
-
-      if not self.shard.is_last_layer():
-        self.model.output_hidden_states = [self.shard.end_layer]
-
-      if not self.model.caches_are_enabled():
-        max_seq_len = total_response_length
-      else:
-        max_seq_len = self.model.decoder_max_cache_seq_len
-
-      # masking for proper attention
-      padding_masks = tokens != self.pad_id
-      if not padding_masks.all():
-        padding_masks = torch.nn.functional.pad(
-          padding_masks,
-          (0, self.max_generated_tokens),
-          value=True,
-        )
-
-        self.masks = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=max_seq_len)
-
-        self.input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
-      else:
-        self.masks = torch.tril(torch.ones(
-          total_response_length,
-          max_seq_len,
-          dtype=torch.bool,
-          device=self.device,
-        )).unsqueeze(0)
-
-        self.input_pos = torch.arange(0, total_response_length, device=self.device).unsqueeze(0)
-
+    self.model.output_hidden_states = [self.shard.end_layer]
+    
+    if curr_pos > 0:
       if self.model.caches_are_enabled():
-        self.curr_masks = self.masks[:, :tokens_length]
+        input_pos = input_pos[:, curr_pos].contiguous()
+        mask = mask[:, curr_pos, None, :].contiguous()
       else:
-        self.curr_masks = self.masks[:, :tokens_length, :tokens_length]
-
-      self.curr_input_pos = self.input_pos[:, :tokens_length].squeeze()
-    else:
-      if self.model.caches_are_enabled():
-        self.curr_input_pos = self.input_pos[:, self.curr_pos].contiguous()
-        self.curr_masks = self.masks[:, self.curr_pos, None, :].contiguous()
-      else:
-        self.curr_input_pos = self.input_pos[:, :self.curr_pos + 1]
-        self.curr_masks = self.masks[:, :self.curr_pos + 1, :self.curr_pos + 1]
+        input_pos = input_pos[:, :curr_pos + 1]
+        mask = mask[:, :curr_pos + 1, :curr_pos + 1]
 
     if DEBUG >= 4:
       print("model_input")
@@ -444,24 +379,23 @@ class ShardedLlamaModel(nn.Module):
         print(f"tokens: {tokens}")
       if hidden_state is not None:
         print(f"hidden_state: {hidden_state}")
-      print(f"mask: {self.curr_masks}")
-      print(f"input_pos: {self.curr_input_pos}")
+      print(f"self.mask: {self.mask}")
+      print(f"self.input_pos: {self.input_pos}")
 
     model_output = self.model(
       tokens=tokens,
-      mask=self.curr_masks,
-      input_pos=self.curr_input_pos,
+      mask=mask,
+      input_pos=input_pos,
       hidden_state=hidden_state,
+      dtype=self.dtype
     )
-
-    self.curr_pos += 1
-
-    if DEBUG >= 4:
-      print(f"model_output\n{model_output}")
 
     if self.shard.is_last_layer():
       model_logits = model_output
     else:
       model_hs = model_output
+
+    if DEBUG >= 4:
+      print(f"model_hs\n{model_hs}\nmodel_logits\n{model_logits}")
 
     return model_hs, model_logits

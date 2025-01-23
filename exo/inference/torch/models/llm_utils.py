@@ -5,16 +5,25 @@ import os
 import re
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
 from torchtune.modules import FeedForward
+from torchtune.models.convert_weights import hf_to_tune
 
 from safetensors.torch import load_file as load_safetensors
 
 from exo.helpers import DEBUG
 from exo.inference.shard import Shard
+
+# dtype string to dtype from huggingface type config.json
+HF_PRECISION_STR_TO_DTYPE: Dict[str, torch.dtype] = {
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "float32": torch.float32,
+    "float64": torch.float64,
+}
 
 
 def load_model_config(model_config_path: Path) -> dict:
@@ -48,12 +57,21 @@ def load_model_config(model_config_path: Path) -> dict:
       "vocab_size": base_config["vocab_size"],
       "num_layers": base_config["num_hidden_layers"],
       "attn_bias": base_config.get("attention_bias", False),
-      "hidden_act": base_config.get("hidden_act", "silu")
+      "hidden_act": base_config.get("hidden_act", "silu"),
+      "torch_dtype": HF_PRECISION_STR_TO_DTYPE.get(
+        base_config.get("torch_dtype", "float16"),
+        torch.float16
+      )
     }
+
+    if model_config.get("rope_scaling", None) is not None:
+      model_config["rope_scaling_factor"] = model_config["rope_scaling"].get("rope_factor", 32)
 
     use_org_seq = bool(os.getenv("TORCH_USE_ORG_SEQ", "False").lower() == "true")
     if use_org_seq and model_config.get("rope_scaling", None) is not None:
       model_config["max_seq_len"] = model_config["rope_scaling"]["original_max_position_embeddings"]
+
+
 
   return model_config
 
@@ -75,6 +93,34 @@ def check_weights(model, state_dict):
     if name not in model_state_dict:
       print(f"Unexpected weight {name} found in state_dict")
 
+def load_weights_torch(cache_dir: Path, model: Any, config: Dict):
+  # Load weights from safetensors files in the cache directory
+  safetensors_files = list(cache_dir.glob("*.safetensors"))
+  if not safetensors_files:
+    raise FileNotFoundError("No safetensors files found in the cache directory.")
+
+  # Load weights from each found safetensors file
+  full_state_dict = {}
+  for safetensor_file in safetensors_files:
+    state_dict = load_safetensors(safetensor_file)
+
+    if full_state_dict is not None:
+      full_state_dict = full_state_dict | state_dict
+    else:
+      full_state_dict = state_dict
+
+  converted_sd = hf_to_tune(
+    state_dict=full_state_dict,
+    num_heads=config["num_heads"],
+    num_kv_heads=config["num_kv_heads"],
+    dim=config["embed_dim"],
+    head_dim=config["head_dim"]
+  )
+
+  model.load_state_dict(converted_sd, strict=True)
+
+  print("\n--- checking weights ----\n")
+  check_weights(model, converted_sd)
 
 def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
   """

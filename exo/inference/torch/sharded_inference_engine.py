@@ -128,11 +128,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"temp: {temp}")
       print(f"top_k: {top_k}")
       print(self.device)
+
     logits = torch.tensor(x).to(self.device)
 
-    def sample_wrapper():
+    q = torch.empty((logits.size(0), self.sharded_model.model.tok_embeddings.num_embeddings), device=logits.device).exponential_(1, generator=self.rng)
 
-      q = torch.empty((logits.size(0), self.sharded_model.model.tok_embeddings.num_embeddings), device=logits.device).exponential_(1, generator=self.rng)
+
+    def sample_wrapper():
       tokens = tt_sample(logits.clone(), temperature=temp, top_k=top_k, q=q.to(self.device))
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
