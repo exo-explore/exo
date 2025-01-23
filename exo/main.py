@@ -39,6 +39,10 @@ import socket
 import resource
 import psutil
 
+# TODO: figure out why this is happening
+os.environ["GRPC_VERBOSITY"] = "error"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
 # Configure uvloop for maximum performance
 def configure_uvloop():
     # Install uvloop as event loop policy
