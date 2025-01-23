@@ -366,5 +366,6 @@ workflows:
       - discovery_integration_test
       - chatgpt_api_integration_test_mlx
       - chatgpt_api_integration_test_tinygrad
+      - chatgpt_api_integration_test_tinygrad_linux
       - chatgpt_api_integration_test_dummy
       - measure_pip_sizes
