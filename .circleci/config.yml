@@ -263,7 +263,8 @@ jobs:
       - run:
           name: Set up Python
           command: |
-            brew install python@3.12
+            sudo apt-get update
+            sudo apt-get install -y python3.12
             python3.12 -m venv env
             source env/bin/activate
       - run:
