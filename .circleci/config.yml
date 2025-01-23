@@ -255,7 +255,9 @@ jobs:
           expected_output: "Michael Jackson"
 
   chatgpt_api_integration_test_tinygrad_linux:
-    resource_class: ubuntu-24.04
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large
     steps:
       - checkout
       - run:
