@@ -263,6 +263,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       try:
         if hidden_state is not None:
           model_hs, model_logits = self.sharded_model.generate(
+            tokens=self.state.tokens.to(self.device),
             hidden_state=hidden_state,
             input_pos=self.state.input_pos.to(self.device),
             mask=self.state.mask.to(self.device),
