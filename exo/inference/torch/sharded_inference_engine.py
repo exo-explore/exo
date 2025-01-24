@@ -214,6 +214,14 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
+      if self.state.tokens is not None:
+        self.state.tokens = torch.cat([
+          self.state.tokens.to(self.device),
+          tokens.clone()
+        ], dim=-1).to(self.device)
+      else:
+        self.state.tokens = tokens.clone()
+
       return tokens.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
@@ -249,14 +257,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       input_tensor = torch.tensor(input_data).to(
         device=self.device
       )
-      
-      if self.state.tokens is not None and input_tensor.size(-1) == 1:
-        self.state.tokens = torch.cat([
-          self.state.tokens.to(self.device),
-          input_tensor
-        ], dim=-1).to(self.device)
-      else:
-        self.state.tokens = input_tensor.clone()
 
     def infer_wrapper():
       if DEBUG >= 4:
