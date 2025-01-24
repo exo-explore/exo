@@ -250,7 +250,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         device=self.device
       )
       
-      if self.state.tokens is not None:
+      if self.state.tokens is not None and input_tensor.size(-1) == 1:
         self.state.tokens = torch.cat([
           self.state.tokens.to(self.device),
           input_tensor
