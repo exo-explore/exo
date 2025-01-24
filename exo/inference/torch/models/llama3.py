@@ -169,7 +169,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
     curr_layers = [self.layers[i] for i in range(self.shard.start_layer, self.shard.end_layer + 1)]
     for i, layer in enumerate(curr_layers):
       if DEBUG >= 8:
-        print(f"\nhidden layer in H[{i}]\n{h}")
+        print(f"\nhidden layer in H[{self.shard.start_layer+i}]\n{h}")
         print(f"\nmask\n{mask}\ninput_pos\n{input_pos}")
         print(f"\noutput_hidden_states\n{self.output_hidden_states}\n")
 
@@ -178,11 +178,16 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
 
       # Process through each transformer layer
       # with torch.no_grad():
-      h = layer(
-        h,
-        mask=mask,
-        input_pos=input_pos,
-      )
+      if hidden_state is not None:
+        h = layer(
+          h
+        )
+      else:
+        h = layer(
+          h,
+          mask=mask,
+          input_pos=input_pos,
+        )
 
 
       # if i in self.output_hidden_states:
