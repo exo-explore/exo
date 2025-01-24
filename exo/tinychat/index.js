@@ -393,8 +393,6 @@ document.addEventListener("alpine:init", () => {
     },
 
     async *openaiChatCompletion(model, messages) {
-      // stream response
-      console.log("model", model)
       const response = await fetch(`${this.endpoint}/chat/completions`, {
         method: "POST",
         headers: {
@@ -417,19 +415,17 @@ document.addEventListener("alpine:init", () => {
 
       const reader = response.body.pipeThrough(new TextDecoderStream())
         .pipeThrough(new EventSourceParserStream()).getReader();
+      
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
+        if (done) break;
+        
         if (value.type === "event") {
           const json = JSON.parse(value.data);
           if (json.choices) {
             const choice = json.choices[0];
-            if (choice.finish_reason === "stop") {
-              break;
-            }
-            yield choice.delta.content;
+            if (choice.finish_reason === "stop") break;
+            if (choice.delta.content) yield choice.delta.content;
           }
         }
       }

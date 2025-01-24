@@ -743,3 +743,39 @@ main {
   font-size: 0.8em;
   color: #666;
 }
+
+.thinking-block {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.thinking-header {
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  font-size: 0.9em;
+  color: #a0a0a0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-content {
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+@keyframes thinking-spin {
+  to { transform: rotate(360deg); }
+}
+
+.thinking-header.thinking::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border: 2px solid #a0a0a0;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: thinking-spin 1s linear infinite;
+}

@@ -22,6 +22,7 @@
 <link href="/static/unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/vs2015.min.css" rel="stylesheet"/>
 <link href="/index.css" rel="stylesheet"/>
 <link href="/common.css" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
@@ -190,67 +191,87 @@
     <i class="fas fa-arrow-left"></i>
     Back to Chats
 </button>
-<div class="messages" x-init="
-      $watch('cstate', value =&gt; {
-        $el.innerHTML = '';
-        value.messages.forEach(({ role, content }) =&gt; {
-          const div = document.createElement('div');
-          div.className = `message message-role-${role}`;
-          try {
-              if (content.includes('![Generated Image]')) {
-                const imageUrl = content.match(/\((.*?)\)/)[1];
-                const img = document.createElement('img');
-                img.src = imageUrl;
-                img.alt = 'Generated Image';
-                img.onclick = async () => {
-                  try {
-                    const response = await fetch(img.src);
-                    const blob = await response.blob();
-                    const file = new File([blob], 'image.png', { type: 'image/png' });
-                    handleImageUpload({ target: { files: [file] } });
-                  } catch (error) {
-                    console.error('Error fetching image:', error);
-                  }
-                };
-                div.appendChild(img);
-              } else {
-                div.innerHTML = DOMPurify.sanitize(marked.parse(content));
-              }
-          } catch (e) {
-            console.log(content);
-            console.error(e);
+<div class="messages"
+  x-init="
+    $watch('cstate', (value) => {
+      $el.innerHTML = '';
+
+      value.messages.forEach((msg) => {
+        const div = document.createElement('div');
+        div.className = `message message-role-${msg.role}`;
+
+        try {
+          // If there's an embedded generated image
+          if (msg.content.includes('![Generated Image]')) {
+            const imageUrlMatch = msg.content.match(/\((.*?)\)/);
+            if (imageUrlMatch) {
+              const imageUrl = imageUrlMatch[1];
+              const img = document.createElement('img');
+              img.src = imageUrl;
+              img.alt = 'Generated Image';
+
+              img.onclick = async () => {
+                try {
+                  const response = await fetch(img.src);
+                  const blob = await response.blob();
+                  const file = new File([blob], 'image.png', { type: 'image/png' });
+                  handleImageUpload({ target: { files: [file] } });
+                } catch (error) {
+                  console.error('Error fetching image:', error);
+                }
+              };
+              div.appendChild(img);
+            } else {
+              // fallback if markdown is malformed
+              div.textContent = msg.content;
+            }
+          } else {
+            // Otherwise, transform message text (including streamed think blocks).
+            div.innerHTML = transformMessageContent(msg);
+            // Render math after content is inserted
+            MathJax.typesetPromise([div]);
           }
+        } catch (e) {
+          console.error('Error rendering message:', e);
+          div.textContent = msg.content; // fallback
+        }
 
-          // add a clipboard button to all code blocks
-          const codeBlocks = div.querySelectorAll('.hljs');
-          codeBlocks.forEach(codeBlock =&gt; {
-            const button = document.createElement('button');
-            button.className = 'clipboard-button';
-            button.innerHTML = '&lt;i class=\'fas fa-clipboard\'&gt;&lt;/i&gt;';
-            button.onclick = () =&gt; {
-              // navigator.clipboard.writeText(codeBlock.textContent);
-              const range = document.createRange();
-              range.setStartBefore(codeBlock);
-              range.setEndAfter(codeBlock);
-              window.getSelection()?.removeAllRanges();
-              window.getSelection()?.addRange(range);
-              document.execCommand('copy');
-              window.getSelection()?.removeAllRanges();
+        // Add a clipboard button to code blocks
+        const codeBlocks = div.querySelectorAll('.hljs');
+        codeBlocks.forEach((codeBlock) => {
+          const button = document.createElement('button');
+          button.className = 'clipboard-button';
+          button.innerHTML = '<i class=\'fas fa-clipboard\'></i>';
 
-              button.innerHTML = '&lt;i class=\'fas fa-check\'&gt;&lt;/i&gt;';
-              setTimeout(() =&gt; button.innerHTML = '&lt;i class=\'fas fa-clipboard\'&gt;&lt;/i&gt;', 1000);
-            };
-            codeBlock.appendChild(button);
-          });
+          button.onclick = () => {
+            const range = document.createRange();
+            range.setStartBefore(codeBlock);
+            range.setEndAfter(codeBlock);
+            window.getSelection()?.removeAllRanges();
+            window.getSelection()?.addRange(range);
+            document.execCommand('copy');
+            window.getSelection()?.removeAllRanges();
 
-          $el.appendChild(div);
+            button.innerHTML = '<i class=\'fas fa-check\'></i>';
+            setTimeout(() => {
+              button.innerHTML = '<i class=\'fas fa-clipboard\'></i>';
+            }, 1000);
+          };
+
+          codeBlock.appendChild(button);
         });
 
-        $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
+        $el.appendChild(div);
       });
-    " x-intersect="
+
+      // Scroll to bottom after rendering
       $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
-    " x-ref="messages" x-show="home === 2" x-transition="">
+    });
+  "
+  x-ref="messages"
+  x-show="home === 2"
+  x-transition=""
+>
 </div>
 
 <!-- Download Progress Section -->
@@ -353,4 +374,42 @@
 </div>
 </div>
 </main>
+
+<script>
+  /**
+   * Transform a single message's content into HTML, preserving <think> blocks.
+   * Ensure LaTeX expressions are properly delimited for MathJax.
+   */
+  function transformMessageContent(message) {
+    let text = message.content;
+    console.log('Processing message content:', text);
+
+    // First replace think blocks
+    text = text.replace(
+      /<think>([\s\S]*?)(?:<\/think>|$)/g,
+      (match, body) => {
+        console.log('Found think block with content:', body);
+        const isComplete = match.includes('</think>');
+        const spinnerClass = isComplete ? '' : ' thinking';
+        const parsedBody = DOMPurify.sanitize(marked.parse(body));
+        return `
+<div class='thinking-block'>
+  <div class='thinking-header${spinnerClass}'>Thinking...</div>
+  <div class='thinking-content'>${parsedBody}</div>
+</div>`;
+      }
+    );
+
+    // Add backslashes to parentheses and brackets for LaTeX
+    text = text
+      .replace(/\((?=\s*[\d\\])/g, '\\(')  // Add backslash before opening parentheses
+      .replace(/\)(?!\w)/g, '\\)')          // Add backslash before closing parentheses
+      .replace(/\[(?=\s*[\d\\])/g, '\\[')   // Add backslash before opening brackets
+      .replace(/\](?!\w)/g, '\\]')          // Add backslash before closing brackets
+      .replace(/\[[\s\n]*\\boxed/g, '\\[\\boxed') // Ensure boxed expressions are properly delimited
+      .replace(/\\!/g, '\\\\!');  // Preserve LaTeX spacing commands
+
+    return DOMPurify.sanitize(marked.parse(text));
+  }
+</script>
 </body>
