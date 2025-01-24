@@ -208,7 +208,7 @@ class GRPCPeerHandle(PeerHandle):
         np_array = np.array(v)
         tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
         proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
-      elif isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
+      elif isinstance(v, list) and all(isinstance(item, mx_array_type) for item in v):
         tensor_list = node_service_pb2.TensorList()
         for tensor in v:
           np_array = np.array(tensor)
