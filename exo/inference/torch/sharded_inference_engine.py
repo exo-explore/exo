@@ -35,9 +35,6 @@ from exo.inference.torch.models.llama3 import ShardedLlamaModel
 TEMP = 0.6
 TOP_K = 35
 
-# max retries for infer on OOM errors
-OOM_MAX_RETRY = 10
-
 class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
   Pytorch based inferece engine for sharded models
@@ -52,7 +49,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.model_path = None
     self.model_config = None
     self.state = None
-    self.oom_max_cnt = 0
+    self.oom_cnt = 0
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -89,7 +86,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       torch.cuda.empty_cache()
     
     self.shard = None
-    self.past_tokens = None
+    self.state = None
 
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     if DEBUG >= 4:
@@ -239,7 +236,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     if inference_state.get("tokens") is not None:
       self.state.from_dict(inference_state)
-      self.state.tokens = torch.tensor(self.state.tokens).to(self.device)
 
     self.request_id = request_id if not self.request_id else self.request_id
 
@@ -249,13 +245,16 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     elif input_data.ndim == 2:
       input_tensor = torch.tensor(input_data).to(self.device)
       if self.state.tokens is not None:
-        self.state.tokens = torch.cat([self.state.tokens, input_tensor], dim=-1).to(self.device)
+        self.state.tokens = torch.cat([
+          self.state.tokens.to(self.device),
+          input_tensor
+        ], dim=-1).to(self.device)
       else:
         self.state.tokens = input_tensor.clone()
 
     def infer_wrapper():
       if DEBUG >= 4:
-        print(f"infer_wrapper called [{self.oom_max_cnt} OOM]")
+        print(f"infer_wrapper called [{self.oom_cnt} OOM]")
         print(f"self.state.tokens: {self.state.tokens}")
         print(f"hidden_state: {hidden_state}")
 
@@ -265,25 +264,30 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         if hidden_state is not None:
           model_hs, model_logits = self.sharded_model.generate(
             hidden_state=hidden_state,
-            input_pos=self.state.input_pos,
-            mask=self.state.mask,
+            input_pos=self.state.input_pos.to(self.device),
+            mask=self.state.mask.to(self.device),
             curr_pos=self.state.curr_pos
           )
         else:
           if not model_cache:
             model_hs, model_logits = self.sharded_model.generate(
-              tokens=self.past_tokens,
-              input_pos=self.state.input_pos,
-              mask=self.state.mask,
+              tokens=self.state.tokens.to(self.device),
+              input_pos=self.state.input_pos.to(self.device),
+              mask=self.state.mask.to(self.device),
               curr_pos=self.state.curr_pos
             )
           else:
             model_hs, model_logits = self.sharded_model.generate(
               tokens=input_tensor,
-              input_pos=self.state.input_pos,
-              mask=self.state.mask,
+              input_pos=self.state.input_pos.to(self.device),
+              mask=self.state.mask.to(self.device),
               curr_pos=self.state.curr_pos
             )
+      except torch.cuda.OutOfMemoryError:
+        print(f"OOM on cuda, clearing model and stopping")
+        self.oom_cnt += 1
+        self.clear_model()
+        return
       except Exception as err:
         print(f"infer_tensor err\n{err}")
         raise
@@ -318,7 +322,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       return
 
     self.shard = shard
-    self.state = InferenceState(device=self.device)
+
+    # Using CPU to store inference state
+    self.state = InferenceState()
 
     # download model safetensors and shard
 

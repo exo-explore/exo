@@ -388,8 +388,8 @@ class ShardedLlamaModel(nn.Module):
 
     model_output = self.model(
       tokens=tokens,
-      mask=mask.to(self.device),
-      input_pos=input_pos.to(self.device),
+      mask=mask,
+      input_pos=input_pos,
       hidden_state=hidden_state,
       dtype=self.dtype
     )

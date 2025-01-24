@@ -307,11 +307,11 @@ class InferenceState:
 
   def from_dict(self, state_dict):
     """
-    input_pos and mask are put on CPU until used
+    Data is stored as torch tensors on needed devices
     """
     self.tokens = torch.tensor(state_dict["tokens"]).to(self.device)
-    self.input_pos = torch.tensor(state_dict["input_pos"]).to("cpu")
-    self.mask = torch.tensor(state_dict["mask"]).to("cpu")
+    self.input_pos = torch.tensor(state_dict["input_pos"]).to(self.device)
+    self.mask = torch.tensor(state_dict["mask"]).to(self.device)
     self.curr_pos = state_dict["curr_pos"]
 
   def to_dict(self) -> dict:
