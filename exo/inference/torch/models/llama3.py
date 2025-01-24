@@ -361,12 +361,12 @@ class ShardedLlamaModel(nn.Module):
     self.model.output_hidden_states = [self.shard.end_layer]
 
     if curr_pos > 0:
-      # if self.model.caches_are_enabled():
-      #   input_pos = input_pos[:, curr_pos].contiguous()
-      #   mask = mask[:, curr_pos, None, :].contiguous()
-      # else:
-      input_pos = input_pos[:, :curr_pos + 1]
-      mask = mask[:, :curr_pos + 1, :curr_pos + 1]
+      if self.model.caches_are_enabled():
+        input_pos = input_pos[:, curr_pos].contiguous()
+        mask = mask[:, curr_pos, None, :].contiguous()
+      else:
+        input_pos = input_pos[:, :curr_pos + 1]
+        mask = mask[:, :curr_pos + 1, :curr_pos + 1]
     else:
       _, tklng = tokens.size()
 

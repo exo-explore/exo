@@ -370,23 +370,28 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     # self.tokenizer = await _resolve_tokenizer(model_path)
     self.tokenizer = await _resolve_tokenizer(self.model_path)
-    
-    self.sharded_model = await asyncio.get_running_loop().run_in_executor(
-      self.executor,
-      functools.partial(
-        ShardedLlamaModel,
+
+    def start_model():
+      if DEBUG >= 4:
+        print("start_model called")
+
+      self.sharded_model = ShardedLlamaModel(
         config=self.model_config,
         shard=shard,
         device=self.device,
         dtype=self.model_config["torch_dtype"],
-        use_cache=self.use_cache,
-      ),
-    )
+        use_cache=self.use_cache
+      )
 
-    # load sharded weights
+      load_weights_torch(
+        self.model_path,
+        self.sharded_model.model,
+        self.model_config
+      )
+    
     await asyncio.get_running_loop().run_in_executor(
       self.executor,
-      functools.partial(load_weights_torch, self.model_path, self.sharded_model.model, self.model_config),
+      functools.partial(start_model),
     )
 
   async def load_checkpoint(self, shard: Shard, path: str):
