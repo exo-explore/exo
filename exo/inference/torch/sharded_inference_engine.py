@@ -247,8 +247,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       )
     elif input_data.ndim == 2:
       input_tensor = torch.tensor(input_data).to(
-        device=self.device,
-        dtype=self.model_config["torch_dtype"]
+        device=self.device
       )
       
       if self.state.tokens is not None:
@@ -269,23 +268,20 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
       try:
         in_tokens = self.state.tokens.clone().to(
-          device=self.device,
-          dtype=self.model_config["torch_dtype"]
+          device=self.device
         )
 
-        in_input_pos = self.state.input_pos.to(
-          device=self.device,
-          dtype=self.model_config["torch_dtype"]
+        in_input_pos = self.state.input_pos.clone().to(
+          device=self.device
         )
 
-        in_mask = self.state.mask.to(
-          device=self.device,
-          dtype=self.model_config["torch_dtype"]
+        in_mask = self.state.mask.clone().to(
+          device=self.device
         )
 
         if hidden_state is not None:
           model_hs, model_logits = self.sharded_model.generate(
-            tokens=in_tokens
+            tokens=in_tokens,
             hidden_state=hidden_state,
             input_pos=in_input_pos,
             mask=in_mask,
