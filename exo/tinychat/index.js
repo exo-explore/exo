@@ -42,6 +42,9 @@ document.addEventListener("alpine:init", () => {
     topology: null,
     topologyInterval: null,
 
+    // Add these new properties
+    expandedGroups: {},
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -393,8 +396,6 @@ document.addEventListener("alpine:init", () => {
     },
 
     async *openaiChatCompletion(model, messages) {
-      // stream response
-      console.log("model", model)
       const response = await fetch(`${this.endpoint}/chat/completions`, {
         method: "POST",
         headers: {
@@ -417,19 +418,17 @@ document.addEventListener("alpine:init", () => {
 
       const reader = response.body.pipeThrough(new TextDecoderStream())
         .pipeThrough(new EventSourceParserStream()).getReader();
+      
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
+        if (done) break;
+        
         if (value.type === "event") {
           const json = JSON.parse(value.data);
           if (json.choices) {
             const choice = json.choices[0];
-            if (choice.finish_reason === "stop") {
-              break;
-            }
-            yield choice.delta.content;
+            if (choice.finish_reason === "stop") break;
+            if (choice.delta.content) yield choice.delta.content;
           }
         }
       }
@@ -668,7 +667,55 @@ document.addEventListener("alpine:init", () => {
         `;
         vizElement.appendChild(nodeElement);
       });
-    }
+    },
+
+    // Add these helper methods
+    countDownloadedModels(models) {
+      return Object.values(models).filter(model => model.downloaded).length;
+    },
+
+    getGroupCounts(groupModels) {
+      const total = Object.keys(groupModels).length;
+      const downloaded = this.countDownloadedModels(groupModels);
+      return `[${downloaded}/${total}]`;
+    },
+
+    // Update the existing groupModelsByPrefix method to include counts
+    groupModelsByPrefix(models) {
+      const groups = {};
+      Object.entries(models).forEach(([key, model]) => {
+        const parts = key.split('-');
+        const mainPrefix = parts[0].toUpperCase();
+        
+        let subPrefix;
+        if (parts.length === 2) {
+          subPrefix = parts[1].toUpperCase();
+        } else if (parts.length > 2) {
+          subPrefix = parts[1].toUpperCase();
+        } else {
+          subPrefix = 'OTHER';
+        }
+        
+        if (!groups[mainPrefix]) {
+          groups[mainPrefix] = {};
+        }
+        if (!groups[mainPrefix][subPrefix]) {
+          groups[mainPrefix][subPrefix] = {};
+        }
+        groups[mainPrefix][subPrefix][key] = model;
+      });
+      return groups;
+    },
+
+    toggleGroup(prefix, subPrefix = null) {
+      const key = subPrefix ? `${prefix}-${subPrefix}` : prefix;
+      this.expandedGroups[key] = !this.expandedGroups[key];
+    },
+
+    isGroupExpanded(prefix, subPrefix = null) {
+      const key = subPrefix ? `${prefix}-${subPrefix}` : prefix;
+      return this.expandedGroups[key] || false;
+    },
   }));
 });
 
