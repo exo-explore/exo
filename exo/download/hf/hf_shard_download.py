@@ -159,13 +159,14 @@ class HFShardDownloader(ShardDownloader):
           print(f"Download calculation for {self.current_repo_id}:")
           print(f"Total bytes: {total_bytes}")
           print(f"Downloaded bytes: {downloaded_bytes}")
+        if DEBUG >= 3:
           for file in relevant_files:
             print(f"File {file['path']}: size={file['size']}, percentage={status[file['path']]}")
 
       return status
 
     except Exception as e:
-      if DEBUG >= 2:
+      if DEBUG >= 3:
         print(f"Error getting shard download status: {e}")
         traceback.print_exc()
       return None

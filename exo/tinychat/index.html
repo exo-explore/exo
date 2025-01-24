@@ -22,75 +22,119 @@
 <link href="/static/unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/vs2015.min.css" rel="stylesheet"/>
 <link href="/index.css" rel="stylesheet"/>
 <link href="/common.css" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
 <main x-data="state" x-init="console.log(endpoint)">
   <div class="sidebar">
+    <!-- Add topology section -->
+    <div class="topology-section">
+      <h2 class="megrim-regular">Network Topology</h2>
+      <div class="topology-visualization"
+           x-init="initTopology()"
+           x-ref="topologyViz">
+        <!-- Loading indicator for topology -->
+        <div class="topology-loading" x-show="!topology">
+          <i class="fas fa-spinner fa-spin"></i>
+          <span>Loading topology...</span>
+        </div>
+        <!-- Topology visualization will be rendered here -->
+      </div>
+    </div>
+
     <h2 class="megrim-regular" style="margin-bottom: 20px;">Models</h2>
-    
+
     <!-- Loading indicator -->
     <div class="loading-container" x-show="Object.keys(models).length === 0">
         <i class="fas fa-spinner fa-spin"></i>
         <span>Loading models...</span>
     </div>
-    
-    <template x-for="(model, key) in models" :key="key">
-        <div class="model-option" 
-             :class="{ 'selected': cstate.selectedModel === key }"
-             @click="cstate.selectedModel = key">
-            <div class="model-header">
-                <div class="model-name" x-text="model.name"></div>
-                <button 
-                    @click.stop="deleteModel(key, model)"
-                    class="model-delete-button"
-                    x-show="model.download_percentage > 0">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-            <div class="model-info">
-                <div class="model-progress">
-                    <template x-if="model.loading">
-                        <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
-                    </template>
-                    <div class="model-progress-info">
-                        <template x-if="!model.loading && model.download_percentage != null">
-                            <span>
-                                <!-- Check if there's an active download for this model -->
-                                <template x-if="downloadProgress?.some(p => 
-                                    p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
-                                )">
-                                    <i class="fas fa-circle-notch fa-spin"></i>
-                                </template>
-                                <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
-                            </span>
-                        </template>
-                        <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
-                            <button 
-                                @click.stop="handleDownload(key)"
-                                class="model-download-button">
-                                <i class="fas fa-download"></i>
-                                <span x-text="(model.download_percentage > 0 && model.download_percentage < 100) ? 'Continue Downloading' : 'Download'"></span>
-                            </button>
-                        </template>
-                    </div>
+
+    <!-- Group models by prefix -->
+    <template x-for="[mainPrefix, subGroups] in Object.entries(groupModelsByPrefix(models))" :key="mainPrefix">
+        <div class="model-group">
+            <div class="model-group-header" @click="toggleGroup(mainPrefix)">
+                <div class="group-header-content">
+                    <span x-text="mainPrefix"></span>
+                    <span class="model-count" x-text="getGroupCounts(Object.values(subGroups).flatMap(group => Object.values(group)))"></span>
                 </div>
-                <template x-if="model.total_size">
-                    <div class="model-size" x-text="model.total_downloaded ? 
-                        `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` : 
-                        formatBytes(model.total_size)">
+                <i class="fas" :class="isGroupExpanded(mainPrefix) ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+            </div>
+            
+            <div class="model-group-content" x-show="isGroupExpanded(mainPrefix)" x-transition>
+                <template x-for="[subPrefix, groupModels] in Object.entries(subGroups)" :key="subPrefix">
+                    <div class="model-subgroup">
+                        <div class="model-subgroup-header" @click.stop="toggleGroup(mainPrefix, subPrefix)">
+                            <div class="group-header-content">
+                                <span x-text="subPrefix"></span>
+                                <span class="model-count" x-text="getGroupCounts(groupModels)"></span>
+                            </div>
+                            <i class="fas" :class="isGroupExpanded(mainPrefix, subPrefix) ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                        </div>
+                        
+                        <div class="model-subgroup-content" x-show="isGroupExpanded(mainPrefix, subPrefix)" x-transition>
+                            <template x-for="(model, key) in groupModels" :key="key">
+                                <div class="model-option"
+                                     :class="{ 'selected': cstate.selectedModel === key }"
+                                     @click="cstate.selectedModel = key">
+                                    <div class="model-header">
+                                        <div class="model-name" x-text="model.name"></div>
+                                        <button
+                                            @click.stop="deleteModel(key, model)"
+                                            class="model-delete-button"
+                                            x-show="model.download_percentage > 0">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                    <div class="model-info">
+                                        <div class="model-progress">
+                                            <template x-if="model.loading">
+                                                <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
+                                            </template>
+                                            <div class="model-progress-info">
+                                                <template x-if="!model.loading && model.download_percentage != null">
+                                                    <span>
+                                                        <template x-if="downloadProgress?.some(p =>
+                                                            p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
+                                                        )">
+                                                            <i class="fas fa-circle-notch fa-spin"></i>
+                                                        </template>
+                                                        <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
+                                                    </span>
+                                                </template>
+                                                <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
+                                                    <button
+                                                        @click.stop="handleDownload(key)"
+                                                        class="model-download-button">
+                                                        <i class="fas fa-download"></i>
+                                                        <span x-text="(model.download_percentage > 0 && model.download_percentage < 100) ? 'Continue Downloading' : 'Download'"></span>
+                                                    </button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <template x-if="model.total_size">
+                                            <div class="model-size" x-text="model.total_downloaded ?
+                                                `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` :
+                                                formatBytes(model.total_size)">
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </template>
             </div>
         </div>
     </template>
-  </div> 
+  </div>
     <!-- Error Toast -->
     <div x-show="errorMessage !== null" x-transition.opacity class="toast">
         <div class="toast-header">
             <span class="toast-error-message" x-text="errorMessage?.basic || ''"></span>
             <div class="toast-header-buttons">
-                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }" 
-                        class="toast-expand-button" 
+                <button @click="errorExpanded = !errorExpanded; if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }"
+                        class="toast-expand-button"
                         x-show="errorMessage?.stack">
                     <span x-text="errorExpanded ? 'Hide Details' : 'Show Details'"></span>
                 </button>
@@ -119,8 +163,8 @@
     " x-show="home === 0" x-transition="">
 <h1 class="title megrim-regular">tinychat</h1>
 <template x-if="histories.length">
-  <button 
-    @click="if(confirm('Are you sure you want to clear all history?')) clearAllHistory();" 
+  <button
+    @click="if(confirm('Are you sure you want to clear all history?')) clearAllHistory();"
     class="clear-history-button">
     <i class="fas fa-trash"></i> Clear All History
   </button>
@@ -162,80 +206,101 @@
 </template>
 </div>
 </div>
-<button 
+</div>
+<button
     @click="
         home = 0;
         cstate = { time: null, messages: [], selectedModel: cstate.selectedModel };
         time_till_first = 0;
         tokens_per_second = 0;
         total_tokens = 0;
-    " 
+    "
     class="back-button"
     x-show="home === 2">
     <i class="fas fa-arrow-left"></i>
     Back to Chats
 </button>
-<div class="messages" x-init="
-      $watch('cstate', value =&gt; {
-        $el.innerHTML = '';
-        value.messages.forEach(({ role, content }) =&gt; {
-          const div = document.createElement('div');
-          div.className = `message message-role-${role}`;
-          try {
-              if (content.includes('![Generated Image]')) {
-                const imageUrl = content.match(/\((.*?)\)/)[1];
-                const img = document.createElement('img');
-                img.src = imageUrl;
-                img.alt = 'Generated Image';
-                img.onclick = async () => {
-                  try {
-                    const response = await fetch(img.src);
-                    const blob = await response.blob();
-                    const file = new File([blob], 'image.png', { type: 'image/png' });
-                    handleImageUpload({ target: { files: [file] } });
-                  } catch (error) {
-                    console.error('Error fetching image:', error);
-                  }
-                };
-                div.appendChild(img);
-              } else {
-                div.innerHTML = DOMPurify.sanitize(marked.parse(content));
-              }
-          } catch (e) {
-            console.log(content);
-            console.error(e);
+<div class="messages"
+  x-init="
+    $watch('cstate', (value) => {
+      $el.innerHTML = '';
+
+      value.messages.forEach((msg) => {
+        const div = document.createElement('div');
+        div.className = `message message-role-${msg.role}`;
+
+        try {
+          // If there's an embedded generated image
+          if (msg.content.includes('![Generated Image]')) {
+            const imageUrlMatch = msg.content.match(/\((.*?)\)/);
+            if (imageUrlMatch) {
+              const imageUrl = imageUrlMatch[1];
+              const img = document.createElement('img');
+              img.src = imageUrl;
+              img.alt = 'Generated Image';
+
+              img.onclick = async () => {
+                try {
+                  const response = await fetch(img.src);
+                  const blob = await response.blob();
+                  const file = new File([blob], 'image.png', { type: 'image/png' });
+                  handleImageUpload({ target: { files: [file] } });
+                } catch (error) {
+                  console.error('Error fetching image:', error);
+                }
+              };
+              div.appendChild(img);
+            } else {
+              // fallback if markdown is malformed
+              div.textContent = msg.content;
+            }
+          } else {
+            // Otherwise, transform message text (including streamed think blocks).
+            div.innerHTML = transformMessageContent(msg);
+            // Render math after content is inserted
+            MathJax.typesetPromise([div]);
           }
+        } catch (e) {
+          console.error('Error rendering message:', e);
+          div.textContent = msg.content; // fallback
+        }
 
-          // add a clipboard button to all code blocks
-          const codeBlocks = div.querySelectorAll('.hljs');
-          codeBlocks.forEach(codeBlock =&gt; {
-            const button = document.createElement('button');
-            button.className = 'clipboard-button';
-            button.innerHTML = '&lt;i class=\'fas fa-clipboard\'&gt;&lt;/i&gt;';
-            button.onclick = () =&gt; {
-              // navigator.clipboard.writeText(codeBlock.textContent);
-              const range = document.createRange();
-              range.setStartBefore(codeBlock);
-              range.setEndAfter(codeBlock);
-              window.getSelection()?.removeAllRanges();
-              window.getSelection()?.addRange(range);
-              document.execCommand('copy');
-              window.getSelection()?.removeAllRanges();
+        // Add a clipboard button to code blocks
+        const codeBlocks = div.querySelectorAll('.hljs');
+        codeBlocks.forEach((codeBlock) => {
+          const button = document.createElement('button');
+          button.className = 'clipboard-button';
+          button.innerHTML = '<i class=\'fas fa-clipboard\'></i>';
 
-              button.innerHTML = '&lt;i class=\'fas fa-check\'&gt;&lt;/i&gt;';
-              setTimeout(() =&gt; button.innerHTML = '&lt;i class=\'fas fa-clipboard\'&gt;&lt;/i&gt;', 1000);
-            };
-            codeBlock.appendChild(button);
-          });
+          button.onclick = () => {
+            const range = document.createRange();
+            range.setStartBefore(codeBlock);
+            range.setEndAfter(codeBlock);
+            window.getSelection()?.removeAllRanges();
+            window.getSelection()?.addRange(range);
+            document.execCommand('copy');
+            window.getSelection()?.removeAllRanges();
 
-          $el.appendChild(div);
+            button.innerHTML = '<i class=\'fas fa-check\'></i>';
+            setTimeout(() => {
+              button.innerHTML = '<i class=\'fas fa-clipboard\'></i>';
+            }, 1000);
+          };
+
+          codeBlock.appendChild(button);
         });
 
-        $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
+        $el.appendChild(div);
       });
-    " x-intersect="
+
+      // Scroll to bottom after rendering
       $el.scrollTo({ top: $el.scrollHeight, behavior: 'smooth' });
-    " x-ref="messages" x-show="home === 2" x-transition="">
+    });
+  "
+  x-ref="messages"
+  x-show="home === 2"
+  x-transition=""
+>
 </div>
 
 <!-- Download Progress Section -->
@@ -250,7 +315,7 @@
         <p><strong>Model:</strong> <span x-text="progress.repo_id + '@' + progress.repo_revision"></span></p>
         <p><strong>Status:</strong> <span x-text="progress.status"></span></p>
         <div class="progress-bar-container">
-          <div class="progress-bar" 
+          <div class="progress-bar"
                :class="progress.isComplete ? 'complete' : 'in-progress'"
                :style="`width: ${progress.percentage}%;`">
           </div>
@@ -294,10 +359,10 @@
 <i class="fas fa-times"></i>
 </button>
 </div>
-<textarea 
-    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
+<textarea
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))"
     :placeholder="
-        generating ? 'Generating...' : 
+        generating ? 'Generating...' :
         (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete)) ? 'Download in progress...' :
         'Say something'
     "
@@ -329,13 +394,51 @@
         });
     "
     x-ref="inputForm"></textarea>
-<button 
-    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))" 
-    @click="await handleSend()" 
+<button
+    :disabled="generating || (downloadProgress?.length > 0 && downloadProgress.some(p => !p.isComplete))"
+    @click="await handleSend()"
     class="input-button">
     <i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
 </button>
 </div>
 </div>
 </main>
+
+<script>
+  /**
+   * Transform a single message's content into HTML, preserving <think> blocks.
+   * Ensure LaTeX expressions are properly delimited for MathJax.
+   */
+  function transformMessageContent(message) {
+    let text = message.content;
+    console.log('Processing message content:', text);
+
+    // First replace think blocks
+    text = text.replace(
+      /<think>([\s\S]*?)(?:<\/think>|$)/g,
+      (match, body) => {
+        console.log('Found think block with content:', body);
+        const isComplete = match.includes('</think>');
+        const spinnerClass = isComplete ? '' : ' thinking';
+        const parsedBody = DOMPurify.sanitize(marked.parse(body));
+        return `
+<div class='thinking-block'>
+  <div class='thinking-header${spinnerClass}'>Thinking...</div>
+  <div class='thinking-content'>${parsedBody}</div>
+</div>`;
+      }
+    );
+
+    // Add backslashes to parentheses and brackets for LaTeX
+    text = text
+      .replace(/\((?=\s*[\d\\])/g, '\\(')  // Add backslash before opening parentheses
+      .replace(/\)(?!\w)/g, '\\)')          // Add backslash before closing parentheses
+      .replace(/\[(?=\s*[\d\\])/g, '\\[')   // Add backslash before opening brackets
+      .replace(/\](?!\w)/g, '\\]')          // Add backslash before closing brackets
+      .replace(/\[[\s\n]*\\boxed/g, '\\[\\boxed') // Ensure boxed expressions are properly delimited
+      .replace(/\\!/g, '\\\\!');  // Preserve LaTeX spacing commands
+
+    return DOMPurify.sanitize(marked.parse(text));
+  }
+</script>
 </body>

@@ -40,7 +40,7 @@ class TailscaleDiscovery(Discovery):
     self.update_task = None
 
   async def start(self):
-    self.device_capabilities = device_capabilities()
+    self.device_capabilities = await device_capabilities()
     self.discovery_task = asyncio.create_task(self.task_discover_peers())
     self.cleanup_task = asyncio.create_task(self.task_cleanup_peers())
     self.update_task = asyncio.create_task(self.task_update_device_posture_attributes())

@@ -6,6 +6,9 @@ import pkgutil
 
 def run():
     site_packages = site.getsitepackages()[0]
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    baseimages_dir = os.path.join(base_dir, "exo", "apputil", "baseimages")
+    
     command = [
         f"{sys.executable}", "-m", "nuitka", "exo/main.py",
         "--company-name=exolabs",
@@ -15,7 +18,8 @@ def run():
         "--standalone",
         "--output-filename=exo",
         "--python-flag=no_site",
-        "--onefile"
+        "--onefile",
+        f"--include-data-dir={baseimages_dir}=exo/apputil/baseimages"
     ]
 
     if sys.platform == "darwin": 
@@ -23,7 +27,7 @@ def run():
             "--macos-app-name=exo",
             "--macos-app-mode=gui",
             "--macos-app-version=0.0.1",
-            "--macos-signed-app-name=com.exolabs.exo",
+            "--macos-signed-app-name=net.exolabs.exo",
             "--include-distribution-meta=mlx",
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",

@@ -6,7 +6,6 @@ service NodeService {
   rpc SendPrompt (PromptRequest) returns (Tensor) {}
   rpc SendTensor (TensorRequest) returns (Tensor) {}
   rpc SendExample (ExampleRequest) returns (Loss) {}
-  rpc GetInferenceResult (GetInferenceResultRequest) returns (InferenceResult) {}
   rpc CollectTopology (CollectTopologyRequest) returns (Topology) {}
   rpc SendResult (SendResultRequest) returns (Empty) {}
   rpc SendOpaqueStatus (SendOpaqueStatusRequest) returns (Empty) {}
@@ -46,15 +45,6 @@ message ExampleRequest {
 message Loss {
   float loss = 1;
   optional Tensor grads = 2;
-}
-  
-message GetInferenceResultRequest {
-  string request_id = 1;
-}
-
-message InferenceResult {
-  optional Tensor tensor = 1;
-  bool is_finished = 2;
 }
 
 message Tensor {
