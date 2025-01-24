@@ -201,6 +201,7 @@ class GRPCPeerHandle(PeerHandle):
     proto_inference_state = node_service_pb2.InferenceState()
     other_data = {}
     for k, v in inference_state.items():
+      print(f"k {k}\nv {v}")
       if isinstance(v, mx.array):
         np_array = np.array(v)
         tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
