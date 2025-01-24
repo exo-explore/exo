@@ -389,10 +389,10 @@ class ShardedLlamaModel(nn.Module):
 
     
     model_output = self.model(
-      tokens=tokens if hidden_state is None else None,
+      tokens=tokens,
       mask=mask,
       input_pos=input_pos,
-      hidden_state=hidden_state if hidden_state is not None else None,
+      hidden_state=hidden_state,
       dtype=self.dtype
     )
 

@@ -281,27 +281,24 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
         if hidden_state is not None:
           model_hs, model_logits = self.sharded_model.generate(
-            tokens=in_tokens,
             hidden_state=hidden_state,
-            input_pos=in_input_pos,
-            mask=in_mask,
             curr_pos=self.state.curr_pos
           )
         else:
-          # if not model_cache:
-          #   model_hs, model_logits = self.sharded_model.generate(
-          #     tokens=in_tokens,
-          #     input_pos=in_input_pos,
-          #     mask=in_mask,
-          #     curr_pos=self.state.curr_pos
-          #   )
-          # else:
-          model_hs, model_logits = self.sharded_model.generate(
-            tokens=input_tensor,
-            input_pos=in_input_pos,
-            mask=in_mask,
-            curr_pos=self.state.curr_pos
-          )
+          if not model_cache:
+            model_hs, model_logits = self.sharded_model.generate(
+              tokens=in_tokens,
+              input_pos=in_input_pos,
+              mask=in_mask,
+              curr_pos=self.state.curr_pos
+            )
+          else:
+            model_hs, model_logits = self.sharded_model.generate(
+              tokens=input_tensor,
+              input_pos=in_input_pos,
+              mask=in_mask,
+              curr_pos=self.state.curr_pos
+            )
       except torch.cuda.OutOfMemoryError:
         print(f"OOM on cuda, clearing model and stopping")
         self.oom_cnt += 1
