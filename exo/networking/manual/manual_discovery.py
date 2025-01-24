@@ -62,9 +62,8 @@ class ManualDiscovery(Discovery):
           elif DEBUG_DISCOVERY >= 2:
             print(f"{peer_id=} at {peer_config.address}:{peer_config.port} is not healthy. Removing.")
         except Exception as e:
-          if DEBUG_DISCOVERY >= 2: print(f"Exception occured when attempting to add {peer_id=}: {e}")
-      self.known_peers = new_known_peers
-      await asyncio.sleep(1.0)
+          if DEBUG_DISCOVERY >= 2: print(f"Exception occurred when attempting to add {peer_id=}: {e}")
+      await asyncio.sleep(5.0)
 
       if DEBUG_DISCOVERY >= 2: print(f"Current known peers: {[peer.id() for peer in self.known_peers.values()]}")
 
