@@ -326,8 +326,6 @@ class ShardedLlamaModel(nn.Module):
 
     # keep track of current position in generation
     self.max_generated_tokens = max_generated_tokens
-    self.input_pos = None
-    self.mask = None
 
   def generate(
     self,
@@ -351,11 +349,8 @@ class ShardedLlamaModel(nn.Module):
       print("generate called")
       print(f"tokens: {tokens}")
       if mask is not None:
-        print(f"mask: {mask}")
-        print(f"input_pos: {input_pos}") 
-      else:
-        print(f"self.mask: {self.mask}")
-        print(f"self.input_pos: {self.input_pos}")
+        print(f"mask: {mask.size()}")
+        print(f"input_pos: {input_pos.size()}") 
       print(f"hidden_state: {hidden_state}")
       print(f"curr_pos: {curr_pos}")
       print(f"cached? {self.model.caches_are_enabled()}")
@@ -364,7 +359,7 @@ class ShardedLlamaModel(nn.Module):
     model_logits = None
 
     self.model.output_hidden_states = [self.shard.end_layer]
-    
+
     if curr_pos > 0:
       if self.model.caches_are_enabled():
         input_pos = input_pos[:, curr_pos].contiguous()
@@ -372,6 +367,15 @@ class ShardedLlamaModel(nn.Module):
       else:
         input_pos = input_pos[:, :curr_pos + 1]
         mask = mask[:, :curr_pos + 1, :curr_pos + 1]
+    else:
+      _, tklng = tokens.size()
+
+      if self.model.caches_are_enabled():
+        mask = mask[:, :tklng]
+      else:
+        mask = mask[:, :tklng, :tklng]
+
+      input_pos = input_pos[:, :tklng].squeeze()
 
     if DEBUG >= 4:
       print("model_input")
@@ -379,13 +383,13 @@ class ShardedLlamaModel(nn.Module):
         print(f"tokens: {tokens}")
       if hidden_state is not None:
         print(f"hidden_state: {hidden_state}")
-      print(f"self.mask: {self.mask}")
-      print(f"self.input_pos: {self.input_pos}")
+      print(f"mask: {mask}")
+      print(f"input_pos: {input_pos}")
 
     model_output = self.model(
       tokens=tokens,
-      mask=mask,
-      input_pos=input_pos,
+      mask=mask.to(self.device),
+      input_pos=input_pos.to(self.device),
       hidden_state=hidden_state,
       dtype=self.dtype
     )

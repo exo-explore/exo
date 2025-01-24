@@ -24,6 +24,7 @@ from exo.helpers import DEBUG
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
   load_weights_torch,
+  InferenceState
 )
 
 # supported models
@@ -34,40 +35,8 @@ from exo.inference.torch.models.llama3 import ShardedLlamaModel
 TEMP = 0.6
 TOP_K = 35
 
-class InferenceState:
-  def __init__(
-    self,
-    tokens: Optional[torch.tensor],
-    input_pos: Optional[torch.tensor],
-    mask: Optional[torch.tensor],
-    curr_pos: int=0
-  ):
-    self.tokens = tokens
-    self.input_pos = input_pos
-    self.mask = mask
-    self.curr_pos = curr_pos
-
-  def from_dict(self, state_dict):
-    self.tokens = state_dict.tokens
-    self.input_pos = state_dict.input_pos
-    self.mask = state_dict.mask
-    self.curr_pos = state_dict.curr_pos
-
-  def __dict__(self) -> dict:
-    return {
-      "tokens": self.tokens.numpy(force=True).tolist(),
-      "input_post": self.input_pos.numpy(force=True).tolist(),
-      "mask": self.mask.numpy(force=True).tolist(),
-      "curr_pos": self.curr_pos
-    }
-
-  def __str__(self) -> str:
-    return f"""
-    tokens: {self.tokens}
-    input_pos: {self.input_pos}
-    mask: {self.mask}
-    curr_pos: {self.curr_pos}
-    """
+# max retries for infer on OOM errors
+OOM_MAX_RETRY = 10
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
@@ -79,13 +48,11 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.sharded_model = None
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
-
     self.uuid = str(uuid.uuid4())
     self.model_path = None
     self.model_config = None
-
-    # current inference engine state
-    self.state = InferenceState()
+    self.state = None
+    self.oom_max_cnt = 0
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -97,14 +64,20 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     else:
       self.device = torch.device("cpu")
 
+    # rng setup for sampling
     self.rng = torch.Generator(device=self.device)
     self.rng.manual_seed(1234)
 
   def clear_model(self):
     """
     Clear out model and shard
-    A way to avoid OOM as more prompts will just
-    stack in memory. OOM will be hit eventually for longer prompts.
+    A way to avoid OOM issues
+    
+    All prompts are stored in VRAM
+    while inference engine is up and using the same
+    model class instance, this will clear it for each prompt.
+
+    OOM issue might occur in longer chats/contexts depending on your machine.
     """
     if self.sharded_model.model.caches_are_enabled():
       self.sharded_model.model.reset_caches()
@@ -130,17 +103,19 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     await self.ensure_shard(shard)
 
-    # tokens = await asyncio.get_event_loop().run_in_executor(
-    #   self.executor,
-    #   functools.partial(self.tokenizer.encode, prompt, return_tensors="np"),
-    # )
-
-    def encode_wrapper() -> np.ndarry:
+    def encode_wrapper() -> np.ndarray:
       """
       Encode the tensors from prompt along with the
       initial input_pos and mask
       """
-      tokens = self.tokenizer.encode(prompt, return_tensors="np")
+      tokens = self.tokenizer.encode(
+        prompt,
+        return_tensors="pt"
+      )
+
+      # move to proper device, default is CPU
+      if tokens.device != self.device:
+        tokens = tokens.to(device=self.device)
       
       if DEBUG >= 4:
         print("encoded_wrapper called")
@@ -151,7 +126,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         max_gen_tokens = self.sharded_model.max_generated_tokens
         tokens = tokens[-max_gen_tokens:]
 
-      self.past_tokens = tokens
+      self.state.tokens = tokens
 
       bsz, tklng = tokens.size()
       total_response_length = tklng + self.sharded_model.max_generated_tokens
@@ -234,18 +209,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     logits = torch.tensor(x).to(self.device)
 
-    q = torch.empty((logits.size(0), self.sharded_model.model.tok_embeddings.num_embeddings), device=logits.device).exponential_(1, generator=self.rng)
-
-
     def sample_wrapper():
+      q = torch.empty((logits.size(0), self.sharded_model.model.tok_embeddings.num_embeddings), device=logits.device).exponential_(1, generator=self.rng)
+
       tokens = ttg.sample(logits.clone(), temperature=temp, top_k=top_k, q=q.to(self.device))
+      
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
-
-       # clearing for non-primary nodes at end of processing
-      # if not self.shard.is_first_layer() and self.shard.is_last_layer():
-      #   print("CLEARING MODEL - INFER TENSOR NODE")
-      #   self.clear_model()
 
       return tokens.numpy(force=True)
 
@@ -266,7 +236,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print("infer_tensor called")
       print(f"shard: {shard}")
       print(f"input_data: {input_data}")
-      print(f"inference_state: {inference_state}")
 
     if inference_state.get("tokens") is not None:
       self.state.from_dict(inference_state)
@@ -279,7 +248,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       hidden_state = torch.tensor(input_data).to(self.device)
     elif input_data.ndim == 2:
       input_tensor = torch.tensor(input_data).to(self.device)
-
       if self.state.tokens is not None:
         self.state.tokens = torch.cat([self.state.tokens, input_tensor], dim=-1).to(self.device)
       else:
@@ -287,46 +255,53 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     def infer_wrapper():
       if DEBUG >= 4:
-        print("infer_wrapper called")
+        print(f"infer_wrapper called [{self.oom_max_cnt} OOM]")
         print(f"self.state.tokens: {self.state.tokens}")
         print(f"hidden_state: {hidden_state}")
 
       model_cache = self.sharded_model.model.caches_are_enabled()
 
-      if self.state.curr_pos == 0:
-        # initial run
-        self.state.curr_pos = self.state.tokens.size(-1)
-
-      if hidden_state is not None:
-        model_hs, model_logits = self.sharded_model.generate(
-          tokens=self.past_tokens,
-          hidden_state=hidden_state,
-          input_pos=self.state.input_pos,
-          mask=self.state.mask
-        )
-      else:
-        if not model_cache:
+      try:
+        if hidden_state is not None:
           model_hs, model_logits = self.sharded_model.generate(
-            tokens=self.past_tokens,
+            hidden_state=hidden_state,
             input_pos=self.state.input_pos,
-            mask=self.state.mask
+            mask=self.state.mask,
+            curr_pos=self.state.curr_pos
           )
         else:
-          model_hs, model_logits = self.sharded_model.generate(
-            tokens=input_tensor,
-            input_pos=self.state.input_pos,
-            mask=self.state.mask
-          )
+          if not model_cache:
+            model_hs, model_logits = self.sharded_model.generate(
+              tokens=self.past_tokens,
+              input_pos=self.state.input_pos,
+              mask=self.state.mask,
+              curr_pos=self.state.curr_pos
+            )
+          else:
+            model_hs, model_logits = self.sharded_model.generate(
+              tokens=input_tensor,
+              input_pos=self.state.input_pos,
+              mask=self.state.mask,
+              curr_pos=self.state.curr_pos
+            )
+      except Exception as err:
+        print(f"infer_tensor err\n{err}")
+        raise
 
       if model_hs is not None:
         return (
           model_hs.numpy(force=True),
-          curr_inference_state,
+          self.state.to_dict(),
         )
+      
+      if self.state.curr_pos == 0:
+        self.state.curr_pos = self.state.tokens.size(-1)
+      else:
+        self.state.curr_pos += 1
 
       return (
         model_logits[:, -1].numpy(force=True),
-        curr_inference_state,
+        self.state.to_dict(),
       )
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
@@ -343,6 +318,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       return
 
     self.shard = shard
+    self.state = InferenceState(device=self.device)
 
     # download model safetensors and shard
 
@@ -367,7 +343,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     # load sharded weights
     await asyncio.get_running_loop().run_in_executor(
       self.executor,
-      functools.partial(load_weights_torch, self.model_path, self.sharded_model, self.model_config),
+      functools.partial(load_weights_torch, self.model_path, self.sharded_model.model, self.model_config),
     )
 
   async def load_checkpoint(self, shard: Shard, path: str):

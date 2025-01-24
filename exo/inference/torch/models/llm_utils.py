@@ -5,7 +5,7 @@ import os
 import re
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -288,3 +288,44 @@ def llama3_mlp(dim: int, hidden_dim: int) -> FeedForward:
   up_proj = nn.Linear(dim, hidden_dim, bias=False)
 
   return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
+
+
+class InferenceState:
+  def __init__(
+    self,
+    tokens: Optional[torch.tensor] = None,
+    input_pos: Optional[torch.tensor] = None,
+    mask: Optional[torch.tensor] = None,
+    curr_pos: int = 0,
+    device: torch.device = torch.device("cpu")
+  ):
+    self.tokens = tokens
+    self.input_pos = input_pos
+    self.mask = mask
+    self.curr_pos = curr_pos
+    self.device = device
+
+  def from_dict(self, state_dict):
+    """
+    input_pos and mask are put on CPU until used
+    """
+    self.tokens = torch.tensor(state_dict["tokens"]).to(self.device)
+    self.input_pos = torch.tensor(state_dict["input_pos"]).to("cpu")
+    self.mask = torch.tensor(state_dict["mask"]).to("cpu")
+    self.curr_pos = state_dict["curr_pos"]
+
+  def to_dict(self) -> dict:
+    return {
+      "tokens": self.tokens.numpy(force=True).tolist(),
+      "input_pos": self.input_pos.numpy(force=True).tolist(),
+      "mask": self.mask.numpy(force=True).tolist(),
+      "curr_pos": self.curr_pos
+    }
+
+  def __str__(self) -> str:
+    return f"""
+    tokens: {self.tokens}
+    input_pos: {self.input_pos}
+    mask: {self.mask}
+    curr_pos: {self.curr_pos}
+    """
