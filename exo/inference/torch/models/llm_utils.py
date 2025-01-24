@@ -175,6 +175,8 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
           if re_attn[0][1] == "o_proj":
             new_key = f"model.layers.{layer_num}.attn.output_proj.weight"
             remapped_state_dict[new_key] = value
+          # add in permute for q and k proj
+          # see https://github.com/pytorch/torchtune/blob/main/torchtune/models/convert_weights.py#L199
           else:
             new_key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
             remapped_state_dict[new_key] = value

@@ -13,7 +13,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from torchtune.generation import sample as tt_sample
+import torchtune.generation as ttg
 from transformers import AutoTokenizer
 
 from exo.inference.inference_engine import InferenceEngine
@@ -23,7 +23,7 @@ from exo.inference.tokenizers import _resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
-  load_model_weights_torchtune,
+  load_weights_torch,
 )
 
 # supported models
@@ -34,6 +34,40 @@ from exo.inference.torch.models.llama3 import ShardedLlamaModel
 TEMP = 0.6
 TOP_K = 35
 
+class InferenceState:
+  def __init__(
+    self,
+    tokens: Optional[torch.tensor],
+    input_pos: Optional[torch.tensor],
+    mask: Optional[torch.tensor],
+    curr_pos: int=0
+  ):
+    self.tokens = tokens
+    self.input_pos = input_pos
+    self.mask = mask
+    self.curr_pos = curr_pos
+
+  def from_dict(self, state_dict):
+    self.tokens = state_dict.tokens
+    self.input_pos = state_dict.input_pos
+    self.mask = state_dict.mask
+    self.curr_pos = state_dict.curr_pos
+
+  def __dict__(self) -> dict:
+    return {
+      "tokens": self.tokens.numpy(force=True).tolist(),
+      "input_post": self.input_pos.numpy(force=True).tolist(),
+      "mask": self.mask.numpy(force=True).tolist(),
+      "curr_pos": self.curr_pos
+    }
+
+  def __str__(self) -> str:
+    return f"""
+    tokens: {self.tokens}
+    input_pos: {self.input_pos}
+    mask: {self.mask}
+    curr_pos: {self.curr_pos}
+    """
 
 class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
@@ -45,10 +79,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.sharded_model = None
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
-    self.past_tokens = None
+
     self.uuid = str(uuid.uuid4())
     self.model_path = None
     self.model_config = None
+
+    # current inference engine state
+    self.state = InferenceState()
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -93,20 +130,86 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     await self.ensure_shard(shard)
 
-    tokens = await asyncio.get_event_loop().run_in_executor(
+    # tokens = await asyncio.get_event_loop().run_in_executor(
+    #   self.executor,
+    #   functools.partial(self.tokenizer.encode, prompt, return_tensors="np"),
+    # )
+
+    def encode_wrapper() -> np.ndarry:
+      """
+      Encode the tensors from prompt along with the
+      initial input_pos and mask
+      """
+      tokens = self.tokenizer.encode(prompt, return_tensors="np")
+      
+      if DEBUG >= 4:
+        print("encoded_wrapper called")
+        print(f"tokens: {tokens}")
+
+      # if going past max, just take from max onward
+      if len(tokens) > self.sharded_model.max_generated_tokens:
+        max_gen_tokens = self.sharded_model.max_generated_tokens
+        tokens = tokens[-max_gen_tokens:]
+
+      self.past_tokens = tokens
+
+      bsz, tklng = tokens.size()
+      total_response_length = tklng + self.sharded_model.max_generated_tokens
+
+      # setup cache
+      if not self.sharded_model.model.caches_are_enabled():
+        with self.device:
+          self.sharded_model.model.setup_caches(
+            bsz,
+            self.model_config["torch_dtype"],
+            decoder_max_seq_len=total_response_length
+          )
+      
+      # setup max sequence length
+      if not self.sharded_model.model.caches_are_enabled():
+        max_seq_len = total_response_length
+      else:
+        max_seq_len = self.sharded_model.model.decoder_max_cache_seq_len
+
+      # set pad_id
+      if hasattr(self.tokenizer, "pad_id"):
+        pad_id = self.tokenizer.pad_id
+      elif hasattr(self.tokenizer, "pad_token_id"):
+        print(f"pad_token_id: {self.tokenizer.pad_token_id}")
+        if self.tokenizer.pad_token_id is not None:
+          pad_id = self.tokenizer.pad_token_id
+        else:
+          pad_id = 0
+      else:
+        pad_id = 0
+      
+      padding_masks = tokens != pad_id
+      if not padding_masks.all():
+        padding_masks = torch.nn.functional.pad(
+          padding_masks,
+          (0, self.sharded_model.max_generated_tokens),
+          value=True,
+        )
+
+        self.state.mask = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=max_seq_len)
+
+        self.state.input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
+      else:
+        self.state.mask = torch.tril(torch.ones(
+          total_response_length,
+          max_seq_len,
+          dtype=torch.bool,
+          device=self.device,
+        )).unsqueeze(0)
+
+        self.state.input_pos = torch.arange(0, total_response_length, device=self.device).unsqueeze(0)
+
+      return tokens
+
+    return await asyncio.get_running_loop().run_in_executor(
       self.executor,
-      functools.partial(self.tokenizer.encode, prompt, return_tensors="np"),
+      functools.partial(encode_wrapper),
     )
-
-    # if going past max, just take from max onward
-    if len(tokens) > self.sharded_model.max_generated_tokens:
-      max_gen_tokens = self.sharded_model.max_generated_tokens
-      tokens = tokens[-max_gen_tokens:]
-
-    if DEBUG >= 4:
-      print(f"tokens: {tokens}")
-
-    return tokens
 
   async def decode(self, shard: Shard, tokens: np.ndarray) -> str:
     if DEBUG >= 4:
@@ -135,7 +238,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
 
     def sample_wrapper():
-      tokens = tt_sample(logits.clone(), temperature=temp, top_k=top_k, q=q.to(self.device))
+      tokens = ttg.sample(logits.clone(), temperature=temp, top_k=top_k, q=q.to(self.device))
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
@@ -165,8 +268,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"input_data: {input_data}")
       print(f"inference_state: {inference_state}")
 
-    if inference_state.get("past_tokens") is not None:
-      self.past_tokens = torch.tensor(inference_state["past_tokens"]).to(self.device)
+    if inference_state.get("tokens") is not None:
+      self.state.from_dict(inference_state)
+      self.state.tokens = torch.tensor(self.state.tokens).to(self.device)
 
     self.request_id = request_id if not self.request_id else self.request_id
 
@@ -176,42 +280,43 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     elif input_data.ndim == 2:
       input_tensor = torch.tensor(input_data).to(self.device)
 
-      if self.past_tokens is not None:
-        self.past_tokens = torch.cat([self.past_tokens, input_tensor], dim=-1).to(self.device)
+      if self.state.tokens is not None:
+        self.state.tokens = torch.cat([self.state.tokens, input_tensor], dim=-1).to(self.device)
       else:
-        self.past_tokens = input_tensor.clone()
+        self.state.tokens = input_tensor.clone()
 
     def infer_wrapper():
       if DEBUG >= 4:
         print("infer_wrapper called")
-        print(f"self.past_tokens: {self.past_tokens}")
+        print(f"self.state.tokens: {self.state.tokens}")
         print(f"hidden_state: {hidden_state}")
 
-      model_input_pos = self.sharded_model.input_pos
-      model_masks = self.sharded_model.masks
       model_cache = self.sharded_model.model.caches_are_enabled()
 
-      curr_inference_state = {
-        "past_tokens": self.past_tokens.numpy(force=True).tolist(),
-      }
+      if self.state.curr_pos == 0:
+        # initial run
+        self.state.curr_pos = self.state.tokens.size(-1)
 
       if hidden_state is not None:
         model_hs, model_logits = self.sharded_model.generate(
           tokens=self.past_tokens,
           hidden_state=hidden_state,
+          input_pos=self.state.input_pos,
+          mask=self.state.mask
         )
       else:
         if not model_cache:
-          model_hs, model_logits = self.sharded_model.generate(tokens=self.past_tokens,)
-        elif (model_input_pos is None and model_masks is None and model_cache):
-          # this is for nodes that are just getting the hidden state
-          # to do caching and positioning correctly
           model_hs, model_logits = self.sharded_model.generate(
-            tokens=input_tensor,
-            past_tokens=self.past_tokens,
+            tokens=self.past_tokens,
+            input_pos=self.state.input_pos,
+            mask=self.state.mask
           )
         else:
-          model_hs, model_logits = self.sharded_model.generate(tokens=input_tensor)
+          model_hs, model_logits = self.sharded_model.generate(
+            tokens=input_tensor,
+            input_pos=self.state.input_pos,
+            mask=self.state.mask
+          )
 
       if model_hs is not None:
         return (
@@ -246,11 +351,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     # self.tokenizer = await _resolve_tokenizer(model_path)
     self.tokenizer = await _resolve_tokenizer(self.model_path)
-    eot_token = (
-      self.tokenizer.special_tokens_map.get("eos_token_id")
-      if hasattr(self.tokenizer, "_tokenizer") and isinstance(self.tokenizer._tokenizer, AutoTokenizer) else getattr(self.tokenizer, "eos_token_id", None)
-    )
-
+    
     self.sharded_model = await asyncio.get_running_loop().run_in_executor(
       self.executor,
       functools.partial(
@@ -258,6 +359,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         config=self.model_config,
         shard=shard,
         device=self.device,
+        dtype=self.model_config["torch_dtype"],
         use_cache=bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true"),
       ),
     )
@@ -265,7 +367,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     # load sharded weights
     await asyncio.get_running_loop().run_in_executor(
       self.executor,
-      functools.partial(load_model_weights_torchtune, self.model_path, shard, self.sharded_model),
+      functools.partial(load_weights_torch, self.model_path, self.sharded_model, self.model_config),
     )
 
   async def load_checkpoint(self, shard: Shard, path: str):
