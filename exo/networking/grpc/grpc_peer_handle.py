@@ -16,8 +16,10 @@ import platform
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
+  IS_APPLE = True
 else:
   import numpy as mx
+  IS_APPLE = False
 
 
 class GRPCPeerHandle(PeerHandle):
@@ -201,8 +203,8 @@ class GRPCPeerHandle(PeerHandle):
     proto_inference_state = node_service_pb2.InferenceState()
     other_data = {}
     for k, v in inference_state.items():
-      print(f"k {k}\nv {v}")
-      if isinstance(v, mx.array):
+      mx_array_type = mx.array if IS_APPLE else mx.ndarray
+      if isinstance(v, mx_array_type):
         np_array = np.array(v)
         tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
         proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
