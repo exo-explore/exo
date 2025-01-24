@@ -285,5 +285,8 @@ if __name__ == "__main__":
 
   # load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
   load_weights_torch(cache_dir, shard_model_1.model, config)
-  main(shard_model_1, prompt, device, config["torch_dtype"])
+
+  import time
+  time.sleep(5)
+  # main(shard_model_1, prompt, device, config["torch_dtype"])
   # normal_full(shard_model_1, prompt, device)

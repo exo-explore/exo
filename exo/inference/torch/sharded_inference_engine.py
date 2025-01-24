@@ -293,6 +293,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         raise
 
       if model_hs is not None:
+        # numpy current no support for bf16
+        if model_hs.dtype == torch.bfloat16:
+          model_hs = model_hs.float()
+
         return (
           model_hs.numpy(force=True),
           self.state.to_dict(),
@@ -302,6 +306,10 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         self.state.curr_pos = self.state.tokens.size(-1)
       else:
         self.state.curr_pos += 1
+
+      # numpy current no support for bf16
+      if model_logits.dtype == torch.bfloat16:
+        model_logits = model_logits.float()
 
       return (
         model_logits[:, -1].numpy(force=True),
