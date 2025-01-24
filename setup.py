@@ -35,8 +35,8 @@ install_requires = [
 extras_require = {
   "formatting": ["yapf==0.40.2",],
   "apple_silicon": [
-    "mlx==0.21.1",
-    "mlx-lm==0.20.4",
+    "mlx==0.22.0",
+    "mlx-lm==0.21.1",
   ],
   "windows": ["pywin32==308",],
   "nvidia-gpu": ["nvidia-ml-py==12.560.30",],
