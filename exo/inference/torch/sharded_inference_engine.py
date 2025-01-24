@@ -241,9 +241,16 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     hidden_state = None
     if input_data.ndim == 3:
-      hidden_state = torch.tensor(input_data).to(self.device)
+      hidden_state = torch.tensor(input_data).to(
+        device=self.device,
+        dtype=self.model_config["torch_dtype"]
+      )
     elif input_data.ndim == 2:
-      input_tensor = torch.tensor(input_data).to(self.device)
+      input_tensor = torch.tensor(input_data).to(
+        device=self.device,
+        dtype=self.model_config["torch_dtype"]
+      )
+      
       if self.state.tokens is not None:
         self.state.tokens = torch.cat([
           self.state.tokens.to(self.device),
@@ -261,27 +268,42 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       model_cache = self.sharded_model.model.caches_are_enabled()
 
       try:
+        in_tokens = self.state.tokens.clone().to(
+          device=self.device,
+          dtype=self.model_config["torch_dtype"]
+        )
+
+        in_input_pos = self.state.input_pos.to(
+          device=self.device,
+          dtype=self.model_config["torch_dtype"]
+        )
+
+        in_mask = self.state.mask.to(
+          device=self.device,
+          dtype=self.model_config["torch_dtype"]
+        )
+
         if hidden_state is not None:
           model_hs, model_logits = self.sharded_model.generate(
-            tokens=self.state.tokens.to(self.device),
+            tokens=in_tokens
             hidden_state=hidden_state,
-            input_pos=self.state.input_pos.to(self.device),
-            mask=self.state.mask.to(self.device),
+            input_pos=in_input_pos,
+            mask=in_mask,
             curr_pos=self.state.curr_pos
           )
         else:
           if not model_cache:
             model_hs, model_logits = self.sharded_model.generate(
-              tokens=self.state.tokens.to(self.device),
-              input_pos=self.state.input_pos.to(self.device),
-              mask=self.state.mask.to(self.device),
+              tokens=in_tokens,
+              input_pos=in_input_pos,
+              mask=in_mask,
               curr_pos=self.state.curr_pos
             )
           else:
             model_hs, model_logits = self.sharded_model.generate(
-              tokens=input_tensor,
-              input_pos=self.state.input_pos.to(self.device),
-              mask=self.state.mask.to(self.device),
+              tokens=in_tokens,
+              input_pos=in_input_pos,
+              mask=in_mask,
               curr_pos=self.state.curr_pos
             )
       except torch.cuda.OutOfMemoryError:
