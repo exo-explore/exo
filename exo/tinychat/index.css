@@ -779,3 +779,54 @@ main {
   border-radius: 50%;
   animation: thinking-spin 1s linear infinite;
 }
+
+.model-group {
+  margin-bottom: 12px;
+}
+
+.model-group-header,
+.model-subgroup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--primary-bg-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 8px;
+}
+
+.model-group-header:hover,
+.model-subgroup-header:hover {
+  background-color: var(--secondary-color-transparent);
+}
+
+.model-group-content {
+  padding-left: 12px;
+}
+
+.model-subgroup {
+  margin-bottom: 8px;
+}
+
+.model-subgroup-header {
+  font-size: 0.9em;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.model-subgroup-content {
+  padding-left: 12px;
+}
+
+.group-header-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-count {
+  font-size: 0.8em;
+  color: var(--secondary-color-transparent);
+  font-family: monospace;
+}

@@ -50,50 +50,78 @@
         <span>Loading models...</span>
     </div>
 
-    <template x-for="(model, key) in models" :key="key">
-        <div class="model-option"
-             :class="{ 'selected': cstate.selectedModel === key }"
-             @click="cstate.selectedModel = key">
-            <div class="model-header">
-                <div class="model-name" x-text="model.name"></div>
-                <button
-                    @click.stop="deleteModel(key, model)"
-                    class="model-delete-button"
-                    x-show="model.download_percentage > 0">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-            <div class="model-info">
-                <div class="model-progress">
-                    <template x-if="model.loading">
-                        <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
-                    </template>
-                    <div class="model-progress-info">
-                        <template x-if="!model.loading && model.download_percentage != null">
-                            <span>
-                                <!-- Check if there's an active download for this model -->
-                                <template x-if="downloadProgress?.some(p =>
-                                    p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
-                                )">
-                                    <i class="fas fa-circle-notch fa-spin"></i>
-                                </template>
-                                <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
-                            </span>
-                        </template>
-                        <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
-                            <button
-                                @click.stop="handleDownload(key)"
-                                class="model-download-button">
-                                <i class="fas fa-download"></i>
-                                <span x-text="(model.download_percentage > 0 && model.download_percentage < 100) ? 'Continue Downloading' : 'Download'"></span>
-                            </button>
-                        </template>
-                    </div>
+    <!-- Group models by prefix -->
+    <template x-for="[mainPrefix, subGroups] in Object.entries(groupModelsByPrefix(models))" :key="mainPrefix">
+        <div class="model-group">
+            <div class="model-group-header" @click="toggleGroup(mainPrefix)">
+                <div class="group-header-content">
+                    <span x-text="mainPrefix"></span>
+                    <span class="model-count" x-text="getGroupCounts(Object.values(subGroups).flatMap(group => Object.values(group)))"></span>
                 </div>
-                <template x-if="model.total_size">
-                    <div class="model-size" x-text="model.total_downloaded ?
-                        `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` :
-                        formatBytes(model.total_size)">
+                <i class="fas" :class="isGroupExpanded(mainPrefix) ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+            </div>
+            
+            <div class="model-group-content" x-show="isGroupExpanded(mainPrefix)" x-transition>
+                <template x-for="[subPrefix, groupModels] in Object.entries(subGroups)" :key="subPrefix">
+                    <div class="model-subgroup">
+                        <div class="model-subgroup-header" @click.stop="toggleGroup(mainPrefix, subPrefix)">
+                            <div class="group-header-content">
+                                <span x-text="subPrefix"></span>
+                                <span class="model-count" x-text="getGroupCounts(groupModels)"></span>
+                            </div>
+                            <i class="fas" :class="isGroupExpanded(mainPrefix, subPrefix) ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                        </div>
+                        
+                        <div class="model-subgroup-content" x-show="isGroupExpanded(mainPrefix, subPrefix)" x-transition>
+                            <template x-for="(model, key) in groupModels" :key="key">
+                                <div class="model-option"
+                                     :class="{ 'selected': cstate.selectedModel === key }"
+                                     @click="cstate.selectedModel = key">
+                                    <div class="model-header">
+                                        <div class="model-name" x-text="model.name"></div>
+                                        <button
+                                            @click.stop="deleteModel(key, model)"
+                                            class="model-delete-button"
+                                            x-show="model.download_percentage > 0">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                    <div class="model-info">
+                                        <div class="model-progress">
+                                            <template x-if="model.loading">
+                                                <span><i class="fas fa-spinner fa-spin"></i> Checking download status...</span>
+                                            </template>
+                                            <div class="model-progress-info">
+                                                <template x-if="!model.loading && model.download_percentage != null">
+                                                    <span>
+                                                        <template x-if="downloadProgress?.some(p =>
+                                                            p.repo_id && p.repo_id.toLowerCase().includes(key.toLowerCase()) && !p.isComplete
+                                                        )">
+                                                            <i class="fas fa-circle-notch fa-spin"></i>
+                                                        </template>
+                                                        <span x-text="model.downloaded ? 'Downloaded' : `${Math.round(model.download_percentage)}% downloaded`"></span>
+                                                    </span>
+                                                </template>
+                                                <template x-if="!model.loading && (model.download_percentage === null || model.download_percentage < 100) && !downloadProgress?.some(p => !p.isComplete)">
+                                                    <button
+                                                        @click.stop="handleDownload(key)"
+                                                        class="model-download-button">
+                                                        <i class="fas fa-download"></i>
+                                                        <span x-text="(model.download_percentage > 0 && model.download_percentage < 100) ? 'Continue Downloading' : 'Download'"></span>
+                                                    </button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <template x-if="model.total_size">
+                                            <div class="model-size" x-text="model.total_downloaded ?
+                                                `${formatBytes(model.total_downloaded)} / ${formatBytes(model.total_size)}` :
+                                                formatBytes(model.total_size)">
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </template>
             </div>
@@ -176,6 +204,7 @@
 <template x-if="histories.length">
 <div class="histories-end"></div>
 </template>
+</div>
 </div>
 </div>
 <button
