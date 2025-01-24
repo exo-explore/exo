@@ -290,7 +290,7 @@ def llama3_mlp(dim: int, hidden_dim: int) -> FeedForward:
   return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
 
 
-class InferenceState:
+class ShardInferenceState:
   def __init__(
     self,
     tokens: Optional[torch.tensor] = None,

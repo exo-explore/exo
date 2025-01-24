@@ -24,7 +24,7 @@ from exo.helpers import DEBUG
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
   load_weights_torch,
-  InferenceState
+  ShardInferenceState
 )
 
 # supported models
@@ -297,6 +297,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         if model_hs.dtype == torch.bfloat16:
           model_hs = model_hs.float()
 
+        if DEBUG >= 4:
+          print("sending hidden states")
+          print(f"model_hs: {model_hs.size()}")
+          print(f"state.tokens: {self.state.tokens}")
+          print(f"state.input_pos: {self.state.input_pos.size()}")
+          print(f"state.mask: {self.state.mask.size()}")
+        
         return (
           model_hs.numpy(force=True),
           self.state.to_dict(),
@@ -332,7 +339,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.shard = shard
 
     # Using CPU to store inference state
-    self.state = InferenceState()
+    self.state = ShardInferenceState()
 
     # download model safetensors and shard
 
