@@ -51,6 +51,9 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.state = None
     self.oom_cnt = 0
 
+    # cache settings
+    self.use_cache = bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true")
+
     # device settings
     if os.environ.get("TORCH_DEVICE"):
       self.device = torch.device(os.environ["TORCH_DEVICE"])
@@ -129,7 +132,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       total_response_length = tklng + self.sharded_model.max_generated_tokens
 
       # setup cache
-      if not self.sharded_model.model.caches_are_enabled():
+      if not self.sharded_model.model.caches_are_enabled() and self.use_cache:
         with self.device:
           self.sharded_model.model.setup_caches(
             bsz,
@@ -376,7 +379,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         shard=shard,
         device=self.device,
         dtype=self.model_config["torch_dtype"],
-        use_cache=bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true"),
+        use_cache=self.use_cache,
       ),
     )
 
