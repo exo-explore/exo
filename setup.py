@@ -36,6 +36,9 @@ install_requires = [
   "torchao==0.8.0",
   "pytest==8.3.3",
   "pytest-asyncio==0.24.0",
+  "scapy==2.6.1",
+  "uvloop==0.21.0"
+
 ]
 
 extras_require = {
