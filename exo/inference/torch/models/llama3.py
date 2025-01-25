@@ -189,7 +189,7 @@ class ShardTransformerDecoder(ttm.TransformerDecoder):
       #   hidden.append(h)
 
       if DEBUG >= 8:
-        print(f"\nhidden layer out H[{i}]->H[{i + 1}]\n{h}\n")
+        print(f"\nhidden layer out H[{self.shard.start_layer+i}]->H[{self.shard.start_layer+i+1}]\n{h}\n")
 
     if self.shard.is_last_layer():
       # Apply normalization

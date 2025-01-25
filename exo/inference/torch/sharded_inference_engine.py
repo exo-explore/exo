@@ -217,14 +217,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if DEBUG >= 4:
         print(f"tokens: {tokens}")
 
-      if self.state.tokens is not None:
-        self.state.tokens = torch.cat([
-          self.state.tokens.to(self.device),
-          tokens.clone()
-        ], dim=-1).to(self.device)
-      else:
-        self.state.tokens = tokens.clone()
-
       return tokens.numpy(force=True)
 
     return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(sample_wrapper))
@@ -268,6 +260,14 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         print(f"hidden_state: {hidden_state}")
 
       model_cache = self.sharded_model.model.caches_are_enabled()
+
+      if self.state.tokens is not None:
+        self.state.tokens = torch.cat([
+          self.state.tokens.to(self.device),
+          [in_tokens[:, -1]]
+        ], dim=-1).to(self.device)
+      else:
+        self.state.tokens = in_tokens.clone()
 
       try:
         in_tokens = self.state.tokens.clone().to(
