@@ -59,7 +59,7 @@ def dequantize_asymmetric(weight: Tensor, scales: Tensor, biases: Tensor, group_
 class AffineQuantizedLinear:
   def __init__(self, in_features: int, out_features: int, group_size: int = 64, bias: bool = False):
     self.group_size = group_size
-    self.weight = Tensor.ones(out_features, in_features, dtype=dtypes.int8)
+    self.weight = Tensor.ones(out_features, in_features, dtype=dtypes.uint8)
     self.scales = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
     self.biases = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
 
@@ -86,7 +86,7 @@ class AffineQuantizedLinear:
 class AffineQuantizedEmbedding:
   def __init__(self, vocab_size: int, embed_size: int, group_size: int = 64):
     self.vocab_sz, self.embed_sz, self.group_size = vocab_size, embed_size, group_size
-    self.weight = Tensor.ones(vocab_size, embed_size, dtype=dtypes.int8)
+    self.weight = Tensor.ones(vocab_size, embed_size, dtype=dtypes.uint8)
     self.scales = Tensor.ones(vocab_size, embed_size // group_size, dtype=dtypes.half)
     self.biases = Tensor.ones(vocab_size, embed_size // group_size, dtype=dtypes.half)
 
