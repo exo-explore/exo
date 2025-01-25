@@ -48,6 +48,56 @@ def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
   # NOTE: this is different from x.repeat((1, 1, n_rep, 1))
   return x.repeat((1, 1, 1, n_rep)).reshape(bs, seqlen, n_kv_heads*n_rep, head_dim)
 
+
+def dequantize_asymmetric(weight: Tensor, scales: Tensor, biases: Tensor, group_size: int) -> Tensor:
+  weight = weight.cast(dtype=dtypes.half).reshape(*scales.shape, group_size)  # group_size, out_features, in_features
+  scales = scales.reshape(*scales.shape, 1).expand(*scales.shape, group_size)
+  biases = biases.reshape(*biases.shape, 1).expand(*biases.shape, group_size)
+  return (weight*scales + biases).reshape(weight.shape[0], -1)
+
+
+class AffineQuantizedLinear:
+  def __init__(self, in_features: int, out_features: int, group_size: int = 64, bias: bool = False):
+    self.group_size = group_size
+    self.weight = Tensor.ones(out_features, in_features, dtype=dtypes.int8)
+    self.scales = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
+    self.biases = Tensor.ones(out_features, in_features // group_size, dtype=dtypes.half)
+
+  def __call__(self, x):
+    orig_shape = x.shape
+    x_flat = x.reshape(-1, x.shape[-1])  # [batch*seq_len, in_features]
+    total_batch = x_flat.shape[0]
+
+    # Grouping parameters
+    in_features = x_flat.shape[-1]
+    group_size = self.group_size
+    n_groups = in_features // group_size
+    out_features = self.weight.shape[0]
+
+    # Reshape weights and input for batched operations
+    w_group = self.weight.reshape(*self.scales.shape, group_size).permute(1, 0, 2).cast(dtype=dtypes.float)
+    x_group = x_flat.reshape(total_batch, n_groups, group_size).permute(1, 0, 2)  # [n_groups, total_batch, group_size]
+
+    term1 = (x_group.dot(w_group.permute(0, 2, 1)))*self.scales.T.reshape(n_groups, 1, out_features)  # [n_groups, 1, out_features]
+    term2 = x_group.sum(axis=-1, keepdim=True)*self.biases.T.reshape(n_groups, 1, out_features)  # [n_groups, total_batch, out_features]
+    return (term1 + term2).sum(axis=0).reshape(*orig_shape[:-1], out_features).cast(dtype=dtypes.half)
+
+
+class AffineQuantizedEmbedding:
+  def __init__(self, vocab_size: int, embed_size: int, group_size: int = 64):
+    self.vocab_sz, self.embed_sz, self.group_size = vocab_size, embed_size, group_size
+    self.weight = Tensor.ones(vocab_size, embed_size, dtype=dtypes.int8)
+    self.scales = Tensor.ones(vocab_size, embed_size // group_size, dtype=dtypes.half)
+    self.biases = Tensor.ones(vocab_size, embed_size // group_size, dtype=dtypes.half)
+
+  def __call__(self, idx: Tensor) -> Tensor:
+    if not hasattr(self, 'arange'): self.arange = Tensor.arange(self.vocab_sz, requires_grad=False, device=self.weight.device).unsqueeze(-1)
+    full_weight = dequantize_asymmetric(self.weight, self.scales, self.biases, self.group_size)
+    big_shp = idx.shape + (self.vocab_sz, self.embed_sz)
+    arange, idx, vals = self.arange.expand(big_shp), idx.reshape(idx.shape + (1, 1)).expand(big_shp), full_weight.expand(big_shp)
+    return (arange == idx).mul(vals).sum(-2, acc_dtype=vals.dtype)
+
+
 class Attention:
   def __init__(self, dim, n_heads, n_kv_heads, max_context, linear=nn.Linear):
     self.n_heads = n_heads
@@ -61,7 +111,7 @@ class Attention:
     self.wv = linear(dim, self.n_kv_heads*self.head_dim, bias=False)
     self.wo = linear(self.n_heads*self.head_dim, dim, bias=False)
 
-  def __call__(self, x: Tensor, start_pos: Union[Variable, int], freqs_cis: Tensor, mask: Optional[Tensor], cache: Optional[Tensor]=None) -> Tensor:
+  def __call__(self, x: Tensor, start_pos: Union[Variable, int], freqs_cis: Tensor, mask: Optional[Tensor], cache: Optional[Tensor] = None) -> Tensor:
     if getenv("WQKV"):
       if not hasattr(self, 'wqkv'): self.wqkv = Tensor.cat(self.wq.weight, self.wk.weight, self.wv.weight)
       xqkv = x @ self.wqkv.T
@@ -180,6 +230,7 @@ class Transformer:
     vocab_size,
     shard: Shard = None,
     linear=nn.Linear,
+    embedding=nn.Embedding,
     n_kv_heads=None,
     rope_theta=10000,
     max_context=1024,
@@ -190,10 +241,13 @@ class Transformer:
   ):
     self.layers = [TransformerBlock(dim, hidden_dim, n_heads, n_kv_heads, norm_eps, max_context, linear, feed_forward=feed_forward) for _ in range(n_layers)]
     self.norm = nn.RMSNorm(dim, norm_eps)
-    self.tok_embeddings = nn.Embedding(vocab_size, dim)
-    self.output = nn.Linear(dim, vocab_size, bias=False)
+    self.tok_embeddings = embedding(vocab_size, dim)
+    self.output = linear(dim, vocab_size, bias=False)
     if tie_word_embeddings:
       self.output.weight = self.tok_embeddings.weight
+      if (getattr(self.output, "scales", None) is not None):
+        self.output.scales = self.tok_embeddings.scales
+        self.output.biases = self.tok_embeddings.biases
     self.max_context = max_context
     self.freqs_cis = precompute_freqs_cis(dim // n_heads, self.max_context*2, rope_theta, rope_scaling=rope_scaling).contiguous()
     self.forward_jit = TinyJit(self.forward_base) if jit else None
@@ -283,19 +337,30 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
     return v.reshape(n_heads, 2, v.shape[0] // n_heads // 2, v.shape[1]).transpose(1, 2).reshape(*v.shape[:2])
 
   keymap = {
-    "model.embed_tokens.weight": "tok_embeddings.weight",
-    **{f"model.layers.{l}.input_layernorm.weight": f"layers.{l}.attention_norm.weight"
+    **{f"model.embed_tokens.{_type}": f"tok_embeddings.{_type}"
+       for _type in ["weight", "scales", "biases"]},
+    **{f"model.layers.{l}.input_layernorm.{_type}": f"layers.{l}.attention_norm.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.self_attn.{x}_proj.weight": f"layers.{l}.attention.w{x}.weight"
-       for x in ["q", "k", "v", "o"]
+    **{
+      f"model.layers.{l}.self_attn.{x}_proj.{_type}": f"layers.{l}.attention.w{x}.{_type}"
+      for _type in ["weight", "scales", "biases"]
+      for x in ["q", "k", "v", "o"]
+      for l in range(len(model.layers))
+    },
+    **{f"model.layers.{l}.post_attention_layernorm.{_type}": f"layers.{l}.ffn_norm.{_type}"
+       for _type in ["weight", "scales", "biases"]
        for l in range(len(model.layers))},
-    **{f"model.layers.{l}.post_attention_layernorm.weight": f"layers.{l}.ffn_norm.weight"
-       for l in range(len(model.layers))},
-    **{f"model.layers.{l}.mlp.{x}_proj.weight": f"layers.{l}.feed_forward.w{y}.weight"
-       for x, y in {"gate": "1", "down": "2", "up": "3"}.items()
-       for l in range(len(model.layers))},
-    "model.norm.weight": "norm.weight",
-    "lm_head.weight": "output.weight",
+    **{
+      f"model.layers.{l}.mlp.{x}_proj.{_type}": f"layers.{l}.feed_forward.w{y}.{_type}"
+      for _type in ["weight", "scales", "biases"]
+      for x, y in {"gate": "1", "down": "2", "up": "3"}.items()
+      for l in range(len(model.layers))
+    },
+    **{f"model.norm.{_type}": f"norm.{_type}"
+       for _type in ["weight", "scales", "biases"]},
+    **{f"lm_head.{_type}": f"output.{_type}"
+       for _type in ["weight", "scales", "biases"]},
   }
   sd = {}
   for k, v in weights.items():
@@ -325,3 +390,15 @@ def fix_bf16(weights: Dict[Any, Tensor]):
     return {k: v.cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()}
   # TODO: check if device supports bf16
   return {k: v.llvm_bf16_cast(dtypes.half).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()}
+
+
+def unpack_quantized(weights: Dict[Any, Tensor]) -> Dict[Any, Tensor]:
+  # Turns 32 bit uints into 4x8 bit ints
+  unpacked_weights = {}
+  for k, v in weights.items():
+    if v.dtype == dtypes.uint32:
+      unpacked = Tensor.stack(*[v*2**(8*(3-i)) for i in range(4)], dim=-1).idiv(2**(8*3)).cast(dtypes.uint8)
+      unpacked_weights[k] = unpacked.reshape((*v.shape[:-1], 4*v.shape[-1]))
+    else:
+      unpacked_weights[k] = v
+  return unpacked_weights

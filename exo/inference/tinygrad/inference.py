@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 import os
-from exo.inference.tinygrad.models.llama import Transformer, TransformerShard, convert_from_huggingface, fix_bf16, sample_logits
+from exo.inference.tinygrad.models.llama import Transformer, TransformerShard, convert_from_huggingface, fix_bf16, sample_logits, unpack_quantized, AffineQuantizedLinear, AffineQuantizedEmbedding
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import safe_save, safe_load, get_state_dict, load_state_dict
@@ -41,8 +41,19 @@ MODEL_PARAMS = {
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
   # build model
+  try:
+    with open(model_path/"config.json", "r") as f:
+      config = json.load(f)
+
+  except FileNotFoundError:
+    raise Exception(f"Config file not found in {model_path}")
+
   linear = nn.Linear
-  model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
+  embedding = nn.Embedding
+  if (quantization := config.get("quantization", None)) is not None:
+    linear, embedding = AffineQuantizedLinear, AffineQuantizedEmbedding
+
+  model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, embedding=embedding, max_context=8192, jit=True, shard=shard)
 
   # load weights
   if model_path.is_dir():
@@ -53,6 +64,8 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
     weights = load(str(model_path), shard)
   weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
   weights = fix_bf16(weights)
+
+  if (quantization is not None): weights = unpack_quantized(weights)
 
   with Context(BEAM=0):
     # replace weights in model
