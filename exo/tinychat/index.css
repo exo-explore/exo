@@ -157,6 +157,12 @@ main {
   background-color: var(--primary-color);
   color: #000;
 }
+
+.message-role-user p {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
 .download-progress {
   position: fixed;
   bottom: 11rem;
