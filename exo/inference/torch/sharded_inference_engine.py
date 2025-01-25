@@ -261,13 +261,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
       model_cache = self.sharded_model.model.caches_are_enabled()
 
-      if self.state.tokens is not None:
+      if self.state.tokens is not None and input_tensor.size(-1) == 1:
         self.state.tokens = torch.cat([
           self.state.tokens.to(self.device),
-          [in_tokens[:, -1]]
+          input_tensor.clone()
         ], dim=-1).to(self.device)
       else:
-        self.state.tokens = in_tokens.clone()
+        self.state.tokens = input_tensor.clone()
 
       try:
         in_tokens = self.state.tokens.clone().to(
