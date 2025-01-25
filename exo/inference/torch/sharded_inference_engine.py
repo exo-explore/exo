@@ -243,6 +243,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     self.request_id = request_id if not self.request_id else self.request_id
 
     hidden_state = None
+    input_tensor = None
     if input_data.ndim == 3:
       hidden_state = torch.tensor(input_data).to(
         device=self.device,
@@ -261,11 +262,12 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
       model_cache = self.sharded_model.model.caches_are_enabled()
 
-      if self.state.tokens is not None and input_tensor.size(-1) == 1:
-        self.state.tokens = torch.cat([
-          self.state.tokens.to(self.device),
-          input_tensor.clone()
-        ], dim=-1).to(self.device)
+      if self.state.tokens is not None:
+        if input_data.ndim == 2 and input_tensor.size(-1) == 1:
+          self.state.tokens = torch.cat([
+            self.state.tokens.to(self.device),
+            input_tensor.clone()
+          ], dim=-1).to(self.device)
       else:
         self.state.tokens = input_tensor.clone()
 
