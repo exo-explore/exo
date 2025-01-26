@@ -274,9 +274,9 @@ def LlamaModel(config: dict, shard: Shard):
 
   layers = nn.ModuleList(layers)
 
+  tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
   if len(re.findall(r"3\.2", shard.model_id)) > 0:
     print("Using TiedLinear")
-    tok_embeddings = nn.Embedding(config["vocab_size"], config["embed_dim"])
     output_proj = ttm.TiedLinear(tok_embeddings)
   else:
     output_proj = nn.Linear(config["embed_dim"], config["vocab_size"], bias=False)
