@@ -23,7 +23,7 @@ from exo.inference.tokenizers import _resolve_tokenizer
 from exo.helpers import DEBUG
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
-  load_weights_torch,
+  load_model_weights_torchtune,
   ShardInferenceState
 )
 
@@ -385,10 +385,14 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
         use_cache=self.use_cache
       )
 
-      load_weights_torch(
-        self.model_path,
-        self.sharded_model.model,
-        self.model_config
+      load_model_weights_torchtune(
+        cache_dir=self.model_path,
+        shard=self.shard,
+        model=self.sharded_model,
+        num_heads=self.model_config["num_heads"],
+        num_kv_heads=self.model_config["num_kv_heads"],
+        dim=self.model_config["embed_dim"],
+        head_dim=self.model_config["head_dim"]
       )
     
     await asyncio.get_running_loop().run_in_executor(

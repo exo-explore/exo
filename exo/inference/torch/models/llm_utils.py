@@ -122,10 +122,33 @@ def load_weights_torch(cache_dir: Path, model: Any, config: Dict):
   print("\n--- checking weights ----\n")
   check_weights(model, converted_sd)
 
-def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
+def _permute(t, n_heads: int, head_dim: int, dim: int):
+  """
+  Reshape weight for torchtune
+  """
+  return (
+    t.view(n_heads, 2, head_dim // 2, dim)
+    .transpose(1, 2)
+    .reshape((head_dim * n_heads), dim)
+  )
+
+def load_model_weights_torchtune(
+  cache_dir: Path,
+  shard: Shard,
+  model: Any,
+  num_heads: int = 32,
+  num_kv_heads: int = 32,
+  dim: int = 4096,
+  head_dim: int = None
+):
   """
   Loads weights from huggingface and changes it to match torchtune naming structure
   """
+  if head_dim is None:
+    head_dim = dim // num_heads
+
+  
+
   model_state_dict = model.state_dict()
   for name, _ in model_state_dict.items():
     print(f"name {name}")
@@ -172,11 +195,29 @@ def load_model_weights_torchtune(cache_dir: Path, shard: Shard, model: Any):
         # along with changing o_proj to output_proj
         re_attn = re.findall(rf"model\.layers\.{layer_num}.(\w+)\.(\w+)\.(\w+)", key)
         if len(re_attn) != 0 and re_attn[0][0] == "self_attn":
-          if re_attn[0][1] == "o_proj":
+          if re_attn[0][1] == "k_proj":
+            value = _permute(
+              t=value,
+              n_heads=num_kv_heads,
+              head_dim=head_dim,
+              dim=dim
+            )
+
+            new_key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
+            remapped_state_dict[new_key] = value
+          elif re_attn[0][1] == "q_proj":
+            value = _permute(
+              t=value,
+              n_heads=num_heads,
+              head_dim=head_dim,
+              dim=dim
+            )
+            new_key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
+            remapped_state_dict[new_key] = value
+
+          elif re_attn[0][1] == "o_proj":
             new_key = f"model.layers.{layer_num}.attn.output_proj.weight"
             remapped_state_dict[new_key] = value
-          # add in permute for q and k proj
-          # see https://github.com/pytorch/torchtune/blob/main/torchtune/models/convert_weights.py#L199
           else:
             new_key = f"model.layers.{layer_num}.attn.{re_attn[0][1]}.{re_attn[0][2]}"
             remapped_state_dict[new_key] = value

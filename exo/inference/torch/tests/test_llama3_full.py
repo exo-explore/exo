@@ -19,6 +19,7 @@ from exo.inference.shard import Shard
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
   load_weights_torch,
+  load_model_weights_torchtune
 )
 
 MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
@@ -284,7 +285,15 @@ if __name__ == "__main__":
   print(f"\nshard_model_1: {shard_model_1}")
 
   # load_model_weights_torchtune(cache_dir, shard_1, shard_model_1)
-  load_weights_torch(cache_dir, shard_model_1.model, config)
+  load_model_weights_torchtune(
+    cache_dir=cache_dir,
+    shard=shard_1,
+    model=shard_model_1,
+    num_heads=config["num_heads"],
+    num_kv_heads=config["num_kv_heads"],
+    dim=config["embed_dim"],
+    head_dim=config["head_dim"]
+  )
 
   import time
   time.sleep(5)
