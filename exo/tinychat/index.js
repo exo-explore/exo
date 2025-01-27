@@ -637,6 +637,9 @@ document.addEventListener("alpine:init", () => {
       const vizElement = this.$refs.topologyViz;
       vizElement.innerHTML = ''; // Clear existing visualization
 
+      // Helper function to truncate node ID
+      const truncateNodeId = (id) => id.substring(0, 8);
+
       // Create nodes from object
       Object.entries(topologyData.nodes).forEach(([nodeId, node]) => {
         const nodeElement = document.createElement('div');
@@ -647,14 +650,14 @@ document.addEventListener("alpine:init", () => {
         const peerConnectionsHtml = peerConnections.map(peer => `
           <div class="peer-connection">
             <i class="fas fa-arrow-right"></i>
-            <span>To ${peer.to_id}: ${peer.description}</span>
+            <span>To ${truncateNodeId(peer.to_id)}: ${peer.description}</span>
           </div>
         `).join('');
 
         nodeElement.innerHTML = `
           <div class="node-info">
             <span class="status ${nodeId === topologyData.active_node_id ? 'active' : 'inactive'}"></span>
-            <span>${node.model}</span>
+            <span>${node.model} [${truncateNodeId(nodeId)}]</span>
           </div>
           <div class="node-details">
             <span>${node.chip}</span>
