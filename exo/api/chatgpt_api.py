@@ -11,17 +11,17 @@ import aiohttp_cors
 import traceback
 import signal
 from exo import DEBUG, VERSION
-from exo.download.download_progress import RepoProgressEvent
 from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.models import build_base_shard, model_cards, get_repo, pretty_name
+from exo.models import build_base_shard, model_cards, get_repo, get_model_id, get_supported_models, get_pretty_name
 from typing import Callable, Optional
 from PIL import Image
 import numpy as np
 import base64
 from io import BytesIO
 import platform
+from exo.download.shard_download import RepoProgressEvent
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
@@ -29,7 +29,6 @@ else:
   import numpy as mx
 
 import tempfile
-from exo.download.hf.hf_shard_download import HFShardDownloader
 import shutil
 from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
 from exo.apputil import create_animation_mp4
@@ -277,41 +276,12 @@ class ChatGPTAPI:
 
   async def handle_model_support(self, request):
     try:
-      response = web.StreamResponse(status=200, reason='OK', headers={
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      })
+      response = web.StreamResponse(status=200, reason='OK', headers={ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' })
       await response.prepare(request)
-
-      async def process_model(model_name, pretty):
-        if model_name in model_cards:
-          model_info = model_cards[model_name]
-
-          if self.inference_engine_classname in model_info.get("repo", {}):
-            shard = build_base_shard(model_name, self.inference_engine_classname)
-            if shard:
-              downloader = HFShardDownloader(quick_check=True)
-              downloader.current_shard = shard
-              downloader.current_repo_id = get_repo(shard.model_id, self.inference_engine_classname)
-              status = await downloader.get_shard_download_status()
-
-              download_percentage = status.get("overall") if status else None
-              total_size = status.get("total_size") if status else None
-              total_downloaded = status.get("total_downloaded") if status else False
-
-              model_data = {
-                model_name: {
-                  "name": pretty, "downloaded": download_percentage == 100 if download_percentage is not None else False, "download_percentage": download_percentage, "total_size": total_size,
-                  "total_downloaded": total_downloaded
-                }
-              }
-
-              await response.write(f"data: {json.dumps(model_data)}\n\n".encode())
-
-      # Process all models in parallel
-      await asyncio.gather(*[process_model(model_name, pretty) for model_name, pretty in pretty_name.items()])
-
+      downloads = await self.node.shard_downloader.get_shard_download_status(self.inference_engine_classname)
+      for (path, d) in downloads:
+        model_data = { get_model_id(d.repo_id): { "downloaded": d.downloaded_bytes == d.total_bytes, "download_percentage": 100 if d.downloaded_bytes == d.total_bytes else 100 * float(d.downloaded_bytes) / float(d.total_bytes), "total_size": d.total_bytes, "total_downloaded": d.downloaded_bytes } }
+        await response.write(f"data: {json.dumps(model_data)}\n\n".encode())
       await response.write(b"data: [DONE]\n\n")
       return response
 
@@ -348,6 +318,7 @@ class ChatGPTAPI:
     progress_data = {}
     for node_id, progress_event in self.node.node_download_progress.items():
       if isinstance(progress_event, RepoProgressEvent):
+        if progress_event.status != "in_progress": continue
         progress_data[node_id] = progress_event.to_dict()
       else:
         print(f"Unknown progress event type: {type(progress_event)}. {progress_event}")
@@ -611,9 +582,9 @@ class ChatGPTAPI:
 
   async def handle_get_initial_models(self, request):
     model_data = {}
-    for model_name, pretty in pretty_name.items():
-      model_data[model_name] = {
-        "name": pretty,
+    for model_id in get_supported_models([[self.inference_engine_classname]]):
+      model_data[model_id] = {
+        "name": get_pretty_name(model_id),
         "downloaded": None,  # Initially unknown
         "download_percentage": None,  # Change from 0 to null
         "total_size": None,

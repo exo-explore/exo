@@ -75,12 +75,12 @@ document.addEventListener("alpine:init", () => {
       while (true) {
         try {
           await this.populateSelector();
-          // Wait 5 seconds before next poll
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          // Wait 15 seconds before next poll
+          await new Promise(resolve => setTimeout(resolve, 15000));
         } catch (error) {
           console.error('Model polling error:', error);
           // If there's an error, wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
     },

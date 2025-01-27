@@ -14,11 +14,12 @@ class RepoFileProgressEvent:
   speed: int
   eta: timedelta
   status: Literal["not_started", "in_progress", "complete"]
+  start_time: float
 
   def to_dict(self):
     return {
       "repo_id": self.repo_id, "repo_revision": self.repo_revision, "file_path": self.file_path, "downloaded": self.downloaded, "downloaded_this_session": self.downloaded_this_session,
-      "total": self.total, "speed": self.speed, "eta": self.eta.total_seconds(), "status": self.status
+      "total": self.total, "speed": self.speed, "eta": self.eta.total_seconds(), "status": self.status, "start_time": self.start_time
     }
 
   @classmethod

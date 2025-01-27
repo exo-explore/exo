@@ -209,7 +209,6 @@ async def download_file(
       raise aiohttp.ClientResponseError(response.request_info, response.history, status=response.status, message=f"Failed to download {file_path}: {response.status}")
 
     if downloaded_size == total_size:
-      print(f"File already downloaded: {file_path}")
       if progress_callback:
         await progress_callback(RepoFileProgressEvent(repo_id, revision, file_path, downloaded_size, downloaded_this_session, total_size, 0, timedelta(0), "complete"))
       return
