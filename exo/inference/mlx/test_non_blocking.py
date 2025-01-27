@@ -2,7 +2,7 @@ import asyncio
 import time
 import numpy as np
 from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
-from exo.download.hf.hf_shard_download import HFShardDownloader
+from exo.download.new_shard_download import NewShardDownloader
 from exo.inference.shard import Shard
 from exo.models import build_base_shard
 from collections import deque
@@ -10,7 +10,7 @@ from statistics import mean, median
 
 async def test_non_blocking():
     # Setup
-    shard_downloader = HFShardDownloader()
+    shard_downloader = NewShardDownloader()
     engine = MLXDynamicShardInferenceEngine(shard_downloader)
     _shard = build_base_shard("llama-3.1-8b", "MLXDynamicShardInferenceEngine")
     shard = Shard(_shard.model_id, _shard.start_layer, _shard.n_layers - 1, _shard.n_layers)

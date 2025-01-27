@@ -1,4 +1,4 @@
-from exo.download.hf.new_shard_download import download_shard, NewShardDownloader
+from exo.download.new_shard_download import download_shard, NewShardDownloader
 from exo.inference.shard import Shard
 from exo.models import get_model_id
 from pathlib import Path
