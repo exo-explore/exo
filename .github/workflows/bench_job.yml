@@ -128,6 +128,7 @@ jobs:
             --interface-type-filter="${{ inputs.network_interface }}" \
             --disable-tui \
             --max-generate-tokens 250 \
+            --chatgpt-api-response-timeout 900 \
             --chatgpt-api-port 52415 > output1.log 2>&1 &
           PID1=$!
           

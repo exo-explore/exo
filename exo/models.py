@@ -175,8 +175,11 @@ pretty_name = {
   "deepseek-coder-v2-lite": "Deepseek Coder V2 Lite",
   "deepseek-coder-v2.5": "Deepseek Coder V2.5",
   "deepseek-v3": "Deepseek V3",
+  "deepseek-v3-3bit": "Deepseek V3 (3-bit)",
   "deepseek-r1": "Deepseek R1",
+  "deepseek-r1-3bit": "Deepseek R1 (3-bit)",
   "llava-1.5-7b-hf": "LLaVa 1.5 7B (Vision Model)",
+  "qwen-2.5-0.5b": "Qwen 2.5 0.5B",
   "qwen-2.5-1.5b": "Qwen 2.5 1.5B",
   "qwen-2.5-coder-1.5b": "Qwen 2.5 Coder 1.5B",
   "qwen-2.5-3b": "Qwen 2.5 3B",
@@ -232,6 +235,9 @@ pretty_name = {
 def get_repo(model_id: str, inference_engine_classname: str) -> Optional[str]:
   return model_cards.get(model_id, {}).get("repo", {}).get(inference_engine_classname, None)
 
+def get_pretty_name(model_id: str) -> Optional[str]:
+  return pretty_name.get(model_id, None)
+
 def build_base_shard(model_id: str, inference_engine_classname: str) -> Optional[Shard]:
   repo = get_repo(model_id, inference_engine_classname)
   n_layers = model_cards.get(model_id, {}).get("layers", 0)
@@ -239,7 +245,12 @@ def build_base_shard(model_id: str, inference_engine_classname: str) -> Optional
     return None
   return Shard(model_id, 0, 0, n_layers)
 
-def get_supported_models(supported_inference_engine_lists: List[List[str]]) -> List[str]:
+def build_full_shard(model_id: str, inference_engine_classname: str) -> Optional[Shard]:
+  base_shard = build_base_shard(model_id, inference_engine_classname)
+  if base_shard is None: return None
+  return Shard(base_shard.model_id, 0, base_shard.n_layers - 1, base_shard.n_layers)
+
+def get_supported_models(supported_inference_engine_lists: Optional[List[List[str]]] = None) -> List[str]:
   if not supported_inference_engine_lists:
     return list(model_cards.keys())
 
