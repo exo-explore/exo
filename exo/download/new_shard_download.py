@@ -94,7 +94,7 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
     length = int(r.headers.get('content-length', 0))
     n_read = 0
     async with aiofiles.tempfile.NamedTemporaryFile(dir=target_dir, delete=False) as temp_file:
-      while chunk := await r.content.read(16384): on_progress(n_read := n_read + await temp_file.write(chunk), length)
+      while chunk := await r.content.read(1024 * 1024): on_progress(n_read := n_read + await temp_file.write(chunk), length)
       await aios.rename(temp_file.name, target_dir/path)
     return target_dir/path
 
