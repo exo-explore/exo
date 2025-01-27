@@ -109,7 +109,7 @@ def calculate_repo_progress(shard: Shard, repo_id: str, revision: str, file_prog
 
 async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]:
   target_dir = await ensure_exo_tmp()/repo_id.replace("/", "--")
-  async with aiohttp.ClientSession() as session:
+  async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=900, connect=10, sock_read=900, sock_connect=10)) as session:
     index_file = await download_file(session, repo_id, revision, "model.safetensors.index.json", target_dir)
     async with aiofiles.open(index_file, 'r') as f: index_data = json.loads(await f.read())
     return index_data.get("weight_map")
