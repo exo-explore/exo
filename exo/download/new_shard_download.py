@@ -89,7 +89,7 @@ async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: 
   base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
   url = urljoin(base_url, path)
   headers = await get_auth_headers()
-  async with session.get(url, headers=headers) as r:
+  async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as r:
     assert r.status == 200, f"Failed to download {path} from {url}: {r.status}"
     length = int(r.headers.get('content-length', 0))
     n_read = 0
