@@ -267,7 +267,6 @@ def load_model_weights_torchtune(
 
     # if DEBUG >= 8:
     print("\n--- checking weights ----\n")
-    print(f"\nremapped_state_dict: {remapped_state_dict.keys()}\n")
     check_weights(model, remapped_state_dict)
 
 

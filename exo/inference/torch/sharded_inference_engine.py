@@ -53,6 +53,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
     # cache settings
     self.use_cache = bool(os.getenv("TORCH_USE_CACHE", "True").lower() == "true")
+    self.cache_setup = False
 
     # device settings
     if os.environ.get("TORCH_DEVICE"):
@@ -67,6 +68,20 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
     # rng setup for sampling
     self.rng = torch.Generator(device=self.device)
     self.rng.manual_seed(1234)
+
+  def setup_cache(self, batch_size: int=1, total_response_length: int=1024):
+    # setup cache
+    # this is needed for a primary node that gets the initial encoding
+    if not self.sharded_model.model.caches_are_enabled() and self.use_cache:
+      with self.device:
+        self.sharded_model.model.setup_caches(
+          batch_size,
+          self.model_config["torch_dtype"],
+          decoder_max_seq_len=total_response_length
+        )
+      
+      self.cache_setup = True
+
 
   def clear_model(self):
     """
@@ -131,14 +146,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       bsz, tklng = tokens.size()
       total_response_length = tklng + self.sharded_model.max_generated_tokens
 
-      # setup cache
-      if not self.sharded_model.model.caches_are_enabled() and self.use_cache:
-        with self.device:
-          self.sharded_model.model.setup_caches(
-            bsz,
-            self.model_config["torch_dtype"],
-            decoder_max_seq_len=total_response_length
-          )
+      self.setup_cache(bsz, total_response_length)
       
       # setup max sequence length
       if not self.sharded_model.model.caches_are_enabled():
@@ -253,6 +261,20 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       input_tensor = torch.tensor(input_data).to(
         device=self.device
       )
+
+    if self.use_cache and not self.cache_setup:
+      if input_tensor is not None:
+        bsz, tklng = input_tensor.size()
+        self.setup_cache(
+          bsz,
+          tklng + self.sharded_model.max_generated_tokens
+        )
+      else:
+        bsz, tklng = self.state.tokens.size()
+        self.setup_cache(
+          bsz,
+          tklng + self.sharded_model.max_generated_tokens
+        )
 
     def infer_wrapper():
       if DEBUG >= 4:
