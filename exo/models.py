@@ -235,9 +235,6 @@ pretty_name = {
 def get_repo(model_id: str, inference_engine_classname: str) -> Optional[str]:
   return model_cards.get(model_id, {}).get("repo", {}).get(inference_engine_classname, None)
 
-def get_model_id(repo_id: str) -> Optional[str]:
-  return next((model_id for model_id, card in model_cards.items() if repo_id in card["repo"].values()), None)
-
 def get_pretty_name(model_id: str) -> Optional[str]:
   return pretty_name.get(model_id, None)
 
@@ -247,6 +244,11 @@ def build_base_shard(model_id: str, inference_engine_classname: str) -> Optional
   if repo is None or n_layers < 1:
     return None
   return Shard(model_id, 0, 0, n_layers)
+
+def build_full_shard(model_id: str, inference_engine_classname: str) -> Optional[Shard]:
+  base_shard = build_base_shard(model_id, inference_engine_classname)
+  if base_shard is None: return None
+  return Shard(base_shard.model_id, 0, base_shard.n_layers - 1, base_shard.n_layers)
 
 def get_supported_models(supported_inference_engine_lists: Optional[List[List[str]]] = None) -> List[str]:
   if not supported_inference_engine_lists:

@@ -14,7 +14,7 @@ from exo import DEBUG, VERSION
 from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.models import build_base_shard, model_cards, get_repo, get_model_id, get_supported_models, get_pretty_name
+from exo.models import build_base_shard, build_full_shard, model_cards, get_repo, get_supported_models, get_pretty_name
 from typing import Callable, Optional
 from PIL import Image
 import numpy as np
@@ -22,7 +22,7 @@ import base64
 from io import BytesIO
 import platform
 from exo.download.download_progress import RepoProgressEvent
-from exo.download.new_shard_download import ensure_downloads_dir, delete_model
+from exo.download.new_shard_download import delete_model
 import tempfile
 from exo.apputil import create_animation_mp4
 from collections import defaultdict
@@ -278,7 +278,7 @@ class ChatGPTAPI:
       await response.prepare(request)
       downloads = await self.node.shard_downloader.get_shard_download_status(self.inference_engine_classname)
       for (path, d) in downloads:
-        model_data = { get_model_id(d.repo_id): { "downloaded": d.downloaded_bytes == d.total_bytes, "download_percentage": 100 if d.downloaded_bytes == d.total_bytes else 100 * float(d.downloaded_bytes) / float(d.total_bytes), "total_size": d.total_bytes, "total_downloaded": d.downloaded_bytes } }
+        model_data = { d.shard.model_id: { "downloaded": d.downloaded_bytes == d.total_bytes, "download_percentage": 100 if d.downloaded_bytes == d.total_bytes else 100 * float(d.downloaded_bytes) / float(d.total_bytes), "total_size": d.total_bytes, "total_downloaded": d.downloaded_bytes } }
         await response.write(f"data: {json.dumps(model_data)}\n\n".encode())
       await response.write(b"data: [DONE]\n\n")
       return response
@@ -551,11 +551,6 @@ class ChatGPTAPI:
       if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"detail": f"Error deleting model: {str(e)}"}, status=500)
 
-    except Exception as e:
-      print(f"Error in handle_delete_model: {str(e)}")
-      traceback.print_exc()
-      return web.json_response({"detail": f"Server error: {str(e)}"}, status=500)
-
   async def handle_get_initial_models(self, request):
     model_data = {}
     for model_id in get_supported_models([[self.inference_engine_classname]]):
@@ -606,7 +601,7 @@ class ChatGPTAPI:
       model_name = data.get("model")
       if not model_name: return web.json_response({"error": "model parameter is required"}, status=400)
       if model_name not in model_cards: return web.json_response({"error": f"Invalid model: {model_name}. Supported models: {list(model_cards.keys())}"}, status=400)
-      shard = build_base_shard(model_name, self.inference_engine_classname)
+      shard = build_full_shard(model_name, self.inference_engine_classname)
       if not shard: return web.json_response({"error": f"Could not build shard for model {model_name}"}, status=400)
       asyncio.create_task(self.node.inference_engine.shard_downloader.ensure_shard(shard, self.inference_engine_classname))
 
