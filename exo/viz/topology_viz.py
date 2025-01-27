@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Dict
 from exo.helpers import exo_text, pretty_print_bytes, pretty_print_bytes_per_second
 from exo.topology.topology import Topology
 from exo.topology.partitioning_strategy import Partition
-from exo.download.hf.hf_helpers import RepoProgressEvent
+from exo.download.download_progress import RepoProgressEvent
 from exo.topology.device_capabilities import UNKNOWN_DEVICE_CAPABILITIES
 from rich.console import Console, Group
 from rich.text import Text

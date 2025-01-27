@@ -21,18 +21,16 @@ import numpy as np
 import base64
 from io import BytesIO
 import platform
-from exo.download.shard_download import RepoProgressEvent
+from exo.download.download_progress import RepoProgressEvent
+from exo.download.new_shard_download import ensure_downloads_dir, delete_model
+import tempfile
+from exo.apputil import create_animation_mp4
+from collections import defaultdict
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
 else:
   import numpy as mx
-
-import tempfile
-import shutil
-from exo.download.hf.hf_helpers import get_hf_home, get_repo_root
-from exo.apputil import create_animation_mp4
-from collections import defaultdict
 
 
 class Message:
@@ -545,35 +543,13 @@ class ChatGPTAPI:
       return web.json_response({"detail": f"Error processing prompt (see logs with DEBUG>=2): {str(e)}"}, status=500)
 
   async def handle_delete_model(self, request):
+    model_id = request.match_info.get('model_name')
     try:
-      model_name = request.match_info.get('model_name')
-      if DEBUG >= 2: print(f"Attempting to delete model: {model_name}")
-
-      if not model_name or model_name not in model_cards:
-        return web.json_response({"detail": f"Invalid model name: {model_name}"}, status=400)
-
-      shard = build_base_shard(model_name, self.inference_engine_classname)
-      if not shard:
-        return web.json_response({"detail": "Could not build shard for model"}, status=400)
-
-      repo_id = get_repo(shard.model_id, self.inference_engine_classname)
-      if DEBUG >= 2: print(f"Repo ID for model: {repo_id}")
-
-      # Get the HF cache directory using the helper function
-      hf_home = get_hf_home()
-      cache_dir = get_repo_root(repo_id)
-
-      if DEBUG >= 2: print(f"Looking for model files in: {cache_dir}")
-
-      if os.path.exists(cache_dir):
-        if DEBUG >= 2: print(f"Found model files at {cache_dir}, deleting...")
-        try:
-          shutil.rmtree(cache_dir)
-          return web.json_response({"status": "success", "message": f"Model {model_name} deleted successfully", "path": str(cache_dir)})
-        except Exception as e:
-          return web.json_response({"detail": f"Failed to delete model files: {str(e)}"}, status=500)
-      else:
-        return web.json_response({"detail": f"Model files not found at {cache_dir}"}, status=404)
+      if await delete_model(model_id, self.inference_engine_classname): return web.json_response({"status": "success", "message": f"Model {model_id} deleted successfully"})
+      else: return web.json_response({"detail": f"Model {model_id} files not found"}, status=404)
+    except Exception as e:
+      if DEBUG >= 2: traceback.print_exc()
+      return web.json_response({"detail": f"Error deleting model: {str(e)}"}, status=500)
 
     except Exception as e:
       print(f"Error in handle_delete_model: {str(e)}")

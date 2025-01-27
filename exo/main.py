@@ -23,19 +23,18 @@ from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
-from exo.download.shard_download import ShardDownloader, RepoProgressEvent, NoopShardDownloader
-from exo.download.hf.new_shard_download import new_shard_downloader
+from exo.download.shard_download import ShardDownloader, NoopShardDownloader
+from exo.download.download_progress import RepoProgressEvent
+from exo.download.new_shard_download import new_shard_downloader, has_exo_home_read_access, has_exo_home_write_access, exo_home, seed_models
 from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
-from exo.download.hf.hf_helpers import has_hf_home_read_access, has_hf_home_write_access, get_hf_home, move_models_to_hf
 import uvloop
 from contextlib import asynccontextmanager
 import concurrent.futures
-import socket
 import resource
 import psutil
 
@@ -321,13 +320,13 @@ async def train_model_cli(node: Node, inference_engine: InferenceEngine, model_n
 async def main():
   loop = asyncio.get_running_loop()
 
-  # Check HuggingFace directory permissions
-  hf_home, has_read, has_write = get_hf_home(), await has_hf_home_read_access(), await has_hf_home_write_access()
-  if DEBUG >= 1: print(f"Model storage directory: {hf_home}")
+  # Check exo directory permissions
+  home, has_read, has_write = exo_home(), await has_exo_home_read_access(), await has_exo_home_write_access()
+  if DEBUG >= 1: print(f"exo home directory: {home}")
   print(f"{has_read=}, {has_write=}")
   if not has_read or not has_write:
     print(f"""
-          WARNING: Limited permissions for model storage directory: {hf_home}.
+          WARNING: Limited permissions for exo home directory: {home}.
           This may prevent model downloads from working correctly.
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}
@@ -336,9 +335,9 @@ async def main():
   if not args.models_seed_dir is None:
     try:
       models_seed_dir = clean_path(args.models_seed_dir)
-      await move_models_to_hf(models_seed_dir)
+      await seed_models(models_seed_dir)
     except Exception as e:
-      print(f"Error moving models to .cache/huggingface: {e}")
+      print(f"Error seeding models: {e}")
 
   def restore_cursor():
     if platform.system() != "Windows":

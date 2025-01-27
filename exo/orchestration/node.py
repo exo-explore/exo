@@ -13,7 +13,7 @@ from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, 
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
-from exo.download.hf.hf_helpers import RepoProgressEvent
+from exo.download.download_progress import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.shard_download import ShardDownloader
 

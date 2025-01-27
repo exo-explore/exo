@@ -16,14 +16,45 @@ import time
 from datetime import timedelta
 import asyncio
 import json
+import traceback
+import shutil
 
 def exo_home() -> Path:
   return Path(os.environ.get("EXO_HOME", Path.home()/".cache"/"exo"))
+
+async def has_exo_home_read_access() -> bool:
+  try: return await aios.access(exo_home(), os.R_OK)
+  except OSError: return False
+
+async def has_exo_home_write_access() -> bool:
+  try: return await aios.access(exo_home(), os.W_OK)
+  except OSError: return False
 
 async def ensure_downloads_dir() -> Path:
   downloads_dir = exo_home()/"downloads"
   await aios.makedirs(downloads_dir, exist_ok=True)
   return downloads_dir
+
+async def delete_model(model_id: str, inference_engine_name: str) -> bool:
+  repo_id = get_repo(model_id, inference_engine_name)
+  model_dir = await ensure_downloads_dir()/repo_id.replace("/", "--")
+  if not await aios.path.exists(model_dir): return False
+  await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
+  return True
+
+async def seed_models(seed_dir: Union[str, Path]):
+  """Move model in resources folder of app to .cache/huggingface/hub"""
+  source_dir = Path(seed_dir)
+  dest_dir = await ensure_downloads_dir()
+  for path in source_dir.iterdir():
+    if path.is_dir() and path.name.startswith("models--"):
+      dest_path = dest_dir/path.name
+      if await aios.path.exists(dest_path): print('Skipping moving model to .cache directory')
+      else:
+        try: await aios.rename(str(path), str(dest_path))
+        except:
+          print(f"Error seeding model {path} to {dest_path}")
+          traceback.print_exc()
 
 async def fetch_file_list(session, repo_id, revision, path=""):
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
@@ -44,8 +75,9 @@ async def fetch_file_list(session, repo_id, revision, path=""):
     else:
       raise Exception(f"Failed to fetch file list: {response.status}")
 
-async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Optional[Callable[[int, int], None]] = None) -> Path:
+async def download_file(session: aiohttp.ClientSession, repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Callable[[int, int], None] = lambda _, __: None) -> Path:
   if (target_dir/path).exists(): return target_dir/path
+  await aios.makedirs((target_dir/path).parent, exist_ok=True)
   base_url = f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/"
   url = urljoin(base_url, path)
   headers = await get_auth_headers()
@@ -71,8 +103,7 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]
   target_dir = await ensure_downloads_dir()/repo_id.replace("/", "--")
   async with aiohttp.ClientSession() as session:
     index_file = await download_file(session, repo_id, revision, "model.safetensors.index.json", target_dir)
-    async with aiofiles.open(index_file, 'r') as f:
-      index_data = json.loads(await f.read())
+    async with aiofiles.open(index_file, 'r') as f: index_data = json.loads(await f.read())
     return index_data.get("weight_map")
 
 async def resolve_allow_patterns(shard: Shard, inference_engine_classname: str) -> list[str]:
