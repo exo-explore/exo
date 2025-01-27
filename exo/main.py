@@ -221,6 +221,7 @@ last_broadcast_time = 0
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
   global last_broadcast_time
   current_time = time.time()
+  if event.status == "not_started": return
   if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
     last_broadcast_time = current_time
     asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
