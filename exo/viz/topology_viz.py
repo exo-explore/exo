@@ -51,17 +51,11 @@ class TopologyViz:
     self.refresh()
 
   def update_prompt(self, request_id: str, prompt: Optional[str] = None):
-    if request_id in self.requests:
-      self.requests[request_id] = [prompt, self.requests[request_id][1]]
-    else:
-      self.requests[request_id] = [prompt, ""]
+    self.requests[request_id] = [prompt, self.requests.get(request_id, ["", ""])[1]]
     self.refresh()
 
   def update_prompt_output(self, request_id: str, output: Optional[str] = None):
-    if request_id in self.requests:
-      self.requests[request_id] = [self.requests[request_id][0], output]
-    else:
-      self.requests[request_id] = ["", output]
+    self.requests[request_id] = [self.requests.get(request_id, ["", ""])[0], output]
     self.refresh()
 
   def refresh(self):
@@ -101,10 +95,10 @@ class TopologyViz:
       prompt_icon, output_icon = "💬️", "🤖"
 
       # Calculate max lines for prompt and output
-      max_prompt_lines = lines_per_entry // 3  # Allocate 1/3 for prompt
+      max_prompt_lines = max(3, lines_per_entry // 2)  # Ensure at least 3 lines for prompt
       max_output_lines = lines_per_entry - max_prompt_lines - 1  # Remaining space minus spacing
 
-      # Process prompt
+      # Process prompt with more generous line allocation
       prompt_lines = []
       for line in prompt.split('\n'):
         words = line.split()
@@ -124,8 +118,15 @@ class TopologyViz:
         if current_line:
           prompt_lines.append(' '.join(current_line))
 
+      # Show more prompt content and append ellipses to last line if needed
       if len(prompt_lines) > max_prompt_lines:
-        prompt_lines = prompt_lines[:max_prompt_lines - 1] + ['...']
+        prompt_lines = prompt_lines[:max_prompt_lines]
+        # Append ellipses to last line if there's room, otherwise truncate last line
+        last_line = prompt_lines[-1]
+        if len(last_line) + 4 <= max_width:  # +4 for " ..."
+          prompt_lines[-1] = last_line + " ..."
+        else:
+          prompt_lines[-1] = last_line[:max_width-4] + " ..."
 
       prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
       prompt_text.append('\n'.join(prompt_lines), style="white")
@@ -151,7 +152,13 @@ class TopologyViz:
           output_lines.append(' '.join(current_line))
 
       if len(output_lines) > max_output_lines:
-        output_lines = output_lines[:max_output_lines - 1] + ['...']
+        output_lines = output_lines[:max_output_lines]
+        last_line = output_lines[-1] if output_lines else None
+        if last_line:
+          if len(last_line) + 4 <= max_width:
+            output_lines[-1] = last_line + " ..."
+          else:
+            output_lines[-1] = last_line[:max_width-4] + " ..."
 
       output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
       output_text.append('\n'.join(output_lines), style="white")
