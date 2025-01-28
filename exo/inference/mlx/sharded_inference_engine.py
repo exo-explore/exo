@@ -1,10 +1,10 @@
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.sample_utils import top_p_sampling, make_sampler
+from mlx_lm.sample_utils import make_sampler
 import mlx.optimizers as optim
 from ..inference_engine import InferenceEngine
-from .sharded_utils import load_shard, load_model_shard, resolve_tokenizer
+from .sharded_utils import load_model_shard, resolve_tokenizer
 from .losses import loss_fns
 from ..shard import Shard
 from typing import Dict, Optional, Tuple
