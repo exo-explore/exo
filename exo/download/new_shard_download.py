@@ -105,7 +105,7 @@ def calculate_repo_progress(shard: Shard, repo_id: str, revision: str, file_prog
   elapsed_time = time.time() - all_start_time
   all_speed = all_downloaded_bytes_this_session / elapsed_time if elapsed_time > 0 else 0
   all_eta = timedelta(seconds=(all_total_bytes - all_downloaded_bytes) / all_speed) if all_speed > 0 else timedelta(seconds=0)
-  status = "complete" if all(p.status == "complete" for p in file_progress.values()) else "not_started" if all(p.status == "not_started" for p in file_progress.values()) else "in_progress"
+  status = "complete" if all(p.status == "complete" for p in file_progress.values()) else "in_progress" if any(p.status == "in_progress" for p in file_progress.values()) else "not_started"
   return RepoProgressEvent(shard, repo_id, revision, len([p for p in file_progress.values() if p.downloaded == p.total]), len(file_progress), all_downloaded_bytes, all_downloaded_bytes_this_session, all_total_bytes, all_speed, all_eta, file_progress, status)
 
 async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]:
