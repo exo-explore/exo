@@ -193,24 +193,20 @@ def update_prompt_viz(request_id, opaque_status: str):
       traceback.print_exc()
 node.on_opaque_status.register("update_prompt_viz").on_next(update_prompt_viz)
 
-def preemptively_start_download(request_id: str, opaque_status: str):
+def preemptively_load_shard(request_id: str, opaque_status: str):
   try:
     status = json.loads(opaque_status)
     if status.get("type") != "node_status" or status.get("status") != "start_process_prompt": return
     current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
     if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
-    asyncio.create_task(shard_downloader.ensure_shard(current_shard, node.inference_engine.__class__.__name__))
+    asyncio.create_task(node.inference_engine.ensure_shard(current_shard))
   except Exception as e:
     if DEBUG >= 2:
       print(f"Failed to preemptively start download: {e}")
       traceback.print_exc()
-
-
-node.on_opaque_status.register("start_download").on_next(preemptively_start_download)
+node.on_opaque_status.register("preemptively_load_shard").on_next(preemptively_load_shard)
 
 last_broadcast_time = 0
-
-
 def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
   global last_broadcast_time
   current_time = time.time()
@@ -218,8 +214,6 @@ def throttled_broadcast(shard: Shard, event: RepoProgressEvent):
   if event.status == "complete" or current_time - last_broadcast_time >= 0.1:
     last_broadcast_time = current_time
     asyncio.create_task(node.broadcast_opaque_status("", json.dumps({"type": "download_progress", "node_id": node.id, "progress": event.to_dict()})))
-
-
 shard_downloader.on_progress.register("broadcast").on_next(throttled_broadcast)
 
 async def run_model_cli(node: Node, model_name: str, prompt: str):
