@@ -211,8 +211,8 @@ async def linux_device_capabilities() -> DeviceCapabilities:
 
     return DeviceCapabilities(
       model="Linux Box ({gpu_name})",
-      chip={gpu_name},
-      memory=gpu_memory_info.total // 2**20,
+      chip=gpu_name,
+      memory=gpu_memory_info // 2**20,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
     )
 
