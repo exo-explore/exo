@@ -89,16 +89,16 @@ class TopologyViz:
     # Calculate available height for content
     panel_height = 15  # Fixed panel height
     available_lines = panel_height - 2  # Subtract 2 for panel borders
-    lines_per_entry = available_lines // len(requests) if requests else 0
+    lines_per_request = available_lines // len(requests) if requests else 0
 
     for (prompt, output) in reversed(requests):
       prompt_icon, output_icon = "💬️", "🤖"
 
-      # Calculate max lines for prompt and output
-      max_prompt_lines = max(3, lines_per_entry // 2)  # Ensure at least 3 lines for prompt
-      max_output_lines = lines_per_entry - max_prompt_lines - 1  # Remaining space minus spacing
+      # Equal space allocation for prompt and output
+      max_prompt_lines = lines_per_request // 2
+      max_output_lines = lines_per_request - max_prompt_lines - 1  # -1 for spacing
 
-      # Process prompt with more generous line allocation
+      # Process prompt
       prompt_lines = []
       for line in prompt.split('\n'):
         words = line.split()
@@ -118,53 +118,55 @@ class TopologyViz:
         if current_line:
           prompt_lines.append(' '.join(current_line))
 
-      # Show more prompt content and append ellipses to last line if needed
+      # Truncate prompt if needed
       if len(prompt_lines) > max_prompt_lines:
         prompt_lines = prompt_lines[:max_prompt_lines]
-        # Append ellipses to last line if there's room, otherwise truncate last line
-        last_line = prompt_lines[-1]
-        if len(last_line) + 4 <= max_width:  # +4 for " ..."
-          prompt_lines[-1] = last_line + " ..."
-        else:
-          prompt_lines[-1] = last_line[:max_width-4] + " ..."
+        if prompt_lines:
+          last_line = prompt_lines[-1]
+          if len(last_line) + 4 <= max_width:
+            prompt_lines[-1] = last_line + " ..."
+          else:
+            prompt_lines[-1] = last_line[:max_width-4] + " ..."
 
       prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
       prompt_text.append('\n'.join(prompt_lines), style="white")
-
-      # Process output - same word-aware wrapping
-      output_lines = []
-      for line in output.split('\n'):
-        words = line.split()
-        current_line = []
-        current_length = 0
-
-        for word in words:
-          if current_length + len(word) + 1 <= max_width:
-            current_line.append(word)
-            current_length += len(word) + 1
-          else:
-            if current_line:
-              output_lines.append(' '.join(current_line))
-            current_line = [word]
-            current_length = len(word)
-
-        if current_line:
-          output_lines.append(' '.join(current_line))
-
-      if len(output_lines) > max_output_lines:
-        output_lines = output_lines[:max_output_lines]
-        last_line = output_lines[-1] if output_lines else None
-        if last_line:
-          if len(last_line) + 4 <= max_width:
-            output_lines[-1] = last_line + " ..."
-          else:
-            output_lines[-1] = last_line[:max_width-4] + " ..."
-
-      output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
-      output_text.append('\n'.join(output_lines), style="white")
-
       content.append(prompt_text)
-      content.append(output_text)
+
+      # Process output with similar word wrapping
+      if output:  # Only process output if it exists
+        output_lines = []
+        for line in output.split('\n'):
+          words = line.split()
+          current_line = []
+          current_length = 0
+
+          for word in words:
+            if current_length + len(word) + 1 <= max_width:
+              current_line.append(word)
+              current_length += len(word) + 1
+            else:
+              if current_line:
+                output_lines.append(' '.join(current_line))
+              current_line = [word]
+              current_length = len(word)
+
+          if current_line:
+            output_lines.append(' '.join(current_line))
+
+        # Truncate output if needed
+        if len(output_lines) > max_output_lines:
+          output_lines = output_lines[:max_output_lines]
+          if output_lines:
+            last_line = output_lines[-1]
+            if len(last_line) + 4 <= max_width:
+              output_lines[-1] = last_line + " ..."
+            else:
+              output_lines[-1] = last_line[:max_width-4] + " ..."
+
+        output_text = Text(f"{output_icon} ", style="bold bright_magenta")
+        output_text.append('\n'.join(output_lines), style="white")
+        content.append(output_text)
+
       content.append(Text())  # Empty line between entries
 
     return Panel(
