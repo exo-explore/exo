@@ -21,7 +21,7 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, NoopShardDownloader
 from exo.download.download_progress import RepoProgressEvent
-from exo.download.new_shard_download import new_shard_downloader, has_exo_home_read_access, has_exo_home_write_access, exo_home, seed_models
+from exo.download.new_shard_download import new_shard_downloader, has_exo_home_read_access, has_exo_home_write_access, ensure_exo_home, seed_models
 from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine
@@ -306,12 +306,8 @@ async def train_model_cli(node: Node, model_name, dataloader, batch_size, iters,
       await hold_outstanding(node)
   await hold_outstanding(node)
 
-
-async def main():
-  loop = asyncio.get_running_loop()
-
-  # Check exo directory permissions
-  home, has_read, has_write = exo_home(), await has_exo_home_read_access(), await has_exo_home_write_access()
+async def check_exo_home():
+  home, has_read, has_write = await ensure_exo_home(), await has_exo_home_read_access(), await has_exo_home_write_access()
   if DEBUG >= 1: print(f"exo home directory: {home}")
   print(f"{has_read=}, {has_write=}")
   if not has_read or not has_write:
@@ -321,6 +317,12 @@ async def main():
           {"❌ No read access" if not has_read else ""}
           {"❌ No write access" if not has_write else ""}
           """)
+
+async def main():
+  loop = asyncio.get_running_loop()
+
+  try: await check_exo_home()
+  except Exception as e: print(f"Error checking exo home directory: {e}")
 
   if not args.models_seed_dir is None:
     try:
