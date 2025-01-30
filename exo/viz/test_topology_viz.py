@@ -5,7 +5,7 @@ from exo.viz.topology_viz import TopologyViz
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import DeviceCapabilities, DeviceFlops
 from exo.topology.partitioning_strategy import Partition
-from exo.download.hf.hf_helpers import RepoProgressEvent, RepoFileProgressEvent
+from exo.download.download_progress import RepoProgressEvent
 
 
 def create_hf_repo_progress_event(

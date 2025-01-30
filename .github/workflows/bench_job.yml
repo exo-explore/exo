@@ -1,0 +1,207 @@
+# This is the reusable workflow file
+name: Distributed Job Runner
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        required: true
+        type: string
+      model:
+        required: true
+        type: string
+      calling_job_name:
+        required: true
+        type: string
+      network_interface:
+        required: true
+        type: string
+jobs:
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: |
+          MATRIX=$(echo $CONFIG | jq -c '{cpu: [to_entries | .[] | .key as $k | range(.value) | $k]}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  run-distributed-job:
+    needs: generate-matrix
+    strategy:
+      matrix: ${{fromJson(needs.generate-matrix.outputs.matrix)}}
+    runs-on: ['self-hosted', 'macOS', '${{ matrix.cpu }}']
+    env:
+      HARDWARE_CONFIG: ${{ inputs.config }}
+      model: ${{ inputs.model }}
+      # Add performance-related environment variables
+      MTL_DEBUG_LAYER: 0
+      METAL_VALIDATION_ENABLED: 0
+      MLX_METAL_VALIDATION: 0
+      MLX_METAL_DEBUG: 0
+      MLX_FORCE_P_CORES: 1
+      MLX_METAL_PREWARM: 1
+      PYTHONOPTIMIZE: 2
+    steps:
+      - name: Cleanup workspace
+        run: |
+          sudo rm -rf "$GITHUB_WORKSPACE"
+          sudo mkdir -p "$GITHUB_WORKSPACE"
+          sudo chown -R $(whoami):$(id -g) "$GITHUB_WORKSPACE"
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          python3.12 -m venv .venv || {
+            echo "Failed to find python3.12. Checking installation locations:"
+            ls -l /usr/local/bin/python* /opt/homebrew/bin/python* 2>/dev/null || true
+            exit 1
+          }
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -e .
+          pip install boto3==1.35.76
+
+      - name: Apply Performance Optimizations
+        run: |
+          # Export performance-related environment variables
+          cat << 'EOF' > /tmp/performance_env.sh
+          # MLX and Metal optimizations
+          export MTL_DEBUG_LAYER=0
+          export METAL_VALIDATION_ENABLED=0
+          export MLX_METAL_VALIDATION=0
+          export MLX_METAL_DEBUG=0
+          export MLX_FORCE_P_CORES=1
+          export MLX_METAL_PREWARM=1
+          export PYTHONOPTIMIZE=2
+          EOF
+          
+          # Source the performance environment variables
+          source /tmp/performance_env.sh
+
+          # MLX Memory Settings
+          ./configure_mlx.sh
+          
+          # Verify optimizations
+          echo "Verifying performance settings..."
+          env | grep -E "MLX_|METAL_|MTL_"
+
+      - name: Run exo
+        env:
+          aws_access_key_id: ${{ secrets.S3_EXO_BENCHMARKS_AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.S3_EXO_BENCHMARKS_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # Source performance environment variables
+          source /tmp/performance_env.sh
+          
+          # Debug information
+          echo "Current commit SHA: $GITHUB_SHA"
+          git rev-parse HEAD
+          git status
+          
+          CALLING_JOB="${{ inputs.calling_job_name }}"
+          UNIQUE_JOB_ID="${CALLING_JOB}_${model}_${GITHUB_RUN_ID}"
+          ALL_NODE_IDS=$(for i in $(seq ${{ strategy.job-total }} -1 0); do echo -n "${UNIQUE_JOB_ID}_${i},"; done | sed 's/,$//')
+          MY_NODE_ID="${UNIQUE_JOB_ID}_${{ strategy.job-index }}"
+          
+          source .venv/bin/activate
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          
+          echo "=== Before starting exo ==="
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | grep -i python
+          
+          echo "Starting exo daemon..."
+          
+          echo "Power mode settings:"
+          sudo pmset -g
+          
+          # Start exo with explicit process control
+          sudo taskpolicy -d default -g default -a -t 0 -l 0 .venv/bin/exo \
+            --node-id="${MY_NODE_ID}" \
+            --node-id-filter="${ALL_NODE_IDS}" \
+            --interface-type-filter="${{ inputs.network_interface }}" \
+            --disable-tui \
+            --max-generate-tokens 250 \
+            --chatgpt-api-response-timeout 900 \
+            --chatgpt-api-port 52415 > output1.log 2>&1 &
+          PID1=$!
+          
+          echo "Exo process started with PID: $PID1"
+          tail -f output1.log &
+          TAIL1=$!
+
+          # Give process time to start
+          sleep 2
+          
+          # Set additional process priorities
+          sudo renice -n -20 -p $PID1
+          sudo taskpolicy -t 4 -p $PID1
+          
+          echo "=== After starting exo ==="
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | head -1
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,pri,command | grep $PID1
+          
+          echo "Additional process details:"
+          sudo powermetrics -n 1 -i 1000 --show-process-energy | grep -A 5 $PID1 || true
+
+          trap 'kill $TAIL1' EXIT
+          trap 'kill $PID1' EXIT
+
+          echo "Waiting for all nodes to connect..."
+          for i in {1..20}; do
+            echo "Attempt $i: Checking node count..."
+            nodes=$(curl -s http://localhost:52415/topology | jq ".nodes | length")
+            echo "Current node count: $nodes"
+            if [ "$nodes" -eq "${{ strategy.job-total }}" ]; then
+              echo "All nodes connected successfully!"
+              break
+            fi
+            if [ $i -eq 20 ]; then
+              echo "ERROR: Failed to connect all nodes after 20 attempts. Expected ${{ strategy.job-total }} nodes, but got $nodes"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          if ! kill -0 $PID1 2>/dev/null; then
+              echo "ERROR: Instance (PID $PID1) died unexpectedly. Full log output:"
+              cat output1.log
+              exit 1
+          fi
+
+          if [ "${{ strategy.job-index }}" -eq "0" ]; then
+            sleep 10
+            echo "This is the primary node (index 0). Running benchmark..."
+            GITHUB_JOB=$CALLING_JOB python .github/bench.py
+          else
+            echo "This is a secondary node (index ${{ strategy.job-index }}). Waiting for completion..."
+            sleep 10
+            while true; do
+              echo "Checking if primary node is still running..."
+              nodes=$(curl -s http://localhost:52415/topology | jq ".nodes | length")
+              echo "Current node count: $nodes"
+              if [ "$nodes" -lt "${{ strategy.job-total }}" ]; then
+                echo "Primary node completed, exiting..."
+                break
+              fi
+              sleep 5
+            done
+          fi
+
+      - name: Check Final System State
+        if: always()
+        run: |
+          echo "=== Final System State ==="
+          sudo pmset -g
+          sudo powermetrics -n 1 -i 1000 --show-process-energy || true
+          system_profiler SPDisplaysDataType
+          sysctl iogpu
+          ps -eo pid,ppid,user,%cpu,%mem,nice,state,command | grep -i python
+          env | grep -E "MLX_|METAL_|MTL_"
+          echo "=== End Final System State ==="

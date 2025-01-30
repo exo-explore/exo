@@ -5,7 +5,7 @@ document.addEventListener("alpine:init", () => {
       time: null,
       messages: [],
       selectedModel: 'llama-3.2-1b',
-    },    
+    },
 
     // historical state
     histories: JSON.parse(localStorage.getItem("histories")) || [],
@@ -13,7 +13,7 @@ document.addEventListener("alpine:init", () => {
     home: 0,
     generating: false,
     endpoint: `${window.location.origin}/v1`,
-    
+
     // Initialize error message structure
     errorMessage: null,
     errorExpanded: false,
@@ -39,6 +39,12 @@ document.addEventListener("alpine:init", () => {
     // Add models state alongside existing state
     models: {},
 
+    topology: null,
+    topologyInterval: null,
+
+    // Add these new properties
+    expandedGroups: {},
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -48,7 +54,7 @@ document.addEventListener("alpine:init", () => {
 
       // Start polling for download progress
       this.startDownloadProgressPolling();
-      
+
       // Start model polling with the new pattern
       this.startModelPolling();
     },
@@ -69,12 +75,12 @@ document.addEventListener("alpine:init", () => {
       while (true) {
         try {
           await this.populateSelector();
-          // Wait 5 seconds before next poll
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          // Wait 15 seconds before next poll
+          await new Promise(resolve => setTimeout(resolve, 15000));
         } catch (error) {
           console.error('Model polling error:', error);
           // If there's an error, wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
     },
@@ -82,14 +88,14 @@ document.addEventListener("alpine:init", () => {
     async populateSelector() {
       return new Promise((resolve, reject) => {
         const evtSource = new EventSource(`${window.location.origin}/modelpool`);
-        
+
         evtSource.onmessage = (event) => {
           if (event.data === "[DONE]") {
             evtSource.close();
             resolve();
             return;
           }
-          
+
           const modelData = JSON.parse(event.data);
           // Update existing model data while preserving other properties
           Object.entries(modelData).forEach(([modelName, data]) => {
@@ -102,7 +108,7 @@ document.addEventListener("alpine:init", () => {
             }
           });
         };
-        
+
         evtSource.onerror = (error) => {
           console.error('EventSource failed:', error);
           evtSource.close();
@@ -390,8 +396,6 @@ document.addEventListener("alpine:init", () => {
     },
 
     async *openaiChatCompletion(model, messages) {
-      // stream response
-      console.log("model", model)
       const response = await fetch(`${this.endpoint}/chat/completions`, {
         method: "POST",
         headers: {
@@ -414,19 +418,17 @@ document.addEventListener("alpine:init", () => {
 
       const reader = response.body.pipeThrough(new TextDecoderStream())
         .pipeThrough(new EventSourceParserStream()).getReader();
+      
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
+        if (done) break;
+        
         if (value.type === "event") {
           const json = JSON.parse(value.data);
           if (json.choices) {
             const choice = json.choices[0];
-            if (choice.finish_reason === "stop") {
-              break;
-            }
-            yield choice.delta.content;
+            if (choice.finish_reason === "stop") break;
+            if (choice.delta.content) yield choice.delta.content;
           }
         }
       }
@@ -509,7 +511,7 @@ document.addEventListener("alpine:init", () => {
         stack: error.stack || ""
       };
       this.errorExpanded = false;
-      
+
       if (this.errorTimeout) {
         clearTimeout(this.errorTimeout);
       }
@@ -524,10 +526,10 @@ document.addEventListener("alpine:init", () => {
 
     async deleteModel(modelName, model) {
       const downloadedSize = model.total_downloaded || 0;
-      const sizeMessage = downloadedSize > 0 ? 
+      const sizeMessage = downloadedSize > 0 ?
         `This will free up ${this.formatBytes(downloadedSize)} of space.` :
         'This will remove any partially downloaded files.';
-      
+
       if (!confirm(`Are you sure you want to delete ${model.name}? ${sizeMessage}`)) {
         return;
       }
@@ -541,7 +543,7 @@ document.addEventListener("alpine:init", () => {
         });
 
         const data = await response.json();
-        
+
         if (!response.ok) {
           throw new Error(data.detail || 'Failed to delete model');
         }
@@ -600,7 +602,123 @@ document.addEventListener("alpine:init", () => {
         console.error('Error starting download:', error);
         this.setError(error);
       }
-    }
+    },
+
+    async fetchTopology() {
+      try {
+        const response = await fetch(`${this.endpoint}/topology`);
+        if (!response.ok) throw new Error('Failed to fetch topology');
+        return await response.json();
+      } catch (error) {
+        console.error('Topology fetch error:', error);
+        return null;
+      }
+    },
+
+    initTopology() {
+      // Initial fetch
+      this.updateTopology();
+
+      // Set up periodic updates
+      this.topologyInterval = setInterval(() => this.updateTopology(), 5000);
+
+      // Cleanup on page unload
+      window.addEventListener('beforeunload', () => {
+        if (this.topologyInterval) {
+          clearInterval(this.topologyInterval);
+        }
+      });
+    },
+
+    async updateTopology() {
+      const topologyData = await this.fetchTopology();
+      if (!topologyData) return;
+
+      const vizElement = this.$refs.topologyViz;
+      vizElement.innerHTML = ''; // Clear existing visualization
+
+      // Helper function to truncate node ID
+      const truncateNodeId = (id) => id.substring(0, 8);
+
+      // Create nodes from object
+      Object.entries(topologyData.nodes).forEach(([nodeId, node]) => {
+        const nodeElement = document.createElement('div');
+        nodeElement.className = 'topology-node';
+
+        // Get peer connections for this node
+        const peerConnections = topologyData.peer_graph[nodeId] || [];
+        const peerConnectionsHtml = peerConnections.map(peer => `
+          <div class="peer-connection">
+            <i class="fas fa-arrow-right"></i>
+            <span>To ${truncateNodeId(peer.to_id)}: ${peer.description}</span>
+          </div>
+        `).join('');
+
+        nodeElement.innerHTML = `
+          <div class="node-info">
+            <span class="status ${nodeId === topologyData.active_node_id ? 'active' : 'inactive'}"></span>
+            <span>${node.model} [${truncateNodeId(nodeId)}]</span>
+          </div>
+          <div class="node-details">
+            <span>${node.chip}</span>
+            <span>${(node.memory / 1024).toFixed(1)}GB RAM</span>
+            <span>${node.flops.fp32.toFixed(1)} TF</span>
+          </div>
+          <div class="peer-connections">
+            ${peerConnectionsHtml}
+          </div>
+        `;
+        vizElement.appendChild(nodeElement);
+      });
+    },
+
+    // Add these helper methods
+    countDownloadedModels(models) {
+      return Object.values(models).filter(model => model.downloaded).length;
+    },
+
+    getGroupCounts(groupModels) {
+      const total = Object.keys(groupModels).length;
+      const downloaded = this.countDownloadedModels(groupModels);
+      return `[${downloaded}/${total}]`;
+    },
+
+    // Update the existing groupModelsByPrefix method to include counts
+    groupModelsByPrefix(models) {
+      const groups = {};
+      Object.entries(models).forEach(([key, model]) => {
+        const parts = key.split('-');
+        const mainPrefix = parts[0].toUpperCase();
+        
+        let subPrefix;
+        if (parts.length === 2) {
+          subPrefix = parts[1].toUpperCase();
+        } else if (parts.length > 2) {
+          subPrefix = parts[1].toUpperCase();
+        } else {
+          subPrefix = 'OTHER';
+        }
+        
+        if (!groups[mainPrefix]) {
+          groups[mainPrefix] = {};
+        }
+        if (!groups[mainPrefix][subPrefix]) {
+          groups[mainPrefix][subPrefix] = {};
+        }
+        groups[mainPrefix][subPrefix][key] = model;
+      });
+      return groups;
+    },
+
+    toggleGroup(prefix, subPrefix = null) {
+      const key = subPrefix ? `${prefix}-${subPrefix}` : prefix;
+      this.expandedGroups[key] = !this.expandedGroups[key];
+    },
+
+    isGroupExpanded(prefix, subPrefix = null) {
+      const key = subPrefix ? `${prefix}-${subPrefix}` : prefix;
+      return this.expandedGroups[key] || false;
+    },
   }));
 });
 

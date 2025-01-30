@@ -52,9 +52,5 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
-  async def get_inference_result(self, request_id: str) -> Tuple[Optional[np.ndarray], bool]:
-    pass
-
-  @abstractmethod
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
     pass

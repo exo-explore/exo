@@ -60,7 +60,7 @@ Unlike other distributed inference frameworks, exo does not use a master-worker 
 
 Exo supports different [partitioning strategies](exo/topology/partitioning_strategy.py) to split up a model across devices. The default partitioning strategy is [ring memory weighted partitioning](exo/topology/ring_memory_weighted_partitioning_strategy.py). This runs an inference in a ring where each device runs a number of model layers proportional to the memory of the device.
 
-!["A screenshot of exo running 5 nodes](docs/exo-screenshot.png)
+!["A screenshot of exo running 5 nodes](docs/exo-screenshot.jpg)
 
 ## Installation
 
@@ -212,9 +212,9 @@ exo run llama-3.2-3b --prompt "What is the meaning of exo?"
 
 ### Model Storage
 
-Models by default are stored in `~/.cache/huggingface/hub`.
+Models by default are stored in `~/.cache/exo/downloads`.
 
-You can set a different model storage location by setting the `HF_HOME` env var.
+You can set a different model storage location by setting the `EXO_HOME` env var.
 
 ## Debugging
 

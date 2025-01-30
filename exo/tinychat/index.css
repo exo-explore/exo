@@ -139,6 +139,14 @@ main {
   padding: 0.5rem 1rem;
   border-radius: 20px;
 }
+
+@media(max-width: 1482px) {
+  .messages {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
 .message-role-assistant {
   background-color: var(--secondary-color);
   margin-right: auto;
@@ -149,6 +157,12 @@ main {
   background-color: var(--primary-color);
   color: #000;
 }
+
+.message-role-user p {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
 .download-progress {
   position: fixed;
   bottom: 11rem;
@@ -654,4 +668,179 @@ main {
 
 .model-download-button i {
   font-size: 0.9em;
+}
+
+.topology-section {
+  margin-bottom: 30px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.topology-visualization {
+  min-height: 150px;
+  position: relative;
+  margin-top: 10px;
+}
+
+.topology-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.topology-node {
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.node-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+}
+
+.topology-node .status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.topology-node .status.active {
+  background: #4CAF50;
+}
+
+.topology-node .status.inactive {
+  background: #666;
+}
+
+.node-details {
+  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+.node-details span {
+  display: flex;
+  align-items: center;
+}
+
+.peer-connections {
+  margin-top: 8px;
+  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.peer-connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: #a0a0a0;
+}
+
+.peer-connection i {
+  font-size: 0.8em;
+  color: #666;
+}
+
+.thinking-block {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.thinking-header {
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  font-size: 0.9em;
+  color: #a0a0a0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-content {
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+@keyframes thinking-spin {
+  to { transform: rotate(360deg); }
+}
+
+.thinking-header.thinking::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border: 2px solid #a0a0a0;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: thinking-spin 1s linear infinite;
+}
+
+.model-group {
+  margin-bottom: 12px;
+}
+
+.model-group-header,
+.model-subgroup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--primary-bg-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 8px;
+}
+
+.model-group-header:hover,
+.model-subgroup-header:hover {
+  background-color: var(--secondary-color-transparent);
+}
+
+.model-group-content {
+  padding-left: 12px;
+}
+
+.model-subgroup {
+  margin-bottom: 8px;
+}
+
+.model-subgroup-header {
+  font-size: 0.9em;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.model-subgroup-content {
+  padding-left: 12px;
+}
+
+.group-header-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-count {
+  font-size: 0.8em;
+  color: var(--secondary-color-transparent);
+  font-family: monospace;
 }
