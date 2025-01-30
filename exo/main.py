@@ -69,6 +69,7 @@ parser.add_argument("--save-checkpoint-dir", type=str, default="checkpoints", he
 parser.add_argument("--node-id", type=str, default=None, help="Node ID")
 parser.add_argument("--node-host", type=str, default="0.0.0.0", help="Node host")
 parser.add_argument("--node-port", type=int, default=None, help="Node port")
+parser.add_argument("--gpu", type=int, default=0, help="GPU ID to use")
 parser.add_argument("--models-seed-dir", type=str, default=None, help="Model seed directory")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--download-quick-check", action="store_true", help="Quick check local path for model shards download")
@@ -103,6 +104,8 @@ shard_downloader: ShardDownloader = new_shard_downloader() if args.inference_eng
 inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
 print(f"Inference engine name after selection: {inference_engine_name}")
 
+# Sets VISIBLE_DEVICES for tinygrad (only supports one GPU currently)
+os.environ["VISIBLE_DEVICES"] = str(args.gpu)
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
 
