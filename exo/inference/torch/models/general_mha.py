@@ -2,8 +2,6 @@
 GeneralMHA class
 Return transformer model with MHA
 """
-import re
-
 from typing import Optional, Tuple
 
 import torch

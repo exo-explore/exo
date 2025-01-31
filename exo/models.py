@@ -162,55 +162,94 @@ model_cards = {
   },
   "qwen-2.5-1.5b": {
     "layers": 28,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-1.5B-Instruct"
+    },
   },
   "qwen-2.5-coder-1.5b": {
     "layers": 28,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    },
   },
   "qwen-2.5-3b": {
     "layers": 36,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-3B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-3B-Instruct"
+    },
   },
   "qwen-2.5-coder-3b": {
     "layers": 36,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-3B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-3B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Coder-3B-Instruct"
+    },
   },
   "qwen-2.5-7b": {
     "layers": 28,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-7B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-7B-Instruct"
+    },
   },
   "qwen-2.5-coder-7b": {
     "layers": 28,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Coder-7B-Instruct"
+    },
   },
   "qwen-2.5-math-7b": {
     "layers": 28,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Math-7B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Math-7B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Math-7B-Instruct"
+    },
   },
   "qwen-2.5-14b": {
     "layers": 48,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-14B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-14B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-14B-Instruct"
+    },
   },
   "qwen-2.5-coder-14b": {
     "layers": 48,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Coder-14B-Instruct"
+    },
   },
   "qwen-2.5-32b": {
     "layers": 64,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-32B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-32B-Instruct"
+    },
   },
   "qwen-2.5-coder-32b": {
     "layers": 64,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Coder-32B-Instruct"
+    },
   },
   "qwen-2.5-72b": {
     "layers": 80,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-72B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-72B-Instruct"
+    },
   },
   "qwen-2.5-math-72b": {
     "layers": 80,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Math-72B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Math-72B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-Math-72B-Instruct"
+    },
   },
   ### nemotron
   "nemotron-70b": {
