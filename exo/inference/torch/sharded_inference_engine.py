@@ -17,7 +17,7 @@ import torchtune.generation as ttg
 from transformers import AutoTokenizer
 
 from exo.inference.inference_engine import InferenceEngine
-from exo.download.hf.hf_shard_download import HFShardDownloader
+from exo.download.shard_download import ShardDownloader
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import _resolve_tokenizer
 from exo.helpers import DEBUG
@@ -38,7 +38,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
   """
   Pytorch based inferece engine for sharded models
   """
-  def __init__(self, shard_downloader: HFShardDownloader):
+  def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.sharded_model = None

@@ -23,6 +23,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-8bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct"
     },
   },
   "llama-3.2-3b": {
@@ -38,6 +39,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-8bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
     },
   },
   "llama-3.2-3b-bf16": {
@@ -45,6 +47,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
     },
   },
   "llama-3.1-8b": {
@@ -52,7 +55,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated",
-      "TorchDynamicShardInferenceEngine": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated",
+      "TorchDynamicShardInferenceEngine": "unsloth/Meta-Llama-3.1-8B-Instruct",
     },
   },
   "llama-3.1-70b": {
@@ -60,6 +63,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-70B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "NousResearch/Meta-Llama-3.1-70B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Meta-Llama-3.1-70B-Instruct",
     },
   },
   "llama-3.1-70b-bf16": {
@@ -67,6 +71,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-70B-Instruct-bf16-CORRECTED",
       "TinygradDynamicShardInferenceEngine": "NousResearch/Meta-Llama-3.1-70B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Meta-Llama-3.1-70B-Instruct",
     },
   },
   "llama-3-8b": {
@@ -74,6 +79,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R",
+      "TorchDynamicShardInferenceEngine": "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-8B-R",
     },
   },
   "llama-3-70b": {
@@ -81,11 +87,15 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3-70B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R",
+      "TorchDynamicShardInferenceEngine": "TriAiExperiments/SFR-Iterative-DPO-LLaMA-3-70B-R",
     },
   },
   "llama-3.1-405b": {
     "layers": 126,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-405B-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Meta-Llama-3.1-405B-4bit",
+      "TorchDynamicShardInferenceEngine": "unsloth/Meta-Llama-3.1-405B-Instruct-bnb-4bit",
+    },
   },
   "llama-3.1-405b-8bit": {
     "layers": 126,
