@@ -40,7 +40,7 @@ def GeneralMHA(
     )
 
     # tied needed for 3.2 llama models
-    if len(re.findall(r"3\.2", shard.model_id)) > 0:
+    if "3.2" in shard.model_id:
       use_tied = True
   elif "qwen" in shard.model_id or "Qwen" in shard.model_id:
     # rope scaling config
@@ -53,7 +53,7 @@ def GeneralMHA(
     output_bias = False
 
     # tied needed for 0.5B qwen models
-    if len(re.findall(r"0\.5B", shard.model_id)) > 0:
+    if "0.5B" in shard.model_id or "0.5b" in shard.model_id:
       use_tied = True
   else:
     rope = RotaryPositionalEmbeddings(
@@ -61,10 +61,13 @@ def GeneralMHA(
       max_seq_len=config["max_seq_len"],
       base=config["rope_base"]
     )
-    
-  print(f"rope: {rope}")
-  print(f"attn_bias: {attn_bias}")
-  print(f"output_bias: {output_bias}")
+  
+  if DEBUG >= 4:
+    print(f"model_id: {shard.model_id}")
+    print(f"rope: {rope}")
+    print(f"attn_bias: {attn_bias}")
+    print(f"output_bias: {output_bias}")
+    print(f"use_tied: {use_tied}")
 
   # hack to align sharded weights with layers
   # fill unused layer positions with None
