@@ -13,24 +13,28 @@ from torchtune.data import Message
 
 from transformers import AutoTokenizer
 
+from exo.inference.torch.models.qwen2 import ShardedQwenModel
 from exo.inference.torch.models.general_mha import ShardedGeneralModel
 from exo.inference.shard import Shard
 
 from exo.inference.torch.models.llm_utils import (
   load_model_config,
-  load_weights_torch,
   load_model_weights_torchtune
 )
 
-MODEL_NAME = "unsloth/Llama-3.2-1B-Instruct"
-# MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
+MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 TEMP = 0.85
 TOP_K = 35
 MAX_NEW_TOKENS = 200
 RAND_SEED = 42
 
 
-def main(model, prompt: str, device: torch.device = torch.device("cpu"), dtype: torch.dtype = torch.bfloat16):
+def main(
+    model,
+    prompt: str,
+    device: torch.device = torch.device("cpu"),
+    dtype: torch.dtype = torch.bfloat16
+):
   messages = [{
     "role": "assistant",
     "content": "",
@@ -206,9 +210,17 @@ if __name__ == "__main__":
   tokenizer = AutoTokenizer.from_pretrained(cache_dir)
 
   # Initialize LlamaModel with config and tokenizer
-  # device = torch.device("cuda")
+#   device = torch.device("cuda")
   dtype = torch.bfloat16
   device = torch.device("cpu")
+  # shard_model_1 = ShardedQwenModel(
+  #   config=config,
+  #   shard=shard_1,
+  #   device=device,
+  #   dtype=config["torch_dtype"],
+  #   use_cache=True,
+  #   max_generated_tokens=MAX_NEW_TOKENS,
+  # )
   shard_model_1 = ShardedGeneralModel(
     config=config,
     shard=shard_1,
@@ -231,5 +243,4 @@ if __name__ == "__main__":
     head_dim=config["head_dim"]
   )
 
-  import time
   main(shard_model_1, prompt, device, config["torch_dtype"])

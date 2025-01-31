@@ -212,9 +212,9 @@ exo run llama-3.2-3b --prompt "What is the meaning of exo?"
 
 ### Model Storage
 
-Models by default are stored in `~/.cache/huggingface/hub`.
+Models by default are stored in `~/.cache/exo/downloads`.
 
-You can set a different model storage location by setting the `HF_HOME` env var.
+You can set a different model storage location by setting the `EXO_HOME` env var.
 
 ## Debugging
 
