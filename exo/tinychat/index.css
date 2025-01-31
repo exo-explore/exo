@@ -139,6 +139,14 @@ main {
   padding: 0.5rem 1rem;
   border-radius: 20px;
 }
+
+@media(max-width: 1482px) {
+  .messages {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
 .message-role-assistant {
   background-color: var(--secondary-color);
   margin-right: auto;
@@ -149,6 +157,12 @@ main {
   background-color: var(--primary-color);
   color: #000;
 }
+
+.message-role-user p {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
 .download-progress {
   position: fixed;
   bottom: 11rem;

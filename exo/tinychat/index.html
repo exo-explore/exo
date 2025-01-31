@@ -193,7 +193,7 @@
             otx = $event.changedTouches[0].clientX;
           " class="history" x-data="{ otx: 0, trigger: 75 }">
 <h3 x-text="new Date(_state.time).toLocaleString()"></h3>
-<p x-text="$truncate(_state.messages[0].content, 80)"></p>
+<p x-text="$truncate(_state.messages[0].content, 76)"></p>
 <!-- delete button -->
 <button @click.stop="removeHistory(_state);" class="history-delete-button">
 <i class="fas fa-trash"></i>

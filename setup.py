@@ -29,7 +29,7 @@ install_requires = [
   "transformers==4.46.3",
   "uuid==1.30",
   "uvloop==0.21.0",
-  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
+  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8",
   "torch==2.5.1",
   "accelerate==0.34.2",
   "torchtune==0.5.0",
