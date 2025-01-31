@@ -518,30 +518,3 @@ def layer_mlp(dim: int, hidden_dim: int) -> FeedForward:
   down_proj = nn.Linear(hidden_dim, dim, bias=False)
   up_proj = nn.Linear(dim, hidden_dim, bias=False)
   return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
-
-"""
-Llama utils
-"""
-def llama3_mlp(dim: int, hidden_dim: int) -> FeedForward:
-  """
-  Build the MLP layer associated with the Llama model.
-  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/llama3_1/_component_builders.py#L124
-  """
-  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
-  down_proj = nn.Linear(hidden_dim, dim, bias=False)
-  up_proj = nn.Linear(dim, hidden_dim, bias=False)
-
-  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
-
-"""
-Qwen utils
-"""
-def qwen2_mlp(dim: int, hidden_dim: int) -> FeedForward:
-  """
-  Build the MLP layer associated with the Qwen2 model.
-  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/qwen2/_component_builders.py#L127C1-L134C82
-  """
-  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
-  down_proj = nn.Linear(hidden_dim, dim, bias=False)
-  up_proj = nn.Linear(dim, hidden_dim, bias=False)
-  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
