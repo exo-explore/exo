@@ -143,7 +143,10 @@ model_cards = {
   ### qwen
   "qwen-2.5-0.5b": {
     "layers": 28,
-    "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",},
+    "repo": {
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-0.5B-Instruct"
+    },
   },
   "qwen-2.5-1.5b": {
     "layers": 28,
@@ -256,6 +259,7 @@ pretty_name = {
   "deepseek-v3": "Deepseek V3",
   "deepseek-r1": "Deepseek R1",
   "llava-1.5-7b-hf": "LLaVa 1.5 7B (Vision Model)",
+  "qwen-2.5-0.5b": "Qwen 2.5 0.5B",
   "qwen-2.5-1.5b": "Qwen 2.5 1.5B",
   "qwen-2.5-coder-1.5b": "Qwen 2.5 Coder 1.5B",
   "qwen-2.5-3b": "Qwen 2.5 3B",

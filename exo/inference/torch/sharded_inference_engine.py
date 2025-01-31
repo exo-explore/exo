@@ -27,8 +27,7 @@ from exo.inference.torch.models.llm_utils import (
   ShardInferenceState
 )
 
-# supported models
-from exo.inference.torch.models.llama3 import ShardedLlamaModel
+from exo.inference.torch.models.general_mha import ShardedGeneralModel
 
 # from torchtune generate recipe
 # https://github.com/pytorch/torchtune/blob/main/recipes/configs/generation.yaml#L40
@@ -399,7 +398,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       if DEBUG >= 4:
         print("start_model called")
 
-      self.sharded_model = ShardedLlamaModel(
+      self.sharded_model = ShardedGeneralModel(
         config=self.model_config,
         shard=shard,
         device=self.device,
