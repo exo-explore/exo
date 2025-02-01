@@ -1,5 +1,5 @@
 """
-Test of pytorch based qwen2 models
+Test of pytorch based mistral models
 full layer run
 """
 
@@ -19,7 +19,7 @@ from exo.inference.torch.models.llm_utils import (
   load_model_weights_torchtune
 )
 
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
+MODEL_NAME = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit"
 TEMP = 0.85
 TOP_K = 35
 MAX_NEW_TOKENS = 200
