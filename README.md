@@ -216,6 +216,16 @@ Models by default are stored in `~/.cache/exo/downloads`.
 
 You can set a different model storage location by setting the `EXO_HOME` env var.
 
+## Model Downloading
+
+Models are downloaded from Hugging Face. If you are running exo in a country with strict internet censorship, you may need to download the models manually and put them in the `~/.cache/exo/downloads` directory.
+
+To download models from a proxy endpoint, set the `HF_ENDPOINT` environment variable. For example, to run exo with the huggingface mirror endpoint:
+
+```sh
+HF_ENDPOINT=https://hf-mirror.com exo
+```
+
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).
