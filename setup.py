@@ -24,7 +24,6 @@ install_requires = [
   "requests==2.32.3",
   "rich==13.7.1",
   "scapy==2.6.1",
-  "tenacity==9.0.0",
   "tqdm==4.66.4",
   "transformers==4.46.3",
   "uuid==1.30",
