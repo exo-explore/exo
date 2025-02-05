@@ -66,7 +66,28 @@ def generate_completion(
   stream: bool,
   finish_reason: Union[Literal["length", "stop"], None],
   object_type: Literal["chat.completion", "text_completion"],
+  partial_tokens: List[int],
 ) -> dict:
+
+  content = tokenizer.decode(tokens if partial_tokens is None else (partial_tokens + tokens))
+
+  if partial_tokens is not None:
+    unicode_partial_char = '�'
+    if (
+        all(char.isspace() or char == unicode_partial_char for char in content)
+        and
+        any(char == unicode_partial_char for char in content)
+    ):
+
+      print(f"unicode_partial_char found! It has {unicode_partial_char} !!", partial_tokens)
+
+      partial_tokens += tokens[:]
+      content = ""
+
+    else:
+      partial_tokens.clear()
+
+
   completion = {
     "id": f"chatcmpl-{request_id}",
     "object": object_type,
@@ -75,7 +96,7 @@ def generate_completion(
     "system_fingerprint": f"exo_{VERSION}",
     "choices": [{
       "index": 0,
-      "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
+      "message": {"role": "assistant", "content": content},
       "logprobs": None,
       "finish_reason": finish_reason,
     }],
@@ -91,9 +112,9 @@ def generate_completion(
   choice = completion["choices"][0]
   if object_type.startswith("chat.completion"):
     key_name = "delta" if stream else "message"
-    choice[key_name] = {"role": "assistant", "content": tokenizer.decode(tokens)}
+    choice[key_name] = {"role": "assistant", "content": content}
   elif object_type == "text_completion":
-    choice["text"] = tokenizer.decode(tokens)
+    choice["text"] = content
   else:
     ValueError(f"Unsupported response type: {object_type}")
 
@@ -373,6 +394,9 @@ class ChatGPTAPI:
         await response.prepare(request)
 
         try:
+          # use partial_tokens to store partial / incomplete token characters
+          partial_tokens = []
+          
           # Stream tokens while waiting for inference to complete
           while True:
             if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for token from queue: {request_id=}")
@@ -399,6 +423,7 @@ class ChatGPTAPI:
               stream,
               finish_reason,
               "chat.completion",
+              partial_tokens,
             )
 
             await response.write(f"data: {json.dumps(completion)}\n\n".encode())
