@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, AsyncIterator
 from pathlib import Path
 from exo.inference.shard import Shard
 from exo.download.download_progress import RepoProgressEvent
@@ -27,7 +27,7 @@ class ShardDownloader(ABC):
     pass
 
   @abstractmethod
-  async def get_shard_download_status(self) -> Optional[Dict[str, float]]:
+  async def get_shard_download_status(self, inference_engine_name: str) -> AsyncIterator[tuple[Path, RepoProgressEvent]]:
     """Get the download status of shards.
     
     Returns:
@@ -45,5 +45,5 @@ class NoopShardDownloader(ShardDownloader):
   def on_progress(self) -> AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]:
     return AsyncCallbackSystem()
 
-  async def get_shard_download_status(self) -> Optional[Dict[str, float]]:
-    return None
+  async def get_shard_download_status(self, inference_engine_name: str) -> AsyncIterator[tuple[Path, RepoProgressEvent]]:
+    if False: yield

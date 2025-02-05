@@ -37,6 +37,6 @@ verbose = os.environ.get("VERBOSE", "0").lower() == "1"
 for m in models:
     # TODO: figure out why use_fast=False is giving inconsistent behaviour (no spaces decoding invididual tokens) for Mistral-Large-Instruct-2407-4bit
     # test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=False), verbose)
-    if m not in ["mlx-community/DeepSeek-R1-4bit", "mlx-community/DeepSeek-V3-4bit"]:
+    if m not in ["mlx-community/DeepSeek-R1-4bit", "mlx-community/DeepSeek-R1-3bit", "mlx-community/DeepSeek-V3-4bit", "mlx-community/DeepSeek-V3-3bit"]:
       test_tokenizer(m, AutoProcessor.from_pretrained(m, use_fast=True, trust_remote_code=True), verbose)
     test_tokenizer(m, AutoTokenizer.from_pretrained(m, trust_remote_code=True), verbose)

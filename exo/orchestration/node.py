@@ -13,9 +13,9 @@ from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, 
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
-from exo.download.hf.hf_helpers import RepoProgressEvent
+from exo.download.download_progress import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
-from exo.download.hf.hf_shard_download import HFShardDownloader
+from exo.download.shard_download import ShardDownloader
 
 class Node:
   def __init__(
@@ -24,16 +24,17 @@ class Node:
     server: Server,
     inference_engine: InferenceEngine,
     discovery: Discovery,
+    shard_downloader: ShardDownloader,
     partitioning_strategy: PartitioningStrategy = None,
     max_generate_tokens: int = 1024,
     default_sample_temperature: float = 0.0,
     topology_viz: Optional[TopologyViz] = None,
-    shard_downloader: Optional[HFShardDownloader] = None,
   ):
     self.id = _id
     self.inference_engine = inference_engine
     self.server = server
     self.discovery = discovery
+    self.shard_downloader = shard_downloader
     self.partitioning_strategy = partitioning_strategy
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
@@ -52,7 +53,6 @@ class Node:
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
     self.topology_inference_engines_pool: List[List[str]] = []
-    self.shard_downloader = shard_downloader
     self.outstanding_requests = {}
 
   async def start(self, wait_for_peers: int = 0) -> None:
@@ -586,6 +586,7 @@ class Node:
     self.on_token.trigger_all(request_id, tokens, is_finished)
   
   async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+    if DEBUG >= 2: print(f"Broadcasting result: {request_id=} {result=} {is_finished=}")
     async def send_result_to_peer(peer):
       try:
         await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=15.0)

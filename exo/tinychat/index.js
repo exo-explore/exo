@@ -39,6 +39,9 @@ document.addEventListener("alpine:init", () => {
     // Add models state alongside existing state
     models: {},
 
+    // Show only models available locally
+    showDownloadedOnly: false,
+
     topology: null,
     topologyInterval: null,
 
@@ -75,12 +78,12 @@ document.addEventListener("alpine:init", () => {
       while (true) {
         try {
           await this.populateSelector();
-          // Wait 5 seconds before next poll
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          // Wait 15 seconds before next poll
+          await new Promise(resolve => setTimeout(resolve, 15000));
         } catch (error) {
           console.error('Model polling error:', error);
           // If there's an error, wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
     },
@@ -637,6 +640,9 @@ document.addEventListener("alpine:init", () => {
       const vizElement = this.$refs.topologyViz;
       vizElement.innerHTML = ''; // Clear existing visualization
 
+      // Helper function to truncate node ID
+      const truncateNodeId = (id) => id.substring(0, 8);
+
       // Create nodes from object
       Object.entries(topologyData.nodes).forEach(([nodeId, node]) => {
         const nodeElement = document.createElement('div');
@@ -647,14 +653,14 @@ document.addEventListener("alpine:init", () => {
         const peerConnectionsHtml = peerConnections.map(peer => `
           <div class="peer-connection">
             <i class="fas fa-arrow-right"></i>
-            <span>To ${peer.to_id}: ${peer.description}</span>
+            <span>To ${truncateNodeId(peer.to_id)}: ${peer.description}</span>
           </div>
         `).join('');
 
         nodeElement.innerHTML = `
           <div class="node-info">
             <span class="status ${nodeId === topologyData.active_node_id ? 'active' : 'inactive'}"></span>
-            <span>${node.model}</span>
+            <span>${node.model} [${truncateNodeId(nodeId)}]</span>
           </div>
           <div class="node-details">
             <span>${node.chip}</span>
@@ -683,7 +689,11 @@ document.addEventListener("alpine:init", () => {
     // Update the existing groupModelsByPrefix method to include counts
     groupModelsByPrefix(models) {
       const groups = {};
-      Object.entries(models).forEach(([key, model]) => {
+      const filteredModels = this.showDownloadedOnly ?
+        Object.fromEntries(Object.entries(models).filter(([, model]) => model.downloaded)) :
+        models;
+
+      Object.entries(filteredModels).forEach(([key, model]) => {
         const parts = key.split('-');
         const mainPrefix = parts[0].toUpperCase();
         

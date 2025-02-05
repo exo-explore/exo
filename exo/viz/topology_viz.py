@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Dict
 from exo.helpers import exo_text, pretty_print_bytes, pretty_print_bytes_per_second
 from exo.topology.topology import Topology
 from exo.topology.partitioning_strategy import Partition
-from exo.download.hf.hf_helpers import RepoProgressEvent
+from exo.download.download_progress import RepoProgressEvent
 from exo.topology.device_capabilities import UNKNOWN_DEVICE_CAPABILITIES
 from rich.console import Console, Group
 from rich.text import Text
@@ -51,17 +51,11 @@ class TopologyViz:
     self.refresh()
 
   def update_prompt(self, request_id: str, prompt: Optional[str] = None):
-    if request_id in self.requests:
-      self.requests[request_id] = [prompt, self.requests[request_id][1]]
-    else:
-      self.requests[request_id] = [prompt, ""]
+    self.requests[request_id] = [prompt, self.requests.get(request_id, ["", ""])[1]]
     self.refresh()
 
   def update_prompt_output(self, request_id: str, output: Optional[str] = None):
-    if request_id in self.requests:
-      self.requests[request_id] = [self.requests[request_id][0], output]
-    else:
-      self.requests[request_id] = ["", output]
+    self.requests[request_id] = [self.requests.get(request_id, ["", ""])[0], output]
     self.refresh()
 
   def refresh(self):
@@ -95,14 +89,14 @@ class TopologyViz:
     # Calculate available height for content
     panel_height = 15  # Fixed panel height
     available_lines = panel_height - 2  # Subtract 2 for panel borders
-    lines_per_entry = available_lines // len(requests) if requests else 0
+    lines_per_request = available_lines // len(requests) if requests else 0
 
     for (prompt, output) in reversed(requests):
       prompt_icon, output_icon = "💬️", "🤖"
 
-      # Calculate max lines for prompt and output
-      max_prompt_lines = lines_per_entry // 3  # Allocate 1/3 for prompt
-      max_output_lines = lines_per_entry - max_prompt_lines - 1  # Remaining space minus spacing
+      # Equal space allocation for prompt and output
+      max_prompt_lines = lines_per_request // 2
+      max_output_lines = lines_per_request - max_prompt_lines - 1  # -1 for spacing
 
       # Process prompt
       prompt_lines = []
@@ -124,40 +118,55 @@ class TopologyViz:
         if current_line:
           prompt_lines.append(' '.join(current_line))
 
+      # Truncate prompt if needed
       if len(prompt_lines) > max_prompt_lines:
-        prompt_lines = prompt_lines[:max_prompt_lines - 1] + ['...']
+        prompt_lines = prompt_lines[:max_prompt_lines]
+        if prompt_lines:
+          last_line = prompt_lines[-1]
+          if len(last_line) + 4 <= max_width:
+            prompt_lines[-1] = last_line + " ..."
+          else:
+            prompt_lines[-1] = last_line[:max_width-4] + " ..."
 
       prompt_text = Text(f"{prompt_icon} ", style="bold bright_blue")
       prompt_text.append('\n'.join(prompt_lines), style="white")
-
-      # Process output - same word-aware wrapping
-      output_lines = []
-      for line in output.split('\n'):
-        words = line.split()
-        current_line = []
-        current_length = 0
-
-        for word in words:
-          if current_length + len(word) + 1 <= max_width:
-            current_line.append(word)
-            current_length += len(word) + 1
-          else:
-            if current_line:
-              output_lines.append(' '.join(current_line))
-            current_line = [word]
-            current_length = len(word)
-
-        if current_line:
-          output_lines.append(' '.join(current_line))
-
-      if len(output_lines) > max_output_lines:
-        output_lines = output_lines[:max_output_lines - 1] + ['...']
-
-      output_text = Text(f"\n{output_icon} ", style="bold bright_magenta")
-      output_text.append('\n'.join(output_lines), style="white")
-
       content.append(prompt_text)
-      content.append(output_text)
+
+      # Process output with similar word wrapping
+      if output:  # Only process output if it exists
+        output_lines = []
+        for line in output.split('\n'):
+          words = line.split()
+          current_line = []
+          current_length = 0
+
+          for word in words:
+            if current_length + len(word) + 1 <= max_width:
+              current_line.append(word)
+              current_length += len(word) + 1
+            else:
+              if current_line:
+                output_lines.append(' '.join(current_line))
+              current_line = [word]
+              current_length = len(word)
+
+          if current_line:
+            output_lines.append(' '.join(current_line))
+
+        # Truncate output if needed
+        if len(output_lines) > max_output_lines:
+          output_lines = output_lines[:max_output_lines]
+          if output_lines:
+            last_line = output_lines[-1]
+            if len(last_line) + 4 <= max_width:
+              output_lines[-1] = last_line + " ..."
+            else:
+              output_lines[-1] = last_line[:max_width-4] + " ..."
+
+        output_text = Text(f"{output_icon} ", style="bold bright_magenta")
+        output_text.append('\n'.join(output_lines), style="white")
+        content.append(output_text)
+
       content.append(Text())  # Empty line between entries
 
     return Panel(
