@@ -40,7 +40,9 @@ def get_system_info():
     return "Unknown Mac architecture"
   if psutil.LINUX:
     return "Linux"
-  return "Non-Mac, non-Linux system"
+  if psutil.WINDOWS:
+    return "Windows"
+  return "Non-Mac, non-Linux, non-Windows system"
 
 
 def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 65535) -> int:
@@ -280,11 +282,44 @@ async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
   return None
 
 
+async def get_windows_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
+  try:
+    # Use the shared subprocess_pool
+    output = await asyncio.get_running_loop().run_in_executor(
+      subprocess_pool, lambda: subprocess.run(['powershell', '-Command', 'Get-NetAdapter', '|', 'ConvertTo-Json'], capture_output=True, text=True, close_fds=True).stdout
+    )
+
+    data = json.loads(output)
+
+    for interface in data:
+      if interface.get('Name') == ifname:
+        if 'Ethernet' in interface.get('InterfaceDescription', ''):
+          return (4, "Ethernet")
+        if 'Wi-Fi' in interface.get('InterfaceDescription', ''):
+          return (3, "WiFi")
+        if 'Bluetooth' in interface.get('InterfaceDescription', ''):
+          return (2, "Bluetooth")
+        if 'Loopback' in interface.get('InterfaceDescription', ''):
+          return (6, "Loopback")
+        if 'Virtual' in interface.get('InterfaceDescription', ''):
+          return (1, "External Virtual")
+
+  except Exception as e:
+    if DEBUG >= 2: print(f"Error detecting Windows interface type: {e}")
+
+  return None
+
+
 async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   # On macOS, try to get interface type using networksetup
   if psutil.MACOS:
     macos_type = await get_macos_interface_type(ifname)
     if macos_type is not None: return macos_type
+
+  # On Windows, try to get interface type using PowerShell
+  if psutil.WINDOWS:
+    windows_type = await get_windows_interface_type(ifname)
+    if windows_type is not None: return windows_type
 
   # Local container/virtual interfaces
   if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or 'bridge' in ifname):
@@ -354,6 +389,25 @@ async def get_mac_system_info() -> Tuple[str, str, int]:
         return model_id, chip_id, memory
     except Exception as e:
         if DEBUG >= 2: print(f"Error getting Mac system info: {e}")
+        return "Unknown Model", "Unknown Chip", 0
+
+async def get_windows_system_info() -> Tuple[str, str, int]:
+    """Get Windows system information using PowerShell."""
+    try:
+        output = await asyncio.get_running_loop().run_in_executor(
+            subprocess_pool,
+            lambda: subprocess.check_output(["powershell", "-Command", "Get-ComputerInfo | Select-Object -Property CsName, CsProcessors, CsTotalPhysicalMemory | ConvertTo-Json"]).decode("utf-8")
+        )
+        
+        data = json.loads(output)
+        
+        model_id = data.get("CsName", "Unknown Model")
+        chip_id = data.get("CsProcessors", ["Unknown Chip"])[0]
+        memory = int(data.get("CsTotalPhysicalMemory", 0)) // (1024 * 1024)  # Convert bytes to MB
+        
+        return model_id, chip_id, memory
+    except Exception as e:
+        if DEBUG >= 2: print(f"Error getting Windows system info: {e}")
         return "Unknown Model", "Unknown Chip", 0
 
 def get_exo_home() -> Path:

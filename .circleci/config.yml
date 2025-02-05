@@ -117,7 +117,6 @@ jobs:
   unit_test:
     macos:
       xcode: "16.0.0"
-    resource_class: m2pro.large
     steps:
       - checkout
       - run:
@@ -222,7 +221,6 @@ jobs:
           name: Install dependencies
           command: |
             source env/bin/activate
-            pip install --upgrade pip
             pip install .
       - run_chatgpt_api_test:
           inference_engine: dummy
@@ -273,6 +271,30 @@ jobs:
           name: Install dependencies
           command: |
             source env/bin/activate
+            pip install --upgrade pip
+            pip install .
+      - run_chatgpt_api_test:
+          inference_engine: tinygrad
+          model_id: llama-3.2-1b
+          prompt: "Keep responses concise. Who was the king of pop?"
+          expected_output: "Michael Jackson"
+
+  chatgpt_api_integration_test_windows:
+    machine:
+      image: windows-server-2022
+    resource_class: windows.medium
+    steps:
+      - checkout
+      - run:
+          name: Set up Python
+          command: |
+            choco install python --version=3.12.0
+            python -m venv env
+            env\Scripts\activate
+      - run:
+          name: Install dependencies
+          command: |
+            env\Scripts\activate
             pip install --upgrade pip
             pip install .
       - run_chatgpt_api_test:
@@ -371,4 +393,5 @@ workflows:
       - chatgpt_api_integration_test_tinygrad
       - chatgpt_api_integration_test_tinygrad_linux
       - chatgpt_api_integration_test_dummy
+      - chatgpt_api_integration_test_windows
       - measure_pip_sizes

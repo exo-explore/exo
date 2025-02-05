@@ -49,7 +49,7 @@ if sys.platform.startswith("darwin") and platform.machine() == "arm64":
 # Check if running Windows
 if sys.platform.startswith("win32"):
   install_requires.extend(extras_require["windows"])
-
+  print("Detected Windows environment. Including Windows-specific dependencies...")
 
 def _add_gpu_requires():
   global install_requires
