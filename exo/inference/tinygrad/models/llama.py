@@ -392,13 +392,13 @@ def fix_bf16(weights: Dict[Any, Tensor]):
   return {k: v.llvm_bf16_cast(dtypes.half).to(v.device) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()}
 
 
-def unpack_quantized(weights: Dict[Any, Tensor]) -> Dict[Any, Tensor]:
-  # Turns 32 bit uints into 4x8 bit ints
+def unpack_quantized(weights: Dict[Any, Tensor], bits: int) -> Dict[Any, Tensor]:
   unpacked_weights = {}
   for k, v in weights.items():
     if v.dtype == dtypes.uint32:
-      unpacked = Tensor.stack(*[v*2**(8*(3-i)) for i in range(4)], dim=-1).idiv(2**(8*3)).cast(dtypes.uint8)
-      unpacked_weights[k] = unpacked.reshape((*v.shape[:-1], 4*v.shape[-1]))
+      weights_per_pack = 32 // bits
+      unpacked = Tensor.stack(*reversed([v*2**(bits*i) for i in range(weights_per_pack)]), dim=-1).idiv(2**(bits*(weights_per_pack-1))).cast(dtypes.uint8)
+      unpacked_weights[k] = unpacked.reshape((*v.shape[:-1], weights_per_pack*v.shape[-1]))
     else:
       unpacked_weights[k] = v
   return unpacked_weights

@@ -65,7 +65,7 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
   weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
   weights = fix_bf16(weights)
 
-  if (quantization is not None): weights = unpack_quantized(weights)
+  if (quantization is not None): weights = unpack_quantized(weights, quantization["bits"])
 
   with Context(BEAM=0):
     # replace weights in model

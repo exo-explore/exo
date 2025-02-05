@@ -14,7 +14,7 @@ model_cards = {
     "layers": 16,
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
-      "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "TinygradDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
     },
   },
   "llama-3.2-1b-8bit": {
