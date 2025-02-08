@@ -285,8 +285,15 @@ exo supports the following inference engines:
 - 🚧 [PyTorch](https://github.com/exo-explore/exo/pull/139)
 - 🚧 [llama.cpp](https://github.com/exo-explore/exo/issues/167)
 
-## Networking Modules
+## Discovery Modules
 
-- ✅ [GRPC](exo/networking/grpc)
+- ✅ [UDP](exo/networking/udp)
+- ✅ [Manual](exo/networking/manual)
+- ✅ [Tailscale](exo/networking/tailscale)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+# Peer Networking Modules
+
+- ✅ [GRPC](exo/networking/grpc)
+- 🚧 [NCCL](TODO)
