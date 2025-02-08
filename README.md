@@ -24,7 +24,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
-Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
+Unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, NVIDIA, Raspberry Pi, pretty much any device!
 
 <div align="center">
   <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
@@ -151,6 +151,18 @@ curl http://localhost:52415/v1/chat/completions \
    }'
 ```
 
+#### DeepSeek R1 (full 671B):
+
+```sh
+curl http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "deepseek-r1",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
+
 #### Llava 1.5 7B (Vision Language Model):
 
 ```sh
@@ -216,6 +228,16 @@ Models by default are stored in `~/.cache/exo/downloads`.
 
 You can set a different model storage location by setting the `EXO_HOME` env var.
 
+## Model Downloading
+
+Models are downloaded from Hugging Face. If you are running exo in a country with strict internet censorship, you may need to download the models manually and put them in the `~/.cache/exo/downloads` directory.
+
+To download models from a proxy endpoint, set the `HF_ENDPOINT` environment variable. For example, to run exo with the huggingface mirror endpoint:
+
+```sh
+HF_ENDPOINT=https://hf-mirror.com exo
+```
+
 ## Debugging
 
 Enable debug logs with the DEBUG environment variable (0-9).
@@ -263,8 +285,15 @@ exo supports the following inference engines:
 - 🚧 [PyTorch](https://github.com/exo-explore/exo/pull/139)
 - 🚧 [llama.cpp](https://github.com/exo-explore/exo/issues/167)
 
-## Networking Modules
+## Discovery Modules
 
-- ✅ [GRPC](exo/networking/grpc)
+- ✅ [UDP](exo/networking/udp)
+- ✅ [Manual](exo/networking/manual)
+- ✅ [Tailscale](exo/networking/tailscale)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+# Peer Networking Modules
+
+- ✅ [GRPC](exo/networking/grpc)
+- 🚧 [NCCL](TODO)

@@ -39,6 +39,9 @@ document.addEventListener("alpine:init", () => {
     // Add models state alongside existing state
     models: {},
 
+    // Show only models available locally
+    showDownloadedOnly: false,
+
     topology: null,
     topologyInterval: null,
 
@@ -686,7 +689,11 @@ document.addEventListener("alpine:init", () => {
     // Update the existing groupModelsByPrefix method to include counts
     groupModelsByPrefix(models) {
       const groups = {};
-      Object.entries(models).forEach(([key, model]) => {
+      const filteredModels = this.showDownloadedOnly ?
+        Object.fromEntries(Object.entries(models).filter(([, model]) => model.downloaded)) :
+        models;
+
+      Object.entries(filteredModels).forEach(([key, model]) => {
         const parts = key.split('-');
         const mainPrefix = parts[0].toUpperCase();
         

@@ -43,6 +43,12 @@
     </div>
 
     <h2 class="megrim-regular" style="margin-bottom: 20px;">Models</h2>
+      <div style="display: flex; align-items: center; margin-bottom: 10px;">
+          <label style="margin-right: 5px;">
+              <input type="checkbox" x-model="showDownloadedOnly" style="margin-right: 5px;">
+              Downloaded only
+          </label>
+      </div>
 
     <!-- Loading indicator -->
     <div class="loading-container" x-show="Object.keys(models).length === 0">
