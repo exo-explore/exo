@@ -263,6 +263,8 @@ jobs:
       - run:
           name: Set up Python
           command: |
+            export DEBIAN_FRONTEND=noninteractive
+            export DEBCONF_NONINTERACTIVE_SEEN=true
             sudo apt-get update
             sudo add-apt-repository -y ppa:deadsnakes/ppa
             sudo apt-get update
