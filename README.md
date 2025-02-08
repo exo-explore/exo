@@ -24,7 +24,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
-Forget expensive NVIDIA GPUs, unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, Linux, pretty much any device!
+Unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, NVIDIA, Raspberry Pi, pretty much any device!
 
 <div align="center">
   <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
@@ -146,6 +146,18 @@ curl http://localhost:52415/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
      "model": "llama-3.1-405b",
+     "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
+     "temperature": 0.7
+   }'
+```
+
+#### DeepSeek R1 (full 671B):
+
+```sh
+curl http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+     "model": "deepseek-r1",
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
@@ -273,8 +285,15 @@ exo supports the following inference engines:
 - 🚧 [PyTorch](https://github.com/exo-explore/exo/pull/139)
 - 🚧 [llama.cpp](https://github.com/exo-explore/exo/issues/167)
 
-## Networking Modules
+## Discovery Modules
 
-- ✅ [GRPC](exo/networking/grpc)
+- ✅ [UDP](exo/networking/udp)
+- ✅ [Manual](exo/networking/manual)
+- ✅ [Tailscale](exo/networking/tailscale)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
+
+# Peer Networking Modules
+
+- ✅ [GRPC](exo/networking/grpc)
+- 🚧 [NCCL](TODO)
