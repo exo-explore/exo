@@ -134,6 +134,8 @@ async def download_file_with_retry(repo_id: str, revision: str, path: str, targe
     try: return await _download_file(repo_id, revision, path, target_dir, on_progress)
     except Exception as e:
       if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1: raise e
+      print(f"Download error on attempt {attempt}/{n_attempts} for {repo_id=} {revision=} {path=} {target_dir=}")
+      traceback.print_exc()
       await asyncio.sleep(min(8, 0.1 * (2 ** attempt)))
 
 async def _download_file(repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Callable[[int, int], None] = lambda _, __: None) -> Path:
