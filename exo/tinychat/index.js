@@ -55,11 +55,32 @@ document.addEventListener("alpine:init", () => {
       // Get initial model list
       this.fetchInitialModels();
 
-      // Start polling for download progress
-      this.startDownloadProgressPolling();
+      // Check for ongoing downloads
+      this.checkOngoingDownloads();
 
       // Start model polling with the new pattern
       this.startModelPolling();
+    },
+
+    async checkOngoingDownloads() {
+      try {
+        console.log("[Debug] Checking for ongoing downloads...");
+        const response = await fetch(`${this.endpoint}/download/progress`);
+        if (response.ok) {
+          const data = await response.json();
+          const progressArray = Object.values(data);
+          console.log("[Debug] Download progress data:", progressArray);
+          // If there are any ongoing downloads, start polling
+          if (progressArray.length > 0 && progressArray.some(progress => progress.status !== "complete")) {
+            console.log("[Debug] Found ongoing downloads, starting polling");
+            this.startDownloadProgressPolling();
+          } else {
+            console.log("[Debug] No ongoing downloads found");
+          }
+        }
+      } catch (error) {
+        console.error("[Debug] Error checking ongoing downloads:", error);
+      }
     },
 
     async fetchInitialModels() {
@@ -439,10 +460,12 @@ document.addEventListener("alpine:init", () => {
 
     async fetchDownloadProgress() {
       try {
+        console.log("[Debug] Fetching download progress...");
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
           const progressArray = Object.values(data);
+          console.log("[Debug] Progress data:", progressArray);
           if (progressArray.length > 0) {
             this.downloadProgress = progressArray.map(progress => {
               // Check if download is complete
@@ -472,39 +495,40 @@ document.addEventListener("alpine:init", () => {
             });
             const allComplete = this.downloadProgress.every(progress => progress.isComplete);
             if (allComplete) {
-              // Check for pendingMessage
-              const savedMessage = localStorage.getItem("pendingMessage");
-              if (savedMessage) {
-                // Clear pendingMessage
-                localStorage.removeItem("pendingMessage");
-                // Call processMessage() with savedMessage
-                if (this.lastErrorMessage) {
-                  await this.processMessage(savedMessage);
-                }
-              }
-              this.lastErrorMessage = null;
-              this.downloadProgress = null;
+              console.log("[Debug] All downloads complete, stopping polling");
+              this.stopDownloadProgressPolling();
             }
           } else {
-            // No ongoing download
+            console.log("[Debug] No ongoing downloads, stopping polling");
             this.downloadProgress = null;
+            this.stopDownloadProgressPolling();
           }
         }
       } catch (error) {
-        console.error("Error fetching download progress:", error);
+        console.error("[Debug] Error fetching progress:", error);
         this.downloadProgress = null;
+        this.stopDownloadProgressPolling();
       }
     },
 
     startDownloadProgressPolling() {
+      console.log("[Debug] Starting download progress polling");
       if (this.downloadProgressInterval) {
-        // Already polling
+        console.log("[Debug] Polling already active, skipping");
         return;
       }
       this.fetchDownloadProgress(); // Fetch immediately
       this.downloadProgressInterval = setInterval(() => {
         this.fetchDownloadProgress();
       }, 1000); // Poll every second
+    },
+
+    stopDownloadProgressPolling() {
+      console.log("[Debug] Stopping download progress polling");
+      if (this.downloadProgressInterval) {
+        clearInterval(this.downloadProgressInterval);
+        this.downloadProgressInterval = null;
+      }
     },
 
     // Add a helper method to set errors consistently
@@ -600,6 +624,9 @@ document.addEventListener("alpine:init", () => {
             loading: true
           };
         }
+
+        // Start polling for download progress
+        this.startDownloadProgressPolling();
 
       } catch (error) {
         console.error('Error starting download:', error);
