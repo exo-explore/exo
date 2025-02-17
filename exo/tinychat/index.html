@@ -342,6 +342,10 @@
 <div class="input-container">
 <div class="input-performance">
 <span class="input-performance-point">
+<p class="monospace" x-text="models[cstate.selectedModel]?.name || cstate.selectedModel"></p>
+<p class="megrim-regular">-</p>
+</span>
+<span class="input-performance-point">
 <p class="monospace" x-text="(time_till_first / 1000).toFixed(2)"></p>
 <p class="megrim-regular">SEC TO FIRST TOKEN</p>
 </span>
