@@ -16,8 +16,10 @@ import platform
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
+  IS_APPLE = True
 else:
   import numpy as mx
+  IS_APPLE = False
 
 
 class GRPCPeerHandle(PeerHandle):
@@ -123,6 +125,7 @@ class GRPCPeerHandle(PeerHandle):
       request_id=request_id,
       inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
     )
+
     response = await self.stub.SendTensor(request)
 
     if not response.tensor_data or not response.shape or not response.dtype:
@@ -200,11 +203,12 @@ class GRPCPeerHandle(PeerHandle):
     proto_inference_state = node_service_pb2.InferenceState()
     other_data = {}
     for k, v in inference_state.items():
-      if isinstance(v, mx.array):
+      mx_array_type = mx.array if IS_APPLE else mx.ndarray
+      if isinstance(v, mx_array_type):
         np_array = np.array(v)
         tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
         proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
-      elif isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
+      elif isinstance(v, list) and all(isinstance(item, mx_array_type) for item in v):
         tensor_list = node_service_pb2.TensorList()
         for tensor in v:
           np_array = np.array(tensor)

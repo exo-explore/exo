@@ -29,6 +29,15 @@ install_requires = [
   "uuid==1.30",
   "uvloop==0.21.0",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8",
+  "torch==2.6.0",
+  "accelerate==0.34.2",
+  "torchtune==0.5.0",
+  "torchao==0.8.0",
+  "pytest==8.3.3",
+  "pytest-asyncio==0.24.0",
+  "scapy==2.6.1",
+  "uvloop==0.21.0"
+
 ]
 
 extras_require = {

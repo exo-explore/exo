@@ -81,6 +81,9 @@ def generate_completion(
     }],
   }
 
+  if DEBUG >= 3:
+    print(f"completion: {completion}")
+
   if not stream:
     completion["usage"] = {
       "prompt_tokens": len(tokenizer.encode(prompt)),
