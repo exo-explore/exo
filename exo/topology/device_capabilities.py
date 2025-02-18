@@ -180,9 +180,12 @@ async def linux_device_capabilities() -> DeviceCapabilities:
   if DEBUG >= 2: print(f"tinygrad {Device.DEFAULT=}")
   if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
     import pynvml
-
+    from os import environ
+    # https://github.com/tinygrad/tinygrad/blob/master/docs/env_vars.md#global-variables
+    # FIXME: When other inference engines are added, this should be updated.
+    gpu = int(environ.get("VISIBLE_DEVICES", "0"))
     pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    handle = pynvml.nvmlDeviceGetHandleByIndex(gpu)
     gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
     gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
     gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
