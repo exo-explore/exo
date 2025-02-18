@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  exo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "52415:52415"
+    environment:
+      - DEBUG=1
+      - TINYGRAD_DEBUG=2
