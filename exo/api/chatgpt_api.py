@@ -67,6 +67,7 @@ def generate_completion(
   finish_reason: Union[Literal["length", "stop"], None],
   object_type: Literal["chat.completion", "text_completion"],
 ) -> dict:
+  decoded_tokens = tokenizer.decode(tokens)
   completion = {
     "id": f"chatcmpl-{request_id}",
     "object": object_type,
@@ -75,7 +76,6 @@ def generate_completion(
     "system_fingerprint": f"exo_{VERSION}",
     "choices": [{
       "index": 0,
-      "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
       "logprobs": None,
       "finish_reason": finish_reason,
     }],
@@ -90,10 +90,12 @@ def generate_completion(
 
   choice = completion["choices"][0]
   if object_type.startswith("chat.completion"):
-    key_name = "delta" if stream else "message"
-    choice[key_name] = {"role": "assistant", "content": tokenizer.decode(tokens)}
+    if stream:
+      choice["delta"] = {"role": "assistant", "content": decoded_tokens} if len(decoded_tokens) > 0 else {}
+    else:
+      choice["message"] = {"role": "assistant", "content": decoded_tokens}
   elif object_type == "text_completion":
-    choice["text"] = tokenizer.decode(tokens)
+    choice["text"] = decoded_tokens
   else:
     ValueError(f"Unsupported response type: {object_type}")
 
@@ -412,7 +414,9 @@ class ChatGPTAPI:
 
             if is_finished:
               break
-
+          
+          # Send the DONE event when the stream is finished
+          await response.write(b"data: [DONE]\n\n")
           await response.write_eof()
           return response
 
