@@ -152,7 +152,7 @@ async def device_capabilities() -> DeviceCapabilities:
   elif psutil.LINUX:
     return await linux_device_capabilities()
   elif psutil.WINDOWS:
-    return await windows_device_capabilities()
+    return windows_device_capabilities()
   else:
     return DeviceCapabilities(
       model="Unknown Device",
