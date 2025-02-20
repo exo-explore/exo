@@ -19,46 +19,50 @@ from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.shard_download import ShardDownloader
 
 class BufferedOutput:
-  token_output: List[int]
-  text_output: str = ""
+  stop_sequences: List[str]
+  max_tokens: int
+  eos_token_id: int
   buffer_size: int
-  buffer_index: int = 0
+
+  _token_count: int = 0
+  buffer: List[Tuple[int, str]]
 
   is_finished: bool = False
   finish_reason: Optional[str] = None
 
-  max_tokens: int
-  eos_token_id: int
-
-  def __init__(self, buffer_size: int, max_tokens: int, eos_token_id: int ):
-    self.token_output = []
+  def __init__(self, buffer_size: int, max_tokens: int, eos_token_id: int, stop_sequences: List[str], tokenizer):
+    self.buffer = []
     self.buffer_size = buffer_size
     self.max_tokens = max_tokens
     self.eos_token_id = eos_token_id
+    self.stop_sequences = stop_sequences
+    self.tokenizer = tokenizer
 
   def append(self, token: int):
-    self.token_output.append(token)
+    self.buffer.append((token, self.tokenizer.decode([token])))
+    self._token_count += 1
 
     if token == self.eos_token_id:
       self.is_finished = True
       self.finish_reason = "stop"
-    elif len(self.token_output) >= self.max_tokens:
+    elif self._token_count >= self.max_tokens:
       self.is_finished = True
       self.finish_reason = "length"
+    else:
+      # self.attempt_to_match_stop_sequences()
+      pass
 
   def token_count(self) -> int:
-    return len(self.token_output)
+    return self._token_count
 
   def next_tokens(self) -> List[int]:
     if self.is_finished:
       # Return all remaining tokens if finished
-      tokens = self.token_output[self.buffer_index:]
-      self.buffer_index = len(self.token_output)
+      tokens = [token for token, _ in self.buffer]
+      self.buffer = []
       return tokens
-    elif len(self.token_output) - self.buffer_index >= self.buffer_size:
-      # Return oldest token when buffer is full
-      token = self.token_output[self.buffer_index]
-      self.buffer_index += 1
+    elif len(self.buffer) >= self.buffer_size:
+      token, _ = self.buffer.pop(0)
       return [token]
 
     # Not enough tokens yet
@@ -215,12 +219,13 @@ class Node:
       if generation_options and generation_options.max_completion_tokens:
         max_tokens = min(max_tokens, generation_options.max_completion_tokens)
 
-      # stop_sequences = generation_options.stop or []
-      # max_textual_stop_length = max([len(stop) for stop in stop_sequences]) if stop_sequences else 0
+      stop_sequences = generation_options.stop or []
       self.buffered_token_output[request_id] = BufferedOutput(
         buffer_size=10,
         eos_token_id=self.inference_engine.tokenizer.eos_token_id,
         max_tokens=max_tokens,
+        stop_sequences=stop_sequences,
+        tokenizer=self.inference_engine.tokenizer,
       )
 
     buffered_output = self.buffered_token_output[request_id]
