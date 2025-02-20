@@ -49,19 +49,21 @@ class Message:
 
 class ChatCompletionRequest:
   def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None,
-               max_completion_tokens: Optional[int] = None):
+               max_completion_tokens: Optional[int] = None, stop: Optional[Union[str, List[str]]] = None):
     self.model = model
     self.messages = messages
     self.temperature = temperature
     self.tools = tools
     self.max_completion_tokens = max_completion_tokens
+    self.stop = stop if isinstance(stop, list) else [stop] if isinstance(stop, str) else None
 
   def to_dict(self):
     return {"model": self.model, "messages": [message.to_dict() for message in self.messages],
-            "temperature": self.temperature, "tools": self.tools, "max_completion_tokens": self.max_completion_tokens}
+            "temperature": self.temperature, "tools": self.tools, "max_completion_tokens": self.max_completion_tokens,
+            "stop": self.stop}
 
   def to_generation_options(self) -> GenerationOptions:
-    return GenerationOptions(max_completion_tokens=self.max_completion_tokens)
+    return GenerationOptions(max_completion_tokens=self.max_completion_tokens, stop=self.stop)
 
 def generate_completion(
   chat_request: ChatCompletionRequest,
@@ -179,6 +181,7 @@ def parse_chat_request(data: dict, default_model: str):
     # The max_tokens field is deprecated, but some clients may still use it, fall back to that value if
     # max_completion_tokens is not provided.
     data.get("max_completion_tokens", data.get("max_tokens", None)),
+    data.get("stop", None),
   )
 
 

@@ -21,6 +21,7 @@ message Shard {
 
 message GenerationOptions {
   optional int32 max_completion_tokens = 1;
+  repeated string stop = 2;
 }
 
 message PromptRequest {
