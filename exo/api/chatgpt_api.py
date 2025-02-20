@@ -14,6 +14,7 @@ from exo import DEBUG, VERSION
 from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
+from exo.inference.generation_options import GenerationOptions
 from exo.models import build_base_shard, build_full_shard, model_cards, get_repo, get_supported_models, get_pretty_name
 from typing import Callable, Optional
 from PIL import Image
@@ -47,15 +48,20 @@ class Message:
 
 
 class ChatCompletionRequest:
-  def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None):
+  def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None,
+               max_completion_tokens: Optional[int] = None):
     self.model = model
     self.messages = messages
     self.temperature = temperature
     self.tools = tools
+    self.max_completion_tokens = max_completion_tokens
 
   def to_dict(self):
-    return {"model": self.model, "messages": [message.to_dict() for message in self.messages], "temperature": self.temperature, "tools": self.tools}
+    return {"model": self.model, "messages": [message.to_dict() for message in self.messages],
+            "temperature": self.temperature, "tools": self.tools, "max_completion_tokens": self.max_completion_tokens}
 
+  def to_generation_options(self) -> GenerationOptions:
+    return GenerationOptions(max_completion_tokens=self.max_completion_tokens)
 
 def generate_completion(
   chat_request: ChatCompletionRequest,
@@ -170,6 +176,9 @@ def parse_chat_request(data: dict, default_model: str):
     [parse_message(msg) for msg in data["messages"]],
     data.get("temperature", 0.0),
     data.get("tools", None),
+    # The max_tokens field is deprecated, but some clients may still use it, fall back to that value if
+    # max_completion_tokens is not provided.
+    data.get("max_completion_tokens", data.get("max_tokens", None)),
   )
 
 
@@ -359,7 +368,12 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"[ChatGPTAPI] Processing prompt: {request_id=} {shard=} {prompt=}")
 
     try:
-      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id))), timeout=self.response_timeout)
+      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(
+        shard,
+        prompt,
+        request_id=request_id,
+        generation_options=chat_request.to_generation_options()
+      ))), timeout=self.response_timeout)
 
       if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for response to finish. timeout={self.response_timeout}s")
 
