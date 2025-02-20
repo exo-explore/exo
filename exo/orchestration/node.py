@@ -184,7 +184,7 @@ class Node:
     if shard.model_id == 'stable-diffusion-2-1-base':
       return intermediate_result
     else:
-      return np.array(self.buffered_token_output[request_id].token_output)
+      return None
 
   async def handle_llm_inference(self, shard, result, request_id, generation_options):
     """Handle LLM-specific inference results processing"""
@@ -217,7 +217,7 @@ class Node:
         finish_reason = "length"
 
     if DEBUG >= 2:
-      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {len(buffered_output.token_output)}, finish_reason: {finish_reason}")
+      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {buffered_output.token_count()}, finish_reason: {finish_reason}")
 
     return token.reshape(1, -1), buffered_output.next_tokens(), is_finished, finish_reason
 
