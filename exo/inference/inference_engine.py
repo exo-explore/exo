@@ -50,6 +50,9 @@ class InferenceEngine(ABC):
 
     return output_data, inference_state
 
+  async def get_flops(self) -> float:
+    return self.device_capabilities.flops.fp32
+
 
 inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
