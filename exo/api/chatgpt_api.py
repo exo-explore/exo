@@ -405,6 +405,9 @@ class ChatGPTAPI:
             if not eos_token_id and hasattr(tokenizer, "eos_token_id"): eos_token_id = tokenizer.eos_token_id
             if not eos_token_id and hasattr(tokenizer, "_tokenizer"): eos_token_id = tokenizer.special_tokens_map.get("eos_token_id")
 
+            if len(tokens) == 0 and not is_finished:
+              continue
+
             if DEBUG >= 2: print(f"{eos_token_id=} {tokens[-1]=}")
             if is_finished:
               if tokens[-1] == eos_token_id:
