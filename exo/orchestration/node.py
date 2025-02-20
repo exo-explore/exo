@@ -19,17 +19,32 @@ from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.shard_download import ShardDownloader
 
 class BufferedOutput:
-  is_finished: bool = False
   token_output: List[int]
   text_output: str = ""
-  buffer_size: int = 10
+  buffer_size: int
   buffer_index: int = 0
 
-  def __init__(self):
+  is_finished: bool = False
+  finish_reason: Optional[str] = None
+
+  max_tokens: int
+  eos_token_id: int
+
+  def __init__(self, buffer_size: int, max_tokens: int, eos_token_id: int ):
     self.token_output = []
+    self.buffer_size = buffer_size
+    self.max_tokens = max_tokens
+    self.eos_token_id = eos_token_id
 
   def append(self, token: int):
     self.token_output.append(token)
+
+    if token == self.eos_token_id:
+      self.is_finished = True
+      self.finish_reason = "stop"
+    elif len(self.token_output) >= self.max_tokens:
+      self.is_finished = True
+      self.finish_reason = "length"
 
   def token_count(self) -> int:
     return len(self.token_output)
@@ -190,40 +205,33 @@ class Node:
     else:
       return None
 
-  async def handle_llm_inference(self, shard, result, request_id, generation_options):
+  async def handle_llm_inference(self, shard: Shard, result, request_id: str, generation_options: GenerationOptions):
+    """Handle LLM-specific inference results processing"""
     if not shard.is_last_layer():
       return result, None, False, None
 
-    """Handle LLM-specific inference results processing"""
     if request_id not in self.buffered_token_output:
-      self.buffered_token_output[request_id] = BufferedOutput()
+      max_tokens = self.max_generate_tokens
+      if generation_options and generation_options.max_completion_tokens:
+        max_tokens = min(max_tokens, generation_options.max_completion_tokens)
+
+      # stop_sequences = generation_options.stop or []
+      # max_textual_stop_length = max([len(stop) for stop in stop_sequences]) if stop_sequences else 0
+      self.buffered_token_output[request_id] = BufferedOutput(
+        buffer_size=10,
+        eos_token_id=self.inference_engine.tokenizer.eos_token_id,
+        max_tokens=max_tokens,
+      )
 
     buffered_output = self.buffered_token_output[request_id]
-
-    max_tokens = self.max_generate_tokens
-    if generation_options and generation_options.max_completion_tokens:
-      max_tokens = min(max_tokens, generation_options.max_completion_tokens)
 
     token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
     buffered_output.append(token.item())
 
-    token_is_eos = token.item() == self.inference_engine.tokenizer.eos_token_id
-    max_length_reached = buffered_output.token_count() >= max_tokens
-    is_finished = token_is_eos or max_length_reached
-
-    finish_reason = None
-    if is_finished:
-      buffered_output.is_finished = True
-
-      if token_is_eos:
-        finish_reason = "stop"
-      else:
-        finish_reason = "length"
-
     if DEBUG >= 2:
-      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {buffered_output.token_count()}, finish_reason: {finish_reason}")
+      print(f"[{request_id}] LLM result size: {result.size}, finished: {buffered_output.is_finished}, tokens: {buffered_output.token_count()}, finish_reason: {buffered_output.finish_reason}")
 
-    return token.reshape(1, -1), buffered_output.next_tokens(), is_finished, finish_reason
+    return token.reshape(1, -1), buffered_output.next_tokens(), buffered_output.is_finished, buffered_output.finish_reason
 
   async def handle_stable_diffusion_inference(self, result, inference_state):
     """Handle Stable Diffusion-specific inference results processing"""
