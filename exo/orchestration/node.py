@@ -32,7 +32,7 @@ class BufferedOutput:
 
   def __init__(self, max_tokens: int, eos_token_id: int, stop_sequences: List[str], tokenizer):
     self.buffer = []
-    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences)
+    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(stop_sequences) > 0 else 0
     self.max_tokens = max_tokens
     self.eos_token_id = eos_token_id
     self.stop_sequences = stop_sequences
