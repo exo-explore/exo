@@ -22,6 +22,8 @@ class BufferedOutput:
   is_finished: bool = False
   token_output: List[int] = []
   text_output: str = ""
+  buffer_size: int = 10
+  buffer_index: int = 0
 
   def append(self, token: int):
     self.token_output.append(token)
@@ -30,7 +32,19 @@ class BufferedOutput:
     return len(self.token_output)
 
   def next_tokens(self) -> List[int]:
-    return [self.token_output[-1]]
+    if self.is_finished:
+      # Return all remaining tokens if finished
+      tokens = self.token_output[self.buffer_index:]
+      self.buffer_index = len(self.token_output)
+      return tokens
+    elif len(self.token_output) - self.buffer_index >= self.buffer_size:
+      # Return oldest token when buffer is full
+      token = self.token_output[self.buffer_index]
+      self.buffer_index += 1
+      return [token]
+
+    # Not enough tokens yet
+    return []
 
 
 class Node:
