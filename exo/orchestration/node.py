@@ -20,10 +20,13 @@ from exo.download.shard_download import ShardDownloader
 
 class BufferedOutput:
   is_finished: bool = False
-  token_output: List[int] = []
+  token_output: List[int]
   text_output: str = ""
   buffer_size: int = 10
   buffer_index: int = 0
+
+  def __init__(self):
+    self.token_output = []
 
   def append(self, token: int):
     self.token_output.append(token)
@@ -173,6 +176,7 @@ class Node:
 
     # Common completion handling
     if is_finished:
+      self.buffered_token_output.pop(request_id, None)
       self.outstanding_requests.pop(request_id, None)
     else:
       self.outstanding_requests[request_id] = "waiting"
@@ -187,14 +191,14 @@ class Node:
       return None
 
   async def handle_llm_inference(self, shard, result, request_id, generation_options):
+    if not shard.is_last_layer():
+      return result, None, False, None
+
     """Handle LLM-specific inference results processing"""
     if request_id not in self.buffered_token_output:
       self.buffered_token_output[request_id] = BufferedOutput()
 
     buffered_output = self.buffered_token_output[request_id]
-
-    if not shard.is_last_layer():
-      return result, None, False
 
     max_tokens = self.max_generate_tokens
     if generation_options and generation_options.max_completion_tokens:
