@@ -265,6 +265,9 @@ async def measure_performance(api_endpoint: str, prompt: str, model: str) -> Dic
             if not line.startswith('data: '):
                 continue
 
+            if line == 'data: [DONE]':
+               break 
+
             data = json.loads(line[6:])  # Skip 'data: ' prefix
             if content := data.get('choices', [{}])[0].get('delta', {}).get('content'):
                 print(f"Received content: {content}", flush=True)
