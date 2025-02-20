@@ -10,12 +10,14 @@ from exo.inference.inference_engine import InferenceEngine, Shard
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
+from exo.inference.generation_options import GenerationOptions
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
 from exo.download.download_progress import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.shard_download import ShardDownloader
+
 
 class Node:
   def __init__(
@@ -119,6 +121,7 @@ class Node:
     result: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ):
     if shard.model_id != 'stable-diffusion-2-1-base':
       if request_id not in self.buffered_token_output:
@@ -160,6 +163,7 @@ class Node:
     prompt: str,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = {},
+    generation_options: Optional[GenerationOptions] = None,
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     start_time = time.perf_counter_ns()
@@ -178,7 +182,7 @@ class Node:
       )
     )
     start_time = time.perf_counter_ns()
-    resp = await self._process_prompt(base_shard, prompt, request_id, inference_state)
+    resp = await self._process_prompt(base_shard, prompt, request_id, inference_state, generation_options)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     asyncio.create_task(
@@ -198,7 +202,9 @@ class Node:
     )
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {elapsed_time_ns=}")
 
-  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[dict] = None) -> Optional[np.ndarray]:
+  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None,
+                            inference_state: Optional[dict] = None,
+                            generation_options: Optional[GenerationOptions] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
     shard = self.get_current_shard(base_shard)
@@ -207,12 +213,12 @@ class Node:
     if not shard.is_first_layer():
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
       self.outstanding_requests[request_id] = "waiting"
-      resp = await self.forward_prompt(shard, prompt, request_id, 0, inference_state)
+      resp = await self.forward_prompt(shard, prompt, request_id, 0, inference_state, generation_options)
       return None
     else:
       self.outstanding_requests[request_id] = "processing"
       result, inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
-      ret = await self.process_inference_result(shard, result, request_id, inference_state)
+      ret = await self.process_inference_result(shard, result, request_id, inference_state, generation_options)
       return result
 
   async def enqueue_example(
@@ -358,10 +364,11 @@ class Node:
     tensor: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     start_time = time.perf_counter_ns()
-    resp = await self._process_tensor(shard, tensor, request_id, inference_state)
+    resp = await self._process_tensor(shard, tensor, request_id, inference_state, generation_options)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     if DEBUG >= 2: print(f"[{request_id}] process_tensor: {base_shard=} {shard=} {tensor.size=} {tensor.shape=} {elapsed_time_ns=}")
@@ -372,6 +379,7 @@ class Node:
     tensor: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
@@ -380,7 +388,7 @@ class Node:
     try:
       self.outstanding_requests[request_id] = "processing"
       result, inference_state = await self.inference_engine.infer_tensor(request_id, shard, tensor, inference_state)
-      ret = await self.process_inference_result(shard, result, request_id, inference_state) 
+      ret = await self.process_inference_result(shard, result, request_id, inference_state, generation_options)
       return ret
     except Exception as e:
       self.outstanding_requests.pop(request_id)
@@ -415,19 +423,20 @@ class Node:
     request_id: str,
     target_index: int,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> None:
     if DEBUG >= 1: print(f"target partition index: {target_index}")
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
     next_shard = self.get_current_shard(base_shard, target_index)
     if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. next shard: {next_shard}")
     if target_id == self.id:
-      await self.process_prompt(next_shard, prompt, request_id, inference_state)
+      await self.process_prompt(next_shard, prompt, request_id, inference_state, generation_options)
     else:
       target_peer = next((p for p in self.peers if p.id() == target_id), None)
       if not target_peer:
         raise ValueError(f"Peer for {target_index} not found")
       if DEBUG >= 1: print(f"Sending prompt to {target_peer.id()}: {prompt}")
-      await target_peer.send_prompt(next_shard, prompt, request_id=request_id, inference_state=inference_state)
+      await target_peer.send_prompt(next_shard, prompt, request_id=request_id, inference_state=inference_state, generation_options=generation_options)
   
   async def forward_tensor(
     self,
@@ -436,19 +445,20 @@ class Node:
     request_id: str,
     target_index: int,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> None:
     if DEBUG >= 1: print(f"target partition index: {target_index}")
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
     next_shard = self.get_current_shard(base_shard, target_index)
     if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. target shard: {next_shard}")
     if target_id == self.id:
-      await self.process_tensor(next_shard, tensor, request_id, inference_state)
+      await self.process_tensor(next_shard, tensor, request_id, inference_state, generation_options)
     else:
       target_peer = next((p for p in self.peers if p.id() == target_id), None)
       if not target_peer:
         raise ValueError(f"Peer for {target_index} not found")
       if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
-      await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state)
+      await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state, generation_options=generation_options)
 
   def get_partition_index(self, offset: int = 0):
     if not self.partitioning_strategy:
