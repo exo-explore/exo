@@ -173,7 +173,7 @@ api = ChatGPTAPI(
   system_prompt=args.system_prompt
 )
 buffered_token_output = {}
-def update_topology_viz(req_id, tokens, __):
+def update_topology_viz(req_id, tokens, __, ___):
   if not topology_viz: return
   if not node.inference_engine.shard: return
   if node.inference_engine.shard.model_id == 'stable-diffusion-2-1-base': return
