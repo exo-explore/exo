@@ -130,7 +130,7 @@ class Node:
       )
     else:
       # LLM specific processing
-      forward, intermediate_result, is_finished = await self.handle_llm_inference(
+      forward, intermediate_result, is_finished, finish_reason = await self.handle_llm_inference(
         shard, result, request_id, generation_options
       )
 
@@ -140,8 +140,8 @@ class Node:
       if intermediate_result is None:
         raise ValueError("Intermediate result is None")
 
-      self.trigger_on_token_callbacks(request_id, intermediate_result, is_finished)
-      asyncio.create_task(self.broadcast_result(request_id, intermediate_result, is_finished))
+      self.trigger_on_token_callbacks(request_id, intermediate_result, is_finished, finish_reason)
+      asyncio.create_task(self.broadcast_result(request_id, intermediate_result, is_finished, finish_reason))
 
     # Common completion handling
     if is_finished:
@@ -174,18 +174,23 @@ class Node:
     self.buffered_token_output[request_id][0].append(token.item())
 
     current_tokens = self.buffered_token_output[request_id][0]
-    is_finished = (
-      token.item() == self.inference_engine.tokenizer.eos_token_id or
-      len(current_tokens) >= max_tokens
-    )
+    token_is_eos = token.item() == self.inference_engine.tokenizer.eos_token_id
+    max_length_reached = len(current_tokens) >= max_tokens
+    is_finished = token_is_eos or max_length_reached
 
+    finish_reason = None
     if is_finished:
       self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
 
-    if DEBUG >= 2:
-      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {len(current_tokens)}")
+      if token_is_eos:
+        finish_reason = "stop"
+      else:
+        finish_reason = "length"
 
-    return token.reshape(1, -1), [current_tokens[-1]], is_finished
+    if DEBUG >= 2:
+      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {len(current_tokens)}, finish_reason: {finish_reason}")
+
+    return token.reshape(1, -1), [current_tokens[-1]], is_finished, finish_reason
 
   async def handle_stable_diffusion_inference(self, result, inference_state):
     """Handle Stable Diffusion-specific inference results processing"""
