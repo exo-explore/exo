@@ -50,7 +50,7 @@ class Node:
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
     self.default_sample_temperature = default_sample_temperature
-    self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
+    self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool, Optional[str]]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
@@ -626,22 +626,22 @@ class Node:
     return self.topology
 
   @property
-  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
+  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool, Optional[str]]]:
     return self._on_token
 
   @property
   def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
     return self._on_opaque_status
 
-  def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
-    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} {tokens=} {is_finished=}")
-    self.on_token.trigger_all(request_id, tokens, is_finished)
+  def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool, finish_reason: Optional[str] = None) -> None:
+    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} {tokens=} {is_finished=} {finish_reason=}")
+    self.on_token.trigger_all(request_id, tokens, is_finished, finish_reason)
 
-  async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
-    if DEBUG >= 2: print(f"Broadcasting result: {request_id=} {result=} {is_finished=}")
+  async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool, finish_reason: Optional[str] = None) -> None:
+    if DEBUG >= 2: print(f"Broadcasting result: {request_id=} {result=} {is_finished=} {finish_reason=}")
     async def send_result_to_peer(peer):
       try:
-        await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=15.0)
+        await asyncio.wait_for(peer.send_result(request_id, result, is_finished, finish_reason), timeout=15.0)
       except asyncio.TimeoutError:
         print(f"Timeout broadcasting result to {peer.id()}")
       except Exception as e:

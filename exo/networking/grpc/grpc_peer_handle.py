@@ -188,12 +188,12 @@ class GRPCPeerHandle(PeerHandle):
         topology.add_edge(node_id, conn.to_id, conn.description)
     return topology
 
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+  async def send_result(self, request_id: str, result: List[int], is_finished: bool, finish_reason: Optional[str] = None) -> None:
     tensor = None
     if isinstance(result, np.ndarray):
       tensor = node_service_pb2.Tensor(tensor_data=result.tobytes(), shape=result.shape, dtype=str(result.dtype))
       result = []
-    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, tensor=tensor, is_finished=is_finished)
+    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, tensor=tensor, is_finished=is_finished, finish_reason=finish_reason)
     await self.stub.SendResult(request)
 
   async def send_opaque_status(self, request_id: str, status: str) -> None:
