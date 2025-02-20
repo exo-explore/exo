@@ -414,20 +414,33 @@ class ChatGPTAPI:
 
             if DEBUG >= 2: print(f"{finish_reason=}")
 
-            completion = generate_completion(
-              chat_request,
-              tokenizer,
-              prompt,
-              request_id,
-              tokens,
-              stream,
-              finish_reason,
-              "chat.completion",
-            )
+            if len(tokens) > 0:
+              completion = generate_completion(
+                chat_request,
+                tokenizer,
+                prompt,
+                request_id,
+                tokens,
+                stream,
+                None,
+                "chat.completion",
+              )
 
-            await response.write(f"data: {json.dumps(completion)}\n\n".encode())
+              await response.write(f"data: {json.dumps(completion)}\n\n".encode())
 
             if is_finished:
+              completion = generate_completion(
+                chat_request,
+                tokenizer,
+                prompt,
+                request_id,
+                [],
+                stream,
+                finish_reason,
+                "chat.completion",
+              )
+
+              await response.write(f"data: {json.dumps(completion)}\n\n".encode())
               break
 
           # Send the DONE event when the stream is finished
