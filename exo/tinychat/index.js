@@ -616,7 +616,7 @@ document.addEventListener("alpine:init", () => {
           throw new Error(data.error || 'Failed to start download');
         }
 
-        await this.startDownloadProgressPolling();
+        this.startDownloadProgressPolling();
         
         // Update the model's status immediately when download starts
         if (this.models[modelName]) {
