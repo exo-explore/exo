@@ -22,7 +22,7 @@ class BufferedOutput:
   stop_sequences: List[str]
   max_tokens: int
   eos_token_id: int
-  buffer_size: int
+  buffer_char_size: int
 
   _token_count: int = 0
   buffer: List[Tuple[int, str]]
@@ -30,9 +30,9 @@ class BufferedOutput:
   is_finished: bool = False
   finish_reason: Optional[str] = None
 
-  def __init__(self, buffer_size: int, max_tokens: int, eos_token_id: int, stop_sequences: List[str], tokenizer):
+  def __init__(self, max_tokens: int, eos_token_id: int, stop_sequences: List[str], tokenizer):
     self.buffer = []
-    self.buffer_size = buffer_size
+    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences)
     self.max_tokens = max_tokens
     self.eos_token_id = eos_token_id
     self.stop_sequences = stop_sequences
@@ -51,8 +51,11 @@ class BufferedOutput:
     elif len(self.stop_sequences) > 0:
       self.attempt_to_match_stop_sequences()
 
+  def assembled_text(self) -> str:
+    return "".join([text for _, text in self.buffer])
+
   def attempt_to_match_stop_sequences(self):
-    assembled_text = "".join([text for _, text in self.buffer])
+    assembled_text = self.assembled_text()
     if DEBUG >= 2: print(f"Attempting to match stop sequences against: {assembled_text=}")
 
     for stop_sequence in self.stop_sequences:
@@ -110,7 +113,7 @@ class BufferedOutput:
       tokens = [token for token, _ in self.buffer]
       self.buffer = []
       return tokens
-    elif len(self.buffer) >= self.buffer_size:
+    elif len(self.assembled_text()) >= self.buffer_char_size:
       token, _ = self.buffer.pop(0)
       return [token]
 
@@ -270,7 +273,6 @@ class Node:
 
       stop_sequences = generation_options.stop or []
       self.buffered_token_output[request_id] = BufferedOutput(
-        buffer_size=10,
         eos_token_id=self.inference_engine.tokenizer.eos_token_id,
         max_tokens=max_tokens,
         stop_sequences=stop_sequences,
