@@ -126,12 +126,15 @@ class Node:
     if shard.model_id != 'stable-diffusion-2-1-base':
       if request_id not in self.buffered_token_output:
         self.buffered_token_output[request_id] = ([], False)
-      is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+      max_tokens = self.max_generate_tokens
+      if generation_options and generation_options.max_completion_tokens:
+        max_tokens = min(max_tokens, generation_options.max_completion_tokens)
+      is_finished = len(self.buffered_token_output[request_id][0]) >= max_tokens
       if shard.is_last_layer() and not is_finished:
         token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
         await self.inference_engine.ensure_shard(shard)
         self.buffered_token_output[request_id][0].append(token.item())
-        is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+        is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= max_tokens
         if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
         forward = token.reshape(1, -1)
         intermediate_result = [self.buffered_token_output[request_id][0][-1]]
@@ -152,7 +155,7 @@ class Node:
       self.outstanding_requests.pop(request_id)
     else:
       self.outstanding_requests[request_id] = "waiting"
-      asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1), inference_state))
+      asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1), inference_state, generation_options))
 
     return  np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
 
