@@ -48,9 +48,24 @@ class BufferedOutput:
     elif self._token_count >= self.max_tokens:
       self.is_finished = True
       self.finish_reason = "length"
-    else:
-      # self.attempt_to_match_stop_sequences()
-      pass
+    elif len(self.stop_sequences) > 0:
+      self.attempt_to_match_stop_sequences()
+
+  def attempt_to_match_stop_sequences(self):
+    assembled_text = "".join([text for _, text in self.buffer])
+    if DEBUG >= 2: print(f"Attempting to match stop sequences against: {assembled_text}")
+
+    for stop_sequence in self.stop_sequences:
+      if len(assembled_text) < len(stop_sequence):
+        continue
+
+      if DEBUG >= 2: print(f"Checking if {assembled_text} matches {stop_sequence}")
+
+      if assembled_text.endswith(stop_sequence):
+        if DEBUG >= 2: print(f"Match found: {assembled_text} matches {stop_sequence}")
+        self.is_finished = True
+        self.finish_reason = "stop"
+        break
 
   def token_count(self) -> int:
     return self._token_count
