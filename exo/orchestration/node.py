@@ -26,8 +26,12 @@ class BufferedOutput:
   def append(self, token: int):
     self.token_output.append(token)
 
-  def token_count(self):
+  def token_count(self) -> int:
     return len(self.token_output)
+
+  def next_tokens(self) -> List[int]:
+    return [self.token_output[-1]]
+
 
 class Node:
   def __init__(
@@ -173,6 +177,8 @@ class Node:
     if request_id not in self.buffered_token_output:
       self.buffered_token_output[request_id] = BufferedOutput()
 
+    buffered_output = self.buffered_token_output[request_id]
+
     if not shard.is_last_layer():
       return result, None, False
 
@@ -181,15 +187,15 @@ class Node:
       max_tokens = min(max_tokens, generation_options.max_completion_tokens)
 
     token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
-    self.buffered_token_output[request_id].append(token.item())
+    buffered_output.append(token.item())
 
     token_is_eos = token.item() == self.inference_engine.tokenizer.eos_token_id
-    max_length_reached = self.buffered_token_output[request_id].token_count() >= max_tokens
+    max_length_reached = buffered_output.token_count() >= max_tokens
     is_finished = token_is_eos or max_length_reached
 
     finish_reason = None
     if is_finished:
-      self.buffered_token_output[request_id].is_finished = True
+      buffered_output.is_finished = True
 
       if token_is_eos:
         finish_reason = "stop"
@@ -197,9 +203,9 @@ class Node:
         finish_reason = "length"
 
     if DEBUG >= 2:
-      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {len(current_tokens)}, finish_reason: {finish_reason}")
+      print(f"[{request_id}] LLM result size: {result.size}, finished: {is_finished}, tokens: {len(buffered_output.token_output)}, finish_reason: {finish_reason}")
 
-    return token.reshape(1, -1), [token.item()], is_finished, finish_reason
+    return token.reshape(1, -1), buffered_output.next_tokens(), is_finished, finish_reason
 
   async def handle_stable_diffusion_inference(self, result, inference_state):
     """Handle Stable Diffusion-specific inference results processing"""
