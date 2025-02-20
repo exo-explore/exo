@@ -26,6 +26,9 @@ class BufferedOutput:
   def append(self, token: int):
     self.token_output.append(token)
 
+  def token_count(self):
+    return len(self.token_output)
+
 class Node:
   def __init__(
     self,
@@ -180,9 +183,8 @@ class Node:
     token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
     self.buffered_token_output[request_id].append(token.item())
 
-    current_tokens = self.buffered_token_output[request_id].token_output
     token_is_eos = token.item() == self.inference_engine.tokenizer.eos_token_id
-    max_length_reached = len(current_tokens) >= max_tokens
+    max_length_reached = self.buffered_token_output[request_id].token_count() >= max_tokens
     is_finished = token_is_eos or max_length_reached
 
     finish_reason = None
