@@ -176,5 +176,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
 
   def deserialize_generation_options(self, generation_options_proto: node_service_pb2.GenerationOptions) -> GenerationOptions:
     return GenerationOptions(
-      max_completion_tokens=generation_options_proto.max_completion_tokens if generation_options_proto.HasField("max_completion_tokens") else None
+      max_completion_tokens=generation_options_proto.max_completion_tokens if generation_options_proto.HasField("max_completion_tokens") else None,
+      stop=generation_options_proto.stop if generation_options_proto.HasField("stop") else None
     )
