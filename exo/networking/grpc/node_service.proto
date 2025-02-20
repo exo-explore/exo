@@ -19,11 +19,16 @@ message Shard {
   int32 n_layers = 4;
 }
 
+message GenerationOptions {
+  optional int32 max_completion_tokens = 1;
+}
+
 message PromptRequest {
   Shard shard = 1;
   string prompt = 2;
   optional string request_id = 3;
   optional InferenceState inference_state = 4;
+  optional GenerationOptions generation_options = 5;
 }
 
 message TensorRequest {
@@ -31,6 +36,7 @@ message TensorRequest {
   Tensor tensor = 2;
   optional string request_id = 3;
   optional InferenceState inference_state = 4;
+  optional GenerationOptions generation_options = 5;
 }
 
 message ExampleRequest {
