@@ -107,6 +107,7 @@ message SendResultRequest {
   repeated int32 result = 2;
   optional Tensor tensor = 3;
   bool is_finished = 4;
+  optional string finish_reason = 5;
 }
 
 message SendOpaqueStatusRequest {
