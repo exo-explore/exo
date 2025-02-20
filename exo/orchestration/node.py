@@ -61,7 +61,7 @@ class BufferedOutput:
 
       if DEBUG >= 2: print(f"Checking if {assembled_text} matches {stop_sequence}")
 
-      if assembled_text.endswith(stop_sequence):
+      if stop_sequence in assembled_text:
         if DEBUG >= 2: print(f"Match found: {assembled_text} matches {stop_sequence}")
         self.is_finished = True
         self.finish_reason = "stop"
