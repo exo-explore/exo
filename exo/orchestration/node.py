@@ -17,6 +17,11 @@ from exo.viz.topology_viz import TopologyViz
 from exo.download.download_progress import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.shard_download import ShardDownloader
+import llguidance
+import llguidance.hf
+
+with open("/Users/joshuacoles/Developer/checkouts/external/exo/event-schema.json") as f:
+  GLOBAL_JSON_SCHEMA = json.load(f)
 
 class BufferedOutput:
   stop_sequences: List[str]
@@ -30,13 +35,41 @@ class BufferedOutput:
   is_finished: bool = False
   finish_reason: Optional[str] = None
 
-  def __init__(self, max_tokens: int, eos_token_id: int, stop_sequences: List[str], tokenizer):
+  guidance_interpreter = None
+  active_token_mask = None
+
+  def __init__(
+    self,
+    max_tokens: int,
+    eos_token_id: int,
+    stop_sequences: List[str],
+    tokenizer,
+    json_schema: Optional[dict] = None
+  ):
     self.buffer = []
     self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(stop_sequences) > 0 else 0
     self.max_tokens = max_tokens
     self.eos_token_id = eos_token_id
     self.stop_sequences = stop_sequences
     self.tokenizer = tokenizer
+    if json_schema:
+        self.initialize_guidance(json_schema, tokenizer)
+
+  def initialize_guidance(self, schema: dict, tokenizer):
+    # Get actual tokenizer configuration
+    vocab_size = tokenizer.vocab_size
+    if DEBUG >= 1:
+        print(f"Initializing guidance with vocab_size={vocab_size}")
+        print(f"Tokenizer special tokens: {tokenizer.special_tokens_map}")
+
+    self.guidance_interpreter = llguidance.LLInterpreter(
+        llguidance.hf.from_tokenizer(tokenizer, n_vocab=vocab_size),
+        json.dumps({"grammars": [{"json_schema": schema}]}),
+        enable_ff_tokens=False,
+        enable_backtrack=False,
+        log_level=2
+    )
+    self.guidance_interpreter.start_without_prompt()
 
   def append(self, token: int):
     self.buffer.append((token, self.tokenizer.decode([token])))
@@ -120,6 +153,11 @@ class BufferedOutput:
     # Not enough tokens yet
     return []
 
+  def get_token_mask(self) -> Optional[np.ndarray]:
+    if not self.guidance_interpreter:
+      return None
+    mask, _ = self.guidance_interpreter.compute_mask()
+    return np.array(list(mask), dtype="int32")
 
 class Node:
   def __init__(
@@ -280,11 +318,22 @@ class Node:
         max_tokens=max_tokens,
         stop_sequences=stop_sequences,
         tokenizer=self.inference_engine.tokenizer,
+        json_schema=GLOBAL_JSON_SCHEMA
       )
 
     buffered_output = self.buffered_token_output[request_id]
 
-    token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
+    token = await self.inference_engine.sample(
+      result,
+      temp=self.default_sample_temperature,
+      mask=buffered_output.get_token_mask()
+    )
+
+    if buffered_output.guidance_interpreter:
+        valid = buffered_output.guidance_interpreter.commit_token(token.item())
+        if not valid:
+            raise ValueError(f"Schema violation at token {token.item()} ('{buffered_output.tokenizer.decode([token.item()])}')")
+
     buffered_output.append(token.item())
 
     if DEBUG >= 2:

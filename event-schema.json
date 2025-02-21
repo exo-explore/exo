@@ -1,0 +1,45 @@
+{
+  "$id": "https://example.com/calendar.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A representation of an event",
+  "type": "object",
+  "required": [ "startDate", "summary" ],
+  "additionalProperties": false,
+  "properties": {
+    "startDate": {
+      "type": "string",
+      "description": "Event starting time"
+    },
+    "endDate": {
+      "type": "string",
+      "description": "Event ending time"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "duration": {
+      "type": "string",
+      "description": "Event duration"
+    },
+    "recurrenceDate": {
+      "type": "string",
+      "description": "Recurrence date"
+    },
+    "recurrenceRule": {
+      "type": "string",
+      "description": "Recurrence rule in iCalendar format (RFC 5545)"
+    },
+    "category": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    }
+  }
+}

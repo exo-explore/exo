@@ -16,7 +16,7 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
-  async def sample(self, x: np.ndarray) -> np.ndarray:
+  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0, mask: Optional[np.ndarray] = None) -> np.ndarray:
     pass
 
   @abstractmethod
