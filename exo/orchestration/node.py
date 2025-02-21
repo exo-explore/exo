@@ -230,6 +230,9 @@ class Node:
       forward, intermediate_result, is_finished = await self.handle_stable_diffusion_inference(
         result, inference_state
       )
+
+      # We don't do finish reason determination here for stable diffusion
+      finish_reason = None
     else:
       # LLM specific processing
       forward, intermediate_result, is_finished, finish_reason = await self.handle_llm_inference(
