@@ -157,6 +157,10 @@ class BufferedOutput:
     if not self.guidance_interpreter:
       return None
     mask, _ = self.guidance_interpreter.compute_mask()
+
+    if mask is None:
+      return None
+
     return np.array(list(mask), dtype="int32")
 
 class Node:
