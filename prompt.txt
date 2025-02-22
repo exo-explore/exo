@@ -14,9 +14,6 @@ type Event = {
   // A brief description of the event
   summary: string;
   location: string;
-  // If the event is not recurring, this field should be omitted. It should be an RFC 5545 RRULE string otherwise.
-  // It should NEVER be an empty string.
-  recurrenceRule?: string;
 };
 ```
 
