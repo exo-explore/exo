@@ -72,6 +72,11 @@ class BufferedOutput:
     self.guidance_interpreter.start_without_prompt()
 
   def append(self, token: int):
+    if self.guidance_interpreter:
+        valid = self.guidance_interpreter.commit_token(token)
+        if not valid:
+            raise ValueError(f"Schema violation at token {token} ('{self.tokenizer.decode([token])}')")
+
     self.buffer.append((token, self.tokenizer.decode([token])))
     self._token_count += 1
 
@@ -81,6 +86,9 @@ class BufferedOutput:
     elif self._token_count >= self.max_tokens:
       self.is_finished = True
       self.finish_reason = "length"
+    elif self.guidance_interpreter and self.guidance_interpreter.has_pending_stop():
+      self.is_finished = True
+      self.finish_reason = "stop"
     elif len(self.stop_sequences) > 0:
       self.attempt_to_match_stop_sequences()
 
@@ -332,11 +340,6 @@ class Node:
       temp=self.default_sample_temperature,
       mask=buffered_output.get_token_mask()
     )
-
-    if buffered_output.guidance_interpreter:
-        valid = buffered_output.guidance_interpreter.commit_token(token.item())
-        if not valid:
-            raise ValueError(f"Schema violation at token {token.item()} ('{buffered_output.tokenizer.decode([token.item()])}')")
 
     buffered_output.append(token.item())
 
