@@ -10,7 +10,8 @@ from exo.inference.inference_engine import InferenceEngine, Shard
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
-from exo.inference.generation_options import GenerationOptions
+from exo.inference.generation_options import GenerationOptions, ResponseFormat, JsonSchemaResponseFormat, \
+  TextResponseFormat, JsonObjectResponseFormat
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
@@ -20,8 +21,6 @@ from exo.download.shard_download import ShardDownloader
 import llguidance
 import llguidance.hf
 
-with open("/Users/joshuacoles/Developer/checkouts/external/exo/event-schema.json") as f:
-  GLOBAL_JSON_SCHEMA = json.load(f)
 
 class BufferedOutput:
   stop_sequences: List[str]
@@ -44,38 +43,49 @@ class BufferedOutput:
     eos_token_id: int,
     stop_sequences: List[str],
     tokenizer,
-    json_schema: Optional[dict] = None
+    response_format: Optional[ResponseFormat] = None
   ):
     self.buffer = []
-    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(stop_sequences) > 0 else 0
+    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(
+      stop_sequences) > 0 else 0
     self.max_tokens = max_tokens
     self.eos_token_id = eos_token_id
     self.stop_sequences = stop_sequences
     self.tokenizer = tokenizer
-    if json_schema:
-        self.initialize_guidance(json_schema, tokenizer)
 
-  def initialize_guidance(self, schema: dict, tokenizer):
-    # Get actual tokenizer configuration
-    vocab_size = tokenizer.vocab_size
-    if DEBUG >= 1:
-        print(f"Initializing guidance with vocab_size={vocab_size}")
-        print(f"Tokenizer special tokens: {tokenizer.special_tokens_map}")
+    # If we are generating structured responses initialize the guidance
+    if response_format and not isinstance(response_format, TextResponseFormat):
+      if DEBUG >= 2: print(f"Initializing guidance for response format: {response_format}")
+      self.initialize_guidance(response_format)
 
+  def convert_response_format(self, response_format: ResponseFormat) -> str:
+    if isinstance(response_format, JsonSchemaResponseFormat):
+      return json.dumps({"grammars": [{"json_schema": response_format.json_schema}]})
+    elif isinstance(response_format, JsonObjectResponseFormat):
+      with open("/Users/joshuacoles/Developer/checkouts/external/exo/json.lark", "r") as f:
+        json_grammar = f.read()
+      return json.dumps({
+        "grammars": [{"lark_grammar": json_grammar}]
+      })
+    else:
+      raise ValueError(f"Unimplemented response format: {response_format}")
+
+  def initialize_guidance(self, response_format):
     self.guidance_interpreter = llguidance.LLInterpreter(
-        llguidance.hf.from_tokenizer(tokenizer, n_vocab=vocab_size),
-        json.dumps({"grammars": [{"json_schema": schema}]}),
-        enable_ff_tokens=False,
-        enable_backtrack=False,
-        log_level=2
+      llguidance.hf.from_tokenizer(self.tokenizer, n_vocab=self.tokenizer.vocab_size),
+      self.convert_response_format(response_format),
+      enable_ff_tokens=False,
+      enable_backtrack=False,
+      log_level=2
     )
+
     self.guidance_interpreter.start_without_prompt()
 
   def append(self, token: int):
     if self.guidance_interpreter:
-        valid = self.guidance_interpreter.commit_token(token)
-        if not valid:
-            raise ValueError(f"Schema violation at token {token} ('{self.tokenizer.decode([token])}')")
+      valid = self.guidance_interpreter.commit_token(token)
+      if not valid:
+        raise ValueError(f"Schema violation at token {token} ('{self.tokenizer.decode([token])}')")
 
     self.buffer.append((token, self.tokenizer.decode([token])))
     self._token_count += 1
@@ -170,6 +180,7 @@ class BufferedOutput:
       return None
 
     return np.array(list(mask), dtype="int32")
+
 
 class Node:
   def __init__(
@@ -324,13 +335,12 @@ class Node:
       if generation_options and generation_options.max_completion_tokens:
         max_tokens = min(max_tokens, generation_options.max_completion_tokens)
 
-      stop_sequences = generation_options.stop or []
       self.buffered_token_output[request_id] = BufferedOutput(
         eos_token_id=self.inference_engine.tokenizer.eos_token_id,
         max_tokens=max_tokens,
-        stop_sequences=stop_sequences,
+        stop_sequences=generation_options.stop or [],
         tokenizer=self.inference_engine.tokenizer,
-        json_schema=GLOBAL_JSON_SCHEMA
+        response_format=generation_options.response_format
       )
 
     buffered_output = self.buffered_token_output[request_id]
