@@ -49,7 +49,6 @@ if sys.platform.startswith("darwin") and platform.machine() == "arm64":
 if sys.platform.startswith("win32"):
   install_requires.extend(extras_require["windows"])
 
-
 def _add_gpu_requires():
   global install_requires
   # Add Nvidia-GPU
@@ -72,7 +71,6 @@ def _add_gpu_requires():
       install_requires.extend(extras_require["amd-gpu"])
   finally:
     pass
-
 
 _add_gpu_requires()
 

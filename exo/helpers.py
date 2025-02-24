@@ -8,6 +8,7 @@ import platform
 import psutil
 import uuid
 from scapy.all import get_if_addr, get_if_list
+from scapy.arch.windows import get_windows_if_list  # Windows-specific
 import re
 import subprocess
 from pathlib import Path
@@ -15,6 +16,8 @@ import tempfile
 import json
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+import netifaces
+from typing import List, Tuple
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -230,25 +233,67 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
     return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
 
 
-def get_all_ip_addresses_and_interfaces():
+def get_all_ip_addresses_and_interfaces() -> List[Tuple[str, str]]:
+    """
+    Get all active IP addresses and their corresponding interfaces.
+    Excludes loopback, non-routable, and inactive interfaces.
+    """
     ip_addresses = []
-    for interface in get_if_list():
+
+    # Exclude these IP prefixes (non-routable or problematic)
+    excluded_prefixes = (
+        "127.",  # Loopback
+        "169.254.",  # Link-local
+        "192.168.137.",  # Hyper-V, VMware, etc.
+        "0.0.0.0",  # Invalid
+    )
+
+    # Get all network interfaces
+    interfaces = netifaces.interfaces()
+
+    for interface in interfaces:
         try:
-            ip = get_if_addr(interface)
-            # Exclude invalid IP addresses
-            if ip.startswith("0.0.") or ip.startswith("169.254.") or ":" in ip:
-                continue
-            simplified_interface = re.sub(r'^\\Device\\NPF_', '', interface)
-            ip_addresses.append((ip, simplified_interface))
-        except:
+            # Get IPv4 addresses for the interface
+            addrs = netifaces.ifaddresses(interface).get(netifaces.AF_INET, [])
+            for addr in addrs:
+                ip = addr.get("addr")
+                if not ip:
+                    continue
+
+                # Skip excluded IPs
+                if any(ip.startswith(prefix) for prefix in excluded_prefixes):
+                    if DEBUG >= 1:
+                        print(f"Skipping excluded IP: {ip} on interface {interface}")
+                    continue
+
+                # On Windows, check if the interface is active
+                if psutil.WINDOWS:
+                    try:
+                        # Use psutil to check interface status
+                        if_stats = psutil.net_if_stats().get(interface)
+                        if if_stats and not if_stats.isup:
+                            if DEBUG >= 1:
+                                print(f"Skipping inactive interface: {interface}")
+                            continue
+                    except Exception as e:
+                        if DEBUG >= 1:
+                            print(f"Error checking interface status for {interface}: {e}")
+
+                # Add the IP and interface to the list
+                ip_addresses.append((ip, interface))
+
+        except Exception as e:
             if DEBUG >= 1:
-                print(f"Failed to get IP address for interface {interface}")
+                print(f"Error processing interface {interface}: {e}")
                 traceback.print_exc()
+
+    # If no valid IPs are found, default to localhost
     if not ip_addresses:
         if DEBUG >= 1:
-            print("Failed to get any IP addresses. Defaulting to localhost.")
-        return [("localhost", "lo")]
-    return list(set(ip_addresses))
+            print("No valid IP addresses found. Defaulting to localhost.")
+        return [("127.0.0.1", "lo")]
+
+    return list(set(ip_addresses))  # Remove duplicates
 
 
 async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
