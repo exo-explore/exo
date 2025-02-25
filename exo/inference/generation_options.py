@@ -3,6 +3,7 @@ from typing import Optional, List, Literal, Any
 from pydantic import BaseModel, TypeAdapter
 from typing import Optional
 import json
+from exo.inference.grammars import JSON_GRAMMAR
 
 class ResponseFormat(BaseModel):
   type: Literal["text", "json_object", "json_schema"]
@@ -32,12 +33,8 @@ class JsonObjectResponseFormat(BaseModel):
   type: Literal["json_object"]
 
   def to_grammar(self) -> Optional[str]:
-    # TODO: This is hacky
-    with open("/Users/joshuacoles/Developer/checkouts/external/exo/json.lark", "r") as f:
-      json_grammar = f.read()
-
     return json.dumps({
-      "grammars": [{"lark_grammar": json_grammar}]
+      "grammars": [{"lark_grammar": JSON_GRAMMAR}]
     })
 
 

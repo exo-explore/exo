@@ -1,0 +1,24 @@
+JSON_GRAMMAR = """
+%llguidance {}
+
+start: object
+
+value: object
+     | array
+     | STRING
+     | NUMBER
+     | ("true" | "false" | "null") WS
+
+object: "{" WS (STRING ":" WS value ("," WS STRING ":" WS value)*)? "}" WS
+array: "[" WS (value ("," WS value)*)? "]" WS
+
+// escapes
+STRING: "\"" ((/[^"\\\x7F\x00-\x1F]/ | "\\" (/["\\bfnrt]/ | "u" /[0-9a-fA-F]/{4,4})))* "\"" WS
+
+NUMBER: "-"? (/[0-9]/ | /[1-9]/ /[0-9]/{0,15}) ("." /[0-9]/+)? (/[eE]/ /[-+]/? /[0-9]/ /[1-9]/{0,15})? WS
+
+// Optional space: by convention, applied in this grammar after literal chars when allowed
+WS: ""
+     | " "
+     | "\n" /[ \t]/{0,20}
+"""
