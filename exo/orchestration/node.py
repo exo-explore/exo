@@ -10,8 +10,7 @@ from exo.inference.inference_engine import InferenceEngine, Shard
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
 from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
-from exo.inference.generation_options import GenerationOptions, ResponseFormat, JsonSchemaResponseFormat, \
-  TextResponseFormat, JsonObjectResponseFormat
+from exo.inference.generation_options import GenerationOptions, ResponseFormat
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
@@ -54,26 +53,14 @@ class BufferedOutput:
     self.tokenizer = tokenizer
 
     # If we are generating structured responses initialize the guidance
-    if response_format and not isinstance(response_format, TextResponseFormat):
+    if response_format and response_format.is_guided():
       if DEBUG >= 2: print(f"Initializing guidance for response format: {response_format}")
       self.initialize_guidance(response_format)
 
-  def convert_response_format(self, response_format: ResponseFormat) -> str:
-    if isinstance(response_format, JsonSchemaResponseFormat):
-      return json.dumps({"grammars": [{"json_schema": response_format.json_schema}]})
-    elif isinstance(response_format, JsonObjectResponseFormat):
-      with open("/Users/joshuacoles/Developer/checkouts/external/exo/json.lark", "r") as f:
-        json_grammar = f.read()
-      return json.dumps({
-        "grammars": [{"lark_grammar": json_grammar}]
-      })
-    else:
-      raise ValueError(f"Unimplemented response format: {response_format}")
-
-  def initialize_guidance(self, response_format):
+  def initialize_guidance(self, response_format: ResponseFormat):
     self.guidance_interpreter = llguidance.LLInterpreter(
       llguidance.hf.from_tokenizer(self.tokenizer, n_vocab=self.tokenizer.vocab_size),
-      self.convert_response_format(response_format),
+      response_format.to_grammar(),
       enable_ff_tokens=False,
       enable_backtrack=False,
       log_level=2

@@ -2,23 +2,53 @@ from typing import Optional, List, Literal, Any
 
 from pydantic import BaseModel, TypeAdapter
 from typing import Optional
+import json
 
+class ResponseFormat(BaseModel):
+  type: Literal["text", "json_object", "json_schema"]
 
-class TextResponseFormat(BaseModel):
+  def to_grammar(self) -> Optional[str]:
+    raise NotImplementedError()
+
+  def is_guided(self):
+    """
+    If the response format requires guided generation. By default, this is true. If this returns true you must return
+    a grammar from to_grammar.
+    """
+
+    return True
+
+class TextResponseFormat(ResponseFormat):
   type: Literal["text"]
+
+  def is_guided(self):
+    return False
+
+  def to_grammar(self) -> Optional[str]:
+    return None
 
 
 class JsonObjectResponseFormat(BaseModel):
   type: Literal["json_object"]
+
+  def to_grammar(self) -> Optional[str]:
+    # TODO: This is hacky
+    with open("/Users/joshuacoles/Developer/checkouts/external/exo/json.lark", "r") as f:
+      json_grammar = f.read()
+
+    return json.dumps({
+      "grammars": [{"lark_grammar": json_grammar}]
+    })
 
 
 class JsonSchemaResponseFormat(BaseModel):
   type: Literal["json_schema"]
   json_schema: Any
 
-
-ResponseFormat = TextResponseFormat | JsonObjectResponseFormat | JsonSchemaResponseFormat
-ResponseFormatAdapter = TypeAdapter(ResponseFormat)
+  def to_grammar(self) -> Optional[str]:
+    return json.dumps({
+      "grammars": [{"json_schema": self.json_schema}]
+    })
 
 class GenerationOptions:
   max_completion_tokens: Optional[int] = None
