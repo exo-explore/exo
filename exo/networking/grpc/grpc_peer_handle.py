@@ -225,5 +225,7 @@ class GRPCPeerHandle(PeerHandle):
   def serialize_generation_options(self, generation_options: GenerationOptions) -> node_service_pb2.GenerationOptions:
     return node_service_pb2.GenerationOptions(
       max_completion_tokens=generation_options.max_completion_tokens,
-      stop=generation_options.stop
+      stop=generation_options.stop,
+      temperature=generation_options.temperature,
+      grammar_definition=generation_options.grammar_definition
     )
