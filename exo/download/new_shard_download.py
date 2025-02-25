@@ -141,7 +141,8 @@ async def download_file_with_retry(repo_id: str, revision: str, path: str, targe
 async def _download_file(repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Callable[[int, int], None] = lambda _, __: None) -> Path:
   if await aios.path.exists(target_dir/path): return target_dir/path
   await aios.makedirs((target_dir/path).parent, exist_ok=True)
-  length, remote_hash = await file_meta(repo_id, revision, path)
+  length, etag = await file_meta(repo_id, revision, path)
+  remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
   partial_path = target_dir/f"{path}.partial"
   resume_byte_pos = (await aios.stat(partial_path)).st_size if (await aios.path.exists(partial_path)) else None
   if resume_byte_pos != length:
