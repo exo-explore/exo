@@ -1,4 +1,4 @@
-JSON_GRAMMAR = """
+JSON_LARK_GRAMMAR = """
 %llguidance {}
 
 start: object

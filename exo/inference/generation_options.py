@@ -1,10 +1,11 @@
 from typing import Optional, List, Literal, Any
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 from typing import Optional
 import json
-from exo.inference.grammars import JSON_GRAMMAR
+from exo.inference.grammars import JSON_LARK_GRAMMAR
 
+# TODO: Move these back to the ChatGPT API as they specify the response format and we just get the grammar JSON string
 class ResponseFormat(BaseModel):
   type: Literal["text", "json_object", "json_schema"]
 
@@ -34,7 +35,7 @@ class JsonObjectResponseFormat(BaseModel):
 
   def to_grammar(self) -> Optional[str]:
     return json.dumps({
-      "grammars": [{"lark_grammar": JSON_GRAMMAR}]
+      "grammars": [{"lark_grammar": JSON_LARK_GRAMMAR}]
     })
 
 
