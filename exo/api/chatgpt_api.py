@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 from transformers import AutoTokenizer
+from pydantic import BaseModel
 from typing import List, Literal, Union, Dict, Optional, Any, TypedDict
 from aiohttp import web
 import aiohttp_cors
@@ -12,9 +13,10 @@ import traceback
 import signal
 from exo import DEBUG, VERSION
 from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
+from exo.inference.grammars import JSON_LARK_GRAMMAR
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
-from exo.inference.generation_options import GenerationOptions, ResponseFormat, ResponseFormatAdapter
+from exo.inference.generation_options import GenerationOptions
 from exo.models import build_base_shard, build_full_shard, model_cards, get_repo, get_supported_models, get_pretty_name
 from typing import Callable, Optional
 from PIL import Image
@@ -47,6 +49,47 @@ class Message:
       data["tools"] = self.tools
     return data
 
+class ResponseFormat(BaseModel):
+  type: Literal["text", "json_object", "json_schema"]
+
+  def to_grammar(self) -> Optional[str]:
+    raise NotImplementedError()
+
+  def is_guided(self):
+    """
+    If the response format requires guided generation. By default, this is true. If this returns true you must return
+    a grammar from to_grammar.
+    """
+
+    return True
+
+class TextResponseFormat(ResponseFormat):
+  type: Literal["text"]
+
+  def is_guided(self):
+    return False
+
+  def to_grammar(self) -> Optional[str]:
+    return None
+
+
+class JsonObjectResponseFormat(BaseModel):
+  type: Literal["json_object"]
+
+  def to_grammar(self) -> Optional[str]:
+    return json.dumps({
+      "grammars": [{"lark_grammar": JSON_LARK_GRAMMAR}]
+    })
+
+
+class JsonSchemaResponseFormat(BaseModel):
+  type: Literal["json_schema"]
+  json_schema: Any
+
+  def to_grammar(self) -> Optional[str]:
+    return json.dumps({
+      "grammars": [{"json_schema": self.json_schema}]
+    })
 
 class ChatCompletionRequest:
   def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None,
@@ -69,7 +112,7 @@ class ChatCompletionRequest:
     return GenerationOptions(
       max_completion_tokens=self.max_completion_tokens,
       stop=self.stop,
-      response_format=self.response_format,
+      grammar_definition=self.response_format.to_grammar() if self.response_format else None,
       temperature=self.temperature,
     )
 
@@ -184,6 +227,28 @@ def parse_message(data: dict):
 
 
 def parse_chat_request(data: dict, default_model: str):
+  # Parse response_format if provided
+  response_format = None
+  if "response_format" in data:
+    rf_data = data["response_format"]
+    if isinstance(rf_data, dict):
+      rf_type = rf_data.get("type", "text")
+      if rf_type == "text":
+        response_format = TextResponseFormat(type="text")
+      elif rf_type == "json_object":
+        response_format = JsonObjectResponseFormat(type="json_object")
+      elif rf_type == "json_schema":
+        if "json_schema" not in rf_data:
+          raise ValueError("json_schema field is required for json_schema response format")
+        response_format = JsonSchemaResponseFormat(type="json_schema", json_schema=rf_data["json_schema"])
+      else:
+        raise ValueError(f"Unsupported response format type: {rf_type}")
+    elif isinstance(rf_data, str) and rf_data == "text":
+      # Handle the case where response_format is just the string "text"
+      response_format = TextResponseFormat(type="text")
+    else:
+      raise ValueError(f"Invalid response_format: {rf_data}")
+
   return ChatCompletionRequest(
     data.get("model", default_model),
     [parse_message(msg) for msg in data["messages"]],
@@ -193,7 +258,7 @@ def parse_chat_request(data: dict, default_model: str):
     # max_completion_tokens is not provided.
     data.get("max_completion_tokens", data.get("max_tokens", None)),
     data.get("stop", None),
-    ResponseFormatAdapter.validate_json(json.dumps(data.get("response_format"))) if data.get("response_format") else None,
+    response_format,
   )
 
 
