@@ -84,6 +84,7 @@ class BufferedOutput:
       self.is_finished = True
       self.finish_reason = "length"
     elif self.guidance_interpreter and self.guidance_interpreter.has_pending_stop():
+      # TODO: We should handle the different stop reasons
       self.is_finished = True
       self.finish_reason = "stop"
     elif len(self.stop_sequences) > 0:
