@@ -22,6 +22,10 @@ message Shard {
 message GenerationOptions {
   optional int32 max_completion_tokens = 1;
   repeated string stop = 2;
+  optional float temperature = 3;
+
+  // This is the JSON grammar definition for the requested response format
+  optional string grammar_definition = 4;
 }
 
 message PromptRequest {

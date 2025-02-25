@@ -42,7 +42,7 @@ class BufferedOutput:
     eos_token_id: int,
     stop_sequences: List[str],
     tokenizer,
-    response_format: Optional[ResponseFormat] = None
+    grammar_definition: Optional[str] = None
   ):
     self.buffer = []
     self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(
@@ -53,14 +53,13 @@ class BufferedOutput:
     self.tokenizer = tokenizer
 
     # If we are generating structured responses initialize the guidance
-    if response_format and response_format.is_guided():
-      if DEBUG >= 2: print(f"Initializing guidance for response format: {response_format}")
-      self.initialize_guidance(response_format)
+    if grammar_definition:
+      self.initialize_guidance(grammar_definition)
 
-  def initialize_guidance(self, response_format: ResponseFormat):
+  def initialize_guidance(self, grammar_definition: str):
     self.guidance_interpreter = llguidance.LLInterpreter(
       llguidance.hf.from_tokenizer(self.tokenizer, n_vocab=self.tokenizer.vocab_size),
-      response_format.to_grammar(),
+      grammar_definition,
       enable_ff_tokens=False,
       enable_backtrack=False,
       log_level=2
@@ -328,7 +327,7 @@ class Node:
         max_tokens=max_tokens,
         stop_sequences=generation_options.stop or [],
         tokenizer=self.inference_engine.tokenizer,
-        response_format=generation_options.response_format
+        grammar_definition=generation_options.grammar_definition
       )
 
     buffered_output = self.buffered_token_output[request_id]

@@ -53,7 +53,7 @@ class GenerationOptions:
   # Textual stop sequences that will halt generation when encountered
   stop: Optional[List[str]] = None
   temperature: Optional[float] = None
-  response_format: Optional[ResponseFormat] = None
+  grammar_definition: Optional[str] = None
 
   def __init__(
     self,
@@ -65,4 +65,4 @@ class GenerationOptions:
     self.max_completion_tokens = max_completion_tokens
     self.stop = stop
     self.temperature = temperature
-    self.response_format = response_format
+    self.grammar_definition = response_format.to_grammar() if response_format else None
