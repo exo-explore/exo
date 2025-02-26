@@ -13,6 +13,9 @@ import asyncio
 from collections import OrderedDict
 from mlx_lm.models.cache import make_prompt_cache
 from concurrent.futures import ThreadPoolExecutor
+from exo import DEBUG
+from llguidance.mlx import apply_token_bitmask
+
 
 class MLXDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
@@ -39,12 +42,19 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       self.caches[request_id] = newcache
     return {"cache": self.caches[request_id]}
 
-  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
+  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0,
+                   mask: Optional[np.ndarray] = None) -> np.ndarray:
     if (temp, top_p, 0.0, 1) != self.sampler_params:
       self.sampler_params = (temp, top_p, 0.0, 1)
       self.sampler = make_sampler(*self.sampler_params)
     logits = mx.array(x)
     logits = logits[:, -1, :]
+
+    if mask is not None:
+      # Why doesn't apply_token_bitmask work here?
+      logits = mx.where(mask == 0, float('-inf'), logits)
+
+
     logprobs = logits - mx.logsumexp(logits, keepdims=True)
     result = self.sampler(logprobs)
     await self._eval_mlx(result)
@@ -76,7 +86,8 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     await self.ensure_shard(shard)
     await asyncio.get_running_loop().run_in_executor(self._mlx_thread, lambda: self.model.load_weights(path))
 
-  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
+  async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray,
+                         inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
     await self.ensure_shard(shard)
     state = await self.poll_state(request_id) if self.model.model_type != 'StableDiffusionPipeline' else {}
     x = mx.array(input_data)
@@ -114,16 +125,19 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     )
     return score
 
-  async def ensure_train(self, shard: Shard, loss: str, opt=optim.SGD, lr=1e-5, trainable_layers=['input_layernorm', 'gate_proj']):
+  async def ensure_train(self, shard: Shard, loss: str, opt=optim.SGD, lr=1e-5,
+                         trainable_layers=['input_layernorm', 'gate_proj']):
     await self.ensure_shard(shard)
 
     if 'train_layers' not in self.session or self.session['train_layers'] != trainable_layers:
       await self.save_session('train_layers', trainable_layers)
+
       def freeze_unfreeze():
         self.model.freeze()
         self.model.apply_to_modules(
           lambda k, v: v.unfreeze() if any(k.endswith(layer_name) for layer_name in trainable_layers) else None
         )
+
       await asyncio.get_running_loop().run_in_executor(self._mlx_thread, freeze_unfreeze)
 
     if 'lossname' not in self.session or 'LVaG' not in self.session or self.session['lossname'] != loss:
@@ -134,7 +148,8 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       await self.save_session('opt', opt(lr))
     return True
 
-  async def train(self, request_id: str, shard: Shard, inputs, targets, lengths, loss: str = "length_masked_ce", opt=optim.SGD, lr=1e-5):
+  async def train(self, request_id: str, shard: Shard, inputs, targets, lengths, loss: str = "length_masked_ce",
+                  opt=optim.SGD, lr=1e-5):
     await self.ensure_train(shard, loss, opt, lr)
 
     def train_step(inp, tar, lng):
@@ -168,6 +183,9 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
         )
         if hasattr(model_shard, "tokenizer"):
           self.tokenizer = model_shard.tokenizer
+          if DEBUG >= 1:
+            print(f"Loaded tokenizer: vocab_size={self.tokenizer.vocab_size}")
+            print(f"Added special tokens: {self.tokenizer.added_tokens_decoder}")
         else:
           self.tokenizer = await resolve_tokenizer(model_path)
         self.shard = shard
