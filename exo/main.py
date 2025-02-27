@@ -16,6 +16,7 @@ from exo.orchestration.node import Node
 from exo.networking.grpc.grpc_server import GRPCServer
 from exo.networking.udp.udp_discovery import UDPDiscovery
 from exo.networking.tailscale.tailscale_discovery import TailscaleDiscovery
+from exo.networking.headscale.headscale_discovery import HeadscaleDiscovery
 from exo.networking.grpc.grpc_peer_handle import GRPCPeerHandle
 from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWeightedPartitioningStrategy
 from exo.api import ChatGPTAPI
@@ -74,7 +75,7 @@ parser.add_argument("--listen-port", type=int, default=5678, help="Listening por
 parser.add_argument("--download-quick-check", action="store_true", help="Quick check local path for model shards download")
 parser.add_argument("--max-parallel-downloads", type=int, default=8, help="Max parallel downloads for model shards download")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
-parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale", "manual"], default="udp", help="Discovery module to use")
+parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale", "headscale", "manual"], default="udp", help="Discovery module to use")
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
 parser.add_argument("--discovery-config-path", type=str, default=None, help="Path to discovery config json file")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
@@ -88,6 +89,8 @@ parser.add_argument("--prompt", type=str, help="Prompt for the model when using 
 parser.add_argument("--default-temp", type=float, help="Default token sampling temperature", default=0.0)
 parser.add_argument("--tailscale-api-key", type=str, default=None, help="Tailscale API key")
 parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name")
+parser.add_argument("--headscale-api-key", type=str, default=None, help="Headscale API key")
+parser.add_argument("--headscale-api-base-url", type=str, default=None, help="Headscale API base URL")
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
 parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
@@ -144,6 +147,20 @@ elif args.discovery_module == "tailscale":
     discovery_timeout=args.discovery_timeout,
     tailscale_api_key=args.tailscale_api_key,
     tailnet=args.tailnet_name,
+    allowed_node_ids=allowed_node_ids
+  )
+elif args.discovery_module == "headscale":
+  if not args.headscale_api_base_url:
+    raise ValueError(f"--headscale-api-base-url is required when using Headscale discovery.")
+  if not args.headscale_api_key:
+    raise ValueError(f"--headscale-api-key is required when using Headscale discovery.")
+  discovery = HeadscaleDiscovery(
+    args.node_id,
+    args.node_port,
+    lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities),
+    discovery_timeout=args.discovery_timeout,
+    headscale_api_key=args.headscale_api_key,
+    headscale_api_base_url=args.headscale_api_base_url,
     allowed_node_ids=allowed_node_ids
   )
 elif args.discovery_module == "manual":
