@@ -31,6 +31,8 @@ def run():
             "--include-distribution-meta=mlx",
             "--include-module=mlx._reprlib_fix",
             "--include-module=mlx._os_warning",
+            "--include-distribution-meta=huggingface_hub",
+            "--include-module=huggingface_hub.repocard",
             f"--include-data-files={site_packages}/mlx/lib/mlx.metallib=mlx/lib/mlx.metallib",
             f"--include-data-files={site_packages}/mlx/lib/mlx.metallib=./mlx.metallib",
             "--include-distribution-meta=pygments",
