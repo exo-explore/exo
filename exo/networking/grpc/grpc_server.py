@@ -40,6 +40,8 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         ("grpc.max_concurrent_streams", 100),
         ("grpc.tcp_nodelay", 1),
         ("grpc.optimization_target", "throughput"),
+        ("grpc.keepalive_permit_without_calls", 1),
+        ("grpc.http2.max_concurrent_streams", 0),  # Unlimited concurrent streams
       ],
     )
     node_service_pb2_grpc.add_NodeServiceServicer_to_server(self, self.server)
