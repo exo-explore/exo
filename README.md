@@ -291,6 +291,7 @@ exo supports the following inference engines:
 - ✅ [UDP](exo/networking/udp)
 - ✅ [Manual](exo/networking/manual)
 - ✅ [Tailscale](exo/networking/tailscale)
+- ✅ [Headscale](exo/networking/headscale)
 - 🚧 [Radio](TODO)
 - 🚧 [Bluetooth](TODO)
 
@@ -298,3 +299,30 @@ exo supports the following inference engines:
 
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 [NCCL](TODO)
+
+## Advanced Configuration
+
+### Tailscale Discovery
+
+If you want to run exo across multiple networks, you can use [Tailscale](https://tailscale.com/) for peer discovery. You'll need to:
+
+1. Set up a Tailscale account and create a Tailnet
+2. Get your Tailscale API key from [https://login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys)
+3. Run exo with the `--discovery-module tailscale` flag and provide your API key and Tailnet name:
+
+```sh
+exo --discovery-module tailscale --tailscale-api-key tskey-api-xxxxx --tailnet-name yourtailnet.com
+```
+
+### Headscale Discovery
+
+If you're using a self-hosted [Headscale](https://github.com/juanfont/headscale) server for Tailscale, you can use the Headscale discovery module. You'll need:
+
+1. Your Headscale server's API base URL
+2. An API key from your Headscale server
+
+Run exo with the `--discovery-module headscale` flag and provide your API key and base URL:
+
+```sh
+exo --discovery-module headscale --headscale-api-key xxxxx --headscale-api-base-url https://your-headscale-server:8080
+```
