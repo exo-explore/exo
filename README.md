@@ -291,10 +291,10 @@ exo supports the following inference engines:
 - ✅ [UDP](exo/networking/udp)
 - ✅ [Manual](exo/networking/manual)
 - ✅ [Tailscale](exo/networking/tailscale)
-- 🚧 [Radio](TODO)
-- 🚧 [Bluetooth](TODO)
+- 🚧 Radio
+- 🚧 Bluetooth
 
 # Peer Networking Modules
 
 - ✅ [GRPC](exo/networking/grpc)
-- 🚧 [NCCL](TODO)
+- 🚧 NCCL
