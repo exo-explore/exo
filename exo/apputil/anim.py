@@ -60,14 +60,6 @@ def crop_image(image, top_crop=70):
   width, height = image.size
   return image.crop((0, top_crop, width, height))
 
-# Add lazy loading function
-def get_cv2():
-    global _cv2
-    if '_cv2' not in globals():
-        print("Initializing OpenCV...")  # Optional: helps track when CV2 is actually loaded
-        import cv2 as _cv2
-    return _cv2
-
 def create_animation_mp4(
   replacement_image_path,
   output_path,
@@ -154,7 +146,7 @@ def create_animation_mp4(
   if frames:
     first_frame = np.array(frames[0])
     height, width = first_frame.shape[:2]
-    cv2 = get_cv2()  # Lazy load OpenCV only when needed
+    import cv2  # Lazy load OpenCV only when needed
     fourcc = cv2.VideoWriter_fourcc(*'avc1')
     out = cv2.VideoWriter(
       output_path,
