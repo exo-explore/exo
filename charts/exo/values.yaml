@@ -1,0 +1,88 @@
+image:
+  repository: ghcr.io/exo-explore/exo
+  pullPolicy: IfNotPresent
+  tag: latest
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+terminal:
+  tty: true
+  stdin: true
+
+resources:
+  limits:
+    memory: 12Gi
+
+service:
+  ports:
+    broadcast:
+      port: 30415
+      nodePort: 30415
+    listen:
+      port: 30416
+      nodePort: 30416
+    chatgptApi:
+      port: 30080
+      nodePort: 30080
+    node:
+      port: 30042
+      nodePort: 30042
+
+env:
+  - name: TERM
+    value: "xterm-256color"
+  # - name: DEBUG
+  #   value: "9"
+  # - name: TINYGRAD_DEBUG
+  #   value: "6"
+
+args: []
+# Examples:
+# - "--disable-tui"
+# - "--data=/opt/exo-data"
+# - "--models-seed-dir=/opt/exo-seed"
+
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+containerSecurityContext: {}
+# Example:
+# capabilities:
+#   add:
+#     - SYS_PTRACE
+# allowPrivilegeEscalation: true
+
+persistence: {}
+# Example:
+# enabled: false
+# mountPath: /opt/exo-data
+# hostPath: /var/lib/exo-data
+
+extraVolumes: []
+# Example:
+# - name: exo-seed
+#   hostPath:
+#     path: /var/lib/exo-seed
+#     type: DirectoryOrCreate
+
+extraVolumeMounts: []
+# Example:
+# - name: exo-seed
+#   mountPath: /opt/exo-seed
+
+tolerations:
+  - operator: "Exists"
+    effect: "NoSchedule"
+  - operator: "Exists"
+    effect: "NoExecute"
+
+nodeSelector: {}
+
+affinity: {}

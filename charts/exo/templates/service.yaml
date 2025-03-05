@@ -1,0 +1,38 @@
+---
+{{- if not .Values.hostNetwork }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "exo.fullname" . }}
+  labels:
+    {{- include "exo.labels" . | nindent 4 }}
+spec:
+  type: NodePort
+  ports:
+    - port: {{ .Values.service.ports.broadcast.port }}
+      targetPort: {{ .Values.service.ports.broadcast.port }}
+      protocol: UDP
+      name: exo-broadcast
+      nodePort: {{ .Values.service.ports.broadcast.nodePort }}
+
+    - port: {{ .Values.service.ports.listen.port }}
+      targetPort: {{ .Values.service.ports.listen.port }}
+      protocol: UDP
+      name: exo-listen
+      nodePort: {{ .Values.service.ports.listen.nodePort }}
+
+    - port: {{ .Values.service.ports.chatgptApi.port }}
+      targetPort: {{ .Values.service.ports.chatgptApi.port }}
+      protocol: TCP
+      name: chatgpt-api
+      nodePort: {{ .Values.service.ports.chatgptApi.nodePort }}
+
+    - port: {{ .Values.service.ports.node.port }}
+      targetPort: {{ .Values.service.ports.node.port }}
+      protocol: TCP
+      name: exo-node
+      nodePort: {{ .Values.service.ports.node.nodePort }}
+
+  selector:
+    {{- include "exo.selectorLabels" . | nindent 4 }}
+{{- end }}

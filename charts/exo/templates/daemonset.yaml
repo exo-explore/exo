@@ -1,0 +1,98 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "exo.fullname" . }}
+  labels:
+    {{- include "exo.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "exo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "exo.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      hostNetwork: {{ .Values.hostNetwork | default false }}
+      dnsPolicy: {{ if .Values.hostNetwork }}{{ .Values.dnsPolicy | default "ClusterFirstWithHostNet" }}{{ else }}ClusterFirst{{ end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "/entrypoint.sh"
+          tty: {{ .Values.terminal.tty | default false }}
+          stdin: {{ .Values.terminal.stdin | default false }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          {{- if .Values.env }}
+            {{- toYaml .Values.env | nindent 12 }}
+          {{- end }}
+          args:
+            - "--discovery-module=udp"
+            - "--broadcast-port={{ .Values.service.ports.broadcast.port }}"
+            - "--chatgpt-api-port={{ .Values.service.ports.chatgptApi.port }}"
+            - "--listen-port={{ .Values.service.ports.listen.port }}"
+            - "--node-port={{ .Values.service.ports.node.port }}"
+          {{- range .Values.args }}
+            - {{ tpl . $ }}
+          {{- end }}
+          ports:
+            - name: broadcast
+              containerPort: {{ .Values.service.ports.broadcast.port }}
+              protocol: UDP
+            - name: listen
+              containerPort: {{ .Values.service.ports.listen.port }}
+              protocol: UDP
+            - name: chatgpt-api
+              containerPort: {{ .Values.service.ports.chatgptApi.port }}
+              protocol: TCP
+            - name: node
+              containerPort: {{ .Values.service.ports.node.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if and .Values.persistence.enabled .Values.persistence.mountPath }}
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            {{- if .Values.extraVolumeMounts }}
+            {{- toYaml .Values.extraVolumeMounts | nindent 12 }}
+            {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.persistence.enabled .Values.extraVolumes }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          hostPath:
+            path: {{ .Values.persistence.hostPath | default "/var/lib/exo-data" }}
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if .Values.extraVolumes }}
+        {{- toYaml .Values.extraVolumes | nindent 8 }}
+        {{- end }}
+      {{- end }}

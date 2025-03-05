@@ -1,0 +1,72 @@
+FROM python:3.12-slim
+
+SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN apt-get -y update \
+    && apt-get -y --no-install-recommends install \
+        bash \
+        clang \
+        curl \
+        git \
+        iproute2 \
+        libgl1 \
+        libglib2.0-0 \
+        procps \
+        protobuf-compiler \
+        strace \
+        sudo \
+        tmux \
+    && apt-get -y upgrade \
+    && apt-get -y dist-upgrade \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -d /home/exo exo \
+    && usermod -aG adm,audio,video exo \
+    && echo "exo ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/sudo \
+    && chmod 0440 /etc/sudoers.d/sudo
+
+RUN mkdir -p /home/exo/src && chown -R exo:exo /home/exo/src
+
+COPY --chown=exo:exo . /home/exo/src/
+
+# https://www.docker.com/blog/introduction-to-heredocs-in-dockerfiles/
+COPY <<EOF /entrypoint.sh
+#!/bin/bash
+
+source .venv/bin/activate
+
+if [ -n "\${NODE_NAME}" ]; then
+  exo --node-id=\${NODE_NAME} "\$@"
+else
+  exo "\$@"
+fi
+EOF
+
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
+USER exo
+WORKDIR /home/exo/src
+
+RUN bash -c "\
+    python -m venv .venv && \
+    source .venv/bin/activate && \
+        pip install --upgrade pip && \
+        pip install -e . && \
+        pip install --no-cache-dir \
+            torch \
+            \"tensorflow>=2.0\" \
+            flax \
+            llvmlite \
+            capstone && \
+        cd exo/networking/grpc && \
+        python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. node_service.proto && \
+        sed -i 's/import\ node_service_pb2/from . &/' node_service_pb2_grpc.py && \
+    deactivate \
+"
+
+EXPOSE 52415/tcp
