@@ -24,7 +24,9 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         pass
     
     async def load_checkpoint(self, shard, path):
-        pass
+        """ Loads the wieght into the model defined after enuring shard exits"""
+        self.ensure_shard(shard)
+        return 
     
     async def ensure_shard(self, shard: Shard):
         """make hure the ard exists otherwise downloads the model and the tokenizer and initialise the shard """
