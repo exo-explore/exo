@@ -7,8 +7,8 @@ def download_model_from_model_id(model_id):
     pass
 
 class HuggingfaceInferenceEngine(InferenceEngine):
-    def __init__(self):
-        self.shard = None
+    def __init__(self, shard_downloader: ShardDownloader):
+        self.shard_downloader = shard_downloader
         pass
     
     async def encode(self, shard, prompt):
@@ -38,7 +38,3 @@ class HuggingfaceInferenceEngine(InferenceEngine):
             self.shard = shard
             self.model = AutoModelForCausalLM.from_pretrained(model_path)
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-    
-    
-    async def infer_prompt(self, request_id, shard, prompt, inference_state=None):
-        pass
