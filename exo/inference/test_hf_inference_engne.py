@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from exo.inference.hf_inference_engine import HuggingFaceInferenceEngine
+from exo.inference.huggingface import HuggingFaceInferenceEngine
 from exo.inference.shard import Shard
 
 @pytest.mark.asyncio
