@@ -626,3 +626,6 @@ class Node:
     if progress[0] == progress[1]:
       intermediate_result = result
     return intermediate_result, inference_state
+
+  def sort_nodes_by_flops(self) -> List[PeerHandle]:
+    return sorted(self.peers, key=lambda peer: peer.device_capabilities().flops.fp32, reverse=True)

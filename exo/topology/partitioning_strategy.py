@@ -13,6 +13,7 @@ class Partition:
   node_id: str
   start: float
   end: float
+  flops: float  # Added flops attribute to store the flops of each partition
 
 
 class PartitioningStrategy(ABC):
@@ -20,12 +21,19 @@ class PartitioningStrategy(ABC):
   def partition(self, topology: Topology) -> List[Partition]:
     pass
 
+  def get_flops(self, topology: Topology) -> Dict[str, float]:
+    flops = {}
+    for node_id, capabilities in topology.all_nodes():
+      flops[node_id] = capabilities.flops.fp32  # Assuming fp32 flops for simplicity
+    return flops
+
 
 def map_partitions_to_shards(partitions: List[Partition], num_layers: int, model_id: str) -> List[Shard]:
   shards = []
+  total_flops = sum(partition.flops for partition in partitions)
   for i, partition in enumerate(partitions):
-    start_layer = int(partition.start*num_layers)
-    end_layer = int(partition.end*num_layers) - 1
+    start_layer = int(partition.start * num_layers)
+    end_layer = int(partition.end * num_layers) - 1
 
     # Ensure the last partition covers up to num_layers - 1
     if i == len(partitions) - 1:
