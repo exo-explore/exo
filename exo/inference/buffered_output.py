@@ -1,5 +1,9 @@
 from typing import List, Tuple, Optional
 
+from llguidance import LLInterpreter
+from llguidance.hf import from_tokenizer as llg_from_tokenizer
+import numpy as np
+
 from exo import DEBUG
 
 
@@ -15,15 +19,53 @@ class BufferedOutput:
   is_finished: bool = False
   finish_reason: Optional[str] = None
 
-  def __init__(self, max_tokens: int, eos_token_id: int, stop_sequences: List[str], tokenizer):
+  # Grammar for output structural generation
+  guidance_interpreter: Optional[LLInterpreter] = None
+
+  def __init__(
+    self,
+    max_tokens: int,
+    eos_token_id: int,
+    stop_sequences: List[str],
+    tokenizer,
+    grammar_definition: Optional[str] = None,
+  ):
     self.buffer = []
-    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(stop_sequences) > 0 else 0
+    self.buffer_char_size = max(len(stop_sequence) for stop_sequence in stop_sequences) if len(
+      stop_sequences) > 0 else 0
     self.max_tokens = max_tokens
     self.eos_token_id = eos_token_id
     self.stop_sequences = stop_sequences
     self.tokenizer = tokenizer
 
+    # If we are generating structured responses initialize the guidance
+    if grammar_definition:
+      print(f"Initializing guidance with grammar definition {grammar_definition}")
+      self.initialize_guidance(grammar_definition)
+
+  def initialize_guidance(self, grammar_definition: str):
+    try:
+      self.guidance_interpreter = LLInterpreter(
+        llg_from_tokenizer(self.tokenizer, n_vocab=self.tokenizer.vocab_size),
+        grammar_definition,
+        # These can't be enabled with how we are currently constructing the tokenizer
+        enable_ff_tokens=False,
+        enable_backtrack=False,
+        log_level=2
+      )
+
+      self.guidance_interpreter.start_without_prompt()
+    except Exception as e:
+      if DEBUG >= 2: print(f"Failed to initialize guidance interpreter for grammar definition {grammar_definition}: {e}")
+      raise Exception(f"Failed to initialize guidance interpreter: {e}")
+
   def append(self, token: int):
+    # Validate token against guidance interpreter if we are doing guided generation
+    if self.guidance_interpreter:
+      valid = self.guidance_interpreter.commit_token(token)
+      if not valid:
+        raise ValueError(f"Schema violation at token {token} ('{self.tokenizer.decode([token])}')")
+
     self.buffer.append((token, self.tokenizer.decode([token])))
     self._token_count += 1
 
@@ -33,6 +75,10 @@ class BufferedOutput:
     elif self._token_count >= self.max_tokens:
       self.is_finished = True
       self.finish_reason = "length"
+    elif self.guidance_interpreter and self.guidance_interpreter.has_pending_stop():
+      # TODO: We should handle the different stop reasons
+      self.is_finished = True
+      self.finish_reason = "stop"
     elif len(self.stop_sequences) > 0:
       self.attempt_to_match_stop_sequences()
 
@@ -104,3 +150,11 @@ class BufferedOutput:
 
     # Not enough tokens yet
     return []
+
+  def get_token_mask(self) -> Optional[np.ndarray]:
+    if self.guidance_interpreter:
+      mask, _ = self.guidance_interpreter.compute_mask()
+      if mask is not None:
+        return np.array(list(mask), dtype="int32")
+
+    return None
