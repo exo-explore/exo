@@ -170,20 +170,26 @@ class Node:
 
     if request_id not in self.buffered_token_output:
       max_tokens = self.max_generate_tokens
-      if generation_options and generation_options.max_completion_tokens:
+      if generation_options.max_completion_tokens is not None:
         max_tokens = min(max_tokens, generation_options.max_completion_tokens)
 
-      stop_sequences = generation_options.stop or []
+      tokenizer = self.inference_engine.tokenizer
       self.buffered_token_output[request_id] = BufferedOutput(
-        eos_token_id=self.inference_engine.tokenizer.eos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
         max_tokens=max_tokens,
-        stop_sequences=stop_sequences,
-        tokenizer=self.inference_engine.tokenizer,
+        stop_sequences=generation_options.stop or [],
+        tokenizer=tokenizer,
+        grammar_definition=generation_options.grammar_definition,
       )
 
     buffered_output = self.buffered_token_output[request_id]
 
-    token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
+    token = await self.inference_engine.sample(
+      result,
+      temp=self.default_sample_temperature,
+      mask=buffered_output.get_token_mask()
+    )
+
     buffered_output.append(token.item())
 
     if DEBUG >= 2:

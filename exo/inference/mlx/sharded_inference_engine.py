@@ -39,12 +39,17 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       self.caches[request_id] = newcache
     return {"cache": self.caches[request_id]}
 
-  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
+  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0, mask: Optional[np.ndarray] = None) -> np.ndarray:
     if (temp, top_p, 0.0, 1) != self.sampler_params:
       self.sampler_params = (temp, top_p, 0.0, 1)
       self.sampler = make_sampler(*self.sampler_params)
     logits = mx.array(x)
     logits = logits[:, -1, :]
+
+    if mask is not None:
+      # Why doesn't apply_token_bitmask work here?
+      logits = mx.where(mask == 0, float('-inf'), logits)
+
     logprobs = logits - mx.logsumexp(logits, keepdims=True)
     result = self.sampler(logprobs)
     await self._eval_mlx(result)
