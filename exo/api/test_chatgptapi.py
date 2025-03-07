@@ -2,6 +2,8 @@ import pytest
 from openai import OpenAI, AsyncOpenAI
 import aiohttp
 import json
+import re
+from exo.api.response_formats import JsonSchemaResponseFormat
 
 # Test configuration
 API_BASE_URL = "http://localhost:52415/v1/"
@@ -211,3 +213,109 @@ async def test_stop_sequence_first_token_streaming(async_client):
   # or content that doesn't contain the stop sequence
   assert "".join(content) == ""
   assert finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_json_object_response_format(client):
+    """Test JSON object response format"""
+    response = client.chat.completions.create(
+        model=TEST_MODEL,
+        messages=[{"role": "user", "content": "Return a JSON object with a 'message' key saying 'hello'"}],
+        temperature=0.0,
+        response_format={"type": "json_object"}
+    )
+    
+    content = response.choices[0].message.content
+    parsed = json.loads(content)
+    assert isinstance(parsed, dict)
+    assert parsed.get("message") == "hello"
+    assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_json_schema_response_format(client):
+    """Test JSON schema response format"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "number": {"type": "integer"},
+            "word": {"type": "string"}
+        },
+        "required": ["number"]
+    }
+    
+    response = client.chat.completions.create(
+        model=TEST_MODEL,
+        messages=[{"role": "user", "content": "Return a JSON object with a random number between 1-10"}],
+        temperature=0.0,
+        response_format=JsonSchemaResponseFormat(
+            type="json_schema",
+            json_schema=schema
+        ).model_dump()
+    )
+    
+    content = response.choices[0].message.content
+    parsed = json.loads(content)
+    assert isinstance(parsed.get("number"), int)
+    assert 1 <= parsed["number"] <= 10
+    assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_lark_grammar_response_format(client):
+    """Test Lark grammar response format"""
+    response = client.chat.completions.create(
+        model=TEST_MODEL,
+        messages=[{"role": "user", "content": "Answer only 'Yes' or 'No'"}],
+        temperature=0.0,
+        response_format={
+            "type": "lark_grammar",
+            "lark_grammar": """
+                start: "Yes" | "No"
+                %import common.WS
+                %ignore WS
+            """
+        }
+    )
+    
+    content = response.choices[0].message.content.strip()
+    assert content in ["Yes", "No"]
+    assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_regex_response_format(client):
+    """Test regex response format"""
+    response = client.chat.completions.create(
+        model=TEST_MODEL,
+        messages=[{"role": "user", "content": "Generate a hexadecimal color code"}],
+        temperature=0.0,
+        response_format={
+            "type": "regex",
+            "regex": r"^#[0-9a-fA-F]{6}$"
+        }
+    )
+    
+    content = response.choices[0].message.content.strip()
+    assert re.fullmatch(r"^#[0-9a-fA-F]{6}$", content)
+    assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_raw_http_json_format():
+    """Test JSON response format using raw HTTP request"""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{API_BASE_URL}chat/completions",
+            json={
+                "model": TEST_MODEL,
+                "messages": [{"role": "user", 
+                            "content": "Return a JSON object with key 'status' and value 'ok'"}],
+                "temperature": 0.0,
+                "response_format": {"type": "json_object"}
+            }
+        ) as resp:
+            data = await resp.json()
+            content = data["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            assert parsed.get("status") == "ok"

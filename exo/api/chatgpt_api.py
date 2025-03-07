@@ -2,10 +2,8 @@ import uuid
 import time
 import asyncio
 import json
-import os
 from pathlib import Path
-from transformers import AutoTokenizer
-from typing import List, Literal, Union, Dict, Optional
+from typing import List, Literal, Union, Dict, Callable, Optional
 from aiohttp import web
 import aiohttp_cors
 import traceback
@@ -16,12 +14,12 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.orchestration import Node
 from exo.inference.generation_options import GenerationOptions
 from exo.models import build_base_shard, build_full_shard, model_cards, get_repo, get_supported_models, get_pretty_name
-from typing import Callable, Optional
 from PIL import Image
 import numpy as np
 import base64
 from io import BytesIO
 import platform
+from .response_formats import ResponseFormat, ResponseFormatAdapter
 from exo.download.download_progress import RepoProgressEvent
 from exo.download.new_shard_download import delete_model
 import tempfile
@@ -49,21 +47,26 @@ class Message:
 
 class ChatCompletionRequest:
   def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None,
-               max_completion_tokens: Optional[int] = None, stop: Optional[Union[str, List[str]]] = None):
+               max_completion_tokens: Optional[int] = None, stop: Optional[Union[str, List[str]]] = None, response_format: Optional[ResponseFormat] = None):
     self.model = model
     self.messages = messages
     self.temperature = temperature
     self.tools = tools
     self.max_completion_tokens = max_completion_tokens
     self.stop = stop if isinstance(stop, list) else [stop] if isinstance(stop, str) else None
+    self.response_format = response_format
 
   def to_dict(self):
     return {"model": self.model, "messages": [message.to_dict() for message in self.messages],
             "temperature": self.temperature, "tools": self.tools, "max_completion_tokens": self.max_completion_tokens,
-            "stop": self.stop}
+            "stop": self.stop, "response_format": self.response_format.model_dump()}
 
   def to_generation_options(self) -> GenerationOptions:
-    return GenerationOptions(max_completion_tokens=self.max_completion_tokens, stop=self.stop)
+    grammar_definition = None
+    if self.response_format is not None:
+      grammar_definition = self.response_format.to_grammar()
+
+    return GenerationOptions(max_completion_tokens=self.max_completion_tokens, stop=self.stop, grammar_definition=grammar_definition)
 
 def generate_completion(
   chat_request: ChatCompletionRequest,
@@ -182,6 +185,7 @@ def parse_chat_request(data: dict, default_model: str):
     # max_completion_tokens is not provided.
     data.get("max_completion_tokens", data.get("max_tokens", None)),
     data.get("stop", None),
+    response_format=ResponseFormatAdapter.validate_python(data.get("response_format")) if "response_format" in data else None,
   )
 
 
