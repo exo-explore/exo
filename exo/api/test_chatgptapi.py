@@ -107,12 +107,12 @@ async def test_raw_http_request():
   """Test API using raw HTTP request for basic completion"""
   async with aiohttp.ClientSession() as session:
     async with session.post(
-      f"{API_BASE_URL}chat/completions",
-      json={
-        "model": TEST_MODEL,
-        "messages": [{"role": "user", "content": "2+2="}],
-        "temperature": 0.0
-      }
+            f"{API_BASE_URL}chat/completions",
+            json={
+              "model": TEST_MODEL,
+              "messages": [{"role": "user", "content": "2+2="}],
+              "temperature": 0.0
+            }
     ) as resp:
       data = await resp.json()
       assert "4" in data["choices"][0]["message"]["content"]
@@ -123,13 +123,14 @@ async def test_raw_http_request_streaming():
   """Test API using raw HTTP request for streaming"""
   async with aiohttp.ClientSession() as session:
     async with session.post(
-      f"{API_BASE_URL}chat/completions",
-      json={
-        "model": TEST_MODEL,
-        "messages": [{"role": "user", "content": "Count to 3 from 1, separate the numbers with commas and a space only."}],
-        "temperature": 0.0,
-        "stream": True
-      }
+            f"{API_BASE_URL}chat/completions",
+            json={
+              "model": TEST_MODEL,
+              "messages": [{"role": "user",
+                            "content": "Count to 3 from 1, separate the numbers with commas and a space only."}],
+              "temperature": 0.0,
+              "stream": True
+            }
     ) as resp:
       data_lines = []
       async for line in resp.content:
@@ -152,19 +153,61 @@ async def test_raw_http_request_streaming():
 
 @pytest.mark.asyncio
 async def test_raw_http_no_eot_id():
-    """Test that responses don't include the <|eot_id|> special token. Note this token is model dependent."""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
+  """Test that responses don't include the <|eot_id|> special token. Note this token is model dependent."""
+  async with aiohttp.ClientSession() as session:
+    async with session.post(
             f"{API_BASE_URL}chat/completions",
             json={
-                "model": TEST_MODEL,
-                "messages": [{"role": "user", "content": "Say exactly this: <|eot_id|>"}],
-                "temperature": 0.0
+              "model": TEST_MODEL,
+              "messages": [{"role": "user", "content": "Say exactly this: <|eot_id|>"}],
+              "temperature": 0.0
             }
-        ) as resp:
-            data = await resp.json()
-            content = data["choices"][0]["message"]["content"]
-            # Should return the literal text without the special token
-            assert "<|eot_id|>" not in content
-            # Verify the response is properly sanitized
-            assert "eot_id" not in content.lower()
+    ) as resp:
+      data = await resp.json()
+      content = data["choices"][0]["message"]["content"]
+      # Should return the literal text without the special token
+      assert "<|eot_id|>" not in content
+      # Verify the response is properly sanitized
+      assert "eot_id" not in content.lower()
+
+
+@pytest.mark.asyncio
+async def test_stop_sequence_first_token(client):
+  """Test stop sequence when it's the first generated token"""
+  response = client.chat.completions.create(
+    model=TEST_MODEL,
+    messages=[{"role": "user", "content": "Please repeat the word supercalifragilisticexpialidocious"}],
+    temperature=0.0,
+    stop=["T", "sup"],
+    max_completion_tokens=20
+  )
+
+  content = response.choices[0].message.content
+  assert content == ""
+  assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_stop_sequence_first_token_streaming(async_client):
+  """Test stop sequence handling when first generated token matches stop sequence (streaming)"""
+  stream = await async_client.chat.completions.create(
+    model=TEST_MODEL,
+    messages=[{"role": "user", "content": "Please repeat the word supercalifragilisticexpialidocious"}],
+    temperature=0.0,
+    stop=["T", "sup"],
+    max_completion_tokens=20,
+    stream=True
+  )
+
+  content = []
+  finish_reason = None
+  async for chunk in stream:
+    if chunk.choices[0].delta.content:
+      content.append(chunk.choices[0].delta.content)
+    if chunk.choices[0].finish_reason:
+      finish_reason = chunk.choices[0].finish_reason
+
+  # Should either get empty content with stop reason,
+  # or content that doesn't contain the stop sequence
+  assert "".join(content) == ""
+  assert finish_reason == "stop"
