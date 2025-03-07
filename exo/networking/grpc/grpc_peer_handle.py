@@ -3,6 +3,8 @@ import numpy as np
 import asyncio
 from typing import Optional, Tuple, List
 
+from exo.inference.generation_options import GenerationOptions
+
 from . import node_service_pb2
 from . import node_service_pb2_grpc
 
@@ -97,7 +99,7 @@ class GRPCPeerHandle(PeerHandle):
         traceback.print_exc()
       return False
 
-  async def send_prompt(self, shard: Shard, prompt: str, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
+  async def send_prompt(self, shard: Shard, prompt: str, inference_state: Optional[dict] = None, request_id: Optional[str] = None, generation_options: Optional[GenerationOptions] = None) -> Optional[np.array]:
     await self._ensure_connected()
     request = node_service_pb2.PromptRequest(
       prompt=prompt,
@@ -108,11 +110,12 @@ class GRPCPeerHandle(PeerHandle):
         n_layers=shard.n_layers,
       ),
       request_id=request_id,
-      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
+      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state),
+      generation_options=None if generation_options is None else self.serialize_generation_options(generation_options)
     )
     await self.stub.SendPrompt(request)
 
-  async def send_tensor(self, shard: Shard, tensor: np.ndarray, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
+  async def send_tensor(self, shard: Shard, tensor: np.ndarray, inference_state: Optional[dict] = None, request_id: Optional[str] = None, generation_options: Optional[GenerationOptions] = None) -> Optional[np.array]:
     await self._ensure_connected()
     request = node_service_pb2.TensorRequest(
       shard=node_service_pb2.Shard(
@@ -123,7 +126,8 @@ class GRPCPeerHandle(PeerHandle):
       ),
       tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
       request_id=request_id,
-      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
+      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state),
+      generation_options=None if generation_options is None else self.serialize_generation_options(generation_options)
     )
     response = await self.stub.SendTensor(request)
 
@@ -189,13 +193,13 @@ class GRPCPeerHandle(PeerHandle):
         topology.add_edge(node_id, conn.to_id, conn.description)
     return topology
 
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+  async def send_result(self, request_id: str, result: List[int], is_finished: bool, finish_reason: Optional[str] = None) -> None:
     await self._ensure_connected()
     tensor = None
     if isinstance(result, np.ndarray):
       tensor = node_service_pb2.Tensor(tensor_data=result.tobytes(), shape=result.shape, dtype=str(result.dtype))
       result = []
-    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, tensor=tensor, is_finished=is_finished)
+    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, tensor=tensor, is_finished=is_finished, finish_reason=finish_reason)
     await self.stub.SendResult(request)
 
   async def send_opaque_status(self, request_id: str, status: str) -> None:
@@ -224,3 +228,9 @@ class GRPCPeerHandle(PeerHandle):
     if other_data:
       proto_inference_state.other_data_json = json.dumps(other_data)
     return proto_inference_state
+
+  def serialize_generation_options(self, generation_options: GenerationOptions) -> node_service_pb2.GenerationOptions:
+    return node_service_pb2.GenerationOptions(
+      max_completion_tokens=generation_options.max_completion_tokens,
+      stop=generation_options.stop
+    )
