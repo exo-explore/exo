@@ -181,4 +181,6 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     return GenerationOptions(
       max_completion_tokens=generation_options_proto.max_completion_tokens if generation_options_proto.HasField("max_completion_tokens") else None,
       stop=generation_options_proto.stop,
+      grammar_definition=generation_options_proto.grammar_definition if generation_options_proto.HasField(
+        "grammar_definition") else None,
     )

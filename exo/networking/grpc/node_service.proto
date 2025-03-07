@@ -22,6 +22,9 @@ message Shard {
 message GenerationOptions {
   optional int32 max_completion_tokens = 1;
   repeated string stop = 2;
+
+  // This is the LLGuidance grammar serialised as JSON which will be used for guided generation
+  optional string grammar_definition = 4;
 }
 
 message PromptRequest {
