@@ -6,6 +6,7 @@ from transformers import AutoTokenizer, AutoProcessor
 import numpy as np
 from exo.helpers import DEBUG
 from exo.download.new_shard_download import ensure_downloads_dir
+from pathlib import Path
 
 
 class DummyTokenizer:
@@ -26,6 +27,14 @@ class DummyTokenizer:
 async def resolve_tokenizer(repo_id: Union[str, PathLike]):
   if repo_id == "dummy":
     return DummyTokenizer()
+
+  # Handle additional models with local paths
+  if await aios.path.exists(repo_id):
+    local_path = Path(repo_id)
+    if DEBUG >= 2: print(f"Loading tokenizer from local path {local_path}")
+    return await _resolve_tokenizer(local_path)
+
+  # Original Hugging Face handling
   local_path = await ensure_downloads_dir()/str(repo_id).replace("/", "--")
   if DEBUG >= 2: print(f"Checking if local path exists to load tokenizer from local {local_path=}")
   try:

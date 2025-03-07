@@ -8,6 +8,7 @@ import os
 import time
 import traceback
 import uuid
+from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 from exo.train.dataset import load_dataset, iterate_batches
@@ -26,7 +27,7 @@ from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine
 from exo.inference.tokenizers import resolve_tokenizer
-from exo.models import build_base_shard, get_repo
+from exo.models import build_base_shard, get_repo, load_additional_models
 from exo.viz.topology_viz import TopologyViz
 import uvloop
 import concurrent.futures
@@ -91,6 +92,7 @@ parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
 parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
+parser.add_argument("--additional-models", type=str, default=None, help="A JSON file of additional models to serve")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -151,6 +153,14 @@ elif args.discovery_module == "manual":
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
   discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
+
+if args.additional_models is not None:
+  path = Path(args.additional_models)
+  if not path.exists():
+    raise ValueError(f"Additional models file {path} does not exist")
+
+  load_additional_models(path)
+
 node = Node(
   args.node_id,
   None,
