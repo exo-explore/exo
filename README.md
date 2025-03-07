@@ -28,6 +28,7 @@ Unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, N
 
 <div align="center">
   <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
+  <h2>Interested in running exo in your business? <a href="mailto:hello@exolabs.net">Contact us</a> to discuss.</h2>
 </div>
 
 ## Get Involved
@@ -290,10 +291,10 @@ exo supports the following inference engines:
 - ✅ [UDP](exo/networking/udp)
 - ✅ [Manual](exo/networking/manual)
 - ✅ [Tailscale](exo/networking/tailscale)
-- 🚧 [Radio](TODO)
-- 🚧 [Bluetooth](TODO)
+- 🚧 Radio
+- 🚧 Bluetooth
 
 # Peer Networking Modules
 
 - ✅ [GRPC](exo/networking/grpc)
-- 🚧 [NCCL](TODO)
+- 🚧 NCCL
