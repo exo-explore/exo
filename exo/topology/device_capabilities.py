@@ -121,6 +121,8 @@ CHIP_FLOPS = {
   "NVIDIA A800 80GB SXM": DeviceFlops(fp32=19.5*TFLOPS, fp16=312.0*TFLOPS, int8=624.0*TFLOPS),
   # ... add more devices if needed ...
   ### AMD GPUs
+  # Valve Steam Deck
+  "AMD Custom GPU 0405": DeviceFlops(fp32=1.638*TFLOPS, fp16=3.277*TFLOPS, int8=6.552*TFLOPS),
   # RX 6000 series
   "AMD Radeon RX 6900 XT": DeviceFlops(fp32=23.04*TFLOPS, fp16=46.08*TFLOPS, int8=92.16*TFLOPS),
   "AMD Radeon RX 6800 XT": DeviceFlops(fp32=20.74*TFLOPS, fp16=41.48*TFLOPS, int8=82.96*TFLOPS),
