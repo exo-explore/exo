@@ -1,24 +1,31 @@
 import pytest
 import numpy as np
-from exo.inference.huggingface import HuggingFaceInferenceEngine
+from exo.inference.huggingface.inference import HuggingfaceInferenceEngine
 from exo.inference.shard import Shard
+from exo.download.new_shard_download import NewShardDownloader
+
 
 @pytest.mark.asyncio
 async def test_hf_inference_specific():
-    engine = HuggingFaceInferenceEngine()
-    test_shard = Shard(model_id="HuggingFaceTB/SmolLM2-1.7B-Instruct", start_layer=0, end_layer=, n_layers=1)
+    test_shard = Shard(model_id="HuggingFaceTB/SmolLM2-1.7B-Instruct", start_layer=0, end_layer=24, n_layers=24)
     test_prompt = "This is a test prompt"
-    
+    engine = HuggingfaceInferenceEngine(test_shard)
+
     result, _ = await engine.infer_prompt("test_request", test_shard, test_prompt)
+    
+    # result = await engine.decode(test_shard, result)
     
     print(f"Inference result shape: {result.shape}")
     
     assert result.shape[0] == 1, "Result should be a 2D array with first dimension 1"
     
+    print("Test passed!")
+    
+    
 @pytest.mark.asyncio
 async def test_hf_inference_engine():
     # Initialize the HuggingFaceInferenceEngine
-    engine = HuggingFaceInferenceEngine()
+    engine = HuggingfaceInferenceEngine()
     
     # Create a test shard
     shard = Shard(model_id="HuggingFaceTB/SmolLM2-1.7B-Instruct", start_layer=0, end_layer=1, n_layers=1)
@@ -37,3 +44,8 @@ async def test_hf_inference_engine():
     assert output.ndim == 2, "Output should be 2-dimensional"
     
     print("All tests passed!")
+    
+if __name__ == "__main__":
+    import asyncio
+    #   asyncio.run(test_dummy_inference_engine())
+    asyncio.run(test_hf_inference_specific()) 

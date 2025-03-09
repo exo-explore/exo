@@ -1,32 +1,40 @@
 from exo.inference.inference_engine import InferenceEngine
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import transformers
 from exo.inference.shard import Shard
 from exo.download.shard_download import ShardDownloader
-from transformers import LogitsProcessor, LogitsProcessorList, TemperatureLogitsWarper, TopPLogitsWarper
 import numpy as np
 import torch
 import asyncio
+from loguru import logger
+import torch
 
 TEMPERATURE = 0.85
 def download_model_from_model_id(model_id):
     pass
 
 class HuggingfaceInferenceEngine(InferenceEngine):
-    def __init__(self, shard_downloader: ShardDownloader):
+    def __init__(self, shard: Shard):
         self.shard = None
-        self.shard_downloader = shard_downloader
+        self.model_id = shard.model_id
         
         pass
     
     async def encode(self, shard, prompt):
-        pass
+        """Encodes prompt to tokens using the tokenizer"""
+        await self.ensure_shard(shard)
+        logger.info(f"Encoding prompt {prompt}")
+        tokens = self.tokenizer(prompt, return_tensors="pt")
+        logger.info(f"Prompt encoded to tokens shape: {tokens}")
+        return tokens
+    
     
     async def sample(self, x: np.ndarray, temp=TEMPERATURE, top_p: float = 0.0) -> np.ndarray:
+        """Samples the next token from the logits"""
         def sample_wrapper():
             logits = torch.Tensor(x[:, -1, :])
-            processors = LogitsProcessorList([
-            TemperatureLogitsWarper(temp),
-            TopPLogitsWarper(top_p) if top_p > 0 else None
+            processors = transformers.LogitsProcessorList([
+            transformers.TemperatureLogitsWarper(temp),
+            transformers.TopPLogitsWarper(top_p) if top_p > 0 else None
             ])
             filtered_logits = processors(None, logits.numpy())
             probs = torch.nn.softmax(torch.Tensor(filtered_logits))
@@ -35,10 +43,72 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         return await asyncio.get_running_loop().run_in_executor(self.executor, sample_wrapper)
     
     async def decode(self, shard, tokens):
-        pass
+        """Decodes tokens to text using the tokenizer"""
+       
+        # self.ensure_shard(shard)
+        return self.tokenizer.decode(tokens)
     
-    async def infer_tensor(self, request_id, shard, input_data, inference_state=None):
-        pass
+    async def infer_tensor(self, request_id, shard, input_data: dict, inference_state=None):
+        logger.info(f"Running inference for request {request_id}, shard {shard}, input_data shape: {len(input_data)}")
+        
+        start_layer = shard.start_layer
+        input_ids = input_data["input_ids"]
+        attention_mask = input_data["attention_mask"]
+        
+        # Generate position IDs for RoPE
+        seq_length = input_ids.shape[1]
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        
+        # Initial embedding
+        if start_layer == 0:
+            outputs = self.model.model.embed_tokens(input_ids)
+        else:
+            outputs = input_ids
+        
+        # Prepare attention mask
+        batch_size = outputs.shape[0]
+        causal_mask = self._prepare_causal_mask(
+            batch_size,
+            seq_length,
+            dtype=outputs.dtype,
+            device=outputs.device
+        )
+        
+        # Process through layers
+        for i, layer_idx in enumerate(range(start_layer, shard.end_layer)):
+            logger.info(f"Running inference for layer {layer_idx}")
+            residual = outputs
+            
+            outputs = self.model.model.layers[i](
+                hidden_states=outputs,
+                attention_mask=causal_mask,
+                position_ids=position_ids
+            )
+            
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]
+            
+            outputs = outputs + residual
+            
+            logger.info(f"Layer {layer_idx} output shape: {outputs.shape}")
+        
+        if shard.end_layer == shard.n_layers:
+            logger.info("Final layer reached, applying final layer normalization and LM head")
+            outputs = self.model.model.norm(outputs)
+            outputs = self.model.lm_head(outputs)
+            all_tokens = torch.argmax(outputs, dim=-1)
+            logger.info(f" Returning all tokens can be sampled, Final output shape: {all_tokens.shape}")
+        
+        return all_tokens, inference_state
+
+    def _prepare_causal_mask(self, batch_size, seq_length, dtype, device):
+        # Create causal mask
+        mask = torch.triu(torch.ones((seq_length, seq_length), device=device) * -float("inf"), diagonal=1)
+        mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_length, seq_length]
+        mask = mask.expand(batch_size, 1, seq_length, seq_length)
+        mask = mask.to(dtype=dtype)
+        return mask
     
     async def load_checkpoint(self, shard, path):
         """ Loads the wieght into the model defined after enuring shard exits"""
@@ -50,8 +120,18 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         if self.shard == shard:
             return
         
-        model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+        # model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
         if self.shard != shard:
+            logger.info(f"Downloading model {shard.model_id}")
             self.shard = shard
-            self.model = AutoModelForCausalLM.from_pretrained(model_path)
-            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self.model = transformers.AutoModelForCausalLM.from_pretrained(self.model_id)
+            self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_id)
+            logger.info(f"Model {shard.model_id} downloaded")
+
+
+    async def infer_prompt(self, request_id, shard, prompt, inference_state = None):
+        """takes prompt and infers till the end layer of the shard"""
+        tokens = await self.encode(shard, prompt) ## [input_ids, attention_mask, position_ids]
+        # x = tokens.reshape(1, -1)
+        output_data, inference_state = await self.infer_tensor(request_id, shard, tokens, inference_state)
+        return output_data, inference_state
