@@ -8,6 +8,9 @@ from aiohttp import web
 import aiohttp_cors
 import traceback
 import signal
+
+from pydantic import BaseModel
+
 from exo import DEBUG, VERSION
 from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
 from exo.inference.tokenizers import resolve_tokenizer
@@ -25,6 +28,7 @@ from exo.download.new_shard_download import delete_model
 import tempfile
 from exo.apputil import create_animation_mp4
 from collections import defaultdict
+from exo.tools import ToolChoice, ToolChoiceModel
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
@@ -45,9 +49,16 @@ class Message:
     return data
 
 
+class ToolBehaviour(BaseModel):
+  format: str
+  guided: bool = True
+  parsed: bool = True
+
+
 class ChatCompletionRequest:
   def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None,
-               max_completion_tokens: Optional[int] = None, stop: Optional[Union[str, List[str]]] = None, response_format: Optional[ResponseFormat] = None):
+               max_completion_tokens: Optional[int] = None, stop: Optional[Union[str, List[str]]] = None, response_format: Optional[ResponseFormat] = None,
+               tool_choice: Optional[ToolChoice] = None, tool_behaviour: Optional[ToolBehaviour] = None):
     self.model = model
     self.messages = messages
     self.temperature = temperature
@@ -55,11 +66,13 @@ class ChatCompletionRequest:
     self.max_completion_tokens = max_completion_tokens
     self.stop = stop if isinstance(stop, list) else [stop] if isinstance(stop, str) else None
     self.response_format = response_format
+    self.tool_choice = tool_choice
+    self.tool_behaviour = tool_behaviour
 
   def to_dict(self):
     return {"model": self.model, "messages": [message.to_dict() for message in self.messages],
             "temperature": self.temperature, "tools": self.tools, "max_completion_tokens": self.max_completion_tokens,
-            "stop": self.stop, "response_format": self.response_format.model_dump()}
+            "stop": self.stop, "response_format": self.response_format.model_dump() if self.response_format else None, "tool_choice": self.tool_choice, "tool_behaviour": self.tool_behaviour.model_dump() if self.tool_behaviour else None}
 
   def to_generation_options(self) -> GenerationOptions:
     grammar_definition = None
@@ -186,6 +199,8 @@ def parse_chat_request(data: dict, default_model: str):
     data.get("max_completion_tokens", data.get("max_tokens", None)),
     data.get("stop", None),
     response_format=ResponseFormatAdapter.validate_python(data.get("response_format")) if "response_format" in data else None,
+    tool_choice=ToolChoiceModel.validate_python(data.get("tool_choice")) if "tool_choice" in data else None,
+    tool_behaviour=ToolBehaviour.model_validate(data.get("tool_behaviour")) if "tool_behaviour" in data else None,
   )
 
 
