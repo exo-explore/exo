@@ -1,13 +1,14 @@
 import time
-from typing import Union, List, Dict, Optional, Literal
+from typing import Union, List, Dict, Optional, Literal, Any
 
 from pydantic import BaseModel
 
 from exo import VERSION, DEBUG
 from exo.api.response_formats import ResponseFormat, ResponseFormatAdapter
 from exo.inference.generation_options import GenerationOptions
-from exo.tools import ToolChoice, ToolChoiceModel
-from exo.tools.tool_parser import ToolParser
+from exo.models import get_default_tool_format
+from exo.tools import ToolChoice, ToolChoiceModel, choose_tools, SpecificToolChoice
+from exo.tools.tool_parser import ToolParser, get_tool_parser_by_name
 
 
 class Message:
@@ -29,8 +30,22 @@ class ToolBehaviour(BaseModel):
   parsed: bool = True
 
 
+class ToolDefinition(BaseModel):
+  """
+  This model maps to elements of the tools array in the request body.
+  """
+  class FunctionDefinition(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[dict[str, Any]]
+    strict: Optional[bool] = False
+
+  type: Literal["function"]
+  function: FunctionDefinition
+
+
 class ChatCompletionRequest:
-  def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[Dict]] = None,
+  def __init__(self, model: str, messages: List[Message], temperature: float, tools: Optional[List[ToolDefinition]] = None,
                max_completion_tokens: Optional[int] = None, stop: Optional[Union[str, List[str]]] = None, response_format: Optional[ResponseFormat] = None,
                tool_choice: Optional[ToolChoice] = None, tool_behaviour: Optional[ToolBehaviour] = None):
     self.model = model
@@ -50,13 +65,36 @@ class ChatCompletionRequest:
 
   def to_generation_options(self) -> GenerationOptions:
     grammar_definition = None
+    tool_parser = self.get_tool_parser()
+
+    if self.response_format and tool_parser:
+      raise ValueError("Cannot use response_format and tools at the same time")
+
     if self.response_format is not None:
       grammar_definition = self.response_format.to_grammar()
+    elif tool_parser:
+      grammar_definition = tool_parser.to_grammar(self.get_tools(), self.tool_choice == "required" or isinstance(self.tool_choice, SpecificToolChoice))
 
     return GenerationOptions(max_completion_tokens=self.max_completion_tokens, stop=self.stop, grammar_definition=grammar_definition)
 
+  def get_tools(self):
+    return choose_tools(self.tool_choice, self.tools) or []
+
   def get_tool_parser(self) -> Optional[ToolParser]:
-    return None
+    if self.tool_behaviour and not self.tool_behaviour.guided:
+      return None
+
+    if self.tool_choice == "none":
+      return None
+
+    if self.tools is None or len(self.tools) == 0:
+      return None
+
+    tool_format = get_default_tool_format(self.model)
+    if self.tool_behaviour:
+      tool_format = self.tool_behaviour.format or tool_format
+
+    return get_tool_parser_by_name(tool_format)
 
 def generate_completion(
   chat_request: ChatCompletionRequest,
@@ -170,7 +208,7 @@ def parse_chat_request(data: dict, default_model: str):
     data.get("model", default_model),
     [parse_message(msg) for msg in data["messages"]],
     data.get("temperature", 0.0),
-    data.get("tools", None),
+    [ToolDefinition.model_validate(tool) for tool in data["tools"]] if "tools" in data else None,
     # The max_tokens field is deprecated, but some clients may still use it, fall back to that value if
     # max_completion_tokens is not provided.
     data.get("max_completion_tokens", data.get("max_tokens", None)),

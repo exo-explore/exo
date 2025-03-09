@@ -12,6 +12,8 @@ class ModelCard(BaseModel):
   layers: int
   repo: dict[InferenceEngineType, str]
 
+  chat_template: Optional[str] = None
+
 ModelCardCollection = dict[str, ModelCard]
 
 model_cards: ModelCardCollection = {
@@ -561,6 +563,9 @@ def get_repo(model_id: str, inference_engine_classname: str) -> Optional[str]:
 def get_pretty_name(model_id: str) -> Optional[str]:
   model_card = model_cards.get(model_id)
   return model_card.pretty_name if model_card else None
+
+def get_default_tool_format(model_id: str) -> Optional[str]:
+  ...
 
 def build_base_shard(model_id: str, inference_engine_classname: str) -> Optional[Shard]:
   model_card = model_cards.get(model_id)
