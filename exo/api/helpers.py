@@ -7,6 +7,7 @@ from exo import VERSION, DEBUG
 from exo.api.response_formats import ResponseFormat, ResponseFormatAdapter
 from exo.inference.generation_options import GenerationOptions
 from exo.tools import ToolChoice, ToolChoiceModel
+from exo.tools.tool_parser import ToolParser
 
 
 class Message:
@@ -54,6 +55,8 @@ class ChatCompletionRequest:
 
     return GenerationOptions(max_completion_tokens=self.max_completion_tokens, stop=self.stop, grammar_definition=grammar_definition)
 
+  def get_tool_parser(self) -> Optional[ToolParser]:
+    return None
 
 def generate_completion(
   chat_request: ChatCompletionRequest,
