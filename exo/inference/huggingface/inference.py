@@ -48,12 +48,18 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         # self.ensure_shard(shard)
         return self.tokenizer.decode(tokens)
     
-    async def infer_tensor(self, request_id, shard, input_data: dict, inference_state=None):
+    async def infer_tensor(self, request_id, shard, input_data, inference_state=None):
         logger.info(f"Running inference for request {request_id}, shard {shard}, input_data shape: {len(input_data)}")
         
         start_layer = shard.start_layer
-        input_ids = input_data["input_ids"]
-        attention_mask = input_data["attention_mask"]
+        try:
+            input_ids = input_data["input_ids"]
+            attention_mask = input_data["attention_mask"]
+        except:
+            # Convert numpy array to tensor if needed
+            input_ids = torch.tensor(input_data) if isinstance(input_data, np.ndarray) else input_data
+            # Generate attention mask for all tokens
+            attention_mask = torch.ones_like(input_ids)
         
         # Generate position IDs for RoPE
         seq_length = input_ids.shape[1]
@@ -77,7 +83,7 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         
         # Process through layers
         for i, layer_idx in enumerate(range(start_layer, shard.end_layer)):
-            logger.info(f"Running inference for layer {layer_idx}")
+            # logger.info(f"Running inference for layer {layer_idx}")
             residual = outputs
             
             outputs = self.model.model.layers[i](
@@ -91,7 +97,7 @@ class HuggingfaceInferenceEngine(InferenceEngine):
             
             outputs = outputs + residual
             
-            logger.info(f"Layer {layer_idx} output shape: {outputs.shape}")
+            # logger.info(f"Layer {layer_idx} output shape: {outputs.shape}")
         
         if shard.end_layer == shard.n_layers:
             logger.info("Final layer reached, applying final layer normalization and LM head")
@@ -99,8 +105,9 @@ class HuggingfaceInferenceEngine(InferenceEngine):
             outputs = self.model.lm_head(outputs)
             all_tokens = torch.argmax(outputs, dim=-1)
             logger.info(f" Returning all tokens can be sampled, Final output shape: {all_tokens.shape}")
-        
-        return all_tokens, inference_state
+            np_all_tokens = all_tokens.detach().cpu().numpy()
+            
+        return np_all_tokens, inference_state
 
     def _prepare_causal_mask(self, batch_size, seq_length, dtype, device):
         # Create causal mask
