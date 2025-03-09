@@ -25,9 +25,7 @@ class HuggingfaceInferenceEngine(InferenceEngine):
     async def encode(self, shard, prompt):
         """Encodes prompt to tokens using the tokenizer"""
         await self.ensure_shard(shard)
-        logger.info(f"Encoding prompt {prompt}")
         tokens = self.tokenizer(prompt, return_tensors="pt")
-        logger.info(f"Prompt encoded to tokens shape: {tokens}")
         return tokens
     
     
@@ -58,24 +56,31 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         # self.ensure_shard(shard)
         return self.tokenizer.decode(tokens)
     
-    async def infer_tensor(self, request_id, shard, input_data, inference_state=None):
-        logger.info(f"Running inference for request {request_id}, shard {shard}, input_data shape: {len(input_data)}")
+    async def infer_tensor(self, request_id, shard, input_data, inference_state : dict = None):
+        await self.ensure_shard(shard)
+        logger.info(f"Running inference for request {request_id}, shard {shard}")
+        if inference_state is None:
+            inference_state = {}
         
         start_layer = shard.start_layer
         try:
             input_ids = input_data["input_ids"]
             attention_mask = input_data["attention_mask"]
         except:
+            logger.info("Input data is not a dictionary, assuming it is input_ids")
+            logger.info(f"Input data shape: {input_data.shape}")
             # Convert numpy array to tensor if needed
             input_ids = torch.tensor(input_data) if isinstance(input_data, np.ndarray) else input_data
-            # Generate attention mask for all tokens
-            attention_mask = torch.ones_like(input_ids)
         
         # Generate position IDs for RoPE
-        seq_length = input_ids.shape[1]
-        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-        
+        try:
+            position_ids = inference_state["position_ids"]
+        except:
+            seq_length = input_ids.shape[1]
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+            inference_state["position_ids"] = position_ids
+            
         # Initial embedding
         if start_layer == 0:
             outputs = self.model.model.embed_tokens(input_ids)
@@ -84,12 +89,17 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         
         # Prepare attention mask
         batch_size = outputs.shape[0]
-        causal_mask = self._prepare_causal_mask(
-            batch_size,
-            seq_length,
-            dtype=outputs.dtype,
-            device=outputs.device
-        )
+        try: 
+            causal_mask = inference_state["attention_mask"]
+        except:
+            causal_mask = self._prepare_causal_mask(
+                batch_size,
+                seq_length,
+                dtype=outputs.dtype,
+                device=outputs.device
+            )
+            inference_state["attention_mask"] = causal_mask
+        
         
         # Process through layers
         for i, layer_idx in enumerate(range(start_layer, shard.end_layer + 1)):
@@ -110,7 +120,7 @@ class HuggingfaceInferenceEngine(InferenceEngine):
             # logger.info(f"Layer {layer_idx} output shape: {outputs.shape}")
         
         if shard.end_layer == shard.n_layers - 1 :
-            logger.info("Final layer reached, applying final layer normalization and LM head")
+            # logger.info("Final layer reached, applying final layer normalization and LM head")
             outputs = self.model.model.norm(outputs)
             outputs = self.model.lm_head(outputs)
             # all_tokens = torch.argmax(outputs, dim=-1)
@@ -148,6 +158,7 @@ class HuggingfaceInferenceEngine(InferenceEngine):
 
     async def infer_prompt(self, request_id, shard, prompt, inference_state = None):
         """takes prompt and infers till the end layer of the shard"""
+        ## encoding only needed when prompt is given
         tokens = await self.encode(shard, prompt) ## [input_ids, attention_mask, position_ids]
         # x = tokens.reshape(1, -1)
         output_data, inference_state = await self.infer_tensor(request_id, shard, tokens, inference_state)
