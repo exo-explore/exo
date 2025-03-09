@@ -7,15 +7,18 @@ import torch
 import asyncio
 from loguru import logger
 import torch
+from concurrent.futures import ThreadPoolExecutor
 
 TEMPERATURE = 0.85
 def download_model_from_model_id(model_id):
     pass
 
+_executor = ThreadPoolExecutor(max_workers=1)
 class HuggingfaceInferenceEngine(InferenceEngine):
     def __init__(self, shard: Shard):
         self.shard = None
         self.model_id = shard.model_id
+        self.executor = _executor
         
         pass
     
@@ -32,13 +35,20 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         """Samples the next token from the logits"""
         def sample_wrapper():
             logits = torch.Tensor(x[:, -1, :])
-            processors = transformers.LogitsProcessorList([
-            transformers.TemperatureLogitsWarper(temp),
-            transformers.TopPLogitsWarper(top_p) if top_p > 0 else None
-            ])
-            filtered_logits = processors(None, logits.numpy())
-            probs = torch.nn.softmax(torch.Tensor(filtered_logits))
-            return probs.multinomial().realize().numpy().astype(int)
+            
+            # Create processors list without None values
+            processors_list = [
+                transformers.TemperatureLogitsWarper(temp),
+            ]
+            if top_p > 0:
+                processors_list.append(transformers.TopPLogitsWarper(top_p))
+                
+            processors = transformers.LogitsProcessorList(processors_list)
+            
+            # Process logits
+            filtered_logits = processors(None, logits.detach().cpu().numpy())
+            probs = torch.nn.functional.softmax(torch.Tensor(filtered_logits), dim=-1)
+            return probs.multinomial(num_samples=1).cpu().numpy().astype(int)
         
         return await asyncio.get_running_loop().run_in_executor(self.executor, sample_wrapper)
     
@@ -82,7 +92,7 @@ class HuggingfaceInferenceEngine(InferenceEngine):
         )
         
         # Process through layers
-        for i, layer_idx in enumerate(range(start_layer, shard.end_layer)):
+        for i, layer_idx in enumerate(range(start_layer, shard.end_layer + 1)):
             # logger.info(f"Running inference for layer {layer_idx}")
             residual = outputs
             
@@ -99,15 +109,15 @@ class HuggingfaceInferenceEngine(InferenceEngine):
             
             # logger.info(f"Layer {layer_idx} output shape: {outputs.shape}")
         
-        if shard.end_layer == shard.n_layers:
+        if shard.end_layer == shard.n_layers - 1 :
             logger.info("Final layer reached, applying final layer normalization and LM head")
             outputs = self.model.model.norm(outputs)
             outputs = self.model.lm_head(outputs)
-            all_tokens = torch.argmax(outputs, dim=-1)
-            logger.info(f" Returning all tokens can be sampled, Final output shape: {all_tokens.shape}")
-            np_all_tokens = all_tokens.detach().cpu().numpy()
+            # all_tokens = torch.argmax(outputs, dim=-1)
+            # logger.info(f" Returning all tokens can be sampled, Final output shape: {all_tokens.shape}")
+            # outputs = all_tokens.detach().cpu().numpy()
             
-        return np_all_tokens, inference_state
+        return outputs, inference_state
 
     def _prepare_causal_mask(self, batch_size, seq_length, dtype, device):
         # Create causal mask
