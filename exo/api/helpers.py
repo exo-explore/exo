@@ -61,11 +61,11 @@ def generate_completion(
   prompt: str,
   request_id: str,
   tokens: List[int],
+  decoded_tokens: str,
   stream: bool,
   finish_reason: Union[Literal["length", "stop"], None],
   object_type: Literal["chat.completion", "text_completion"],
 ) -> dict:
-  decoded_tokens = tokenizer.decode(tokens)
   completion = {
     "id": f"chatcmpl-{request_id}",
     "object": object_type,
