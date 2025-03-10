@@ -1,12 +1,25 @@
 import traceback
 from os import PathLike
 from aiofiles import os as aios
-from typing import Union
+from typing import Union, Protocol
 from transformers import AutoTokenizer, AutoProcessor
 import numpy as np
 from exo.helpers import DEBUG
 from exo.download.new_shard_download import ensure_downloads_dir
 from pathlib import Path
+
+class Tokenizer(Protocol):
+  eos_token_id: int
+  vocab_size: int
+
+  def encode(self, text: str) -> np.ndarray:
+    ...
+
+  def decode(self, tokens: np.ndarray) -> str:
+    ...
+
+  def apply_chat_template(self, conversation, tokenize=True, add_generation_prompt=True, tools=None, **kwargs):
+    ...
 
 
 class DummyTokenizer:
