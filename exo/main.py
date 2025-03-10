@@ -91,6 +91,8 @@ parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
 parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
+parser.add_argument("--webassembly", action="store_true", help="Run exo node in the browser using WebAssembly")
+parser.add_argument("--node-endpoints", type=str, default=None, help="Comma separated list of node endpoints for manual discovery")
 args = parser.parse_args()
 print(f"Selected inference engine: {args.inference_engine}")
 
@@ -149,7 +151,7 @@ elif args.discovery_module == "tailscale":
 elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
-  discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
+  discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities), manual_node_endpoints=args.node_endpoints.split(',') if args.node_endpoints else None)
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
 node = Node(
   args.node_id,

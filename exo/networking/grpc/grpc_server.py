@@ -17,6 +17,9 @@ if platform.system().lower() == "darwin" and platform.machine().lower() == "arm6
 else:
   import numpy as mx
 
+import asyncio
+import websockets
+import json
 
 class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
   def __init__(self, node: Node, host: str, port: int):
@@ -24,6 +27,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     self.host = host
     self.port = port
     self.server = None
+    self.websocket_server = None
 
   async def start(self) -> None:
     self.server = grpc.aio.server(
@@ -50,6 +54,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     await self.server.start()
     if DEBUG >= 1: print(f"Server started, listening on {listen_addr}")
 
+    self.websocket_server = await websockets.serve(self.websocket_handler, self.host, self.port + 1)
+    if DEBUG >= 1: print(f"WebSocket server started, listening on {self.host}:{self.port + 1}")
+
   async def stop(self) -> None:
     if self.server:
       try:
@@ -58,6 +65,11 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       except CancelledError:
         pass
       if DEBUG >= 1: print("Server stopped and all connections are closed")
+
+    if self.websocket_server:
+      self.websocket_server.close()
+      await self.websocket_server.wait_closed()
+      if DEBUG >= 1: print("WebSocket server stopped and all connections are closed")
 
   async def SendPrompt(self, request, context):
     shard = Shard(
@@ -171,3 +183,125 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       inference_state.update(other_data)
 
     return inference_state
+
+  async def websocket_handler(self, websocket, path):
+    async for message in websocket:
+      data = json.loads(message)
+      action = data.get("action")
+      if action == "SendPrompt":
+        shard = Shard(
+          model_id=data["shard"]["model_id"],
+          start_layer=data["shard"]["start_layer"],
+          end_layer=data["shard"]["end_layer"],
+          n_layers=data["shard"]["n_layers"],
+        )
+        prompt = data["prompt"]
+        request_id = data["request_id"]
+        inference_state = None if data.get("inference_state") is None else self.deserialize_inference_state(data["inference_state"])
+        result = await self.node.process_prompt(shard, prompt, request_id, inference_state)
+        response = {
+          "tensor_data": result.tobytes() if result is not None else None,
+          "shape": result.shape if result is not None else None,
+          "dtype": str(result.dtype) if result is not None else None
+        }
+        await websocket.send(json.dumps(response))
+      elif action == "SendTensor":
+        shard = Shard(
+          model_id=data["shard"]["model_id"],
+          start_layer=data["shard"]["start_layer"],
+          end_layer=data["shard"]["end_layer"],
+          n_layers=data["shard"]["n_layers"],
+        )
+        tensor = np.frombuffer(data["tensor"]["tensor_data"], dtype=np.dtype(data["tensor"]["dtype"])).reshape(data["tensor"]["shape"])
+        request_id = data["request_id"]
+        inference_state = None if data.get("inference_state") is None else self.deserialize_inference_state(data["inference_state"])
+        result = await self.node.process_tensor(shard, tensor, request_id, inference_state)
+        response = {
+          "tensor_data": result.tobytes() if result is not None else None,
+          "shape": result.shape if result is not None else None,
+          "dtype": str(result.dtype) if result is not None else None
+        }
+        await websocket.send(json.dumps(response))
+      elif action == "SendExample":
+        shard = Shard(
+          model_id=data["shard"]["model_id"],
+          start_layer=data["shard"]["start_layer"],
+          end_layer=data["shard"]["end_layer"],
+          n_layers=data["shard"]["n_layers"],
+        )
+        example = np.frombuffer(data["example"]["tensor_data"], dtype=np.dtype(data["example"]["dtype"])).reshape(data["example"]["shape"])
+        target = np.frombuffer(data["target"]["tensor_data"], dtype=np.dtype(data["target"]["dtype"])).reshape(data["target"]["shape"])
+        length = np.frombuffer(data["length"]["tensor_data"], dtype=np.dtype(data["length"]["dtype"])).reshape(data["length"]["shape"])
+        train = data["train"]
+        request_id = data["request_id"]
+        if train and not shard.is_first_layer():
+          loss, grad = await self.node.process_example(shard, example, target, length, train, request_id)
+          response = {
+            "loss": loss,
+            "grads": {
+              "tensor_data": grad.tobytes(),
+              "shape": grad.shape,
+              "dtype": str(grad.dtype)
+            }
+          }
+        else:
+          loss = await self.node.process_example(shard, example, target, length, train, request_id)
+          response = {
+            "loss": loss,
+            "grads": None
+          }
+        await websocket.send(json.dumps(response))
+      elif action == "CollectTopology":
+        max_depth = data["max_depth"]
+        visited = set(data["visited"])
+        topology = self.node.current_topology
+        nodes = {
+          node_id: {
+            "model": cap.model,
+            "chip": cap.chip,
+            "memory": cap.memory,
+            "flops": {
+              "fp32": cap.flops.fp32,
+              "fp16": cap.flops.fp16,
+              "int8": cap.flops.int8
+            }
+          }
+          for node_id, cap in topology.nodes.items()
+        }
+        peer_graph = {
+          node_id: [
+            {
+              "to_id": conn.to_id,
+              "description": conn.description
+            }
+            for conn in connections
+          ]
+          for node_id, connections in topology.peer_graph.items()
+        }
+        response = {
+          "nodes": nodes,
+          "peer_graph": peer_graph
+        }
+        await websocket.send(json.dumps(response))
+      elif action == "SendResult":
+        request_id = data["request_id"]
+        result = data["result"]
+        is_finished = data["is_finished"]
+        img = data["tensor"]
+        result = list(result)
+        if len(img["tensor_data"]) > 0:
+          result = np.frombuffer(img["tensor_data"], dtype=np.dtype(img["dtype"])).reshape(img["shape"])
+        self.node.on_token.trigger_all(request_id, result, is_finished)
+        response = {}
+        await websocket.send(json.dumps(response))
+      elif action == "SendOpaqueStatus":
+        request_id = data["request_id"]
+        status = data["status"]
+        self.node.on_opaque_status.trigger_all(request_id, status)
+        response = {}
+        await websocket.send(json.dumps(response))
+      elif action == "HealthCheck":
+        response = {
+          "is_healthy": True
+        }
+        await websocket.send(json.dumps(response))

@@ -16,10 +16,12 @@ class ManualDiscovery(Discovery):
     network_config_path: str,
     node_id: str,
     create_peer_handle: Callable[[str, str, str, DeviceCapabilities], PeerHandle],
+    manual_node_endpoints: Optional[List[str]] = None,
   ):
     self.network_config_path = network_config_path
     self.node_id = node_id
     self.create_peer_handle = create_peer_handle
+    self.manual_node_endpoints = manual_node_endpoints or []
 
     self.listen_task = None
     self.known_peers: Dict[str, PeerHandle] = {}
@@ -99,3 +101,16 @@ class ManualDiscovery(Discovery):
               f"Please update the config file in order to successfully discover peers. "
               f"Exception: {e}")
       return self._cached_peers
+
+  async def _get_manual_peers(self):
+    manual_peers = {}
+    for endpoint in self.manual_node_endpoints:
+      try:
+        peer_id, address = endpoint.split('@')
+        host, port = address.split(':')
+        port = int(port)
+        device_capabilities = DeviceCapabilities()  # Default capabilities, can be customized
+        manual_peers[peer_id] = PeerConfig(address=host, port=port, device_capabilities=device_capabilities)
+      except Exception as e:
+        if DEBUG_DISCOVERY >= 2: print(f"Error parsing manual node endpoint {endpoint}: {e}")
+    return manual_peers

@@ -48,6 +48,10 @@ document.addEventListener("alpine:init", () => {
     // Add these new properties
     expandedGroups: {},
 
+    // Add new properties for WebAssembly and WebGPU
+    exoNode: null,
+    nodeEndpoints: [],
+
     init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
@@ -60,6 +64,9 @@ document.addEventListener("alpine:init", () => {
 
       // Start model polling with the new pattern
       this.startModelPolling();
+
+      // Initialize exo node in the browser
+      this.initializeExoNode();
     },
 
     async fetchInitialModels() {
@@ -725,6 +732,34 @@ document.addEventListener("alpine:init", () => {
     isGroupExpanded(prefix, subPrefix = null) {
       const key = subPrefix ? `${prefix}-${subPrefix}` : prefix;
       return this.expandedGroups[key] || false;
+    },
+
+    // Add method to initialize exo node in the browser
+    async initializeExoNode() {
+      try {
+        // Load WebAssembly and WebGPU modules
+        const wasmModule = await WebAssembly.instantiateStreaming(fetch('path/to/wasm/module.wasm'));
+        const webgpuModule = await import('path/to/webgpu/module.js');
+
+        // Initialize exo node
+        this.exoNode = new webgpuModule.ExoNode(wasmModule.instance);
+
+        // Set up WebRTC for peer-to-peer communication
+        this.exoNode.setupWebRTC();
+
+        // Generate shareable link
+        this.generateShareableLink();
+      } catch (error) {
+        console.error('Error initializing exo node:', error);
+        this.setError(error);
+      }
+    },
+
+    // Add method to generate shareable link
+    generateShareableLink() {
+      const nodeEndpoints = this.nodeEndpoints.join(',');
+      const shareableLink = `${window.location.origin}?node_endpoints=${encodeURIComponent(nodeEndpoints)}`;
+      console.log('Shareable link:', shareableLink);
     },
   }));
 });
