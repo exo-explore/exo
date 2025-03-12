@@ -76,9 +76,15 @@ class BufferedOutput:
       self.is_finished = True
       self.finish_reason = "length"
     elif self.guidance_interpreter and self.guidance_interpreter.has_pending_stop():
-      # TODO: We should handle the different stop reasons
       self.is_finished = True
-      self.finish_reason = "stop"
+
+      grammar_stop_reason = self.guidance_interpreter.stop_reason()
+      if grammar_stop_reason == "EndOfSentence" or grammar_stop_reason == "NoExtension":
+        self.finish_reason = "stop"
+      elif grammar_stop_reason == "MaxTokensTotal" or grammar_stop_reason == "MaxTokensParser":
+        self.finish_reason = "length"
+      else:
+        self.finish_reason = grammar_stop_reason
     elif len(self.stop_sequences) > 0:
       self.attempt_to_match_stop_sequences()
 
