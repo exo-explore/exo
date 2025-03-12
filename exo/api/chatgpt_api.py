@@ -10,7 +10,7 @@ import signal
 
 from exo import DEBUG
 from exo.helpers import PrefixDict, shutdown, get_exo_images_dir
-from exo.inference.tokenizers import resolve_tokenizer
+from exo.inference.tokenizers import resolve_tokenizer, Tokenizer
 from exo.orchestration import Node
 from exo.models import build_base_shard, build_full_shard, model_cards, get_repo, get_supported_models, get_pretty_name
 from PIL import Image
@@ -226,66 +226,32 @@ class ChatGPTAPI:
       if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for response to finish. timeout={self.response_timeout}s")
 
       if stream:
-        response = web.StreamResponse(
-          status=200,
-          reason="OK",
-          headers={
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-          },
-        )
-        await response.prepare(request)
-
         try:
-          async for chunk in self.result_manager.get_inference_result(request_id, timeout=self.response_timeout):
-            if DEBUG >= 2: print(f"[ChatGPTAPI] Got token chunk: {request_id=} {chunk.text=} {chunk.is_finished=} {chunk.finish_reason=}")
+          response = web.StreamResponse(
+            status=200,
+            reason="OK",
+            headers={
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+            },
+          )
+          await response.prepare(request)
 
-            if not chunk.text and not chunk.is_finished:
-              continue
-
-            # Generate completion response with tokens for metrics
-            completion = generate_completion(
-              chat_request,
-              tokenizer,
-              prompt,
-              request_id,
-              chunk.tokens,
-              chunk.text,
-              stream,
-              chunk.finish_reason if chunk.is_finished else None,
-              "chat.completion",
-            )
-
+          async for completion in self.handle_chat_completions_streaming(request_id, chat_request, tokenizer, prompt):
             await response.write(f"data: {json.dumps(completion)}\n\n".encode())
 
-            if chunk.is_finished:
-              # Send a final completion with empty delta to indicate completion
-              completion = generate_completion(
-                chat_request,
-                tokenizer,
-                prompt,
-                request_id,
-                [],
-                "",
-                stream,
-                chunk.finish_reason,
-                "chat.completion",
-              )
-              await response.write(f"data: {json.dumps(completion)}\n\n".encode())
-              break
-
-          # Send the DONE event when the stream is finished
           await response.write(b"data: [DONE]\n\n")
           await response.write_eof()
           return response
-
+        # TODO: How should this appear in the SSE stream? I don't think this is right
         except asyncio.TimeoutError:
           if DEBUG >= 2: print(f"[ChatGPTAPI] Timeout waiting for token: {request_id=}")
           return web.json_response({"detail": "Response generation timed out"}, status=408)
-
         except Exception as e:
           if DEBUG >= 2: traceback.print_exc()
           return web.json_response({"detail": f"Error processing request: {str(e)}"}, status=500)
+
+
       else:
         # Non-streaming mode: get complete result
         result = await self.result_manager.get_complete_inference_result(request_id, timeout=self.response_timeout)
@@ -298,7 +264,7 @@ class ChatGPTAPI:
             request_id,
             result.tokens,
             result.text,
-            stream,
+            False,
             result.finish_reason,
             "chat.completion"
           )
@@ -309,6 +275,45 @@ class ChatGPTAPI:
     except Exception as e:
       if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"detail": f"Error processing request: {str(e)}"}, status=500)
+
+  async def handle_chat_completions_streaming(self, request_id: str, chat_request: ChatCompletionRequest, tokenizer, prompt: str):
+    async for chunk in self.result_manager.get_inference_result(request_id, timeout=self.response_timeout):
+      if DEBUG >= 2: print(f"[ChatGPTAPI] Got token chunk: {request_id=} {chunk.text=} {chunk.is_finished=} {chunk.finish_reason=}")
+
+      if not chunk.text and not chunk.is_finished:
+        continue
+
+      # Generate completion response with tokens for metrics
+      completion = generate_completion(
+        chat_request,
+        tokenizer,
+        prompt,
+        request_id,
+        chunk.tokens,
+        chunk.text,
+        True,
+        chunk.finish_reason if chunk.is_finished else None,
+        "chat.completion",
+      )
+
+      yield completion
+
+      if chunk.is_finished:
+        # Send a final completion with empty delta to indicate completion
+        completion = generate_completion(
+          chat_request,
+          tokenizer,
+          prompt,
+          request_id,
+          [],
+          "",
+          True,
+          chunk.finish_reason,
+          "chat.completion",
+        )
+
+        yield completion
+        break
 
   async def handle_post_image_generations(self, request):
     data = await request.json()
