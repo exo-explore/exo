@@ -145,6 +145,9 @@ model_cards = {
   # gemma
   "gemma2-9b": { "layers": 42, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/gemma-2-9b-it-4bit", }, },
   "gemma2-27b": { "layers": 46, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/gemma-2-27b-it-4bit", }, },
+  "gemma3-4b": { "layers": 34, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/gemma-3-4b-it-8bit", }, },
+  "gemma3-12b": { "layers": 48, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/gemma-3-12b-it-8bit", }, },
+  "gemma3-27b": { "layers": 62, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/gemma-3-27b-it-8bit", }, },
   # stable diffusion
   "stable-diffusion-2-1-base": { "layers": 31, "repo": { "MLXDynamicShardInferenceEngine": "stabilityai/stable-diffusion-2-1-base" } },
   # phi
@@ -168,6 +171,9 @@ pretty_name = {
   "llama-3.1-405b-8bit": "Llama 3.1 405B (8-bit)",
   "gemma2-9b": "Gemma2 9B",
   "gemma2-27b": "Gemma2 27B",
+  "gemma3-4b": "Gemma3 4B",
+  "gemma3-12b": "Gemma3 12B",
+  "gemma3-27b": "Gemma3 27B",
   "nemotron-70b": "Nemotron 70B",
   "nemotron-70b-bf16": "Nemotron 70B (BF16)",
   "mistral-nemo": "Mistral Nemo",
