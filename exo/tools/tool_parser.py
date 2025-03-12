@@ -28,4 +28,12 @@ class ToolParser(ABC):
 
 
 def get_tool_parser_by_name(name: str) -> ToolParser:
-  ...
+  if name == "llama_python_tag":
+    from exo.tools.llama_python_tag_tool_parser import LlamaPythonTag
+    return LlamaPythonTag()
+  elif name == "watt":
+    from exo.tools.watt_tool_parser import WattToolParser
+
+    return WattToolParser()
+  else:
+    raise ValueError(f"Unknown tool parser name: {name}")
