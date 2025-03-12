@@ -1,7 +1,6 @@
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import os
 import numpy as np
-import cv2
 import sys
 
 def draw_rounded_rectangle(draw, coords, radius, fill):
@@ -147,6 +146,7 @@ def create_animation_mp4(
   if frames:
     first_frame = np.array(frames[0])
     height, width = first_frame.shape[:2]
+    import cv2  # Lazy load OpenCV only when needed
     fourcc = cv2.VideoWriter_fourcc(*'avc1')
     out = cv2.VideoWriter(
       output_path,
