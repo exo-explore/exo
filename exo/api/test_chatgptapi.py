@@ -422,6 +422,7 @@ async def test_function_calling_with_tool_choice(client):
     messages=[
       {"role": "system", "content": """You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you may need to make one or more function/tool calls to achieve the purpose.
       You should only invoke the function(s) which will assist you in fulfilling the user's request, if their request does not require any function call, you should reply to them directly as a helpful assistant.
+      DO NOT USE FUNCTIONS WHEN THEY WILL NOT HELP YOU ANSWER THE USER'S QUESTION.
       You MUST NOT make any assumptions about what tools you have access to or set of functions you can generate.
       You SHOULD NOT make any function calls that are not provided in the list of functions.
       You SHOULD NOT make any function calls that are not needed to answer the question.
@@ -986,3 +987,151 @@ async def test_diverse_tool_types(client):
     assert args.get("location") == "Berlin"
   elif first_call.function.name == "search_web":
     assert "Berlin" in args.get("query")
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_calls_sdk(client):
+  """Test parallel tool calling using OpenAI SDK with watt format"""
+  tools = [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_stock_price",
+        "description": "Get current stock price for a company",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "ticker": {"type": "string", "description": "Stock ticker symbol"}
+          },
+          "required": ["ticker"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_news_headlines",
+        "description": "Get recent news headlines for a company",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "company": {"type": "string", "description": "Company name"},
+            "limit": {"type": "integer", "description": "Number of headlines to return"}
+          },
+          "required": ["company"]
+        }
+      }
+    }
+  ]
+
+  response = client.chat.completions.create(
+    # model="watt-tool-ct",
+    model=TEST_MODEL,
+    messages=[
+      {"role": "system", "content": f"""You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you may need to make one or more function/tool calls to achieve the purpose.
+You should only invoke the function(s) which will assist you in fulfilling the user's request, if their request does not require any function call, you should return the answer directly.
+You MUST NOT make any assumptions about what tools you have access to or set of functions you can generate.
+You SHOULD NOT make any function calls that are not provided in the list of functions.
+You SHOULD NOT make any function calls that are not needed to answer the question.
+You should only return the function call in tools call sections.
+
+If you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]
+You SHOULD NOT include any other text in the response.
+Here is a list of functions in JSON format that you can invoke.
+{json.dumps(tools)}
+"""},
+      {"role": "user", "content": "What's the current stock price and recent news for Microsoft?"}
+    ],
+    parallel_tool_calls=True,
+    tool_choice="required",
+    tools=tools,
+    # Only watt support parallel tool calls
+    extra_body={"tool_behaviour": {"format": "watt"}},
+    temperature=0.0
+  )
+
+  assert response.choices[0].finish_reason == "tool_calls"
+  assert len(response.choices[0].message.tool_calls) >= 2
+
+  # Verify at least one call for each tool
+  tool_names = {call.function.name for call in response.choices[0].message.tool_calls}
+  assert "get_stock_price" in tool_names
+  assert "get_news_headlines" in tool_names
+
+  # Validate arguments for each tool
+  for call in response.choices[0].message.tool_calls:
+    args = json.loads(call.function.arguments)
+    if call.function.name == "get_stock_price":
+      assert "MSFT" in args.get("ticker", "").upper()
+    elif call.function.name == "get_news_headlines":
+      assert "microsoft" in args.get("company", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_calls_raw_http():
+  """Test parallel tool calling using raw HTTP request with watt format"""
+  async with aiohttp.ClientSession() as session:
+    async with session.post(
+      f"{API_BASE_URL}chat/completions",
+      json={
+        "model": TEST_MODEL,
+        "messages": [{
+          "role": "user",
+          "content": "Get weather in Paris and find flights from CDG to JFK"
+        }],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get current weather for a location",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {"type": "string"}
+                },
+                "required": ["location"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "search_flights",
+              "description": "Search for available flights",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "origin": {"type": "string"},
+                  "destination": {"type": "string"}
+                },
+                "required": ["origin", "destination"]
+              }
+            }
+          }
+        ],
+        "tool_choice": "required",
+        "tool_behaviour": {"format": "watt"},  # Required parameter
+        "temperature": 0.0,
+        "parallel_tool_calls": True
+      }
+    ) as resp:
+      data = await resp.json()
+      assert data["choices"][0]["finish_reason"] == "tool_calls"
+
+      tool_calls = data["choices"][0]["message"]["tool_calls"]
+      assert len(tool_calls) >= 2
+
+      # Verify both tools were called
+      called_tools = {call["function"]["name"] for call in tool_calls}
+      assert "get_weather" in called_tools
+      assert "search_flights" in called_tools
+
+      # Validate arguments
+      for call in tool_calls:
+        args = json.loads(call["function"]["arguments"])
+        if call["function"]["name"] == "get_weather":
+          assert "Paris" in args.get("location", "")
+        elif call["function"]["name"] == "search_flights":
+          assert args.get("origin", "").upper() == "CDG"
+          assert args.get("destination", "").upper() == "JFK"

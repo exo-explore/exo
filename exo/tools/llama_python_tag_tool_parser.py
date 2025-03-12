@@ -10,10 +10,10 @@ from exo.tools.tool_parser import ToolParser, UnplacedToolCall
 
 
 class LlamaPythonTag(ToolParser):
-  def is_start_of_tool(self, chunk: InferenceResultChunk):
+  def is_start_of_tool_section(self, chunk: InferenceResultChunk):
     return chunk.tokens[0] == 128010
 
-  def to_grammar(self, tools: list[ToolDefinition], required: bool) -> str:
+  def to_grammar(self, tools: list[ToolDefinition], required: bool, parallel_tool_calling: bool) -> str:
     # This is lifted from https://github.com/guidance-ai/llguidance/blob/cc83715f/docs/syntax.md#special-tokens
     return lark_grammar(f"""
 %llguidance {{}}
@@ -24,7 +24,7 @@ fun_call: <|python_tag|> json_body <|eom_id|>
 json_body: %json{json.dumps(generate_tool_call_json_schema(tools, "parameters"))}
     """.strip())
 
-  def parse_complete(self, content: str) -> list[UnplacedToolCall]:
+  def parse_complete(self, content: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
     tool_calls = []
 
     for m in re.finditer(r"<\|python_tag\|>(.+)<\|eom_id\|>", content, re.DOTALL):

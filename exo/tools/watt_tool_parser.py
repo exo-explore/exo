@@ -8,10 +8,10 @@ from exo.tools.tool_parser import ToolParser, UnplacedToolCall
 
 
 class WattToolParser(ToolParser):
-  def is_start_of_tool(self, chunk: InferenceResultChunk):
+  def is_start_of_tool_section(self, chunk: InferenceResultChunk):
     return chunk.text[0] == "["
 
-  def to_grammar(self, tools, required) -> str:
+  def to_grammar(self, tools, required: bool, parallel_tool_calling: bool) -> str:
     import os
 
     with open(os.path.join(os.path.dirname(__file__), "watt_grammar.lark"), "r") as f:
@@ -21,20 +21,16 @@ class WattToolParser(ToolParser):
 
   def _generate_function_names(self, tools) -> str:
     """Generate a grammar rule for function names based on available tools."""
-    function_names = [tool.name for tool in tools]
+    function_names = [tool.function.name for tool in tools]
     if not function_names:
       return '""'  # Empty string if no functions available
     return ' | '.join([f'"{name}"' for name in function_names])
 
-  def parse_complete(self, text: str) -> list[UnplacedToolCall]:
-    offset = 0
+  def parse_complete(self, text: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
     tool_calls = []
 
     # Match patterns like [func_name(param1=value1, param2=value2)]
     for i, m in enumerate(re.finditer(r'\[([\w_\-]+)\((.*?)\)\]', text, re.DOTALL)):
-      if i == 0:
-        offset = m.end()
-
       try:
         func_name = m.group(1)
         params_str = m.group(2).strip()

@@ -12,18 +12,18 @@ class UnplacedToolCall(BaseModel):
 
 class ToolParser(ABC):
   @abstractmethod
-  def is_start_of_tool(self, chunk: InferenceResultChunk):
+  def is_start_of_tool_section(self, chunk: InferenceResultChunk):
     ...
 
   @abstractmethod
-  def parse_complete(self, text: str) -> list[UnplacedToolCall]:
+  def parse_complete(self, text: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
     """
     Parse
     """
     ...
 
   @abstractmethod
-  def to_grammar(self, tools: list[Any], required: bool) -> str:
+  def to_grammar(self, tools: list[Any], required: bool, parallel_tool_calling: bool) -> str:
     ...
 
 
