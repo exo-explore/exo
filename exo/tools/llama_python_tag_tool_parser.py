@@ -14,6 +14,9 @@ class LlamaPythonTag(ToolParser):
     return chunk.tokens[0] == 128010
 
   def to_grammar(self, tools: list[ToolDefinition], required: bool, parallel_tool_calling: bool) -> str:
+    if parallel_tool_calling:
+      raise ValueError("Parallel tool calling not supported for LlamaPythonTag")
+
     # This is lifted from https://github.com/guidance-ai/llguidance/blob/cc83715f/docs/syntax.md#special-tokens
     return lark_grammar(f"""
 %llguidance {{}}
@@ -25,6 +28,9 @@ json_body: %json{json.dumps(generate_tool_call_json_schema(tools, "parameters"))
     """.strip())
 
   def parse_complete(self, content: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
+    if parallel_tool_calling:
+      raise ValueError("Parallel tool calling not supported for LlamaPythonTag")
+
     tool_calls = []
 
     for m in re.finditer(r"<\|python_tag\|>(.+)<\|eom_id\|>", content, re.DOTALL):
@@ -40,6 +46,7 @@ json_body: %json{json.dumps(generate_tool_call_json_schema(tools, "parameters"))
         if DEBUG >= 2: print(f"Failed to parse python_tag tool calls: {e}")
 
     return tool_calls
+
 
 def generate_tool_call_json_schema(tools: list[ToolDefinition], parameter_key: str = "arguments") -> dict[str, Any]:
   """

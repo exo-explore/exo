@@ -201,37 +201,37 @@ def test_watt_parallel_tool_calling_parse_complete(watt_parser, tokenizer):
   assert parsed_tool_calls[2].name == "tool3"
 
 
-def test_llama_parallel_tool_calling_grammar(llama_parser, tokenizer):
-  llama_tools = [
-    ToolDefinition(
-      type="function",
-      function=ToolDefinition.FunctionDefinition(name=f"tool{i}", parameters={})
-    ) for i in range(2)
-  ]
+# def test_llama_parallel_tool_calling_grammar(llama_parser, tokenizer):
+#   llama_tools = [
+#     ToolDefinition(
+#       type="function",
+#       function=ToolDefinition.FunctionDefinition(name=f"tool{i}", parameters={})
+#     ) for i in range(2)
+#   ]
+#
+#   assert validate_with_guidance(
+#     llama_parser, llama_tools,
+#     "<|python_tag|>{\"name\":\"tool1\"}<|eom_id|><|python_tag|>{\"name\":\"tool2\"}<|eom_id|>",
+#     tokenizer
+#   ) != "failed"
 
-  assert validate_with_guidance(
-    llama_parser, llama_tools,
-    "<|python_tag|>{\"name\":\"tool1\"}<|eom_id|><|python_tag|>{\"name\":\"tool2\"}<|eom_id|>",
-    tokenizer
-  ) != "failed"
 
-
-def test_llama_parallel_tool_calling_parse_complete(llama_parser, tokenizer):
-  llama_tools = [
-    ToolDefinition(
-      type="function",
-      function=ToolDefinition.FunctionDefinition(name=f"tool{i}", parameters={})
-    ) for i in range(2)
-  ]
-
-  tool_calls = llama_parser.parse_complete(
-    "<|python_tag|>{\"name\":\"tool1\"}<|eom_id|><|python_tag|>{\"name\":\"tool2\"}<|eom_id|>",
-    True
-  )
-
-  assert len(tool_calls) == 2
-  assert tool_calls[0].name == "tool1"
-  assert tool_calls[1].name == "tool2"
+# def test_llama_parallel_tool_calling_parse_complete(llama_parser, tokenizer):
+#   llama_tools = [
+#     ToolDefinition(
+#       type="function",
+#       function=ToolDefinition.FunctionDefinition(name=f"tool{i}", parameters={})
+#     ) for i in range(2)
+#   ]
+#
+#   tool_calls = llama_parser.parse_complete(
+#     "<|python_tag|>{\"name\":\"tool1\"}<|eom_id|><|python_tag|>{\"name\":\"tool2\"}<|eom_id|>",
+#     True
+#   )
+#
+#   assert len(tool_calls) == 2
+#   assert tool_calls[0].name == "tool1"
+#   assert tool_calls[1].name == "tool2"
 
 
 # Enhanced error handling tests
