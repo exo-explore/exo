@@ -44,7 +44,19 @@ def validate_with_guidance(parser, tools, text, tokenizer, required=True):
 
     # Feed text one character at a time (simple tokenization)
     for token in tokens:
-      buffered.get_token_mask()
+      mask = buffered.get_token_mask()
+
+      if mask is not None and mask[token] == 0:
+        print(f"Token {tokenizer.decode([token])} is not in the mask")
+        print("Tokens in mask: ", end="")
+        for t, m in enumerate(mask):
+          if m != 0:
+            decoded = tokenizer.decode([t])
+            print(f"[{decoded}]", end=", ")
+
+        print()
+        return "failed"
+
       buffered.append(token)
 
     if buffered.is_finished:
@@ -163,18 +175,30 @@ def test_watt_parallel_tool_calling_grammar(watt_parser, tokenizer):
 
   assert validate_with_guidance(
     watt_parser, watt_tools,
-    "[tool1(), tool2(), tool3()]",
+    "[tool0(), tool1(), tool2()]",
     tokenizer
-  )
+  ) == "finished"
+
+  assert validate_with_guidance(
+    watt_parser, watt_tools,
+    "[tool1(), tool2(),]",
+    tokenizer
+  ) == "failed"
+
+  assert validate_with_guidance(
+    watt_parser, watt_tools,
+    "[tool1(), tool2]",
+    tokenizer
+  ) == "failed"
 
 
 def test_watt_parallel_tool_calling_parse_complete(watt_parser, tokenizer):
   parsed_tool_calls = watt_parser.parse_complete("[tool1(), tool2(), tool3()]", True)
 
   assert len(parsed_tool_calls) == 3
-  assert parsed_tool_calls[0].function.name == "tool1"
-  assert parsed_tool_calls[1].function.name == "tool2"
-  assert parsed_tool_calls[2].function.name == "tool3"
+  assert parsed_tool_calls[0].name == "tool1"
+  assert parsed_tool_calls[1].name == "tool2"
+  assert parsed_tool_calls[2].name == "tool3"
 
 
 def test_llama_parallel_tool_calling_grammar(llama_parser, tokenizer):
@@ -206,8 +230,8 @@ def test_llama_parallel_tool_calling_parse_complete(llama_parser, tokenizer):
   )
 
   assert len(tool_calls) == 2
-  assert tool_calls[0].function.name == "tool1"
-  assert tool_calls[1].function.name == "tool2"
+  assert tool_calls[0].name == "tool1"
+  assert tool_calls[1].name == "tool2"
 
 
 # Enhanced error handling tests

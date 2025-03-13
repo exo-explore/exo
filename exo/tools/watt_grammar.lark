@@ -2,7 +2,8 @@
 
 start: %%ENTRY_PRODUCTION%%
 TEXT: /[^\[](.|\n)*/
-function_call_expression: "[" function_call "]"
+function_call_expression: "[" %%INNER_PRODUCTION%% "]"
+function_calls: function_call | function_call "," WS function_calls
 function_call: function_name "(" parameter_list ")"
 function_name: %%FUNCTION_NAME%%
 parameter_list: parameter | parameter WS "," WS parameter_list | ""
