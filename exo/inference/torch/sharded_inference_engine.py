@@ -111,10 +111,6 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"shard: {shard}")
       print(f"prompt: {prompt}")
 
-    if self.sharded_model is not None:
-      print("CLEARING SHARD AND MODEL - ENCODING")
-      self.clear_model()
-
     await self.ensure_shard(shard)
 
     def encode_wrapper() -> np.ndarray:
