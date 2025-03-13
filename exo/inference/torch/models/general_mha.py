@@ -232,14 +232,14 @@ class ShardedGeneralModel(nn.Module):
       print(f"mask: {mask}")
       print(f"input_pos: {input_pos}")
 
-    
-    model_output = self.model(
-      tokens=tokens,
-      mask=mask,
-      input_pos=input_pos,
-      hidden_state=hidden_state,
-      dtype=self.dtype
-    )
+    with torch.no_grad():
+      model_output = self.model(
+        tokens=tokens,
+        mask=mask,
+        input_pos=input_pos,
+        hidden_state=hidden_state,
+        dtype=self.dtype
+      )
 
     if self.shard.is_last_layer():
       model_logits = model_output
