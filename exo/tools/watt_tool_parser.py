@@ -29,7 +29,7 @@ class WattToolParser(ToolParser):
       return '""'  # Empty string if no functions available
     return ' | '.join([f'"{name}"' for name in function_names])
 
-  def parse_complete(self, text: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
+  def parse_complete(self, text: str, parallel_tool_calling: bool = False) -> list[UnplacedToolCall]:
     tool_calls = []
 
     # Match patterns like [func_name(param1=value1, param2=value2)]

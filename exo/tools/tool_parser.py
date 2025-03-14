@@ -16,7 +16,7 @@ class ToolParser(ABC):
     ...
 
   @abstractmethod
-  def parse_complete(self, text: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
+  def parse_complete(self, text: str, parallel_tool_calling: bool = False) -> list[UnplacedToolCall]:
     """
     Parse
     """

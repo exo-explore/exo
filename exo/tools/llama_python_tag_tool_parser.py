@@ -27,7 +27,7 @@ fun_call: <|python_tag|> json_body <|eom_id|>
 json_body: %json{json.dumps(generate_tool_call_json_schema(tools, "parameters"))}
     """.strip())
 
-  def parse_complete(self, content: str, parallel_tool_calling: bool) -> list[UnplacedToolCall]:
+  def parse_complete(self, content: str, parallel_tool_calling: bool = False) -> list[UnplacedToolCall]:
     if parallel_tool_calling:
       raise ValueError("Parallel tool calling not supported for LlamaPythonTag")
 
