@@ -20,19 +20,104 @@ import numpy as np
 import base64
 from io import BytesIO
 import platform
+import tempfile
 
-from .helpers import Message, ChatCompletionRequest, generate_completion, build_prompt, parse_message, \
-  parse_chat_request, PromptSession
 from exo.download.download_progress import RepoProgressEvent
 from exo.download.new_shard_download import delete_model
-import tempfile
 from exo.apputil import create_animation_mp4
+from exo.tools import ToolChoice, ToolChoiceModel
+from exo.api.response_formats import ResponseFormatAdapter
+
 from .inference_result_manager import InferenceResultManager
+from .chat_completion_request import ChatCompletionRequest, Message, ToolBehaviour, ToolDefinition
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
 else:
   import numpy as mx
+
+
+def remap_messages(messages: List[Message]) -> List[Message]:
+  remapped_messages = []
+  last_image = None
+  for message in messages:
+    if not isinstance(message.content, list):
+      remapped_messages.append(message)
+      continue
+
+    remapped_content = []
+    for content in message.content:
+      if isinstance(content, dict):
+        if content.get("type") in ["image_url", "image"]:
+          image_url = content.get("image_url", {}).get("url") or content.get("image")
+          if image_url:
+            last_image = {"type": "image", "image": image_url}
+            remapped_content.append({"type": "text", "text": "[An image was uploaded but is not displayed here]"})
+        else:
+          remapped_content.append(content)
+      else:
+        remapped_content.append(content)
+    remapped_messages.append(Message(role=message.role, content=remapped_content))
+
+  if last_image:
+    # Replace the last image placeholder with the actual image content
+    for message in reversed(remapped_messages):
+      for i, content in enumerate(message.content):
+        if isinstance(content, dict):
+          if content.get("type") == "text" and content.get("text") == "[An image was uploaded but is not displayed here]":
+            message.content[i] = last_image
+            return remapped_messages
+
+  return remapped_messages
+
+def build_prompt(tokenizer, _messages: List[Message], tools: Optional[List[Dict]] = None):
+  messages = _messages # TODO: Re-enable remap_messages(_messages)
+  chat_template_args = {"conversation": [m if isinstance(m, Dict) else m.to_dict() for m in messages], "tokenize": False, "add_generation_prompt": True}
+  if tools:
+    chat_template_args["tools"] = tools
+
+  try:
+    prompt = tokenizer.apply_chat_template(**chat_template_args)
+    if DEBUG >= 3: print(f"!!! Prompt: {prompt}")
+    return prompt
+  except UnicodeEncodeError:
+    # Handle Unicode encoding by ensuring everything is UTF-8
+    chat_template_args["conversation"] = [
+      {k: v.encode('utf-8').decode('utf-8') if isinstance(v, str) else v
+       for k, v in m.to_dict().items()}
+      for m in messages
+    ]
+    prompt = tokenizer.apply_chat_template(**chat_template_args)
+    if DEBUG >= 3: print(f"!!! Prompt (UTF-8 encoded): {prompt}")
+    return prompt
+
+def parse_message(data: dict):
+  if "role" not in data or "content" not in data:
+    raise ValueError(f"Invalid message: {data}. Must have 'role' and 'content'")
+  return Message(data["role"], data["content"], data.get("tools"))
+
+def parse_chat_request(data: dict, default_model: str):
+  return ChatCompletionRequest(
+    data.get("model", default_model),
+    data["messages"],
+    data.get("temperature", 0.0),
+    [ToolDefinition.model_validate(tool) for tool in data["tools"]] if "tools" in data else None,
+    # The max_tokens field is deprecated, but some clients may still use it, fall back to that value if
+    # max_completion_tokens is not provided.
+    data.get("max_completion_tokens", data.get("max_tokens", None)),
+    data.get("stop", None),
+    response_format=ResponseFormatAdapter.validate_python(data.get("response_format")) if "response_format" in data else None,
+    tool_choice=ToolChoiceModel.validate_python(data.get("tool_choice")) if "tool_choice" in data else None,
+    tool_behaviour=ToolBehaviour.model_validate(data.get("tool_behaviour")) if "tool_behaviour" in data else None,
+    parallel_tool_calling=data.get("parallel_tool_calls", False),
+  )
+
+
+class PromptSession:
+  def __init__(self, request_id: str, timestamp: int, prompt: str):
+    self.request_id = request_id
+    self.timestamp = timestamp
+    self.prompt = prompt
 
 
 class ChatGPTAPI:
@@ -306,7 +391,7 @@ class ChatGPTAPI:
           return web.json_response(completion)
 
         return web.json_response(
-          generate_completion(
+          ChatCompletionRequest.generate_completion(
             chat_request,
             tokenizer,
             prompt,
@@ -379,7 +464,7 @@ class ChatGPTAPI:
           return
 
       # Generate completion response with tokens for metrics
-      completion = generate_completion(
+      completion = ChatCompletionRequest.generate_completion(
         chat_request,
         tokenizer,
         prompt,
@@ -395,7 +480,7 @@ class ChatGPTAPI:
 
       if chunk.is_finished:
         # Send a final completion with empty delta to indicate completion
-        completion = generate_completion(
+        completion = ChatCompletionRequest.generate_completion(
           chat_request,
           tokenizer,
           prompt,
