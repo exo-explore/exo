@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Get the total memory in MB
 TOTAL_MEM_MB=$(($(sysctl -n hw.memsize) / 1024 / 1024))
 
