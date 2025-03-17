@@ -28,8 +28,9 @@ document.addEventListener("alpine:init", () => {
     imagePreview: null,
 
     // download progress
+    isPolling: false,  // To check if the download progress is polling
+    allProgressComplete: false, // To check if the download progress is all complete
     downloadProgress: null,
-    downloadProgressInterval: null, // To keep track of the polling interval
 
     // Pending message storage
     pendingMessage: null,
@@ -436,7 +437,6 @@ document.addEventListener("alpine:init", () => {
         }
       }
     },
-
     async fetchDownloadProgress() {
       try {
         const response = await fetch(`${this.endpoint}/download/progress`);
@@ -471,7 +471,9 @@ document.addEventListener("alpine:init", () => {
               }
             });
             const allComplete = this.downloadProgress.every(progress => progress.isComplete);
+
             if (allComplete) {
+              this.allProgressComplete = true;
               // Check for pendingMessage
               const savedMessage = localStorage.getItem("pendingMessage");
               if (savedMessage) {
@@ -486,7 +488,6 @@ document.addEventListener("alpine:init", () => {
               this.downloadProgress = null;
             }
           } else {
-            // No ongoing download
             this.downloadProgress = null;
           }
         }
@@ -496,17 +497,39 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
-    startDownloadProgressPolling() {
-      if (this.downloadProgressInterval) {
-        // Already polling
+    async startDownloadProgressPolling(maxRetries = 4, baseInterval = 1000) {
+      if (this.isPolling) {
         return;
       }
-      this.fetchDownloadProgress(); // Fetch immediately
-      this.downloadProgressInterval = setInterval(() => {
-        this.fetchDownloadProgress();
-      }, 1000); // Poll every second
-    },
+    
+      this.isPolling = true;
+      let retryCount = 1;
+      let currentInterval = baseInterval;
 
+      while (true) {
+        await this.fetchDownloadProgress();
+
+        // isAllComplete is updated in fetchDownloadProgress when all downloads are complete
+        if(this.allProgressComplete){
+          break;
+        }
+        if (this.downloadProgress && this.downloadProgress.length > 0) {
+          retryCount = 1;
+          currentInterval = baseInterval;
+        } else {
+          if (retryCount > maxRetries) { 
+            console.log('No progress after maximum retries');
+            break;
+          } 
+          currentInterval = Math.min(baseInterval * Math.pow(2, retryCount-1), 32000); // Cap at 32 seconds
+          retryCount++;  
+        }
+
+        await new Promise(resolve => setTimeout(resolve, currentInterval));
+      }
+
+      this.isPolling = false;
+    },
     // Add a helper method to set errors consistently
     setError(error) {
       this.errorMessage = {
@@ -593,6 +616,8 @@ document.addEventListener("alpine:init", () => {
           throw new Error(data.error || 'Failed to start download');
         }
 
+        this.startDownloadProgressPolling();
+        
         // Update the model's status immediately when download starts
         if (this.models[modelName]) {
           this.models[modelName] = {
