@@ -96,23 +96,6 @@ def parse_message(data: dict):
     raise ValueError(f"Invalid message: {data}. Must have 'role' and 'content'")
   return Message(data["role"], data["content"], data.get("tools"))
 
-def parse_chat_request(data: dict, default_model: str):
-  return ChatCompletionRequest(
-    data.get("model", default_model),
-    data["messages"],
-    data.get("temperature", 0.0),
-    [ToolDefinition.model_validate(tool) for tool in data["tools"]] if "tools" in data else None,
-    # The max_tokens field is deprecated, but some clients may still use it, fall back to that value if
-    # max_completion_tokens is not provided.
-    data.get("max_completion_tokens", data.get("max_tokens", None)),
-    data.get("stop", None),
-    response_format=ResponseFormatAdapter.validate_python(data.get("response_format")) if "response_format" in data else None,
-    tool_choice=ToolChoiceModel.validate_python(data.get("tool_choice")) if "tool_choice" in data else None,
-    tool_behaviour=ToolBehaviour.model_validate(data.get("tool_behaviour")) if "tool_behaviour" in data else None,
-    parallel_tool_calling=data.get("parallel_tool_calls", False),
-  )
-
-
 class PromptSession:
   def __init__(self, request_id: str, timestamp: int, prompt: str):
     self.request_id = request_id
@@ -272,7 +255,7 @@ class ChatGPTAPI:
     data = await request.json()
     if DEBUG >= 2: print(f"[ChatGPTAPI] Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)
-    chat_request = parse_chat_request(data, self.default_model)
+    chat_request = ChatCompletionRequest.from_chat_request_dict(data, self.default_model)
     if chat_request.model and chat_request.model.startswith(
       "gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to default model
       chat_request.model = self.default_model
@@ -364,7 +347,7 @@ class ChatGPTAPI:
         #       - The message will either contain a tool call begining at the first token, or it will not contain any tool calls.
         #       - A tool call can be identified from the initial emitted chunk.
         #       - We do not stream tool calls, they are emitted in a single completion object.
-        if tool_parser and tool_parser.is_start_of_tool_section(result):
+        if chat_request.enable_tool_parsing() and tool_parser and tool_parser.is_start_of_tool_section(result):
           tool_calls = [{
             "index": i,
             "function": tool_call.model_dump(),
@@ -426,7 +409,7 @@ class ChatGPTAPI:
       #       - The message will either contain a tool call begining at the first token, or it will not contain any tool calls.
       #       - A tool call can be identified from the initial emitted chunk.
       #       - We do not stream tool calls, they are emitted in a single completion object.
-      if tool_parser:
+      if tool_parser and chat_request.enable_tool_parsing():
         if is_first_chunk:
           is_first_chunk = False
 

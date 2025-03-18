@@ -25,7 +25,6 @@ class Message:
 
 class ToolBehaviour(BaseModel):
   format: str
-  guided: bool = True
   parsed: bool = True
 
 class ToolDefinition(BaseModel):
@@ -63,6 +62,21 @@ class ChatCompletionRequest:
             "stop": self.stop, "response_format": self.response_format.model_dump() if self.response_format else None, "tool_choice": self.tool_choice, "tool_behaviour": self.tool_behaviour.model_dump() if self.tool_behaviour else None,
             "parallel_tool_calling": self.parallel_tool_calling}
 
+  def enable_tool_parsing(self) -> bool:
+    """
+    If we should parse the tool output from the model in an OpenAI tool call response.
+    """
+    if self.tool_choice == "none":
+      return False
+
+    if self.tools is None or len(self.tools) == 0:
+      return None
+
+    if self.tool_behaviour is None:
+      return True
+
+    return self.tool_behaviour.parsed
+
   def to_generation_options(self) -> GenerationOptions:
     grammar_definition = None
     tool_parser = self.get_tool_parser()
@@ -73,18 +87,15 @@ class ChatCompletionRequest:
     if self.response_format is not None:
       grammar_definition = self.response_format.to_grammar()
     elif tool_parser:
-      grammar_definition = tool_parser.to_grammar(self.get_tools(), self.tool_choice == "required" or isinstance(self.tool_choice, SpecificToolChoice), self.parallel_tool_calling)
+      tool_call_required = self.tool_choice == "required" or isinstance(self.tool_choice, SpecificToolChoice)
+      grammar_definition = tool_parser.to_grammar(self.get_tools(), tool_call_required, self.parallel_tool_calling)
 
     return GenerationOptions(max_completion_tokens=self.max_completion_tokens, stop=self.stop, grammar_definition=grammar_definition)
 
   def get_tools(self):
-    ##
     return choose_tools(self.tool_choice, self.tools) or []
 
   def get_tool_parser(self) -> Optional[ToolParser]:
-    if self.tool_behaviour and not self.tool_behaviour.guided:
-      return None
-
     if self.tool_choice == "none":
       return None
 

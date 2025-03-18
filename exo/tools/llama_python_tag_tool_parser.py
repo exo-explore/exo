@@ -54,7 +54,7 @@ def generate_tool_call_json_schema(tools: list[ToolDefinition], parameter_key: s
 
   type ValidToolCall[name] = {
     "name": name,
-    "arguments": tools[name].parameters
+    "arguments": tools[name].strict ? tools[name].parameters : object
   }
 
   With the overall schema looking like:
@@ -74,12 +74,10 @@ def generate_tool_call_json_schema(tools: list[ToolDefinition], parameter_key: s
     tool_schema = {
       "type": "object",
       "properties": {
-        # TODO: The LLama example on LLGuidance uses "name": { "const": "get_weather" } which might be easier?
-        "name": {
-          "type": "string",
-          "enum": [tool.function.name]
-        },
-        parameter_key: tool.function.parameters
+        "name": { "const": tool.function.name },
+        parameter_key: tool.function.parameters if getattr(tool.function, "strict", False) else {
+          "type": "object"
+        }
       },
       "required": ["name", parameter_key],
       "additionalProperties": False
