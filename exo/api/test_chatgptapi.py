@@ -178,9 +178,9 @@ async def test_stop_sequence_first_token(client):
   """Test stop sequence when it's the first generated token"""
   response = client.chat.completions.create(
     model=TEST_MODEL,
-    messages=[{"role": "user", "content": "Please repeat the word supercalifragilisticexpialidocious"}],
+    messages=[{"role": "user", "content": "Please repeat the word supercalifragilisticexpialidocious in all lower case"}],
     temperature=0.0,
-    stop=["T", "sup"],
+    stop=["T", "sup", "Sup"],
     max_completion_tokens=20
   )
 
@@ -196,7 +196,7 @@ async def test_stop_sequence_first_token_streaming(async_client):
     model=TEST_MODEL,
     messages=[{"role": "user", "content": "Please repeat the word supercalifragilisticexpialidocious"}],
     temperature=0.0,
-    stop=["T", "sup"],
+    stop=["T", "sup", "Sup"],
     max_completion_tokens=20,
     stream=True
   )
@@ -487,9 +487,11 @@ async def test_multiple_function_calls(client):
     model=TEST_MODEL,
     messages=[{"role": "user", "content": "Find me an Italian restaurant in New York"}],
     tools=tools,
+    tool_choice="required",
     temperature=0.0
   )
 
+  print(response)
   assert response.choices[0].finish_reason == "tool_calls"
   assert len(response.choices[0].message.tool_calls) == 1
   assert response.choices[0].message.tool_calls[0].function.name == "get_restaurant"
@@ -731,6 +733,7 @@ async def test_complex_tool_schema(client):
       "function": {
         "name": "book_flight",
         "description": "Book a flight ticket",
+        "strict": True,
         "parameters": {
           "type": "object",
           "properties": {

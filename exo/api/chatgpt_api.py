@@ -307,7 +307,9 @@ class ChatGPTAPI:
         generation_options=chat_request.to_generation_options()
       ))), timeout=self.response_timeout)
 
-      if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for response to finish. timeout={self.response_timeout}s")
+      if DEBUG >= 2:
+        print(f"[ChatGPTAPI] Waiting for response to finish. timeout={self.response_timeout}s")
+        print(f"[ChatGPTAPI] Tool consideration {chat_request.tool_behaviour=} {chat_request.get_tool_parser()=} {chat_request.enable_tool_parsing()=}")
 
       if stream:
         try:
@@ -342,6 +344,7 @@ class ChatGPTAPI:
         if DEBUG >= 2: print("Using tool_parser:", tool_parser)
         result = await self.result_manager.get_complete_inference_result(request_id, timeout=self.response_timeout)
 
+        print("GOT RESULT: ", result)
         # TODO: This is a hack to get around the lack of information we get out of the tool parser as to its state
         #       This provides the following simplifying assumptions:
         #       - The message will either contain a tool call begining at the first token, or it will not contain any tool calls.
@@ -445,6 +448,8 @@ class ChatGPTAPI:
 
           yield completion
           return
+        elif tool_chunk:
+          continue
 
       # Generate completion response with tokens for metrics
       completion = ChatCompletionRequest.generate_completion(

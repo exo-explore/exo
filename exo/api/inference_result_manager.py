@@ -117,7 +117,6 @@ class InferenceResultManager:
     inference_result = InferenceResultChunk(text="", tokens=[], is_finished=False, finish_reason=None)
 
     async for chunk in self.get_inference_result(request_id, timeout):
-      print(f"XYA: {chunk}")
       inference_result.extend(chunk)
 
     return inference_result

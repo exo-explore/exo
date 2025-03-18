@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any
 
-from exo.api.helpers import ToolDefinition
+from exo.api.chat_completion_request import ToolDefinition
 from exo.api.inference_result_manager import InferenceResultChunk
 from exo.helpers import DEBUG
 from exo.inference.grammars import lark_grammar

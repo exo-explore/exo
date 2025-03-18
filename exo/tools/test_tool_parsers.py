@@ -2,7 +2,7 @@ import pytest
 import json
 from transformers import AutoProcessor
 
-from exo.api.helpers import ToolDefinition
+from exo.api.chat_completion_request import ToolDefinition
 from exo.download.new_shard_download import exo_home
 from exo.tools.watt_tool_parser import WattToolParser
 from exo.tools.llama_python_tag_tool_parser import LlamaPythonTag

@@ -70,7 +70,7 @@ class ChatCompletionRequest:
       return False
 
     if self.tools is None or len(self.tools) == 0:
-      return None
+      return False
 
     if self.tool_behaviour is None:
       return True
