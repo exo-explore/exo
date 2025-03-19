@@ -206,7 +206,7 @@ async def linux_device_capabilities() -> DeviceCapabilities:
                       memory=gpu_memory_info // 2**20,
                       flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
                     )
-  elif Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
+  if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
     import pynvml
 
     pynvml.nvmlInit()
