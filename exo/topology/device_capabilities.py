@@ -140,6 +140,8 @@ CHIP_FLOPS = {
   "AMD Radeon RX 7600": DeviceFlops(fp32=21.5*TFLOPS, fp16=43.0*TFLOPS, int8=86.0*TFLOPS),
   "AMD Radeon RX 7500": DeviceFlops(fp32=16.2*TFLOPS, fp16=32.4*TFLOPS, int8=64.8*TFLOPS),
   ### Qualcomm embedded chips: TODO
+  ### Intel Arc GPUs
+  "Intel(R) Arc(TM) A770 Graphics": DeviceFlops(fp32=19.66*TFLOPS, fp16=39.32*TFLOPS, int8=78.64*TFLOPS),
 }
 CHIP_FLOPS.update({f"LAPTOP GPU {key}": value for key, value in CHIP_FLOPS.items()})
 CHIP_FLOPS.update({f"Laptop GPU {key}": value for key, value in CHIP_FLOPS.items()})
@@ -179,7 +181,32 @@ async def linux_device_capabilities() -> DeviceCapabilities:
   from tinygrad import Device
 
   if DEBUG >= 2: print(f"tinygrad {Device.DEFAULT=}")
-  if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
+
+  if Device.DEFAULT == "GPU":
+    import pyopencl as cl
+    platforms = cl.get_platforms()
+
+    for platform in platforms:
+        # Check if platform is Intel
+        if "Intel" in platform.name:
+            devices = platform.get_devices()
+
+            for device_id, device in enumerate(devices):
+                # Detect an Arc GPU, otherwise fall through to Nvidia block
+                if device.type == cl.device_type.GPU and "Arc" in device.name:
+                    gpu_name = device.name
+                    gpu_memory_info = device.global_mem_size
+
+                    if DEBUG >= 2:
+                        print(f"Intel Arc device {gpu_name=} {gpu_memory_info=}")
+
+                    return DeviceCapabilities(
+                      model=f"Linux Box ({gpu_name})",
+                      chip=gpu_name,
+                      memory=gpu_memory_info // 2**20,
+                      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+                    )
+  elif Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
     import pynvml
 
     pynvml.nvmlInit()
