@@ -152,6 +152,8 @@ model_cards = {
   "phi-4": { "layers": 40, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/phi-4-4bit", }, },
   # dummy
   "dummy": { "layers": 8, "repo": { "DummyInferenceEngine": "dummy", }, },
+  "exaone-3.5-7.8b": {"layers": 32, "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/EXAONE-3.5-7.8B-Instruct-4bit"}, },
+  "exaone-3.5-2.4b": {"layers": 30, "repo": {"MLXDynamicShardInferenceEngine": "mlx-community/EXAONE-3.5-2.4B-Instruct-4bit"}, },
 }
 
 pretty_name = {
@@ -197,6 +199,8 @@ pretty_name = {
   "phi-4": "Phi-4",
   "llama-3-8b": "Llama 3 8B",
   "llama-3-70b": "Llama 3 70B",
+  "exaone-3.5-2.4b": "EXAONE-3.5 2.4B",
+  "exaone-3.5-7.8b": "EXAONE-3.5 7.8B",
   "stable-diffusion-2-1-base": "Stable Diffusion 2.1",
   "deepseek-r1-distill-qwen-1.5b": "DeepSeek R1 Distill Qwen 1.5B",
   "deepseek-r1-distill-qwen-1.5b-3bit": "DeepSeek R1 Distill Qwen 1.5B (3-bit)",
