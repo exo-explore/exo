@@ -208,12 +208,26 @@ async def download_shard(shard: Shard, inference_engine_classname: str, on_progr
   if repo_id is None:
     raise ValueError(f"No repo found for {shard.model_id=} and inference engine {inference_engine_classname}")
 
-  allow_patterns = await resolve_allow_patterns(shard, inference_engine_classname)
-  if DEBUG >= 2: print(f"Downloading {shard.model_id=} with {allow_patterns=}")
+  single_file_model = False
+  try:
+      url = f"https://huggingface.co/deepseek-ai/{repo_id}/blob/main/model.safetensors"
+      response = requests.head(url)
+      if response.status_code == 200:
+        single_file_model = True
+  except Exception as e:
+    pass
+  
+  if not single_file_model: 
+    allow_patterns = await resolve_allow_patterns(shard, inference_engine_classname)
+    if DEBUG >= 2: print(f"Downloading {shard.model_id=} with {allow_patterns=}")
 
-  all_start_time = time.time()
-  file_list = await fetch_file_list_with_cache(repo_id, revision)
-  filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, key=lambda x: x["path"]))
+    all_start_time = time.time()
+    
+    file_list = await fetch_file_list_with_cache(repo_id, revision)
+    filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, key=lambda x: x["path"]))
+  else:
+    filtered_file_list = ['model.safetensors']
+  
   file_progress: Dict[str, RepoFileProgressEvent] = {}
   def on_progress_wrapper(file: dict, curr_bytes: int, total_bytes: int):
     start_time = file_progress[file["path"]].start_time if file["path"] in file_progress else time.time()

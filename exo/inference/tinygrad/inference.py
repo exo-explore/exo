@@ -8,6 +8,7 @@ from tinygrad.nn.state import safe_save, safe_load, get_state_dict, load_state_d
 from tinygrad import Tensor, nn, Context, TinyJit
 from exo.inference.inference_engine import InferenceEngine
 import numpy as np
+from exo.inference.tinygrad.load_by_layer import build_transformer_2
 from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,9 @@ from .losses import length_masked_ce_loss
 from collections import OrderedDict
 import asyncio
 from typing import Optional
+import asyncio
 Tensor.no_grad = True 
+
 # default settings
 TEMPERATURE = int(os.getenv("TEMPERATURE", 0.85))
 TOP_K = 25
@@ -37,6 +40,7 @@ MODEL_PARAMS = {
   }, "8B": {"args": {"dim": 4096, "n_heads": 32, "n_kv_heads": 8, "n_layers": 32, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 14336}, "files": 1},
   "70B": {"args": {"dim": 8192, "n_heads": 64, "n_kv_heads": 8, "n_layers": 80, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 28672}, "files": 8}
 }
+
 
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
@@ -68,6 +72,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     self.shard_downloader = shard_downloader
     self.states = OrderedDict()
     self.executor = _executor
+    self.shard_loading = False
 
   def poll_state(self, x, request_id: str, max_states=2):
     if request_id not in self.states:
@@ -143,13 +148,19 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
       return
-
+    
+    if self.shard_loading:
+      while True:
+        await asyncio.sleep(0.2)
+        if not self.shard_loading:
+          return
+    self.shard_loading = True
     model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
 
     if self.shard != shard:
       loop = asyncio.get_running_loop()
       parameters = "1B" if "1b" in shard.model_id.lower() else "3B" if "3b" in shard.model_id.lower() else "8B" if "8b" in shard.model_id.lower() else "70B"
-      model_shard = await loop.run_in_executor(self.executor, build_transformer, model_path, shard, parameters)
+      model_shard = await loop.run_in_executor(self.executor, build_transformer_2, model_path, shard, parameters)
 
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)

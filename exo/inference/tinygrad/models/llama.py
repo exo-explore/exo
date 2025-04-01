@@ -276,6 +276,39 @@ class TransformerShard:
     return self.forward(h, start_pos, cache=self.null_cache if cache is None else cache)
       
 # *** helpers ***
+def convert_from_huggingface3(weights:dict[str, Tensor], model: Transformer, n_heads: int, n_kv_heads: int, permute_layers: bool = True):
+  # huggingface stores Q and K permuted! it is mostly correct without this, but without it makes RoPE different, so it will diverge after 10+ toks.
+  def permute(v: Tensor, n_heads: int):
+    return v.reshape(n_heads, 2, v.shape[0] // n_heads // 2, v.shape[1] if len(v.shape) > 1 else 1).transpose(1, 2).reshape(*v.shape[:2])
+
+  keymap = {
+    "model.embed_tokens.weight": "tok_embeddings.weight",
+    **{f"model.layers.{l}.input_layernorm.weight": f"layers.{l}.attention_norm.weight" for l in range(len(model.layers))},
+    **{f"model.layers.{l}.self_attn.{x}_norm.weight": f"layers.{l}.attention.{x}_norm.weight" for x in ["q", "k"] for l in range(len(model.layers))},
+    **{f"model.layers.{l}.self_attn.{x}_proj.weight": f"layers.{l}.attention.w{x}.weight" for x in ["q", "k", "v", "o"] for l in range(len(model.layers))},
+    **{f"model.layers.{l}.self_attn.{x}_proj.bias": f"layers.{l}.attention.w{x}.bias" for x in ["q", "k", "v", "o"] for l in range(len(model.layers))},
+    **{f"model.layers.{l}.post_attention_layernorm.weight": f"layers.{l}.ffn_norm.weight" for l in range(len(model.layers))},
+    **{f"model.layers.{l}.mlp.{x}_proj.weight": f"layers.{l}.feed_forward.w{y}.weight" for x, y in {"gate": "1", "down": "2", "up": "3"}.items() for l in range(len(model.layers))},
+    **{f"model.layers.{l}.mlp.gate.weight": f"layers.{l}.feed_forward.gate.weight" for l in range(len(model.layers))},
+    "model.norm.weight": "norm.weight",
+    "lm_head.weight": "output.weight",
+  }
+  sd = {}
+  experts = defaultdict(dict)
+  for k, v in weights.items():
+    if ".rotary_emb." in k: continue
+    v = v.to(Device.DEFAULT)
+    if "model.layers" in k:
+      if ("q_proj" in k or "q_norm" in k) and permute_layers: v = permute(v, n_heads)
+      elif ("k_proj" in k or "k_norm" in k) and permute_layers: v = permute(v, n_kv_heads)
+    if '.mlp.experts.' in k:
+      # support MoE models
+      _, _, layer, _, _, expert, name, _ = k.split('.')
+      experts[f'layers.{layer}.feed_forward.{name}'][int(expert)] = v
+      continue
+    sd[keymap[k]] = v
+  for k,v in experts.items(): sd[k] = Tensor.stack(*[v[i] for i in range(len(v))])
+  return sd
 
 
 def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_heads: int, n_kv_heads: int):
@@ -314,12 +347,12 @@ def convert_from_huggingface(weights: Dict[str, Tensor], model: Transformer, n_h
 
 
 def fix_bf16(weights: Dict[Any, Tensor]):
-  if Device.DEFAULT == "CLANG":
-    # TODO: without casting to float16, 70B llama OOM on tinybox.
-    return {
-      k: (v.llvm_bf16_cast(dtypes.float32).to(v.device) if v.dtype == dtypes.bfloat16 else v) 
-      for k, v in weights.items()
-    }
+  # if Device.DEFAULT == "CLANG":
+  #   # TODO: without casting to float16, 70B llama OOM on tinybox.
+  #   return {
+  #     k: (v.llvm_bf16_cast(dtypes.float32).to(v.device) if v.dtype == dtypes.bfloat16 else v) 
+  #     for k, v in weights.items()
+  #   }
   if getenv("SUPPORT_BF16", 1):
     # TODO: without casting to float16, 70B llama OOM on tinybox.
     return {k: v.cast(dtypes.float32).cast(dtypes.float16) if v.dtype == dtypes.bfloat16 else v for k, v in weights.items()}
