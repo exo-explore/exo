@@ -30,7 +30,6 @@ from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 import concurrent.futures
-import resource
 import psutil
 
 # TODO: figure out why this is happening
@@ -41,6 +40,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 # Configure uvloop for maximum performance
 def configure_uvloop():
     import uvloop
+    import resource
     uvloop.install()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -385,6 +385,7 @@ def run():
         if sys.platform.startswith("win32"):
           import winloop
           winloop.install()
+          loop = asyncio.new_event_loop()
           loop.run_until_complete(main())
         else:
           loop = configure_uvloop()
