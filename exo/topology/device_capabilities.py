@@ -5,39 +5,9 @@ import subprocess
 import psutil
 import asyncio
 from exo.helpers import get_mac_system_info, subprocess_pool
+from exo.topology.cpu_perf import DeviceCapabilities, DeviceFlops, get_device_flops
 
-TFLOPS = 1.00
-
-
-class DeviceFlops(BaseModel):
-  # units of TFLOPS
-  fp32: float
-  fp16: float
-  int8: float
-
-  def __str__(self):
-    return f"fp32: {self.fp32 / TFLOPS:.2f} TFLOPS, fp16: {self.fp16 / TFLOPS:.2f} TFLOPS, int8: {self.int8 / TFLOPS:.2f} TFLOPS"
-
-  def to_dict(self):
-    return self.model_dump()
-
-
-class DeviceCapabilities(BaseModel):
-  model: str
-  chip: str
-  memory: int
-  flops: DeviceFlops
-
-  def __str__(self):
-    return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}"
-
-  def model_post_init(self, __context: Any) -> None:
-    if isinstance(self.flops, dict):
-      self.flops = DeviceFlops(**self.flops)
-
-  def to_dict(self):
-    return {"model": self.model, "chip": self.chip, "memory": self.memory, "flops": self.flops.to_dict()}
-
+TFLOPS = 1.0
 
 UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
 
@@ -214,10 +184,17 @@ async def linux_device_capabilities() -> DeviceCapabilities:
       flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
     )
 
+  elif Device.DEFAULT == "CLANG":
+    return DeviceCapabilities(
+      model=f"Linux Box (Device: {Device.DEFAULT})",
+      chip=f"CPU (Device: {Device.DEFAULT})",
+      memory=psutil.virtual_memory().total // 2**20,
+      flops=get_device_flops(),
+    )
   else:
     return DeviceCapabilities(
       model=f"Linux Box (Device: {Device.DEFAULT})",
-      chip=f"Unknown Chip (Device: {Device.DEFAULT})",
+      chip=f"Unknown chip (Device: {Device.DEFAULT})",
       memory=psutil.virtual_memory().total // 2**20,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
     )
