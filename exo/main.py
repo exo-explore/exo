@@ -29,7 +29,6 @@ from exo.inference.inference_engine import get_inference_engine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
-import uvloop
 import concurrent.futures
 import resource
 import psutil
@@ -41,6 +40,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Configure uvloop for maximum performance
 def configure_uvloop():
+    import uvloop
     uvloop.install()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
