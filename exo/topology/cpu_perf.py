@@ -76,7 +76,4 @@ def get_device_flops(
         print(f"Error: {e}")
         return DeviceFlops(fp32=0, fp16=0, int8=0)
 
-# Usage example
-flops = get_device_flops()
-print(flops)
-print(flops.to_dict())
+

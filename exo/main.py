@@ -5,6 +5,7 @@ import signal
 import json
 import platform
 import os
+import sys
 import time
 import traceback
 import uuid
@@ -381,8 +382,13 @@ async def main():
 def run():
     loop = None
     try:
-        loop = configure_uvloop()
-        loop.run_until_complete(main())
+        if sys.platform.startswith("win32"):
+          import winloop
+          winloop.install()
+          loop.run_until_complete(main())
+        else:
+          loop = configure_uvloop()
+        loop.run_until_complete(main())  
     except KeyboardInterrupt:
         print("\nShutdown requested... exiting")
     finally:
