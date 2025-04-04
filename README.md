@@ -269,7 +269,7 @@ python3 format.py ./exo
 
 ## Known Issues
 
-- On certain versions of Python on macOS, certificates may not installed correctly, potentially causing SSL errors (e.g., when accessing huggingface.co). To resolve this, run the `Install Certificates` command, typicall as follows:
+- On certain versions of Python on macOS, certificates may not be installed correctly, potentially causing SSL errors (e.g., when accessing huggingface.co). To resolve this, run the `Install Certificates` command, typically as follows:
 
 ```sh
 /Applications/Python 3.x/Install Certificates.command
