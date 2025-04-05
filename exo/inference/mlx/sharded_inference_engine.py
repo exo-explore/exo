@@ -107,7 +107,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
     output_data_np = await asyncio.get_running_loop().run_in_executor(
       self._mlx_thread,
-      lambda: np.array(output_data, copy=False)
+      lambda: convert_output_to_numpy(output_data_mx)
     )
     return output_data_np, inference_state
 
