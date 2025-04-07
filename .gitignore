@@ -173,3 +173,6 @@ cython_debug/
 .aider*
 
 exo/tinychat/images/*.png
+
+inf_2.py
+inf_test.py

@@ -156,7 +156,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
           return
     self.shard_loading = True
     model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
-
+    print(f"Loading shard {shard} from {model_path}")
     if self.shard != shard:
       loop = asyncio.get_running_loop()
       parameters = "1B" if "1b" in shard.model_id.lower() else "3B" if "3b" in shard.model_id.lower() else "8B" if "8b" in shard.model_id.lower() else "70B"
