@@ -381,7 +381,13 @@ document.addEventListener("alpine:init", () => {
     },
 
     async handleEnter(event) {
-      // if shift is not pressed
+      // Check if an IME (Input Method Editor) composition is in progress
+      if (event.isComposing || event.keyCode === 229) {
+        // Allow the default Enter behavior for IME composition
+        return;
+      }
+      
+      // Only send message if shift is not pressed and not in IME composition
       if (!event.shiftKey) {
         event.preventDefault();
         await this.handleSend();
