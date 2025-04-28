@@ -117,7 +117,7 @@ class TransformerBlock:
 
 
 # standard openai sampling
-def sample_logits(logits: Tensor, temp: float, k: int, p: float, af: float, ap: float):
+def sample_logits(logits: Tensor, temp: float, k: int, p: float, af: float, ap: float, mask: Optional[Tensor] = None):
   assert logits.ndim == 1, "only works on 1d tensors"
   assert 0 <= p <= 1, "p must be between 0 and 1"
   assert 0 <= k <= logits.numel(), "k must be between 0 and numel"
@@ -133,6 +133,10 @@ def sample_logits(logits: Tensor, temp: float, k: int, p: float, af: float, ap: 
 
   # replace NaNs with -inf
   logits = (logits != logits).where(-float("inf"), logits)
+
+  # apply token mask if provided
+  if mask is not None:
+    logits = (mask == 0).where(-float("inf"), logits)
 
   # softmax
   t = (logits/temp).softmax()
