@@ -504,3 +504,14 @@ def get_exo_images_dir() -> Path:
   images_dir = exo_home/"Images"
   if not images_dir.exists(): images_dir.mkdir(exist_ok=True)
   return images_dir
+
+def get_device_capabilities_json():
+  from exo.topology.device_capabilities import device_capabilities
+  loop = asyncio.new_event_loop()
+  asyncio.set_event_loop(loop)
+  try:
+    caps = loop.run_until_complete(device_capabilities())
+    caps_dict = caps.model_dump()
+    return json.dumps(caps_dict, indent=2)
+  finally:
+    loop.close()
