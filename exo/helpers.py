@@ -64,11 +64,15 @@ def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 6
 
   while available_ports:
     port = random.choice(list(available_ports))
-    if DEBUG >= 2: print(f"Trying to find available port {port=}")
+    if DEBUG >= 2: print(f"Trying to bind port {port=} on address {host=}")
     try:
       with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
-      write_used_port(port, used_ports)
+      try:
+        write_used_port(port, used_ports)
+      except Exception as e:
+        if DEBUG >= 2: print(f"Unable to write to file using the write_used_port function")
+        raise RuntimeError (e)
       return port
     except socket.error:
       available_ports.remove(port)
