@@ -1,3 +1,10 @@
+> [!IMPORTANT]  
+> This is not an offically maintained fork of [Exo](https://github.com/exo-explore/exo).
+> <br> The sole reason for this fork appears to be stalled maintenance of the project.
+> <br> PRs are welcome in the hopes that this fork remains stable and will be eventually merged [upstream](https://github.com/exo-explore/exo/pull/825).
+> <br> No claim of ownership or future claim of stewardship is being made.
+> <br> No warranty is provided for this fork; use at your own risk.
+
 <div align="center">
 
 <picture>
