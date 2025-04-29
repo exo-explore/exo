@@ -26,7 +26,7 @@ install_requires = [
   "rich==13.7.1",
   "scapy==2.6.1",
   "tqdm==4.66.4",
-  "transformers==4.48.0",
+  "transformers==4.50.0",
   "uuid==1.30",
   "uvloop==0.21.0",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8",
