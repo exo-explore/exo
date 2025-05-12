@@ -228,7 +228,7 @@ async def linux_device_capabilities() -> DeviceCapabilities:
     )
 
 
-def windows_device_capabilities() -> DeviceCapabilities:
+async def windows_device_capabilities() -> DeviceCapabilities:
   import psutil
 
   def get_gpu_info():

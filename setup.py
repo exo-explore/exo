@@ -28,7 +28,6 @@ install_requires = [
   "tqdm==4.66.4",
   "transformers==4.46.3",
   "uuid==1.30",
-  "uvloop==0.21.0",
   "tinygrad==0.10.2",
   "torch==2.6.0",
   "accelerate==0.34.2",
@@ -37,8 +36,6 @@ install_requires = [
   "pytest==8.3.3",
   "pytest-asyncio==0.24.0",
   "scapy==2.6.1",
-  "uvloop==0.21.0"
-
 ]
 
 extras_require = {
@@ -47,18 +44,28 @@ extras_require = {
     "mlx==0.22.0",
     "mlx-lm==0.21.1",
   ],
-  "windows": ["pywin32==308",],
+  "windows": ["pywin32==308","winloop==0.1.8"],
   "nvidia-gpu": ["nvidia-ml-py==12.560.30",],
   "amd-gpu": ["pyrsmi==0.2.0"],
+  "other-os": ["uvloop==0.21.0"],
 }
+
+USE_APPLE = False
+USE_WIN = False
 
 # Check if running on macOS with Apple Silicon
 if sys.platform.startswith("darwin") and platform.machine() == "arm64":
   install_requires.extend(extras_require["apple_silicon"])
+  USE_APPLE = True
 
 # Check if running Windows
 if sys.platform.startswith("win32"):
   install_requires.extend(extras_require["windows"])
+  USE_WIN = True
+
+if not USE_WIN and not USE_APPLE:
+  install_requires.extend(extras_require["other-os"])
+
 
 
 def _add_gpu_requires():
