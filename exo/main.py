@@ -36,11 +36,11 @@ import sys
 
 if sys.platform in ("win32", "cygwin", "cli"):
   import winloop
-  USE_WIN = True
+  use_win = True
 else:
   import uvloop
   import resource
-  USE_WIN = False
+  use_win = False
 
 # TODO: figure out why this is happening
 os.environ["GRPC_VERBOSITY"] = "error"
@@ -49,7 +49,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Configure uvloop for maximum performance
 def configure_uvloop():
-    if USE_WIN:
+    if use_win:
       winloop.install()
     else:
       uvloop.install()
