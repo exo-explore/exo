@@ -28,10 +28,19 @@ from exo.inference.inference_engine import get_inference_engine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
-import uvloop
+
 import concurrent.futures
-import resource
+
 import psutil
+import sys
+
+if sys.platform in ("win32", "cygwin", "cli"):
+  import winloop
+  use_win = True
+else:
+  import uvloop
+  import resource
+  use_win = False
 
 # TODO: figure out why this is happening
 os.environ["GRPC_VERBOSITY"] = "error"
@@ -40,7 +49,11 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Configure uvloop for maximum performance
 def configure_uvloop():
-    uvloop.install()
+    if use_win:
+      winloop.install()
+    else:
+      uvloop.install()
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
