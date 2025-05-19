@@ -38,6 +38,7 @@ class InferenceResultManager:
     self.token_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
     self.tokenizers = {}
     self.request_models = {}
+    self.partial_tokens_map = {}
 
     # Register our token handler with the node
     self.token_callback = node.on_token.register("inference-result-manager-token-handler")
@@ -53,6 +54,15 @@ class InferenceResultManager:
 
   def get_tokenizer(self, request_id: str) -> Tokenizer:
     return self.tokenizers[request_id]
+  
+  def get_partial_tokens(self, request_id: str) -> List[int]:
+    if request_id not in self.partial_tokens_map:
+      self.partial_tokens_map[request_id] = []
+
+    return self.partial_tokens_map[request_id]
+
+  def remove_partial_tokens(self, request_id: str) -> List[int]:
+    del self.partial_tokens_map[request_id]
 
   async def handle_tokens(self, request_id: str, tokens: List[int], is_finished: bool,
                           finish_reason: Optional[str] = None):
@@ -74,12 +84,37 @@ class InferenceResultManager:
     if len(tokens) == 0 and not is_finished:
       return
 
+
+    partial_tokens = self.get_partial_tokens(request_id)
+
+    result_tokens = tokens if partial_tokens is None else (partial_tokens + tokens)
+    content = tokenizer.decode(result_tokens)
+
+    if partial_tokens is not None:
+      unicode_partial_char = '�'
+      if (
+          all(char.isspace() or char == unicode_partial_char for char in content)
+          and
+          any(char == unicode_partial_char for char in content)
+      ):
+        partial_tokens += tokens[:]
+        result_tokens = []
+        content = ""
+      else:
+        partial_tokens.clear()
+
+
     await self.token_queues[request_id].put(InferenceResultChunk(
-      text=tokenizer.decode(tokens),
-      tokens=tokens,
+      text=content,
+      tokens=result_tokens,
       is_finished=is_finished,
       finish_reason=finish_reason
     ))
+
+
+    if is_finished:
+      self.remove_partial_tokens(request_id)
+
 
   async def get_inference_result(self, request_id: str, timeout: int = 90) -> AsyncIterator[InferenceResultChunk]:
     """
