@@ -85,7 +85,7 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
       tensor_mask = Tensor(mask).flatten() if mask is not None else None
       return sample_logits(Tensor(logits).flatten(), temp, 0, 0.8, top_p, 0.0, mask=tensor_mask).realize().numpy().astype(int)
     return await asyncio.get_running_loop().run_in_executor(self.executor, sample_wrapper)
-    
+
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     await self.ensure_shard(shard)
     tokens = await asyncio.get_running_loop().run_in_executor(self.executor, self.tokenizer.encode, prompt)

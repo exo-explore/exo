@@ -1,5 +1,4 @@
-# from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
-from exo.inference.huggingface.inference import HuggingfaceInferenceEngine
+from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 from exo.inference.inference_engine import InferenceEngine
 from exo.download.new_shard_download import NewShardDownloader
 from exo.inference.shard import Shard
