@@ -84,7 +84,6 @@ class InferenceResultManager:
     if len(tokens) == 0 and not is_finished:
       return
 
-
     partial_tokens = self.get_partial_tokens(request_id)
 
     result_tokens = tokens if partial_tokens is None else (partial_tokens + tokens)
@@ -111,10 +110,8 @@ class InferenceResultManager:
       finish_reason=finish_reason
     ))
 
-
     if is_finished:
       self.remove_partial_tokens(request_id)
-
 
   async def get_inference_result(self, request_id: str, timeout: int = 90) -> AsyncIterator[InferenceResultChunk]:
     """
