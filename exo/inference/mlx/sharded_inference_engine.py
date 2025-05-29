@@ -19,7 +19,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.caches = OrderedDict()
-    self.sampler_params: tuple[float, float] = (0.0, 0.0, 0.0, 1)
+    self.sampler_params: tuple[float, float, float] = (0.0, 0.0, 0.0, 1)
     self.sampler = make_sampler(*self.sampler_params)
     self._mlx_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
     self._tokenizer_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tokenizer")
@@ -208,3 +208,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
   async def cleanup(self):
     self._mlx_thread.shutdown(wait=True)
+
+  async def get_flops(self) -> float:
+    return self.device_capabilities.flops.fp32
