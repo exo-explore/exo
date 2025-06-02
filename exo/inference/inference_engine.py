@@ -6,6 +6,9 @@ from typing import Tuple, Optional
 from abc import ABC, abstractmethod
 from .shard import Shard
 from exo.download.shard_download import ShardDownloader
+from exo.inference.llama_cpp.llama_cpp_inference_engine import LlamaCppInferenceEngine
+from exo.inference.vllm.vllm_inference_engine import VLLMInferenceEngine
+from exo.inference.openvino.openvino_inference_engine import OpenVINOInferenceEngine
 
 
 class InferenceEngine(ABC):
@@ -55,6 +58,9 @@ inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
+  "llama_cpp": "LlamaCppInferenceEngine",
+  "vllm": "VLLMInferenceEngine",
+  "openvino": "OpenVINOInferenceEngine",
 }
 
 
@@ -74,4 +80,10 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()
+  elif inference_engine_name == "llama_cpp":
+    return LlamaCppInferenceEngine(shard_downloader)
+  elif inference_engine_name == "vllm":
+    return VLLMInferenceEngine(shard_downloader)
+  elif inference_engine_name == "openvino":
+    return OpenVINOInferenceEngine(shard_downloader)
   raise ValueError(f"Unsupported inference engine: {inference_engine_name}")

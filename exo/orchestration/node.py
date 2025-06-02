@@ -153,7 +153,6 @@ class Node:
 
     return  np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
 
-
   async def process_prompt(
     self,
     base_shard: Shard,
@@ -518,12 +517,203 @@ class Node:
     self.peers = next_peers
     return len(peers_added) > 0 or len(peers_removed) > 0 or len(peers_updated) > 0
 
-  async def select_best_inference_engine(self):
-    if self.inference_engine.__class__.__name__ == 'DummyInferenceEngine': return
-    supported_engines = self.get_supported_inference_engines()
-    await self.broadcast_supported_engines(supported_engines)
-    if len(self.get_topology_inference_engines()):
-      self.inference_engine = get_inference_engine(supported_engines[0], self.shard_downloader)
+    async def select_best_inference_engine(self):
+
+      if self.inference_engine.__class__.__name__ == 'DummyInferenceEngine':
+
+          if DEBUG >= 1: print("Running with DummyInferenceEngine, skipping backend selection.")
+
+          return
+
+      selected_engine_name = None
+
+      import os # Ensure os is imported
+
+      manual_override = os.getenv("EXO_INFERENCE_ENGINE")
+
+      if manual_override:
+
+          if DEBUG >= 1: print(f"Manual override: EXO_INFERENCE_ENGINE is set to {manual_override}")
+
+          try:
+
+              if manual_override == "vllm":
+
+                  import vllm
+
+              elif manual_override == "llama_cpp":
+
+                  import llama_cpp
+
+              elif manual_override == "openvino":
+
+                  from openvino.runtime import Core # Corrected import
+
+              elif manual_override not in ["mlx", "tinygrad"]:
+
+                  raise ValueError(f"Unsupported engine specified in EXO_INFERENCE_ENGINE: {manual_override}")
+
+              selected_engine_name = manual_override
+
+              if DEBUG >= 1: print(f"Manual override engine {selected_engine_name} is valid.")
+
+          except ImportError:
+
+              print(f"Warning: Manually specified engine '{manual_override}' or its dependencies not found. Falling back to automatic selection.")
+
+              selected_engine_name = None
+
+          except ValueError as e:
+
+              print(f"Warning: {e}. Falling back to automatic selection.")
+
+              selected_engine_name = None
+
+      if not selected_engine_name:
+
+          caps = self.device_capabilities
+
+          if DEBUG >= 1: print(f"Performing automatic backend selection. Device capabilities: {caps}")
+
+          backend_priority = [
+
+              ("vllm", lambda caps: "NVIDIA" in caps.chip.upper() and caps.memory > 8000),
+
+              ("openvino", lambda caps: "INTEL" in caps.chip.upper()),
+
+              ("mlx", lambda caps: "APPLE" in caps.chip.upper()),
+
+              ("llama_cpp", lambda caps: True),
+
+              ("tinygrad", lambda caps: True)
+
+          ]
+
+          for engine_name, condition in backend_priority:
+
+              if DEBUG >= 2: print(f"Checking condition for {engine_name}...")
+
+              if condition(caps):
+
+                  if DEBUG >= 2: print(f"Condition met for {engine_name}.")
+
+                  try:
+
+                      # Perform actual import checks
+
+                      if engine_name == "vllm": import vllm
+
+                      elif engine_name == "llama_cpp": import llama_cpp
+
+                      elif engine_name == "openvino": from openvino.runtime import Core # Corrected import
+
+                      elif engine_name == "mlx":
+
+                          if "APPLE" not in caps.chip.upper():
+
+                              if DEBUG >= 2: print("MLX check: Not Apple, skipping MLX priority for this round.")
+
+                              continue
+
+                          # No specific import for mlx here, existence of "APPLE" chip is the check
+
+                      elif engine_name == "tinygrad":
+
+                          pass # No specific import, always considered available if reached
+
+                      selected_engine_name = engine_name
+
+                      if DEBUG >= 1: print(f"Selected '{selected_engine_name}' based on condition and availability check.")
+
+                      break
+
+                  except ImportError:
+
+                      if DEBUG >= 1: print(f"Dependencies for '{engine_name}' not met, trying next.")
+
+                      continue
+
+              else:
+
+                  if DEBUG >= 2: print(f"Condition NOT met for {engine_name}.")
+
+          if not selected_engine_name and DEBUG >=1:
+
+              print("No preferred engine found after checking conditions, will use default or keep current.")
+
+      if selected_engine_name:
+
+          current_engine_simple_name = self.inference_engine.__class__.__name__.lower().replace("dynamicshardinferenceengine", "").replace("inferenceengine", "")
+
+          if current_engine_simple_name != selected_engine_name.lower():
+
+              if DEBUG >= 1: print(f"Switching inference engine from {self.inference_engine.__class__.__name__} to: {selected_engine_name}")
+
+              try:
+
+                  self.inference_engine = get_inference_engine(selected_engine_name, self.shard_downloader) # get_inference_engine needs to be in scope
+
+                  if DEBUG >= 1: print(f"Successfully switched to {selected_engine_name}.")
+
+              except Exception as e: # Catch specific exceptions if possible
+
+                  print(f"Error switching to {selected_engine_name}: {e}. Keeping previous engine {self.inference_engine.__class__.__name__}.")
+
+          else:
+
+              if DEBUG >= 1: print(f"Current inference engine {self.inference_engine.__class__.__name__} already matches selected {selected_engine_name}.")
+
+      else:
+
+          if DEBUG >= 1: print(f"No engine selected by override or auto-selection logic. Keeping existing engine: {self.inference_engine.__class__.__name__}")
+
+      node_actually_supports = []
+
+      # Check actual availability for broadcast
+
+      try:
+
+          import vllm
+
+          node_actually_supports.append("vllm")
+
+      except ImportError: pass
+
+      try:
+
+          import llama_cpp
+
+          node_actually_supports.append("llama_cpp")
+
+      except ImportError: pass
+
+      try:
+
+          from openvino.runtime import Core # Corrected import
+
+          node_actually_supports.append("openvino")
+
+      except ImportError: pass
+
+      if "APPLE" in self.device_capabilities.chip.upper():
+
+          # Assuming mlx is available if on Apple Silicon and other project dependencies are met
+
+          node_actually_supports.append("mlx")
+
+      node_actually_supports.append("tinygrad")
+
+      final_supported_engines = list(set(node_actually_supports)) # Use set to remove duplicates
+
+      if DEBUG >= 1: print(f"Node will broadcast actually supported engines: {final_supported_engines}")
+
+      # Ensure DEBUG and get_inference_engine are available in the method's scope
+
+      # DEBUG is likely module-level. get_inference_engine might need to be passed or imported if not already.
+
+      # For now, assuming they are in scope.
+
+      await self.broadcast_supported_engines(final_supported_engines)
 
   async def periodic_topology_collection(self, interval: int):
     while True:
