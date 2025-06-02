@@ -5,6 +5,35 @@ import subprocess
 import psutil
 import asyncio
 from exo.helpers import get_mac_system_info, subprocess_pool
+import platform
+
+def get_cpu_arch_for_chip_info():
+    # Simplified CPU detection
+    try:
+        # platform.processor() can be empty or unreliable on some systems/python builds.
+        # platform.machine() gives architecture (e.g. x86_64, arm64)
+        # For more detailed CPU brand, one might need cpuinfo package or OS-specific commands.
+        # This is a best-effort based on platform.processor().
+        processor_info = platform.processor()
+        if "Intel" in processor_info:
+            return "Intel CPU"
+        elif "AMD" in processor_info: # Checking for AMD as well
+            return "AMD CPU"
+
+        # Fallback to architecture if processor brand isn't obvious
+        arch = platform.machine().lower()
+        if "aarch64" == arch or "arm64" == arch :
+            return "ARM CPU"
+        elif "x86_64" == arch or "amd64" == arch:
+            # Could be Intel or AMD, if processor_info was not specific
+            return "x86_64 CPU"
+        elif arch: # If arch is not empty
+            return arch.upper() + " CPU"
+
+    except Exception:
+        pass # Ignore errors in CPU detection
+    return "Unknown CPU"
+
 
 TFLOPS = 1.00
 
@@ -40,7 +69,7 @@ class DeviceCapabilities(BaseModel):
     return {"model": self.model, "chip": self.chip, "memory": self.memory, "available_memory": self.available_memory, "flops": self.flops.to_dict()}
 
 
-UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, available_memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
+UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip=get_cpu_arch_for_chip_info(), memory=0, available_memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
 
 CHIP_FLOPS = {
   # Source: https://www.cpu-monkey.com
@@ -158,7 +187,7 @@ async def device_capabilities() -> DeviceCapabilities:
   else:
     return DeviceCapabilities(
       model="Unknown Device",
-      chip="Unknown Chip",
+      chip=get_cpu_arch_for_chip_info(),
       memory=psutil.virtual_memory().total // 2**20,
       available_memory=psutil.virtual_memory().available // 2**20,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
@@ -222,7 +251,7 @@ async def linux_device_capabilities() -> DeviceCapabilities:
   else:
     return DeviceCapabilities(
       model=f"Linux Box (Device: {Device.DEFAULT})",
-      chip=f"Unknown Chip (Device: {Device.DEFAULT})",
+      chip=get_cpu_arch_for_chip_info() + f" (Tinygrad Device: {Device.DEFAULT})",
       memory=psutil.virtual_memory().total // 2**20,
       available_memory=psutil.virtual_memory().available // 2**20,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
@@ -296,7 +325,7 @@ def windows_device_capabilities() -> DeviceCapabilities:
   else:
     return DeviceCapabilities(
       model=f"Windows Box (Device: Unknown)",
-      chip=f"Unknown Chip (Device(s): {gpu_names})",
+      chip=get_cpu_arch_for_chip_info() + f" (GPU(s) detected: {gpu_names})",
       memory=psutil.virtual_memory().total // 2**20,
       available_memory=psutil.virtual_memory().available // 2**20,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),

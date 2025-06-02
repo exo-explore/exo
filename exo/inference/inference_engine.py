@@ -6,9 +6,7 @@ from typing import Tuple, Optional
 from abc import ABC, abstractmethod
 from .shard import Shard
 from exo.download.shard_download import ShardDownloader
-from exo.inference.llama_cpp.llama_cpp_inference_engine import LlamaCppInferenceEngine
-from exo.inference.vllm.vllm_inference_engine import VLLMInferenceEngine
-from exo.inference.openvino.openvino_inference_engine import OpenVINOInferenceEngine
+# Removed problematic top-level imports for llama_cpp, vllm, openvino
 
 
 class InferenceEngine(ABC):
@@ -81,9 +79,12 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()
   elif inference_engine_name == "llama_cpp":
+    from exo.inference.llama_cpp.llama_cpp_inference_engine import LlamaCppInferenceEngine
     return LlamaCppInferenceEngine(shard_downloader)
   elif inference_engine_name == "vllm":
+    from exo.inference.vllm.vllm_inference_engine import VLLMInferenceEngine
     return VLLMInferenceEngine(shard_downloader)
   elif inference_engine_name == "openvino":
+    from exo.inference.openvino.openvino_inference_engine import OpenVINOInferenceEngine
     return OpenVINOInferenceEngine(shard_downloader)
   raise ValueError(f"Unsupported inference engine: {inference_engine_name}")

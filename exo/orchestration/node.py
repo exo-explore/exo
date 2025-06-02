@@ -577,7 +577,7 @@ class Node:
 
           backend_priority = [
 
-              ("vllm", lambda caps: "NVIDIA" in caps.chip.upper() and caps.memory > 8000),
+              ("vllm", lambda caps: "NVIDIA" in caps.chip.upper() and caps.available_memory > 8000),
 
               ("openvino", lambda caps: "INTEL" in caps.chip.upper()),
 

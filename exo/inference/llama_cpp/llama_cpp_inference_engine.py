@@ -2,8 +2,14 @@ from exo.inference.inference_engine import InferenceEngine
 import numpy as np
 from exo.inference.shard import Shard
 from typing import Optional
+from exo.download.shard_download import ShardDownloader # Added import
+
 
 class LlamaCppInferenceEngine(InferenceEngine):
+    def __init__(self, shard_downloader: ShardDownloader):
+        self.shard_downloader = shard_downloader
+        # super().__init__() # If InferenceEngine had a relevant __init__
+
     async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
         pass
 
