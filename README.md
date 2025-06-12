@@ -85,6 +85,7 @@ The current recommended way to install exo is from source.
 
 ### From source
 
+#### Linux/macOS:
 
 ```sh
 git clone https://github.com/exo-explore/exo.git
@@ -94,10 +95,47 @@ pip install -e .
 source install.sh
 ```
 
+#### Windows: ✅ **Full Support**
+
+```powershell
+git clone https://github.com/exo-explore/exo.git
+cd exo
+pip install -e .
+# alternatively, with venv
+.\install.ps1
+```
+
+**Windows Support Status:**
+- ✅ **All inference engines supported**: LlamaCpp, TinyGrad, MLX (compatibility layer), Dummy
+- ✅ **Full networking support**: UDP discovery, manual discovery, GRPC
+- ✅ **GPU acceleration**: NVIDIA CUDA, automatic device detection
+- ✅ **Cross-platform clustering**: Join Linux/macOS clusters seamlessly
+- ✅ **Web interface**: TinyChat and ChatGPT-compatible API
+
+**Requirements:**
+- Python 3.12+ (add to PATH during installation)
+- For GPU acceleration: NVIDIA drivers + CUDA toolkit
+- See the [Windows Setup Guide](docs/WINDOWS_SETUP.md) for detailed instructions
+
 
 ### Troubleshooting
 
+#### General Issues
 - If running on Mac, MLX has an [install guide](https://ml-explore.github.io/mlx/build/html/install.html) with troubleshooting steps.
+
+#### Windows-Specific Issues
+- **"uvloop is not available"**: This is normal on Windows. The program will automatically fall back to the standard asyncio event loop.
+- **Permission errors during installation**: Run PowerShell as Administrator or use `--user` flag with pip.
+- **GPU not detected**: 
+  - For NVIDIA GPUs: Ensure CUDA toolkit is installed and `nvidia-smi` works
+  - For AMD GPUs: Limited support on Windows; consider using CPU inference
+- **Firewall warnings**: Allow Python/exo through Windows Firewall for network discovery to work.
+- **"Python not found"**: Ensure Python is installed and added to PATH. You may need to restart your terminal.
+
+#### Network Discovery on Windows
+- UDP discovery works but may require firewall exceptions
+- Manual discovery is recommended for Windows setups
+- Tailscale discovery works well across platforms
 
 ### Performance
 
@@ -142,6 +180,7 @@ curl http://localhost:52415/v1/chat/completions \
 
 #### Llama 3.1 405B:
 
+**Linux/macOS:**
 ```sh
 curl http://localhost:52415/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -152,8 +191,21 @@ curl http://localhost:52415/v1/chat/completions \
    }'
 ```
 
+**Windows (PowerShell):**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:52415/v1/chat/completions" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body (@{
+    model = "llama-3.1-405b"
+    messages = @(@{ role = "user"; content = "What is the meaning of exo?" })
+    temperature = 0.7
+  } | ConvertTo-Json -Depth 10)
+```
+
 #### DeepSeek R1 (full 671B):
 
+**Linux/macOS:**
 ```sh
 curl http://localhost:52415/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -162,6 +214,18 @@ curl http://localhost:52415/v1/chat/completions \
      "messages": [{"role": "user", "content": "What is the meaning of exo?"}],
      "temperature": 0.7
    }'
+```
+
+**Windows (PowerShell):**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:52415/v1/chat/completions" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body (@{
+    model = "deepseek-r1"
+    messages = @(@{ role = "user"; content = "What is the meaning of exo?" })
+    temperature = 0.7
+  } | ConvertTo-Json -Depth 10)
 ```
 
 #### Llava 1.5 7B (Vision Language Model):

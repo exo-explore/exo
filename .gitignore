@@ -173,3 +173,8 @@ cython_debug/
 .aider*
 
 exo/tinychat/images/*.png
+
+.claude/
+
+venv-windows/
+venv-linux/

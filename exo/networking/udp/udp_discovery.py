@@ -3,6 +3,7 @@ import json
 import socket
 import time
 import traceback
+import psutil
 from typing import List, Dict, Callable, Tuple, Coroutine, Optional
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
@@ -39,13 +40,39 @@ class BroadcastProtocol(asyncio.DatagramProtocol):
     self.source_ip = source_ip
 
   def connection_made(self, transport):
-    sock = transport.get_extra_info("socket")
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    # Try both subnet-specific and global broadcast
-    broadcast_addr = get_broadcast_address(self.source_ip)
-    transport.sendto(self.message.encode("utf-8"), (broadcast_addr, self.broadcast_port))
-    if broadcast_addr != "255.255.255.255":
-      transport.sendto(self.message.encode("utf-8"), ("255.255.255.255", self.broadcast_port))
+    try:
+      sock = transport.get_extra_info("socket")
+      sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+      
+      # Windows-specific: Set additional socket options to prevent network errors
+      if psutil.WINDOWS:
+        try:
+          sock.setsockopt(socket.SOL_SOCKET, socket.SO_DONTROUTE, 1)
+        except OSError:
+          pass  # Not critical if this fails
+      
+      # Try both subnet-specific and global broadcast with error handling
+      broadcast_addr = get_broadcast_address(self.source_ip)
+      
+      try:
+        transport.sendto(self.message.encode("utf-8"), (broadcast_addr, self.broadcast_port))
+      except OSError as e:
+        if DEBUG_DISCOVERY >= 2:
+          print(f"Failed to send to subnet broadcast {broadcast_addr}: {e}")
+      
+      if broadcast_addr != "255.255.255.255":
+        try:
+          transport.sendto(self.message.encode("utf-8"), ("255.255.255.255", self.broadcast_port))
+        except OSError as e:
+          if DEBUG_DISCOVERY >= 2:
+            print(f"Failed to send to global broadcast: {e}")
+            
+    except Exception as e:
+      if DEBUG_DISCOVERY >= 1:
+        print(f"Error in BroadcastProtocol.connection_made: {e}")
+    finally:
+      # Close transport immediately after sending to prevent hanging connections
+      transport.close()
 
 
 class UDPDiscovery(Discovery):
@@ -101,6 +128,35 @@ class UDPDiscovery(Discovery):
     while True:
       for addr, interface_name in get_all_ip_addresses_and_interfaces():
         interface_priority, interface_type = await get_interface_priority_and_type(interface_name)
+        
+        # Skip virtual adapters on Windows to avoid broadcast errors
+        if psutil.WINDOWS and interface_priority >= 7:
+          if DEBUG_DISCOVERY >= 2: 
+            print(f"Skipping virtual interface {interface_name} ({interface_type}) for broadcast")
+          continue
+        
+        # Skip localhost/loopback for broadcasting
+        if addr in ['127.0.0.1', 'localhost', '::1']:
+          continue
+        
+        # Additional Windows validation - check if interface is reachable
+        if psutil.WINDOWS:
+          try:
+            # Quick connectivity check for Windows interfaces
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            test_sock.settimeout(0.1)
+            try:
+              test_sock.bind((addr, 0))
+              test_sock.close()
+            except OSError as test_e:
+              if DEBUG_DISCOVERY >= 2:
+                print(f"Skipping unreachable Windows interface {interface_name} ({addr}): {test_e}")
+              continue
+          except Exception as validation_e:
+            if DEBUG_DISCOVERY >= 2:
+              print(f"Failed to validate Windows interface {interface_name}: {validation_e}")
+            continue
+        
         message = json.dumps({
           "type": "discovery",
           "node_id": self.node_id,
@@ -112,27 +168,77 @@ class UDPDiscovery(Discovery):
         })
 
         transport = None
+        sock = None
         try:
           sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
           sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
           sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-          try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-          except AttributeError:
-            pass
-          sock.bind((addr, 0))
           
-          transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(
-            lambda: BroadcastProtocol(message, self.broadcast_port, addr),
-            sock=sock
-          )
+          # Windows-specific socket options
+          if psutil.WINDOWS:
+            try:
+              # Set socket timeout to prevent hanging
+              sock.settimeout(1.0)
+            except OSError:
+              pass
+          else:
+            try:
+              sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+              pass
+          
+          # On Windows, binding to specific adapter addresses can fail
+          # Try binding to the specific address first, fallback to any address
+          bind_success = False
+          try:
+            sock.bind((addr, 0))
+            bind_success = True
+          except OSError as bind_error:
+            if DEBUG_DISCOVERY >= 2:
+              print(f"Failed to bind to {addr}, trying 0.0.0.0: {bind_error}")
+            try:
+              sock.bind(('0.0.0.0', 0))
+              bind_success = True
+            except OSError as fallback_error:
+              if DEBUG_DISCOVERY >= 1:
+                print(f"Failed to bind to any address for interface {interface_name}: {fallback_error}")
+          
+          if not bind_success:
+            continue
+          
+          # Create transport with error handling
+          try:
+            transport, _ = await asyncio.wait_for(
+              asyncio.get_event_loop().create_datagram_endpoint(
+                lambda: BroadcastProtocol(message, self.broadcast_port, addr),
+                sock=sock
+              ),
+              timeout=2.0  # Timeout to prevent hanging on Windows
+            )
+          except asyncio.TimeoutError:
+            if DEBUG_DISCOVERY >= 1:
+              print(f"Timeout creating transport for {interface_name} ({addr})")
+            continue
+          except OSError as transport_error:
+            if DEBUG_DISCOVERY >= 1:
+              print(f"Transport creation failed for {interface_name} ({addr}): {transport_error}")
+            continue
+            
         except Exception as e:
-          print(f"Error in broadcast presence ({addr} - {interface_name} - {interface_priority}): {e}")
+          if DEBUG_DISCOVERY >= 1:
+            print(f"Error in broadcast presence ({addr} - {interface_name} - {interface_priority}): {e}")
         finally:
+          # Ensure proper cleanup
           if transport:
-            try: transport.close()
+            try: 
+              transport.close()
             except Exception as e:
               if DEBUG_DISCOVERY >= 2: print(f"Error closing transport: {e}")
+          elif sock:
+            try:
+              sock.close()
+            except Exception as e:
+              if DEBUG_DISCOVERY >= 2: print(f"Error closing socket: {e}")
 
       await asyncio.sleep(self.broadcast_interval)
 

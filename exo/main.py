@@ -28,9 +28,17 @@ from exo.inference.inference_engine import get_inference_engine
 from exo.inference.tokenizers import resolve_tokenizer
 from exo.models import build_base_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
-import uvloop
+# Import uvloop only on Unix systems (not Windows)
+try:
+  import uvloop
+except ImportError:
+  uvloop = None
 import concurrent.futures
-import resource
+# Import resource module only on Unix systems
+try:
+  import resource
+except ImportError:
+  resource = None
 import psutil
 
 # TODO: figure out why this is happening
@@ -40,17 +48,22 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Configure uvloop for maximum performance
 def configure_uvloop():
-    uvloop.install()
+    # uvloop doesn't support Windows, so only use it on Unix systems
+    if not psutil.WINDOWS and uvloop is not None:
+        uvloop.install()
+    
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    # Increase file descriptor limits on Unix systems
-    if not psutil.WINDOWS:
-      soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-      try: resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
-      except ValueError:
-        try: resource.setrlimit(resource.RLIMIT_NOFILE, (8192, hard))
-        except ValueError: pass
+    asyncio.set_event_loop(loop)    # Increase file descriptor limits on Unix systems
+    if not psutil.WINDOWS and resource is not None:
+      try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        try: resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+        except ValueError:
+          try: resource.setrlimit(resource.RLIMIT_NOFILE, (8192, hard))
+          except ValueError: pass
+      except AttributeError:
+        # resource module may not have RLIMIT_NOFILE on some systems
+        pass
 
     loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) * 4)))
     return loop
@@ -81,7 +94,7 @@ parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of pee
 parser.add_argument("--chatgpt-api-port", type=int, default=52415, help="ChatGPT API port")
 parser.add_argument("--chatgpt-api-response-timeout", type=int, default=900, help="ChatGPT API response timeout in seconds")
 parser.add_argument("--max-generate-tokens", type=int, default=10000, help="Max tokens to generate in each request")
-parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use (mlx, tinygrad, or dummy)")
+parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use (llamacpp, mlx, tinygrad, or dummy)")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
 parser.add_argument("--prompt", type=str, help="Prompt for the model when using --run-model", default="Who are you?")
@@ -100,7 +113,7 @@ system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
 shard_downloader: ShardDownloader = new_shard_downloader(args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
-inference_engine_name = args.inference_engine or ("mlx" if system_info == "Apple Silicon Mac" else "tinygrad")
+inference_engine_name = args.inference_engine or "llamacpp"
 print(f"Inference engine name after selection: {inference_engine_name}")
 
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
@@ -230,7 +243,11 @@ async def run_model_cli(node: Node, model_name: str, prompt: str):
   callback = node.on_token.register(callback_id)
   if topology_viz:
     topology_viz.update_prompt(request_id, prompt)
-  prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+  try:
+    prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True, enable_thinking=False)
+  except TypeError:
+    # Fallback for tokenizers that don't support enable_thinking parameter
+    prompt = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
 
   try:
     print(f"Processing prompt: {prompt}")
@@ -330,14 +347,13 @@ async def main():
       await seed_models(models_seed_dir)
     except Exception as e:
       print(f"Error seeding models: {e}")
-
   def restore_cursor():
     if platform.system() != "Windows":
-        os.system("tput cnorm")  # Show cursor
+        os.system("tput cnorm")  # Show cursor on Unix systems
+    # On Windows, the cursor should be visible by default
 
   # Restore the cursor when the program exits
   atexit.register(restore_cursor)
-
   # Use a more direct approach to handle signals
   def handle_exit():
     asyncio.ensure_future(shutdown(signal.SIGTERM, loop, node.server))
@@ -345,6 +361,15 @@ async def main():
   if platform.system() != "Windows":
     for s in [signal.SIGINT, signal.SIGTERM]:
       loop.add_signal_handler(s, handle_exit)
+  else:
+    # On Windows, we need to handle signals differently
+    # Set up signal handlers for Windows
+    def windows_signal_handler(sig, frame):
+      print(f"\nReceived signal {sig}")
+      asyncio.create_task(shutdown(signal.SIGTERM, loop, node.server))
+      
+    signal.signal(signal.SIGINT, windows_signal_handler)
+    signal.signal(signal.SIGTERM, windows_signal_handler)
 
   await node.start(wait_for_peers=args.wait_for_peers)
 

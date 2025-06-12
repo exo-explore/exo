@@ -70,7 +70,11 @@ document.addEventListener("alpine:init", () => {
           this.models = initialModels;
         }
       } catch (error) {
-        console.error('Error fetching initial models:', error);
+        if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+          console.error('Error fetching initial models:', error);
+        }
+        // If server is not available, still provide a basic model structure so UI works
+        this.models = {};
       }
     },
 
@@ -81,7 +85,10 @@ document.addEventListener("alpine:init", () => {
           // Wait 15 seconds before next poll
           await new Promise(resolve => setTimeout(resolve, 15000));
         } catch (error) {
-          console.error('Model polling error:', error);
+          // Only log error if it's not a network error (which is expected when server is down)
+          if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+            console.error('Model polling error:', error);
+          }
           // If there's an error, wait before retrying
           await new Promise(resolve => setTimeout(resolve, 15000));
         }
@@ -95,6 +102,12 @@ document.addEventListener("alpine:init", () => {
         evtSource.onmessage = (event) => {
           if (event.data === "[DONE]") {
             evtSource.close();
+            // Ensure any remaining models are not stuck in loading state
+            Object.keys(this.models).forEach(modelName => {
+              if (this.models[modelName].loading) {
+                this.models[modelName].loading = false;
+              }
+            });
             resolve();
             return;
           }
@@ -108,6 +121,12 @@ document.addEventListener("alpine:init", () => {
                 ...data,
                 loading: false
               };
+            } else {
+              // Add new model if it doesn't exist
+              this.models[modelName] = {
+                ...data,
+                loading: false
+              };
             }
           });
         };
@@ -115,7 +134,15 @@ document.addEventListener("alpine:init", () => {
         evtSource.onerror = (error) => {
           console.error('EventSource failed:', error);
           evtSource.close();
-          reject(error);
+          // Ensure models are not stuck in loading state when EventSource fails
+          Object.keys(this.models).forEach(modelName => {
+            if (this.models[modelName].loading) {
+              this.models[modelName].loading = false;
+            }
+          });
+          // Don't reject on network errors - this is expected during connection issues
+          // Instead, resolve to prevent infinite retries
+          resolve();
         };
       });
     },
@@ -442,8 +469,10 @@ document.addEventListener("alpine:init", () => {
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
+          console.log('Download progress data:', data);
           const progressArray = Object.values(data);
           if (progressArray.length > 0) {
+            console.log(`Found ${progressArray.length} downloads in progress`);
             this.downloadProgress = progressArray.map(progress => {
               // Check if download is complete
               if (progress.status === "complete") {
@@ -487,11 +516,22 @@ document.addEventListener("alpine:init", () => {
             }
           } else {
             // No ongoing download
+            console.log('No downloads in progress, clearing downloadProgress');
             this.downloadProgress = null;
+            // Reset any loading states when no downloads are active
+            Object.keys(this.models).forEach(modelName => {
+              if (this.models[modelName].loading) {
+                console.log(`Resetting loading state for ${modelName} - no active downloads`);
+                this.models[modelName].loading = false;
+              }
+            });
           }
         }
       } catch (error) {
-        console.error("Error fetching download progress:", error);
+        // Only log error if it's not a network error (which is expected when server is down)
+        if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+          console.error("Error fetching download progress:", error);
+        }
         this.downloadProgress = null;
       }
     },
@@ -577,7 +617,20 @@ document.addEventListener("alpine:init", () => {
 
     async handleDownload(modelName) {
       try {
-        const response = await fetch(`${window.location.origin}/download`, {
+        console.log(`Starting download for model: ${modelName}`);
+        
+        // Set loading state immediately
+        if (this.models[modelName]) {
+          this.models[modelName] = {
+            ...this.models[modelName],
+            loading: true
+          };
+        }
+
+        const downloadUrl = `${window.location.origin}/download`;
+        console.log(`Making download request to: ${downloadUrl}`);
+
+        const response = await fetch(downloadUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -587,23 +640,48 @@ document.addEventListener("alpine:init", () => {
           })
         });
 
+        console.log(`Download response status: ${response.status}`);
+
         const data = await response.json();
+        console.log('Download response data:', data);
 
         if (!response.ok) {
-          throw new Error(data.error || 'Failed to start download');
+          throw new Error(data.error || `Failed to start download (${response.status})`);
         }
 
-        // Update the model's status immediately when download starts
-        if (this.models[modelName]) {
-          this.models[modelName] = {
-            ...this.models[modelName],
-            loading: true
-          };
-        }
+        // Download started successfully - keep loading state and start download progress polling
+        console.log(`Download started successfully for ${modelName}:`, data.message || 'Download initiated');
+        
+        // Wait a moment for download to start before beginning progress polling
+        setTimeout(() => {
+          this.startDownloadProgressPolling();
+        }, 2000);
+        
+        // Set a timeout to reset loading state if no progress is seen after 30 seconds
+        setTimeout(() => {
+          if (this.models[modelName] && this.models[modelName].loading) {
+            console.log(`Resetting loading state for ${modelName} due to timeout`);
+            this.models[modelName].loading = false;
+          }
+        }, 30000);
 
       } catch (error) {
         console.error('Error starting download:', error);
-        this.setError(error);
+        
+        // Reset loading state on error
+        if (this.models[modelName]) {
+          this.models[modelName] = {
+            ...this.models[modelName],
+            loading: false
+          };
+        }
+        
+        // Show user-friendly error message
+        if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+          this.setError(new Error(`Cannot connect to exo server at ${window.location.origin}. Please make sure the server is running.`));
+        } else {
+          this.setError(error);
+        }
       }
     },
 
@@ -613,7 +691,10 @@ document.addEventListener("alpine:init", () => {
         if (!response.ok) throw new Error('Failed to fetch topology');
         return await response.json();
       } catch (error) {
-        console.error('Topology fetch error:', error);
+        // Only log error if it's not a network error (which is expected when server is down)
+        if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+          console.error('Topology fetch error:', error);
+        }
         return null;
       }
     },

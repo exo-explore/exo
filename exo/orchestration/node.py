@@ -94,14 +94,20 @@ class Node:
     except Exception as e:
       if DEBUG >= 1: print(f"Error on_node_status: {e}")
       if DEBUG >= 1: traceback.print_exc()
-
   def get_supported_inference_engines(self):
     supported_engine_names = []
     if self.inference_engine.__class__.__name__ == 'MLXDynamicShardInferenceEngine':
       supported_engine_names.append('mlx')
+    elif self.inference_engine.__class__.__name__ == 'LlamaCppInferenceEngine':
+      supported_engine_names.append('llamacpp')
+    elif self.inference_engine.__class__.__name__ == 'TinygradDynamicShardInferenceEngine':
       supported_engine_names.append('tinygrad')
     else:
-      supported_engine_names.append('tinygrad')
+      # For dummy inference engine, keep it as is, otherwise default to llamacpp
+      if self.inference_engine.__class__.__name__ == 'DummyInferenceEngine':
+        supported_engine_names.append('dummy')
+      else:
+        supported_engine_names.append('llamacpp')
     return supported_engine_names
 
   async def broadcast_supported_engines(self, supported_engines_names: List[str]):
