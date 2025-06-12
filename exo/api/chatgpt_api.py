@@ -26,6 +26,11 @@ from exo.download.new_shard_download import delete_model
 import tempfile
 from exo.apputil import create_animation_mp4
 from collections import defaultdict
+import mimetypes
+
+# Configure MIME types globally
+mimetypes.add_type('text/css', '.css')
+mimetypes.add_type('application/javascript', '.js')
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
@@ -67,6 +72,16 @@ def generate_completion(
   finish_reason: Union[Literal["length", "stop"], None],
   object_type: Literal["chat.completion", "text_completion"],
 ) -> dict:
+  # Handle case where tokenizer is None - fallback to basic string representation
+  if tokenizer is None:
+    content = str(tokens) if tokens else ""
+    prompt_tokens = len(prompt.split()) if prompt else 0
+    completion_tokens = len(tokens) if tokens else 0
+  else:
+    content = tokenizer.decode(tokens)
+    prompt_tokens = len(tokenizer.encode(prompt))
+    completion_tokens = len(tokens)
+  
   completion = {
     "id": f"chatcmpl-{request_id}",
     "object": object_type,
@@ -75,7 +90,7 @@ def generate_completion(
     "system_fingerprint": f"exo_{VERSION}",
     "choices": [{
       "index": 0,
-      "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
+      "message": {"role": "assistant", "content": content},
       "logprobs": None,
       "finish_reason": finish_reason,
     }],
@@ -83,17 +98,17 @@ def generate_completion(
 
   if not stream:
     completion["usage"] = {
-      "prompt_tokens": len(tokenizer.encode(prompt)),
-      "completion_tokens": len(tokens),
-      "total_tokens": len(tokenizer.encode(prompt)) + len(tokens),
+      "prompt_tokens": prompt_tokens,
+      "completion_tokens": completion_tokens,
+      "total_tokens": prompt_tokens + completion_tokens,
     }
 
   choice = completion["choices"][0]
   if object_type.startswith("chat.completion"):
     key_name = "delta" if stream else "message"
-    choice[key_name] = {"role": "assistant", "content": tokenizer.decode(tokens)}
+    choice[key_name] = {"role": "assistant", "content": content}
   elif object_type == "text_completion":
-    choice["text"] = tokenizer.decode(tokens)
+    choice["text"] = content
   else:
     ValueError(f"Unsupported response type: {object_type}")
 
@@ -136,7 +151,34 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 
 def build_prompt(tokenizer, _messages: List[Message], tools: Optional[List[Dict]] = None):
   messages = remap_messages(_messages)
-  chat_template_args = {"conversation": [m.to_dict() for m in messages], "tokenize": False, "add_generation_prompt": True}
+  
+  # Handle case where tokenizer is None
+  if tokenizer is None:
+    # Fallback to basic prompt building
+    prompt_parts = []
+    for message in messages:
+      if hasattr(message, 'content') and message.content:
+        content = message.content if isinstance(message.content, str) else str(message.content)
+        prompt_parts.append(f"{message.role}: {content}")
+    return "\n".join(prompt_parts)
+  
+  # Add system message to enforce English responses for multilingual models
+  conversation_with_system = []
+  has_system = False
+  for m in messages:
+    if m.role == "system":
+      has_system = True
+      # Modify existing system message to include English instruction
+      content = m.content + " Always respond in English only."
+      conversation_with_system.append({"role": "system", "content": content})
+    else:
+      conversation_with_system.append(m.to_dict())
+  
+  # If no system message, add one
+  if not has_system:
+    conversation_with_system.insert(0, {"role": "system", "content": "You are a helpful assistant. Always respond in English only."})
+  
+  chat_template_args = {"conversation": conversation_with_system, "tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
   if tools: 
     chat_template_args["tools"] = tools
 
@@ -144,13 +186,26 @@ def build_prompt(tokenizer, _messages: List[Message], tools: Optional[List[Dict]
     prompt = tokenizer.apply_chat_template(**chat_template_args)
     if DEBUG >= 3: print(f"!!! Prompt: {prompt}")
     return prompt
-  except UnicodeEncodeError:
+  except (UnicodeEncodeError, TypeError) as e:
+    if isinstance(e, TypeError) and "enable_thinking" in str(e):
+      # Fallback: try without enable_thinking parameter for models that don't support it
+      chat_template_args.pop("enable_thinking", None)
+      try:
+        prompt = tokenizer.apply_chat_template(**chat_template_args)
+        if DEBUG >= 3: print(f"!!! Prompt (without enable_thinking): {prompt}")
+        return prompt
+      except UnicodeEncodeError:
+        pass  # Fall through to Unicode handling below
+    
     # Handle Unicode encoding by ensuring everything is UTF-8
     chat_template_args["conversation"] = [
       {k: v.encode('utf-8').decode('utf-8') if isinstance(v, str) else v 
-       for k, v in m.to_dict().items()}
-      for m in messages
+       for k, v in item.items()}
+      for item in conversation_with_system
     ]
+    # Try to keep enable_thinking=False if it was originally set
+    if "enable_thinking" not in chat_template_args:
+      chat_template_args["enable_thinking"] = False
     prompt = tokenizer.apply_chat_template(**chat_template_args)
     if DEBUG >= 3: print(f"!!! Prompt (UTF-8 encoded): {prompt}")
     return prompt
@@ -233,6 +288,7 @@ class ChatGPTAPI:
     if "__compiled__" not in globals():
       self.static_dir = Path(__file__).parent.parent/"tinychat"
       self.app.router.add_get("/", self.handle_root)
+      
       self.app.router.add_static("/", self.static_dir, name="static")
       
     # Always add images route, regardless of compilation status
@@ -277,7 +333,13 @@ class ChatGPTAPI:
       response = web.StreamResponse(status=200, reason='OK', headers={ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' })
       await response.prepare(request)
       async for path, s in self.node.shard_downloader.get_shard_download_status(self.inference_engine_classname):
-        model_data = { s.shard.model_id: { "downloaded": s.downloaded_bytes == s.total_bytes, "download_percentage": 100 if s.downloaded_bytes == s.total_bytes else 100 * float(s.downloaded_bytes) / float(s.total_bytes), "total_size": s.total_bytes, "total_downloaded": s.downloaded_bytes } }
+        # Avoid division by zero when total_bytes is 0
+        if s.total_bytes > 0:
+          download_percentage = 100 if s.status == "complete" else 100 * float(s.downloaded_bytes) / float(s.total_bytes)
+        else:
+          download_percentage = 0 if s.status != "complete" else 100
+        
+        model_data = { s.shard.model_id: { "downloaded": s.status == "complete", "download_percentage": download_percentage, "total_size": s.total_bytes, "total_downloaded": s.downloaded_bytes } }
         await response.write(f"data: {json.dumps(model_data)}\n\n".encode())
       await response.write(b"data: [DONE]\n\n")
       return response
@@ -313,12 +375,24 @@ class ChatGPTAPI:
 
   async def handle_get_download_progress(self, request):
     progress_data = {}
+    all_progress_data = {}  # For debugging
     for node_id, progress_event in self.node.node_download_progress.items():
       if isinstance(progress_event, RepoProgressEvent):
-        if progress_event.status != "in_progress": continue
-        progress_data[node_id] = progress_event.to_dict()
+        all_progress_data[node_id] = {
+          **progress_event.to_dict(),
+          "debug_status": progress_event.status
+        }
+        # Only include in_progress downloads in the main response, but log all
+        if progress_event.status == "in_progress":
+          progress_data[node_id] = progress_event.to_dict()
       else:
         print(f"Unknown progress event type: {type(progress_event)}. {progress_event}")
+    
+    if DEBUG >= 1 and all_progress_data:
+      print(f"All download progress: {all_progress_data}")
+    if DEBUG >= 1:
+      print(f"Active downloads: {len(progress_data)}")
+    
     return web.json_response(progress_data)
 
   async def handle_post_chat_completions(self, request):
@@ -339,7 +413,20 @@ class ChatGPTAPI:
         status=400,
       )
 
-    tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
+    # For GGUF models, extract repository part from file path for tokenizer
+    repo_id = get_repo(shard.model_id, self.inference_engine_classname)
+    if repo_id and repo_id.endswith('.gguf'):
+      # Extract repository part: "unsloth/Qwen3-0.6B-GGUF/file.gguf" -> "unsloth/Qwen3-0.6B-GGUF"
+      parts = repo_id.split('/')
+      if len(parts) >= 3:
+        tokenizer_repo_id = '/'.join(parts[:-1])
+      else:
+        tokenizer_repo_id = repo_id
+    else:
+      tokenizer_repo_id = repo_id
+    
+    tokenizer = await resolve_tokenizer(tokenizer_repo_id)
+    if DEBUG >= 2: print(f"[ChatGPTAPI] Tokenizer resolution: repo_id='{repo_id}' -> tokenizer_repo_id='{tokenizer_repo_id}' -> tokenizer={tokenizer is not None}")
     if DEBUG >= 4: print(f"[ChatGPTAPI] Resolved tokenizer: {tokenizer}")
 
     # Add system prompt if set
@@ -383,8 +470,8 @@ class ChatGPTAPI:
             if DEBUG >= 2: print(f"[ChatGPTAPI] Got token from queue: {request_id=} {tokens=} {is_finished=}")
 
             eos_token_id = None
-            if not eos_token_id and hasattr(tokenizer, "eos_token_id"): eos_token_id = tokenizer.eos_token_id
-            if not eos_token_id and hasattr(tokenizer, "_tokenizer"): eos_token_id = tokenizer.special_tokens_map.get("eos_token_id")
+            if tokenizer and not eos_token_id and hasattr(tokenizer, "eos_token_id"): eos_token_id = tokenizer.eos_token_id
+            if tokenizer and not eos_token_id and hasattr(tokenizer, "_tokenizer"): eos_token_id = tokenizer.special_tokens_map.get("eos_token_id")
 
             finish_reason = None
             if is_finished: finish_reason = "stop" if tokens[-1] == eos_token_id else "length"
@@ -436,8 +523,8 @@ class ChatGPTAPI:
             break
         finish_reason = "length"
         eos_token_id = None
-        if not eos_token_id and hasattr(tokenizer, "eos_token_id"): eos_token_id = tokenizer.eos_token_id
-        if not eos_token_id and hasattr(tokenizer, "_tokenizer"): eos_token_id = tokenizer.special_tokens_map.get("eos_token_id")
+        if tokenizer and not eos_token_id and hasattr(tokenizer, "eos_token_id"): eos_token_id = tokenizer.eos_token_id
+        if tokenizer and not eos_token_id and hasattr(tokenizer, "_tokenizer"): eos_token_id = tokenizer.special_tokens_map.get("eos_token_id")
         if DEBUG >= 2: print(f"Checking if end of tokens result {tokens[-1]=} is {eos_token_id=}")
         if tokens[-1] == eos_token_id:
           finish_reason = "stop"
@@ -559,7 +646,7 @@ class ChatGPTAPI:
         "download_percentage": None,  # Change from 0 to null
         "total_size": None,
         "total_downloaded": None,
-        "loading": True  # Add loading state
+        "loading": False  # Don't start in loading state - let EventSource update this
       }
     return web.json_response(model_data)
 
@@ -593,19 +680,43 @@ class ChatGPTAPI:
     except Exception as e:
       if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"error": str(e)}, status=500)
-
   async def handle_post_download(self, request):
     try:
       data = await request.json()
       model_name = data.get("model")
+      if DEBUG >= 1: print(f"Download request for model: {model_name}")
       if not model_name: return web.json_response({"error": "model parameter is required"}, status=400)
-      if model_name not in model_cards: return web.json_response({"error": f"Invalid model: {model_name}. Supported models: {list(model_cards.keys())}"}, status=400)
+      if model_name not in model_cards: 
+        if DEBUG >= 1: print(f"Invalid model {model_name}. Available: {list(model_cards.keys())[:10]}...")
+        return web.json_response({"error": f"Invalid model: {model_name}. Supported models: {list(model_cards.keys())}"}, status=400)
       shard = build_full_shard(model_name, self.inference_engine_classname)
-      if not shard: return web.json_response({"error": f"Could not build shard for model {model_name}"}, status=400)
-      asyncio.create_task(self.node.inference_engine.shard_downloader.ensure_shard(shard, self.inference_engine_classname))
+      if not shard: 
+        if DEBUG >= 1: print(f"Could not build shard for model {model_name}")
+        return web.json_response({"error": f"Could not build shard for model {model_name}"}, status=400)
+      
+      if DEBUG >= 1: print(f"Starting download task for {model_name} with inference engine {self.inference_engine_classname}")
+      # Store the task reference to prevent garbage collection and enable proper error handling
+      task = asyncio.create_task(self.node.inference_engine.shard_downloader.ensure_shard(shard, self.inference_engine_classname))
+      
+      # Add the task to a set to keep a reference and enable cleanup
+      if not hasattr(self, '_download_tasks'):
+        self._download_tasks = set()
+      self._download_tasks.add(task)
+      
+      # Add callback to clean up completed tasks
+      def cleanup_task(task):
+        self._download_tasks.discard(task)
+        if task.exception():
+          if DEBUG >= 1: print(f"Download task failed for {model_name}: {task.exception()}")
+          if DEBUG >= 2: traceback.print_exception(type(task.exception()), task.exception(), task.exception().__traceback__)
+        elif DEBUG >= 1:
+          print(f"Download task completed successfully for {model_name}")
+      
+      task.add_done_callback(cleanup_task)
 
       return web.json_response({"status": "success", "message": f"Download started for model: {model_name}"})
     except Exception as e:
+      if DEBUG >= 1: print(f"Download error: {str(e)}")
       if DEBUG >= 2: traceback.print_exc()
       return web.json_response({"error": str(e)}, status=500)
 

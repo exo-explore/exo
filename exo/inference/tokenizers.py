@@ -39,9 +39,12 @@ async def resolve_tokenizer(repo_id: Union[str, PathLike]):
 
 
 async def _resolve_tokenizer(repo_id_or_local_path: Union[str, PathLike]):
+  # Convert to string early to handle WindowsPath objects
+  repo_str = str(repo_id_or_local_path)
+  
   try:
-    if DEBUG >= 4: print(f"Trying AutoProcessor for {repo_id_or_local_path}")
-    processor = AutoProcessor.from_pretrained(repo_id_or_local_path, use_fast=True if "Mistral-Large" in f"{repo_id_or_local_path}" else False, trust_remote_code=True)
+    if DEBUG >= 4: print(f"Trying AutoProcessor for {repo_str}")
+    processor = AutoProcessor.from_pretrained(repo_id_or_local_path, use_fast=True if "Mistral-Large" in repo_str else False, trust_remote_code=True)
     if not hasattr(processor, 'eos_token_id'):
       processor.eos_token_id = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).eos_token_id
     if not hasattr(processor, 'encode'):
@@ -50,14 +53,58 @@ async def _resolve_tokenizer(repo_id_or_local_path: Union[str, PathLike]):
       processor.decode = getattr(processor, 'tokenizer', getattr(processor, '_tokenizer', processor)).decode
     return processor
   except Exception as e:
-    if DEBUG >= 4: print(f"Failed to load processor for {repo_id_or_local_path}. Error: {e}")
+    if DEBUG >= 4: print(f"Failed to load processor for {repo_str}. Error: {e}")
     if DEBUG >= 4: print(traceback.format_exc())
 
   try:
-    if DEBUG >= 4: print(f"Trying AutoTokenizer for {repo_id_or_local_path}")
+    if DEBUG >= 4: print(f"Trying AutoTokenizer for {repo_str}")
     return AutoTokenizer.from_pretrained(repo_id_or_local_path, trust_remote_code=True)
   except Exception as e:
-    if DEBUG >= 4: print(f"Failed to load tokenizer for {repo_id_or_local_path}. Falling back to tinygrad tokenizer. Error: {e}")
+    if DEBUG >= 4: print(f"Failed to load tokenizer for {repo_str}. Error: {e}")
     if DEBUG >= 4: print(traceback.format_exc())
+  # Special handling for GGUF models - try to get tokenizer from base model
+  if "GGUF" in repo_str:
+    try:
+      # Handle both repo-level GGUF paths and specific file paths
+      base_repo_id = repo_str
+      
+      # If this is a specific .gguf file path, extract the repository part
+      if repo_str.endswith('.gguf'):
+        # Split by '/' and take everything except the last part (filename)
+        parts = repo_str.split('/')
+        if len(parts) > 1:
+          base_repo_id = '/'.join(parts[:-1])  # Remove the .gguf filename
+          if DEBUG >= 4: print(f"Extracted base repo from GGUF file path: {base_repo_id}")
+      
+      # For GGUF models, try to get the base model name and load tokenizer from there
+      if "unsloth/" in base_repo_id and "-GGUF" in base_repo_id:
+        # Extract base model name from unsloth GGUF repo
+        base_model = base_repo_id.replace("unsloth/", "").replace("-GGUF", "")
+        
+        # Try different base model variants
+        potential_bases = [
+          f"meta-llama/{base_model}",
+          f"unsloth/{base_model}",
+          base_model,
+          base_repo_id  # Also try the GGUF repo itself
+        ]
+        
+        for base_repo in potential_bases:
+          try:
+            if DEBUG >= 4: print(f"Trying base model tokenizer from {base_repo} for GGUF model {repo_id_or_local_path}")
+            return AutoTokenizer.from_pretrained(base_repo, trust_remote_code=True)
+          except Exception as base_e:
+            if DEBUG >= 4: print(f"Failed to load tokenizer from base repo {base_repo}. Error: {base_e}")
+            continue
+      else:
+        # For other GGUF models, try the base repo directly
+        try:
+          if DEBUG >= 4: print(f"Trying GGUF repo tokenizer from {base_repo_id} for {repo_id_or_local_path}")
+          return AutoTokenizer.from_pretrained(base_repo_id, trust_remote_code=True)
+        except Exception as base_e:
+          if DEBUG >= 4: print(f"Failed to load tokenizer from GGUF repo {base_repo_id}. Error: {base_e}")
+          
+    except Exception as gguf_e:
+      if DEBUG >= 4: print(f"Failed GGUF fallback for {repo_id_or_local_path}. Error: {gguf_e}")
 
   raise ValueError(f"[TODO] Unsupported model: {repo_id_or_local_path}")

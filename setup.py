@@ -12,6 +12,7 @@ install_requires = [
   "grpcio==1.70.0",
   "grpcio-tools==1.70.0",
   "Jinja2==3.1.4",
+  "llama-cpp-python>=0.2.90",
   "numpy==2.0.0",
   "nuitka==2.5.1",
   "nvidia-ml-py==12.560.30",
@@ -25,10 +26,9 @@ install_requires = [
   "requests==2.32.3",
   "rich==13.7.1",
   "scapy==2.6.1",
-  "tqdm==4.66.4",
-  "transformers==4.46.3",
+  "tqdm==4.66.4",  "transformers==4.46.3",
   "uuid==1.30",
-  "uvloop==0.21.0",
+  "uvloop==0.21.0;sys_platform!='win32'",  # uvloop doesn't support Windows
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8",
 ]
 
@@ -41,6 +41,9 @@ extras_require = {
   "windows": ["pywin32==308",],
   "nvidia-gpu": ["nvidia-ml-py==12.560.30",],
   "amd-gpu": ["pyrsmi==0.2.0"],
+  "llamacpp": ["llama-cpp-python>=0.2.90"],
+  "llamacpp-cuda": ["llama-cpp-python[cuda]>=0.2.90"],
+  "llamacpp-metal": ["llama-cpp-python[metal]>=0.2.90"],
 }
 
 # Check if running on macOS with Apple Silicon
@@ -61,7 +64,6 @@ def _add_gpu_requires():
       install_requires.extend(extras_require["nvidia-gpu"])
   except subprocess.CalledProcessError:
     pass
-
   # Add AMD-GPU
   # This will mostly work only on Linux, amd/rocm-smi is not yet supported on Windows
   try:
@@ -69,11 +71,12 @@ def _add_gpu_requires():
     if out.returncode == 0:
       install_requires.extend(extras_require["amd-gpu"])
   except:
-    out = subprocess.run(['rocm-smi', 'list', '--csv'], shell=True, text=True, capture_output=True, check=False)
-    if out.returncode == 0:
-      install_requires.extend(extras_require["amd-gpu"])
-  finally:
-    pass
+    try:
+      out = subprocess.run(['rocm-smi', 'list', '--csv'], shell=True, text=True, capture_output=True, check=False)
+      if out.returncode == 0:
+        install_requires.extend(extras_require["amd-gpu"])
+    except:
+      pass
 
 
 _add_gpu_requires()
@@ -84,6 +87,11 @@ setup(
   packages=find_packages(),
   install_requires=install_requires,
   extras_require=extras_require,
-  package_data={"exo": ["tinychat/**/*"]},
+  package_data={
+    "exo": [
+      "tinychat/**/*",
+      "inference/llamacpp/**/*",
+    ]
+  },
   entry_points={"console_scripts": ["exo = exo.main:run"]},
 )
