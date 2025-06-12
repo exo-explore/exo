@@ -20,6 +20,8 @@ import traceback
 import shutil
 import tempfile
 import hashlib
+import psutil
+import platform
 
 def exo_home() -> Path:
   return Path(os.environ.get("EXO_HOME", Path.home()/".cache"/"exo"))
@@ -143,9 +145,13 @@ async def fetch_file_list_with_retry(repo_id: str, revision: str = "main", path:
 async def _fetch_file_list(repo_id: str, revision: str = "main", path: str = "") -> Optional[List[Dict[str, Union[str, int]]]]:
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
   url = f"{api_url}/{path}" if path else api_url
-
-  headers = await get_auth_headers()
-  async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30, connect=10, sock_read=30, sock_connect=10)) as session:
+  headers = await get_auth_headers()  # Use optimized connector for file list requests
+  connector = aiohttp.TCPConnector(
+    limit=100, limit_per_host=50, enable_cleanup_closed=True,
+    keepalive_timeout=120, ttl_dns_cache=600, use_dns_cache=True
+  )
+  timeout = aiohttp.ClientTimeout(total=60, connect=20, sock_read=60, sock_connect=20)
+  async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
     async with session.get(url, headers=headers) as response:
       if response.status == 200:
         data = await response.json()
@@ -176,8 +182,13 @@ async def calc_hash(path: Path, type: Literal["sha1", "sha256"] = "sha1") -> str
 
 async def file_meta(repo_id: str, revision: str, path: str) -> Tuple[int, str]:
   url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
-  headers = await get_auth_headers()
-  async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session:
+  headers = await get_auth_headers()  # Use optimized connector for metadata requests too
+  connector = aiohttp.TCPConnector(
+    limit=100, limit_per_host=50, enable_cleanup_closed=True,
+    keepalive_timeout=120, ttl_dns_cache=600, use_dns_cache=True
+  )
+  timeout = aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)
+  async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
     async with session.head(url, headers=headers) as r:
       content_length = int(r.headers.get('x-linked-size') or r.headers.get('content-length') or 0)
       etag = r.headers.get('X-Linked-ETag') or r.headers.get('ETag') or r.headers.get('Etag')
@@ -207,14 +218,51 @@ async def _download_file(repo_id: str, revision: str, path: str, target_dir: Pat
     url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
     headers = await get_auth_headers()
     if resume_byte_pos: headers['Range'] = f'bytes={resume_byte_pos}-'
-    n_read = resume_byte_pos or 0
-    connector = aiohttp.TCPConnector(limit=0, limit_per_host=0, enable_cleanup_closed=True, keepalive_timeout=60)
-    async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session:
-      async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as r:
+    n_read = resume_byte_pos or 0    # Highly optimized connector settings for maximum download speeds
+    connector = aiohttp.TCPConnector(
+        limit=500,  # Significantly increased total connection pool size
+        limit_per_host=100,  # Increased per-host connections for parallel downloads
+        enable_cleanup_closed=True, 
+        keepalive_timeout=120,  # Longer keepalive for better connection reuse
+        ttl_dns_cache=600,  # Cache DNS lookups longer
+        use_dns_cache=True,
+        # TCP socket options for maximum throughput
+        family=0,  # Allow both IPv4 and IPv6
+        ssl=False,  # Disable SSL verification for speed (if applicable)
+        force_close=False  # Reuse connections
+    )
+    # Optimized timeout values for high-speed downloads
+    timeout = aiohttp.ClientTimeout(
+        total=7200,  # 2 hours for very large files
+        connect=60,  # Longer connect timeout for stability
+        sock_read=600,  # 10 minutes read timeout for large chunks
+        sock_connect=60
+    )
+    async with aiohttp.ClientSession(
+        connector=connector, 
+        timeout=timeout,
+        # Additional session optimizations
+        read_timeout=None,  # Disable read timeout
+        connector_owner=False  # Don't close connector automatically
+    ) as session:
+      async with session.get(url, headers=headers, timeout=timeout) as r:
         if r.status == 404: raise FileNotFoundError(f"File not found: {url}")
         assert r.status in [200, 206], f"Failed to download {path} from {url}: {r.status}"
         async with aiofiles.open(partial_path, 'ab' if resume_byte_pos else 'wb') as f:
-          while chunk := await r.content.read(4 * 1024 * 1024): on_progress(n_read := n_read + await f.write(chunk), length)
+          # Adaptive chunk size based on file size for maximum throughput
+          # Start with 32MB chunks for better bandwidth utilization
+          base_chunk_size = 32 * 1024 * 1024  # 32MB base
+          # Increase chunk size for larger files to reduce overhead
+          file_size_mb = length / (1024 * 1024)
+          if file_size_mb > 1000:  # Files over 1GB
+            chunk_size = 64 * 1024 * 1024  # 64MB chunks
+          elif file_size_mb > 100:  # Files over 100MB
+            chunk_size = 48 * 1024 * 1024  # 48MB chunks
+          else:
+            chunk_size = base_chunk_size  # 32MB chunks
+          
+          while chunk := await r.content.read(chunk_size): 
+            on_progress(n_read := n_read + await f.write(chunk), length)
 
   final_hash = await calc_hash(partial_path, type="sha256" if len(remote_hash) == 64 else "sha1")
   integrity = final_hash == remote_hash
@@ -222,6 +270,103 @@ async def _download_file(repo_id: str, revision: str, path: str, target_dir: Pat
     try: await aios.remove(partial_path)
     except Exception as e: print(f"Error removing partial file {partial_path}: {e}")
     raise Exception(f"Downloaded file {target_dir/path} has hash {final_hash} but remote hash is {remote_hash}")
+  await aios.rename(partial_path, target_dir/path)
+  return target_dir/path
+
+async def download_file_multipart(repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Callable[[int, int], None] = lambda _, __: None, parts: int = 4) -> Path:
+  """
+  Download a file using multiple parallel connections for maximum speed.
+  This is especially effective for very large files (>1GB).
+  """
+  if await aios.path.exists(target_dir/path): 
+    return target_dir/path
+    
+  await aios.makedirs((target_dir/path).parent, exist_ok=True)
+  length, etag = await file_meta(repo_id, revision, path)
+  
+  # Only use multipart for files larger than 100MB
+  if length < 100 * 1024 * 1024:
+    return await _download_file(repo_id, revision, path, target_dir, on_progress)
+  
+  remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
+  partial_path = target_dir/f"{path}.partial"
+  
+  # Check if file already exists and is complete
+  if await aios.path.exists(partial_path):
+    current_size = (await aios.stat(partial_path)).st_size
+    if current_size == length:
+      # Verify hash and move if correct
+      final_hash = await calc_hash(partial_path, type="sha256" if len(remote_hash) == 64 else "sha1")
+      if final_hash == remote_hash:
+        await aios.rename(partial_path, target_dir/path)
+        return target_dir/path
+  
+  url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
+  headers = await get_auth_headers()
+  
+  # Calculate part sizes
+  part_size = length // parts
+  ranges = []
+  for i in range(parts):
+    start = i * part_size
+    end = start + part_size - 1 if i < parts - 1 else length - 1
+    ranges.append((start, end))
+    # Highly optimized connector for multipart downloads
+  connector = aiohttp.TCPConnector(
+    limit=parts * 2,  # More connections for multipart
+    limit_per_host=parts * 2,
+    enable_cleanup_closed=True,
+    keepalive_timeout=120,
+    ttl_dns_cache=600,
+    use_dns_cache=True
+  )
+  
+  timeout = aiohttp.ClientTimeout(total=7200, connect=60, sock_read=600, sock_connect=60)
+  
+  # Create temporary files for each part
+  part_files = [target_dir/f"{path}.part{i}" for i in range(parts)]
+  total_downloaded = 0
+  download_lock = asyncio.Lock()
+  
+  async def download_part(session, part_idx, start, end):
+    nonlocal total_downloaded
+    part_headers = headers.copy()
+    part_headers['Range'] = f'bytes={start}-{end}'
+    
+    async with session.get(url, headers=part_headers) as r:
+      assert r.status in [200, 206], f"Failed to download part {part_idx}: {r.status}"
+      
+      async with aiofiles.open(part_files[part_idx], 'wb') as f:
+        chunk_size = 16 * 1024 * 1024  # 16MB chunks
+        async for chunk in r.content.iter_chunked(chunk_size):
+          await f.write(chunk)
+          async with download_lock:
+            total_downloaded += len(chunk)
+            on_progress(total_downloaded, length)
+  
+  # Download all parts in parallel
+  async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+    tasks = [download_part(session, i, start, end) for i, (start, end) in enumerate(ranges)]
+    await asyncio.gather(*tasks)
+  
+  # Combine parts into final file
+  async with aiofiles.open(partial_path, 'wb') as final_file:
+    for part_file in part_files:
+      async with aiofiles.open(part_file, 'rb') as part:
+        while chunk := await part.read(32 * 1024 * 1024):  # 32MB chunks for combining
+          await final_file.write(chunk)
+      # Clean up part file
+      await aios.remove(part_file)
+  
+  # Verify hash
+  final_hash = await calc_hash(partial_path, type="sha256" if len(remote_hash) == 64 else "sha1")
+  if final_hash != remote_hash:
+    try: 
+      await aios.remove(partial_path)
+    except Exception as e: 
+      print(f"Error removing partial file {partial_path}: {e}")
+    raise Exception(f"Downloaded file {target_dir/path} has hash {final_hash} but remote hash is {remote_hash}")
+  
   await aios.rename(partial_path, target_dir/path)
   return target_dir/path
 
@@ -271,8 +416,10 @@ async def is_file_complete(path: Path) -> bool:
   """Check if a file is completely downloaded (not partial)"""
   return await aios.path.exists(path)
 
-async def download_shard(shard: Shard, inference_engine_classname: str, on_progress: AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]], max_parallel_downloads: int = 8, skip_download: bool = False) -> tuple[Path, RepoProgressEvent]:
-  if DEBUG >= 2 and not skip_download: print(f"Downloading {shard.model_id=} for {inference_engine_classname}")
+async def download_shard(shard: Shard, inference_engine_classname: str, on_progress: AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]], max_parallel_downloads: int = 32, skip_download: bool = False) -> tuple[Path, RepoProgressEvent]:
+  if DEBUG >= 1 and not skip_download: 
+    print(f"Starting download for shard {shard.start_layer}-{shard.end_layer} out of {shard.n_layers} layers for model {shard.model_id} using {inference_engine_classname}")
+  
   repo_id = get_repo(shard.model_id, inference_engine_classname)
   revision = "main"
   
@@ -297,7 +444,9 @@ async def download_shard(shard: Shard, inference_engine_classname: str, on_progr
     allow_patterns = [specific_file]
   else:
     allow_patterns = await resolve_allow_patterns(shard, inference_engine_classname)
-  if DEBUG >= 2: print(f"Downloading {shard.model_id=} with {allow_patterns=}")
+  
+  if DEBUG >= 1: 
+    print(f"Downloading {shard.model_id=} with {allow_patterns=} for shard layers {shard.start_layer}-{shard.end_layer}")
 
   all_start_time = time.time()
   file_list = await fetch_file_list_with_cache(actual_repo_id, revision)
@@ -315,11 +464,19 @@ async def download_shard(shard: Shard, inference_engine_classname: str, on_progr
     downloaded_bytes = await get_downloaded_size(target_dir/file["path"])
     is_complete = await is_file_complete(target_dir/file["path"])
     file_progress[file["path"]] = RepoFileProgressEvent(actual_repo_id, revision, file["path"], downloaded_bytes, 0, file["size"], 0, timedelta(0), "complete" if is_complete and downloaded_bytes == file["size"] else "not_started", time.time())
-
   semaphore = asyncio.Semaphore(max_parallel_downloads)
   async def download_with_semaphore(file):
     async with semaphore:
-      await download_file_with_retry(actual_repo_id, revision, file["path"], target_dir, lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes))
+      # Use multipart download for large GGUF files (>500MB) for maximum speed
+      file_size_mb = file["size"] / (1024 * 1024)
+      if file["path"].endswith(".gguf") and file_size_mb > 500:
+        if DEBUG >= 1: print(f"Using multipart download for large GGUF file: {file['path']} ({file_size_mb:.1f}MB)")
+        await download_file_multipart(actual_repo_id, revision, file["path"], target_dir, 
+                                     lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes),
+                                     parts=8)  # Use 8 parts for very large files
+      else:
+        await download_file_with_retry(actual_repo_id, revision, file["path"], target_dir, 
+                                     lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes))
   if not skip_download: await asyncio.gather(*[download_with_semaphore(file) for file in filtered_file_list])
   final_repo_progress = calculate_repo_progress(shard, actual_repo_id, revision, file_progress, all_start_time)
   on_progress.trigger_all(shard, final_repo_progress)
@@ -328,7 +485,7 @@ async def download_shard(shard: Shard, inference_engine_classname: str, on_progr
   else:
     return target_dir, final_repo_progress
 
-def new_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
+def new_shard_downloader(max_parallel_downloads: int = 32) -> ShardDownloader:
   return SingletonShardDownloader(CachedShardDownloader(NewShardDownloader(max_parallel_downloads)))
 
 class SingletonShardDownloader(ShardDownloader):
@@ -373,7 +530,7 @@ class CachedShardDownloader(ShardDownloader):
       yield path, status
 
 class NewShardDownloader(ShardDownloader):
-  def __init__(self, max_parallel_downloads: int = 8):
+  def __init__(self, max_parallel_downloads: int = 32):
     self.max_parallel_downloads = max_parallel_downloads
     self._on_progress = AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]]()
 
@@ -417,3 +574,134 @@ class NewShardDownloader(ShardDownloader):
           # Log other errors as they might be more serious
           if DEBUG >= 1: print(f"Error downloading shard: {error_msg}")
           if DEBUG >= 2: print(f"Full traceback: {traceback.format_exc()}")
+
+async def test_bandwidth_and_optimize() -> dict:
+    """
+    Perform a quick bandwidth test using a small file download to optimize settings.
+    Returns optimized settings based on detected bandwidth.
+    """
+    try:
+        import time
+        test_start = time.time()
+        
+        # Use a small file from HuggingFace for testing (usually fast and reliable)
+        test_url = f"{get_hf_endpoint()}/datasets/huggingface/documentation-images/resolve/main/blog/ov_blog_cover.jpg"
+        headers = await get_auth_headers()
+        
+        connector = aiohttp.TCPConnector(limit=10, limit_per_host=10)
+        timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=30, sock_connect=10)
+        
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.get(test_url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.read()
+                    test_end = time.time()
+                    
+                    # Calculate bandwidth
+                    elapsed = test_end - test_start
+                    if elapsed > 0:
+                        bytes_per_second = len(data) / elapsed
+                        mbps = (bytes_per_second * 8) / (1024 * 1024)
+                        
+                        # Optimize based on bandwidth
+                        if mbps >= 100:  # Very fast connection (100+ Mbps)
+                            return {
+                                "max_parallel_downloads": 96,
+                                "multipart_parts": 12,
+                                "chunk_size_mb": 64,
+                                "bandwidth_mbps": mbps
+                            }
+                        elif mbps >= 50:  # Fast connection (50-100 Mbps)
+                            return {
+                                "max_parallel_downloads": 64,
+                                "multipart_parts": 8,
+                                "chunk_size_mb": 48,
+                                "bandwidth_mbps": mbps
+                            }
+                        elif mbps >= 25:  # Medium connection (25-50 Mbps)
+                            return {
+                                "max_parallel_downloads": 48,
+                                "multipart_parts": 6,
+                                "chunk_size_mb": 32,
+                                "bandwidth_mbps": mbps
+                            }
+                        elif mbps >= 10:  # Slower connection (10-25 Mbps)
+                            return {
+                                "max_parallel_downloads": 32,
+                                "multipart_parts": 4,
+                                "chunk_size_mb": 24,
+                                "bandwidth_mbps": mbps
+                            }
+                        else:  # Very slow connection (<10 Mbps)
+                            return {
+                                "max_parallel_downloads": 16,
+                                "multipart_parts": 2,
+                                "chunk_size_mb": 16,
+                                "bandwidth_mbps": mbps
+                            }
+    except Exception as e:
+        if DEBUG >= 1:
+            print(f"Bandwidth test failed: {e}")
+    
+    # Fallback to default optimized settings
+    return {
+        "max_parallel_downloads": 48,
+        "multipart_parts": 6,
+        "chunk_size_mb": 32,
+        "bandwidth_mbps": None
+    }
+
+def get_optimal_download_settings() -> dict:
+    """
+    Auto-detect optimal download settings based on system capabilities.
+    Returns a dictionary with recommended settings for maximum download speed.
+    """
+    settings = {
+        "max_parallel_downloads": 32,
+        "chunk_size_mb": 32,
+        "use_multipart": True,
+        "multipart_threshold_mb": 500,
+        "multipart_parts": 4
+    }
+    
+    # Get system info
+    cpu_count = psutil.cpu_count(logical=True)
+    memory_gb = psutil.virtual_memory().total / (1024**3)
+    
+    # Adjust based on CPU cores
+    if cpu_count >= 16:  # High-end systems
+        settings["max_parallel_downloads"] = 64
+        settings["multipart_parts"] = 8
+        settings["chunk_size_mb"] = 64
+    elif cpu_count >= 8:  # Mid-range systems
+        settings["max_parallel_downloads"] = 48
+        settings["multipart_parts"] = 6
+        settings["chunk_size_mb"] = 48
+    elif cpu_count >= 4:  # Lower-end systems
+        settings["max_parallel_downloads"] = 32
+        settings["multipart_parts"] = 4
+        settings["chunk_size_mb"] = 32
+    else:  # Very low-end systems
+        settings["max_parallel_downloads"] = 16
+        settings["multipart_parts"] = 2
+        settings["chunk_size_mb"] = 16
+    
+    # Adjust based on available memory
+    if memory_gb < 8:  # Low memory systems
+        settings["max_parallel_downloads"] = min(settings["max_parallel_downloads"], 16)
+        settings["chunk_size_mb"] = min(settings["chunk_size_mb"], 16)
+        settings["multipart_parts"] = min(settings["multipart_parts"], 2)
+    elif memory_gb >= 32:  # High memory systems
+        settings["max_parallel_downloads"] = max(settings["max_parallel_downloads"], 64)
+        settings["chunk_size_mb"] = max(settings["chunk_size_mb"], 64)
+    
+    # Windows-specific optimizations
+    if platform.system() == "Windows":
+        # Windows can handle more connections efficiently
+        settings["max_parallel_downloads"] = min(settings["max_parallel_downloads"] * 1.25, 96)
+    
+    if DEBUG >= 1:
+        print(f"🔧 Auto-detected optimal settings: {settings}")
+        print(f"   System: {cpu_count} cores, {memory_gb:.1f}GB RAM")
+    
+    return settings

@@ -54,9 +54,13 @@ class Node:
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
     self.topology_inference_engines_pool: List[List[str]] = []
     self.outstanding_requests = {}
-
   async def start(self, wait_for_peers: int = 0) -> None:
     self.device_capabilities = await device_capabilities()
+    
+    # Initialize GPU memory manager with device capabilities
+    from exo.inference.memory_manager import initialize_memory_manager
+    initialize_memory_manager(self.device_capabilities)
+    
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)
@@ -67,7 +71,6 @@ class Node:
   async def stop(self) -> None:
     await self.discovery.stop()
     await self.server.stop()
-
   def on_node_status(self, request_id, opaque_status):
     try:
       status_data = json.loads(opaque_status)
@@ -82,6 +85,17 @@ class Node:
         elif status_data.get("status", "").startswith("end_"):
           if status_data.get("node_id") == self.current_topology.active_node_id:
             self.current_topology.active_node_id = None
+      elif status_type == "shard_loading":
+        # Track shard loading across nodes
+        node_id = status_data.get("node_id")
+        model_id = status_data.get("model_id")
+        start_layer = status_data.get("start_layer")
+        end_layer = status_data.get("end_layer")
+        total_layers = status_data.get("total_layers")
+        loading_status = status_data.get("status", "loading")
+        
+        if DEBUG >= 1:
+          print(f"Node {node_id} is {loading_status} model {model_id} layers {start_layer}-{end_layer}/{total_layers}")
 
       download_progress = None
       if status_type == "download_progress":
@@ -165,7 +179,6 @@ class Node:
 
     return  np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
 
-
   async def process_prompt(
     self,
     base_shard: Shard,
@@ -173,8 +186,19 @@ class Node:
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = {},
   ) -> Optional[np.ndarray]:
+    if request_id is None:
+      request_id = str(uuid.uuid4())
+      
     shard = self.get_current_shard(base_shard)
     start_time = time.perf_counter_ns()
+    
+    # First, broadcast to all nodes to prepare their shards
+    await self.broadcast_model_preparation(base_shard, request_id)
+    
+    # Give nodes a moment to start loading their shards
+    await asyncio.sleep(0.1)
+    
+    # Start processing on this node
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -209,6 +233,7 @@ class Node:
       )
     )
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {elapsed_time_ns=}")
+    return resp
 
   async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[dict] = None) -> Optional[np.ndarray]:
     if request_id is None:
@@ -453,14 +478,11 @@ class Node:
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
     next_shard = self.get_current_shard(base_shard, target_index)
     if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. target shard: {next_shard}")
-    if target_id == self.id:
-      await self.process_tensor(next_shard, tensor, request_id, inference_state)
-    else:
-      target_peer = next((p for p in self.peers if p.id() == target_id), None)
-      if not target_peer:
-        raise ValueError(f"Peer for {target_index} not found")
-      if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
-      await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state)
+    target_peer = next((p for p in self.peers if p.id() == target_id), None)
+    if not target_peer:
+      raise ValueError(f"Peer for {target_index} not found")
+    if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
+    await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state)
 
   def get_partition_index(self, offset: int = 0):
     if not self.partitioning_strategy:
@@ -638,3 +660,21 @@ class Node:
     if progress[0] == progress[1]:
       intermediate_result = result
     return intermediate_result, inference_state
+
+  async def broadcast_model_preparation(self, base_shard: Shard, request_id: str):
+    """Broadcast to all nodes to prepare their shards for the given model"""
+    if DEBUG >= 1: 
+      print(f"[{request_id}] Broadcasting model preparation for {base_shard.model_id} across {len(self.peers)} peers")
+    
+    # Broadcast the base shard to all nodes so they can calculate their assigned shard
+    await self.broadcast_opaque_status(
+      request_id,
+      json.dumps({
+        "type": "node_status",
+        "node_id": self.id,
+        "status": "start_process_prompt", 
+        "base_shard": base_shard.to_dict(),
+        "shard": base_shard.to_dict(),  # Send base shard, each node will calculate their portion
+        "request_id": request_id,
+      })
+    )

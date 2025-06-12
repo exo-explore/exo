@@ -346,12 +346,10 @@ def build_base_shard(model_id: str, inference_engine_classname: str) -> Optional
   n_layers = model_cards.get(model_id, {}).get("layers", 0)
   if repo is None or n_layers < 1:
     return None
-  return Shard(model_id, 0, 0, n_layers)
+  return Shard(model_id, 0, n_layers - 1, n_layers)
 
 def build_full_shard(model_id: str, inference_engine_classname: str) -> Optional[Shard]:
-  base_shard = build_base_shard(model_id, inference_engine_classname)
-  if base_shard is None: return None
-  return Shard(base_shard.model_id, 0, base_shard.n_layers - 1, base_shard.n_layers)
+  return build_base_shard(model_id, inference_engine_classname)
 
 def get_supported_models(supported_inference_engine_lists: Optional[List[List[str]]] = None) -> List[str]:
   if not supported_inference_engine_lists:

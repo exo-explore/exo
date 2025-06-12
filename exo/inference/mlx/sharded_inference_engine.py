@@ -9,6 +9,7 @@ from .losses import loss_fns
 from ..shard import Shard
 from typing import Dict, Optional, Tuple
 from exo.download.shard_download import ShardDownloader
+from exo.helpers import DEBUG
 import asyncio
 from collections import OrderedDict
 from mlx_lm.models.cache import make_prompt_cache
@@ -156,24 +157,61 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     first_layer = np.array(layers[0]['input_layernorm'], copy=False)
     await self._eval_mlx(first_layer)
     return score, first_layer
-
   async def ensure_shard(self, shard: Shard):
     async with self._shard_lock:
-      if self.shard == shard: return
+      if self.shard == shard: 
+        if DEBUG >= 1: print(f"Shard {shard.start_layer}-{shard.end_layer} already loaded, skipping")
+        return
+      
+      if DEBUG >= 1: 
+        print(f"Loading shard {shard.start_layer}-{shard.end_layer} out of {shard.n_layers} layers for model {shard.model_id}")
+      
+      # Apply GPU memory management recommendations for MLX
+      try:
+        from exo.inference.memory_manager import should_prioritize_gpu, get_gpu_optimization_config
+        
+        if should_prioritize_gpu():
+          gpu_config = get_gpu_optimization_config()
+          if DEBUG >= 1:
+            print(f"MLX GPU optimization config: {gpu_config}")
+            
+          # MLX automatically uses GPU when available, but we can log optimization status
+          if gpu_config.get('metal_gpu', False):
+            if DEBUG >= 1:
+              print("Using Metal GPU acceleration for MLX inference")
+          elif gpu_config.get('unified_memory', False):
+            if DEBUG >= 1:
+              print("Using unified memory optimization for MLX")
+        else:
+          if DEBUG >= 1:
+            print("Memory manager recommends CPU fallback for MLX (though MLX will still use GPU if available)")
+      except (ImportError, RuntimeError) as e:
+        if DEBUG >= 1:
+          print(f"Memory manager not available for MLX optimization: {e}")
+      
       model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
+      
       if self.shard != shard:
+        if DEBUG >= 1: 
+          print(f"Loading model shard from {model_path} with layers {shard.start_layer}-{shard.end_layer}")
+        
         model_shard = await asyncio.get_running_loop().run_in_executor(
           self._mlx_thread,
           lambda: load_model_shard(model_path, shard, lazy=False)
         )
+        
         if hasattr(model_shard, "tokenizer"):
           self.tokenizer = model_shard.tokenizer
         else:
           self.tokenizer = await resolve_tokenizer(model_path)
+        
         self.shard = shard
         self.model = model_shard
         self.caches = OrderedDict()
         self.session = {}
+        
+        if DEBUG >= 1: 
+          print(f"Successfully loaded shard {shard.start_layer}-{shard.end_layer}, model type: {getattr(model_shard, 'model_type', 'unknown')}")
 
   async def cleanup(self):
     self._mlx_thread.shutdown(wait=True)

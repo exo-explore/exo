@@ -21,7 +21,7 @@ from exo.topology.ring_memory_weighted_partitioning_strategy import RingMemoryWe
 from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, NoopShardDownloader
 from exo.download.download_progress import RepoProgressEvent
-from exo.download.new_shard_download import new_shard_downloader, has_exo_home_read_access, has_exo_home_write_access, ensure_exo_home, seed_models
+from exo.download.new_shard_download import new_shard_downloader, has_exo_home_read_access, has_exo_home_write_access, ensure_exo_home, seed_models, get_optimal_download_settings, test_bandwidth_and_optimize
 from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine
@@ -85,7 +85,10 @@ parser.add_argument("--node-port", type=int, default=None, help="Node port")
 parser.add_argument("--models-seed-dir", type=str, default=None, help="Model seed directory")
 parser.add_argument("--listen-port", type=int, default=5678, help="Listening port for discovery")
 parser.add_argument("--download-quick-check", action="store_true", help="Quick check local path for model shards download")
-parser.add_argument("--max-parallel-downloads", type=int, default=8, help="Max parallel downloads for model shards download")
+parser.add_argument("--max-parallel-downloads", type=int, default=32, help="Max parallel downloads for model shards download")
+parser.add_argument("--download-turbo-mode", action="store_true", help="Enable turbo mode for very fast internet connections (increases parallel downloads to 64)")
+parser.add_argument("--auto-optimize-downloads", action="store_true", help="Automatically optimize download settings based on system capabilities")
+parser.add_argument("--test-bandwidth", action="store_true", help="Test internet bandwidth and optimize download settings accordingly (takes a few seconds)")
 parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast port for discovery")
 parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale", "manual"], default="udp", help="Discovery module to use")
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
@@ -112,7 +115,17 @@ print_yellow_exo()
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
-shard_downloader: ShardDownloader = new_shard_downloader(args.max_parallel_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
+# Determine optimal download settings
+max_downloads = args.max_parallel_downloads
+if args.auto_optimize_downloads:
+    optimal_settings = get_optimal_download_settings()
+    max_downloads = optimal_settings["max_parallel_downloads"]
+    print(f"🔧 Auto-optimized download settings: {max_downloads} parallel downloads")
+elif args.download_turbo_mode:
+    max_downloads = 64
+    print(f"🚀 Turbo mode enabled! Using 64 parallel downloads for maximum speed.")
+
+shard_downloader: ShardDownloader = new_shard_downloader(max_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 inference_engine_name = args.inference_engine or "llamacpp"
 print(f"Inference engine name after selection: {inference_engine_name}")
 
@@ -210,11 +223,36 @@ def preemptively_load_shard(request_id: str, opaque_status: str):
   try:
     status = json.loads(opaque_status)
     if status.get("type") != "node_status" or status.get("status") != "start_process_prompt": return
-    current_shard = node.get_current_shard(Shard.from_dict(status.get("shard")))
-    if DEBUG >= 2: print(f"Preemptively starting download for {current_shard}")
+    
+    # Get the base shard (full model) from the status
+    base_shard = Shard.from_dict(status.get("shard"))
+    
+    # Calculate this node's assigned shard based on current topology
+    current_shard = node.get_current_shard(base_shard)
+    
+    if DEBUG >= 1: print(f"[{request_id}] Preemptively loading shard {current_shard.start_layer}-{current_shard.end_layer} out of {current_shard.n_layers} layers on node {node.id}")
+    
+    # Ensure this node loads its assigned shard
     asyncio.create_task(node.inference_engine.ensure_shard(current_shard))
+    
+    # Also broadcast that this node is starting to load its shard
+    asyncio.create_task(
+      node.broadcast_opaque_status(
+        request_id,
+        json.dumps({
+          "type": "shard_loading",
+          "node_id": node.id,
+          "model_id": current_shard.model_id,
+          "start_layer": current_shard.start_layer,
+          "end_layer": current_shard.end_layer,
+          "total_layers": current_shard.n_layers,
+          "status": "loading"
+        })
+      )
+    )
+    
   except Exception as e:
-    if DEBUG >= 2:
+    if DEBUG >= 1:
       print(f"Failed to preemptively start download: {e}")
       traceback.print_exc()
 node.on_opaque_status.register("preemptively_load_shard").on_next(preemptively_load_shard)
@@ -337,6 +375,19 @@ async def check_exo_home():
 
 async def main():
   loop = asyncio.get_running_loop()
+
+  # Handle bandwidth testing if requested
+  if args.test_bandwidth:
+    print("🌐 Testing internet bandwidth for optimal download settings...")
+    bandwidth_settings = await test_bandwidth_and_optimize()
+    max_downloads = bandwidth_settings["max_parallel_downloads"]
+    if bandwidth_settings.get("bandwidth_mbps"):
+        print(f"📊 Detected bandwidth: {bandwidth_settings['bandwidth_mbps']:.1f} Mbps")
+    print(f"🔧 Bandwidth-optimized settings: {max_downloads} parallel downloads")
+    
+    # Update the shard downloader with optimized settings
+    global shard_downloader
+    shard_downloader = new_shard_downloader(max_downloads) if args.inference_engine != "dummy" else NoopShardDownloader()
 
   try: await check_exo_home()
   except Exception as e: print(f"Error checking exo home directory: {e}")

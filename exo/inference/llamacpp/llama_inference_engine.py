@@ -440,14 +440,61 @@ class LlamaCppInferenceEngine(InferenceEngine):
             chat_format = self._detect_chat_format(gguf_path, shard)
             if chat_format:
                 params['chat_format'] = chat_format
-            
-            # Detect and optimize for different quantization levels
+              # Detect and optimize for different quantization levels
             self._optimize_for_quantization(gguf_path, params)
             
-            # Auto-detect GPU support and configure accordingly
-            gpu_layers = self._detect_gpu_support()
-            if gpu_layers is not None:
-                params['n_gpu_layers'] = gpu_layers
+            # Use GPU memory manager for optimal memory allocation
+            try:
+                from exo.inference.memory_manager import get_memory_config_for_model, should_prioritize_gpu, get_gpu_optimization_config
+                
+                if should_prioritize_gpu():
+                    # Get memory configuration recommendations
+                    memory_config = get_memory_config_for_model(gguf_path)
+                    gpu_config = get_gpu_optimization_config()
+                    
+                    if DEBUG >= 1:
+                        print(f"Memory manager config: {memory_config}")
+                        print(f"GPU optimization config: {gpu_config}")
+                    
+                    # Apply memory manager recommendations
+                    if memory_config.get('use_gpu', False):
+                        # Prioritize GPU memory allocation
+                        params['n_gpu_layers'] = memory_config.get('gpu_layers', -1)  # -1 = all layers
+                        
+                        # Apply GPU-specific optimizations
+                        if gpu_config.get('metal_gpu', False):  # macOS Metal
+                            params['use_mmap'] = True  # Use memory mapping for Metal
+                            params['use_mlock'] = False  # Don't lock in system memory
+                        elif gpu_config.get('cuda_gpu', False):  # CUDA
+                            params['use_mmap'] = True
+                            params['low_vram'] = not memory_config.get('sufficient_gpu_memory', True)
+                            
+                        # Apply memory fraction settings
+                        if 'gpu_memory_fraction' in gpu_config:
+                            # Note: llama.cpp doesn't have direct GPU memory fraction control
+                            # but we can adjust batch size and context based on available memory
+                            gpu_fraction = gpu_config['gpu_memory_fraction']
+                            if gpu_fraction < 0.5:  # Limited GPU memory
+                                params['n_batch'] = min(params.get('n_batch', 512), 256)
+                                params['n_ctx'] = min(params.get('n_ctx', 4096), 2048)
+                    else:
+                        # Fallback to system memory
+                        params['n_gpu_layers'] = memory_config.get('cpu_fallback_layers', 0)
+                        if DEBUG >= 1:
+                            print("GPU memory insufficient, using system memory fallback")
+                else:
+                    # Memory manager recommends CPU-only
+                    params['n_gpu_layers'] = 0
+                    if DEBUG >= 1:
+                        print("Memory manager recommends CPU-only inference")
+                        
+            except (ImportError, RuntimeError) as e:
+                if DEBUG >= 1:
+                    print(f"Memory manager not available, using legacy GPU detection: {e}")
+                # Fallback to original GPU detection logic
+                gpu_layers = self._detect_gpu_support()
+                if gpu_layers is not None:
+                    params['n_gpu_layers'] = gpu_layers
             
             # Set optimal threading based on system
             if params['n_threads'] is None:
