@@ -50,10 +50,58 @@ async def ensure_downloads_dir() -> Path:
 
 async def delete_model(model_id: str, inference_engine_name: str) -> bool:
   repo_id = get_repo(model_id, inference_engine_name)
-  model_dir = await ensure_downloads_dir()/repo_id.replace("/", "--")
-  if not await aios.path.exists(model_dir): return False
-  await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
-  return True
+  
+  # Handle GGUF file paths that include specific files
+  actual_repo_id = repo_id
+  specific_file = None
+  if repo_id and repo_id.endswith('.gguf'):
+    # Split repo_id like "unsloth/Qwen3-0.6B-GGUF/Q4_K_M.gguf" into repo and file
+    parts = repo_id.split('/')
+    if len(parts) >= 3:
+      actual_repo_id = '/'.join(parts[:-1])  # "unsloth/Qwen3-0.6B-GGUF"
+      specific_file = parts[-1]  # "Q4_K_M.gguf"
+  
+  model_dir = await ensure_downloads_dir()/actual_repo_id.replace("/", "--")
+  found_files = False
+  
+  if specific_file:
+    # Delete specific file if it exists
+    specific_file_path = model_dir / specific_file
+    if await aios.path.exists(specific_file_path):
+      await aios.remove(specific_file_path)
+      found_files = True
+    # Also check for partial file
+    partial_file_path = model_dir / f"{specific_file}.partial"
+    if await aios.path.exists(partial_file_path):
+      await aios.remove(partial_file_path)
+      found_files = True
+  else:
+    # Check if model directory exists and remove it
+    if await aios.path.exists(model_dir):
+      await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
+      found_files = True
+  
+  # Also check for any partial files that might exist
+  # This handles cases where only partial downloads exist
+  downloads_dir = await ensure_downloads_dir()
+  if await aios.path.exists(downloads_dir):
+    try:
+      async for entry in aios.scandir(downloads_dir):
+        entry_path = downloads_dir / entry.name
+        # Look for directories that match our model and any partial files
+        if entry.is_dir() and entry.name.startswith(actual_repo_id.replace("/", "--")):
+          # Check if this directory has any partial files
+          try:
+            async for subentry in aios.scandir(entry_path):
+              if subentry.name.endswith(".partial"):
+                await aios.remove(entry_path / subentry.name)
+                found_files = True
+          except Exception:
+            pass
+    except Exception:
+      pass  # Ignore scanning errors
+  
+  return found_files
 
 async def seed_models(seed_dir: Union[str, Path]):
   """Move model in resources folder of app to .cache/huggingface/hub"""
@@ -81,12 +129,18 @@ async def fetch_file_list_with_cache(repo_id: str, revision: str = "main") -> Li
 async def fetch_file_list_with_retry(repo_id: str, revision: str = "main", path: str = "") -> List[Dict[str, Union[str, int]]]:
   n_attempts = 30
   for attempt in range(n_attempts):
-    try: return await _fetch_file_list(repo_id, revision, path)
+    try: 
+      result = await _fetch_file_list(repo_id, revision, path)
+      if result is None:
+        # Repository or path doesn't exist (404 error)
+        if DEBUG >= 1: print(f"Repository '{repo_id}' not found or inaccessible (404) - skipping this model")
+        return []
+      return result
     except Exception as e:
       if attempt == n_attempts - 1: raise e
       await asyncio.sleep(min(8, 0.1 * (2 ** attempt)))
 
-async def _fetch_file_list(repo_id: str, revision: str = "main", path: str = "") -> List[Dict[str, Union[str, int]]]:
+async def _fetch_file_list(repo_id: str, revision: str = "main", path: str = "") -> Optional[List[Dict[str, Union[str, int]]]]:
   api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
   url = f"{api_url}/{path}" if path else api_url
 
@@ -101,8 +155,12 @@ async def _fetch_file_list(repo_id: str, revision: str = "main", path: str = "")
             files.append({"path": item["path"], "size": item["size"]})
           elif item["type"] == "directory":
             subfiles = await _fetch_file_list(repo_id, revision, item["path"])
-            files.extend(subfiles)
+            if subfiles is not None:  # Handle case where subdirectory fetch failed
+              files.extend(subfiles)
         return files
+      elif response.status == 404:
+        # Return None for 404 errors (repository or path doesn't exist)
+        return None
       else:
         raise Exception(f"Failed to fetch file list: {response.status}")
 
@@ -150,12 +208,13 @@ async def _download_file(repo_id: str, revision: str, path: str, target_dir: Pat
     headers = await get_auth_headers()
     if resume_byte_pos: headers['Range'] = f'bytes={resume_byte_pos}-'
     n_read = resume_byte_pos or 0
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session:
+    connector = aiohttp.TCPConnector(limit=0, limit_per_host=0, enable_cleanup_closed=True)
+    async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session:
       async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as r:
         if r.status == 404: raise FileNotFoundError(f"File not found: {url}")
         assert r.status in [200, 206], f"Failed to download {path} from {url}: {r.status}"
         async with aiofiles.open(partial_path, 'ab' if resume_byte_pos else 'wb') as f:
-          while chunk := await r.content.read(8 * 1024 * 1024): on_progress(n_read := n_read + await f.write(chunk), length)
+          while chunk := await r.content.read(1024 * 1024): on_progress(n_read := n_read + await f.write(chunk), length)
 
   final_hash = await calc_hash(partial_path, type="sha256" if len(remote_hash) == 64 else "sha1")
   integrity = final_hash == remote_hash
@@ -174,7 +233,11 @@ def calculate_repo_progress(shard: Shard, repo_id: str, revision: str, file_prog
   elapsed_time = time.time() - all_start_time
   all_speed = all_downloaded_bytes_this_session / elapsed_time if elapsed_time > 0 else 0
   all_eta = timedelta(seconds=(all_total_bytes - all_downloaded_bytes) / all_speed) if all_speed > 0 else timedelta(seconds=0)
-  status = "complete" if all(p.status == "complete" for p in file_progress.values()) else "in_progress" if any(p.status == "in_progress" for p in file_progress.values()) else "not_started"
+  # Handle empty file_progress (no files found) - should be "not_started", not "complete"
+  if not file_progress:
+    status = "not_started"
+  else:
+    status = "complete" if all(p.status == "complete" for p in file_progress.values()) else "in_progress" if any(p.status == "in_progress" for p in file_progress.values()) else "not_started"
   return RepoProgressEvent(shard, repo_id, revision, len([p for p in file_progress.values() if p.downloaded == p.total]), len(file_progress), all_downloaded_bytes, all_downloaded_bytes_this_session, all_total_bytes, all_speed, all_eta, file_progress, status)
 
 async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]:
@@ -184,6 +247,12 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]
   return index_data.get("weight_map")
 
 async def resolve_allow_patterns(shard: Shard, inference_engine_classname: str) -> List[str]:
+  # GGUF models (LlamaCpp) don't use safetensors format, so download all files
+  if inference_engine_classname == "LlamaCppInferenceEngine":
+    if DEBUG >= 2: print(f"Using wildcard patterns for GGUF model {shard.model_id}")
+    return ["*"]
+  
+  # For other inference engines (MLX, Tinygrad), try to get weight map from safetensors index
   try:
     weight_map = await get_weight_map(get_repo(shard.model_id, inference_engine_classname))
     return get_allow_patterns(weight_map, shard)
@@ -198,21 +267,40 @@ async def get_downloaded_size(path: Path) -> int:
   if await aios.path.exists(partial_path): return (await aios.stat(partial_path)).st_size
   return 0
 
+async def is_file_complete(path: Path) -> bool:
+  """Check if a file is completely downloaded (not partial)"""
+  return await aios.path.exists(path)
+
 async def download_shard(shard: Shard, inference_engine_classname: str, on_progress: AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]], max_parallel_downloads: int = 8, skip_download: bool = False) -> tuple[Path, RepoProgressEvent]:
   if DEBUG >= 2 and not skip_download: print(f"Downloading {shard.model_id=} for {inference_engine_classname}")
   repo_id = get_repo(shard.model_id, inference_engine_classname)
   revision = "main"
-  target_dir = await ensure_downloads_dir()/repo_id.replace("/", "--")
-  if not skip_download: await aios.makedirs(target_dir, exist_ok=True)
-
+  
   if repo_id is None:
     raise ValueError(f"No repo found for {shard.model_id=} and inference engine {inference_engine_classname}")
 
-  allow_patterns = await resolve_allow_patterns(shard, inference_engine_classname)
+  # Handle GGUF file paths that include specific files
+  actual_repo_id = repo_id
+  specific_file = None
+  if repo_id.endswith('.gguf'):
+    # Split repo_id like "unsloth/Qwen3-0.6B-GGUF/Q4_K_M.gguf" into repo and file
+    parts = repo_id.split('/')
+    if len(parts) >= 3:
+      actual_repo_id = '/'.join(parts[:-1])  # "unsloth/Qwen3-0.6B-GGUF"
+      specific_file = parts[-1]  # "Q4_K_M.gguf"
+  
+  target_dir = await ensure_downloads_dir()/actual_repo_id.replace("/", "--")
+  if not skip_download: await aios.makedirs(target_dir, exist_ok=True)
+
+  # Override allow_patterns for specific GGUF files
+  if specific_file:
+    allow_patterns = [specific_file]
+  else:
+    allow_patterns = await resolve_allow_patterns(shard, inference_engine_classname)
   if DEBUG >= 2: print(f"Downloading {shard.model_id=} with {allow_patterns=}")
 
   all_start_time = time.time()
-  file_list = await fetch_file_list_with_cache(repo_id, revision)
+  file_list = await fetch_file_list_with_cache(actual_repo_id, revision)
   filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, key=lambda x: x["path"]))
   file_progress: Dict[str, RepoFileProgressEvent] = {}
   def on_progress_wrapper(file: dict, curr_bytes: int, total_bytes: int):
@@ -220,19 +308,20 @@ async def download_shard(shard: Shard, inference_engine_classname: str, on_progr
     downloaded_this_session = file_progress[file["path"]].downloaded_this_session + (curr_bytes - file_progress[file["path"]].downloaded) if file["path"] in file_progress else curr_bytes
     speed = downloaded_this_session / (time.time() - start_time) if time.time() - start_time > 0 else 0
     eta = timedelta(seconds=(total_bytes - curr_bytes) / speed) if speed > 0 else timedelta(seconds=0)
-    file_progress[file["path"]] = RepoFileProgressEvent(repo_id, revision, file["path"], curr_bytes, downloaded_this_session, total_bytes, speed, eta, "complete" if curr_bytes == total_bytes else "in_progress", start_time)
-    on_progress.trigger_all(shard, calculate_repo_progress(shard, repo_id, revision, file_progress, all_start_time))
+    file_progress[file["path"]] = RepoFileProgressEvent(actual_repo_id, revision, file["path"], curr_bytes, downloaded_this_session, total_bytes, speed, eta, "complete" if curr_bytes == total_bytes else "in_progress", start_time)
+    on_progress.trigger_all(shard, calculate_repo_progress(shard, actual_repo_id, revision, file_progress, all_start_time))
     if DEBUG >= 6: print(f"Downloading {file['path']} {curr_bytes}/{total_bytes} {speed} {eta}")
   for file in filtered_file_list:
     downloaded_bytes = await get_downloaded_size(target_dir/file["path"])
-    file_progress[file["path"]] = RepoFileProgressEvent(repo_id, revision, file["path"], downloaded_bytes, 0, file["size"], 0, timedelta(0), "complete" if downloaded_bytes == file["size"] else "not_started", time.time())
+    is_complete = await is_file_complete(target_dir/file["path"])
+    file_progress[file["path"]] = RepoFileProgressEvent(actual_repo_id, revision, file["path"], downloaded_bytes, 0, file["size"], 0, timedelta(0), "complete" if is_complete and downloaded_bytes == file["size"] else "not_started", time.time())
 
   semaphore = asyncio.Semaphore(max_parallel_downloads)
   async def download_with_semaphore(file):
     async with semaphore:
-      await download_file_with_retry(repo_id, revision, file["path"], target_dir, lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes))
+      await download_file_with_retry(actual_repo_id, revision, file["path"], target_dir, lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes))
   if not skip_download: await asyncio.gather(*[download_with_semaphore(file) for file in filtered_file_list])
-  final_repo_progress = calculate_repo_progress(shard, repo_id, revision, file_progress, all_start_time)
+  final_repo_progress = calculate_repo_progress(shard, actual_repo_id, revision, file_progress, all_start_time)
   on_progress.trigger_all(shard, final_repo_progress)
   if gguf := next((f for f in filtered_file_list if f["path"].endswith(".gguf")), None):
     return target_dir/gguf["path"], final_repo_progress
@@ -295,13 +384,36 @@ class NewShardDownloader(ShardDownloader):
   async def ensure_shard(self, shard: Shard, inference_engine_name: str) -> Path:
     target_dir, _ = await download_shard(shard, inference_engine_name, self.on_progress, max_parallel_downloads=self.max_parallel_downloads)
     return target_dir
-
   async def get_shard_download_status(self, inference_engine_name: str) -> AsyncIterator[tuple[Path, RepoProgressEvent]]:
     if DEBUG >= 2: print("Getting shard download status for", inference_engine_name)
-    tasks = [download_shard(build_full_shard(model_id, inference_engine_name), inference_engine_name, self.on_progress, skip_download=True) for model_id in get_supported_models([[inference_engine_name]])]
+    
+    async def download_with_timeout(model_id):
+      try:
+        # Add 30 second timeout per model to prevent hanging
+        return await asyncio.wait_for(
+          download_shard(build_full_shard(model_id, inference_engine_name), inference_engine_name, self.on_progress, skip_download=True),
+          timeout=30.0
+        )
+      except asyncio.TimeoutError:
+        if DEBUG >= 1: print(f"Timeout checking status for model: {model_id}")
+        return None
+      except Exception as e:
+        if DEBUG >= 1: print(f"Error checking status for model {model_id}: {e}")
+        return None
+    
+    tasks = [download_with_timeout(model_id) for model_id in get_supported_models([[inference_engine_name]])]
     for task in asyncio.as_completed(tasks):
       try:
-        path, progress = await task
-        yield (path, progress)
+        result = await task
+        if result is not None:
+          path, progress = result
+          yield (path, progress)
       except Exception as e:
-        print("Error downloading shard:", e)
+        # Handle any remaining errors gracefully
+        error_msg = str(e)
+        if "404" in error_msg or "Failed to fetch file list: 404" in error_msg:
+          if DEBUG >= 1: print(f"Skipping model due to 404 error (repository not accessible): {error_msg}")
+        else:
+          # Log other errors as they might be more serious
+          if DEBUG >= 1: print(f"Error downloading shard: {error_msg}")
+          if DEBUG >= 2: print(f"Full traceback: {traceback.format_exc()}")

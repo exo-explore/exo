@@ -67,6 +67,16 @@ CHIP_FLOPS = {
   "Apple A16 Bionic": DeviceFlops(fp32=1.79*TFLOPS, fp16=3.58*TFLOPS, int8=7.16*TFLOPS),
   "Apple A17 Pro": DeviceFlops(fp32=2.15*TFLOPS, fp16=4.30*TFLOPS, int8=8.60*TFLOPS),
   ### NVIDIA GPUs
+  # RTX 50 series (Blackwell architecture)
+  "NVIDIA GEFORCE RTX 5090": DeviceFlops(fp32=104.8*TFLOPS, fp16=209.6*TFLOPS, int8=419.2*TFLOPS),
+  "NVIDIA GEFORCE RTX 5080": DeviceFlops(fp32=56.28*TFLOPS, fp16=112.56*TFLOPS, int8=225.12*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070 TI": DeviceFlops(fp32=43.94*TFLOPS, fp16=87.88*TFLOPS, int8=175.76*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070": DeviceFlops(fp32=30.87*TFLOPS, fp16=61.74*TFLOPS, int8=123.48*TFLOPS),
+  # RTX 50 series Mobile variants
+  "NVIDIA GEFORCE RTX 5090 MOBILE": DeviceFlops(fp32=95.0*TFLOPS, fp16=190.0*TFLOPS, int8=380.0*TFLOPS),
+  "NVIDIA GEFORCE RTX 5080 MOBILE": DeviceFlops(fp32=50.0*TFLOPS, fp16=100.0*TFLOPS, int8=200.0*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070 TI MOBILE": DeviceFlops(fp32=40.0*TFLOPS, fp16=80.0*TFLOPS, int8=160.0*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070 MOBILE": DeviceFlops(fp32=28.0*TFLOPS, fp16=56.0*TFLOPS, int8=112.0*TFLOPS),
   # RTX 40 series
   "NVIDIA GEFORCE RTX 4090": DeviceFlops(fp32=82.58*TFLOPS, fp16=165.16*TFLOPS, int8=330.32*TFLOPS),
   "NVIDIA GEFORCE RTX 4080": DeviceFlops(fp32=48.74*TFLOPS, fp16=97.48*TFLOPS, int8=194.96*TFLOPS),
@@ -223,7 +233,7 @@ async def linux_device_capabilities() -> DeviceCapabilities:
     )
 
 
-def windows_device_capabilities() -> DeviceCapabilities:
+async def windows_device_capabilities() -> DeviceCapabilities:
   import psutil
 
   def get_gpu_info():
@@ -261,6 +271,8 @@ def windows_device_capabilities() -> DeviceCapabilities:
 
     if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
 
+    pynvml.nvmlShutdown()
+
     return DeviceCapabilities(
       model=f"Windows Box ({gpu_name})",
       chip=gpu_name,
@@ -269,22 +281,31 @@ def windows_device_capabilities() -> DeviceCapabilities:
     )
   elif contains_amd:
     # For AMD GPUs, pyrsmi is the way (Official python package for rocm-smi)
-    from pyrsmi import rocml
+    try:
+      from pyrsmi import rocml
 
-    rocml.smi_initialize()
-    gpu_name = rocml.smi_get_device_name(0).upper()
-    gpu_memory_info = rocml.smi_get_device_memory_total(0)
+      rocml.smi_initialize()
+      gpu_name = rocml.smi_get_device_name(0).upper()
+      gpu_memory_info = rocml.smi_get_device_memory_total(0)
 
-    if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")
+      if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")
 
-    rocml.smi_shutdown()
+      rocml.smi_shutdown()
 
-    return DeviceCapabilities(
-      model="Windows Box ({gpu_name})",
-      chip={gpu_name},
-      memory=gpu_memory_info.total // 2**20,
-      flops=DeviceFlops(fp32=0, fp16=0, int8=0),
-    )
+      return DeviceCapabilities(
+        model=f"Windows Box ({gpu_name})",
+        chip=gpu_name,
+        memory=gpu_memory_info // 2**20,
+        flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+      )
+    except ImportError:
+      if DEBUG >= 1: print("pyrsmi not available for AMD GPU detection on Windows")
+      return DeviceCapabilities(
+        model="Windows Box (AMD GPU - pyrsmi not available)",
+        chip="AMD GPU (details unavailable)",
+        memory=psutil.virtual_memory().total // 2**20,
+        flops=DeviceFlops(fp32=0, fp16=0, int8=0),
+      )
   else:
     return DeviceCapabilities(
       model=f"Windows Box (Device: Unknown)",

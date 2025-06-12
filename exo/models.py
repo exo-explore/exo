@@ -8,6 +8,7 @@ model_cards = {
     "repo": {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.3-70B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.3-70B-Instruct",
+       "LlamaCppInferenceEngine": "unsloth/Llama-3.3-70B-Instruct-GGUF",
     },
   },
   "llama-3.2-1b": {
@@ -15,20 +16,42 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "LlamaCppInferenceEngine": "unsloth/Llama-3.2-1B-Instruct-GGUF",
     },
   },
-  "llama-3.2-1b-8bit": {
+  
+  # Llama-3.2-1B GGUF quantization variants
+  "llama-3.2-1b-q4-k-m": {
     "layers": 16,
     "repo": {
-      "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-8bit",
-      "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "LlamaCppInferenceEngine": "unsloth/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
     },
   },
+  "llama-3.2-1b-q5-k-m": {
+    "layers": 16,
+    "repo": {
+      "LlamaCppInferenceEngine": "unsloth/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q5_K_M.gguf",
+    },
+  },
+  "llama-3.2-1b-q8-0": {
+    "layers": 16,
+    "repo": {
+      "LlamaCppInferenceEngine": "unsloth/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q8_0.gguf",
+    },
+  },
+  "llama-3.2-1b-f16": {
+    "layers": 16,
+    "repo": {
+      "LlamaCppInferenceEngine": "unsloth/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-F16.gguf",
+    },
+  },
+  
   "llama-3.2-3b": {
     "layers": 28,
     "repo": {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+       "LlamaCppInferenceEngine": "unsloth/Llama-3.2-3B-Instruct-GGUF",
     },
   },
   "llama-3.2-3b-8bit": {
@@ -139,6 +162,52 @@ model_cards = {
   "qwen-2.5-coder-32b": { "layers": 64, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit", }, },
   "qwen-2.5-72b": { "layers": 80, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-72B-Instruct-4bit", }, },
   "qwen-2.5-math-72b": { "layers": 80, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Math-72B-Instruct-4bit", }, },
+  ### qwen3 (latest generation with thinking mode support) - separate quantizations
+  # Qwen3-0.6B variants
+  "qwen3-0.6b-q4-k-m": { "layers": 24, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf", }, },
+  "qwen3-0.6b-q5-k-m": { "layers": 24, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q5_K_M.gguf", }, },
+  "qwen3-0.6b-q8-0": { "layers": 24, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf", }, },
+  
+  # Qwen3-4B variants  
+  "qwen3-4b-q4-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf", }, },
+  "qwen3-4b-q5-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-4B-GGUF/Qwen3-4B-Q5_K_M.gguf", }, },
+  "qwen3-4b-q8-0": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-4B-GGUF/Qwen3-4B-Q8_0.gguf", }, },
+  
+  # Qwen3-32B variants
+  "qwen3-32b-q4-k-m": { "layers": 64, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-32B-GGUF/Qwen3-32B-Q4_K_M.gguf", }, },
+  "qwen3-32b-q5-k-m": { "layers": 64, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-32B-GGUF/Qwen3-32B-Q5_K_M.gguf", }, },
+  "qwen3-32b-q8-0": { "layers": 64, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-32B-GGUF/Qwen3-32B-Q8_0.gguf", }, },
+  
+  # Qwen3-30B-A3B variants (MoE model - your requested model!)
+  "qwen3-30b-a3b-q2-k": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q2_K.gguf", }, },
+  "qwen3-30b-a3b-q3-k-m": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q3_K_M.gguf", }, },
+  "qwen3-30b-a3b-q4-k-m": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q4_K_M.gguf", }, },
+  "qwen3-30b-a3b-q5-k-m": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q5_K_M.gguf", }, },
+  "qwen3-30b-a3b-q6-k": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q6_K.gguf", }, },
+  "qwen3-30b-a3b-q8-0": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q8_0.gguf", }, },
+  "qwen3-30b-a3b-bf16": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-GGUF/BF16/Qwen3-30B-A3B-BF16-00001-of-00002.gguf", }, },
+  
+  # Qwen3-30B-A3B 128K Context variants
+  "qwen3-30b-a3b-128k-q4-k-m": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-128K-GGUF/Qwen3-30B-A3B-128K-Q4_K_M.gguf", }, },
+  "qwen3-30b-a3b-128k-q5-k-m": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-128K-GGUF/Qwen3-30B-A3B-128K-Q5_K_M.gguf", }, },
+  "qwen3-30b-a3b-128k-q8-0": { "layers": 48, "repo": { "LlamaCppInferenceEngine": "unsloth/Qwen3-30B-A3B-128K-GGUF/Qwen3-30B-A3B-128K-Q8_0.gguf", }, },
+  ### additional unsloth models with specific quantizations
+  # Unsloth Llama 3.1 8B variants
+  "unsloth-llama-3.1-8b-q4-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Llama-3.1-8B-Instruct-GGUF/Q4_K_M.gguf", }, },
+  "unsloth-llama-3.1-8b-q5-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Llama-3.1-8B-Instruct-GGUF/Q5_K_M.gguf", }, },
+  "unsloth-llama-3.1-8b-q8-0": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Llama-3.1-8B-Instruct-GGUF/Q8_0.gguf", }, },
+  
+  # Unsloth Llama 3.1 70B variants 
+  "unsloth-llama-3.1-70b-q4-k-m": { "layers": 80, "repo": { "LlamaCppInferenceEngine": "unsloth/Llama-3.1-70B-Instruct-GGUF/Q4_K_M.gguf", }, },
+  "unsloth-llama-3.1-70b-q5-k-m": { "layers": 80, "repo": { "LlamaCppInferenceEngine": "unsloth/Llama-3.1-70B-Instruct-GGUF/Q5_K_M.gguf", }, },
+  
+  # Unsloth Mistral 7B variants
+  "unsloth-mistral-7b-q4-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Mistral-7B-Instruct-v0.3-GGUF/Q4_K_M.gguf", }, },
+  "unsloth-mistral-7b-q5-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/Mistral-7B-Instruct-v0.3-GGUF/Q5_K_M.gguf", }, },
+  
+  # Unsloth CodeLlama variants
+  "unsloth-codellama-7b-q4-k-m": { "layers": 32, "repo": { "LlamaCppInferenceEngine": "unsloth/CodeLlama-7b-Instruct-hf-GGUF/Q4_K_M.gguf", }, },
+  "unsloth-codellama-13b-q4-k-m": { "layers": 40, "repo": { "LlamaCppInferenceEngine": "unsloth/CodeLlama-13b-Instruct-hf-GGUF/Q4_K_M.gguf", }, },
   ### nemotron
   "nemotron-70b": { "layers": 80, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/nvidia_Llama-3.1-Nemotron-70B-Instruct-HF_4bit", }, },
   "nemotron-70b-bf16": { "layers": 80, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.1-Nemotron-70B-Instruct-HF-bf16", }, },
@@ -157,6 +226,10 @@ model_cards = {
 pretty_name = {
   "llama-3.3-70b": "Llama 3.3 70B",
   "llama-3.2-1b": "Llama 3.2 1B",
+  "llama-3.2-1b-q4-k-m": "Llama 3.2 1B Q4_K_M (~1GB)",
+  "llama-3.2-1b-q5-k-m": "Llama 3.2 1B Q5_K_M (~1.2GB)",
+  "llama-3.2-1b-q8-0": "Llama 3.2 1B Q8_0 (~1.6GB)",
+  "llama-3.2-1b-f16": "Llama 3.2 1B F16 (~2.6GB)",
   "llama-3.2-1b-8bit": "Llama 3.2 1B (8-bit)",
   "llama-3.2-3b": "Llama 3.2 3B",
   "llama-3.2-3b-8bit": "Llama 3.2 3B (8-bit)",
@@ -230,6 +303,36 @@ pretty_name = {
   "deepseek-r1-distill-llama-70b-6bit": "DeepSeek R1 Distill Llama 70B (6-bit)",
   "deepseek-r1-distill-llama-70b-8bit": "DeepSeek R1 Distill Llama 70B (8-bit)",
   "deepseek-r1-distill-qwen-32b-6bit": "DeepSeek R1 Distill Qwen 32B (6-bit)",
+  # qwen3 models with quantization info
+  "qwen3-0.6b-q4-k-m": "Qwen3 0.6B Q4_K_M (~1.5GB)",
+  "qwen3-0.6b-q5-k-m": "Qwen3 0.6B Q5_K_M (~1.8GB)",
+  "qwen3-0.6b-q8-0": "Qwen3 0.6B Q8_0 (~2.3GB)",
+  "qwen3-4b-q4-k-m": "Qwen3 4B Q4_K_M (~2.8GB)",
+  "qwen3-4b-q5-k-m": "Qwen3 4B Q5_K_M (~3.2GB)",
+  "qwen3-4b-q8-0": "Qwen3 4B Q8_0 (~4.1GB)",
+  "qwen3-32b-q4-k-m": "Qwen3 32B Q4_K_M (~20GB)",
+  "qwen3-32b-q5-k-m": "Qwen3 32B Q5_K_M (~23GB)",
+  "qwen3-32b-q8-0": "Qwen3 32B Q8_0 (~33GB)",
+  "qwen3-30b-a3b-q2-k": "Qwen3 30B-A3B Q2_K (~11GB, MoE)",
+  "qwen3-30b-a3b-q3-k-m": "Qwen3 30B-A3B Q3_K_M (~15GB, MoE)",
+  "qwen3-30b-a3b-q4-k-m": "Qwen3 30B-A3B Q4_K_M (~19GB, MoE)",
+  "qwen3-30b-a3b-q5-k-m": "Qwen3 30B-A3B Q5_K_M (~22GB, MoE)",
+  "qwen3-30b-a3b-q6-k": "Qwen3 30B-A3B Q6_K (~25GB, MoE)",
+  "qwen3-30b-a3b-q8-0": "Qwen3 30B-A3B Q8_0 (~33GB, MoE)",
+  "qwen3-30b-a3b-bf16": "Qwen3 30B-A3B BF16 (~61GB, MoE)",
+  "qwen3-30b-a3b-128k-q4-k-m": "Qwen3 30B-A3B 128K Q4_K_M (~19GB, Extended Context)",
+  "qwen3-30b-a3b-128k-q5-k-m": "Qwen3 30B-A3B 128K Q5_K_M (~22GB, Extended Context)", 
+  "qwen3-30b-a3b-128k-q8-0": "Qwen3 30B-A3B 128K Q8_0 (~33GB, Extended Context)",
+  # unsloth models with quantization info
+  "unsloth-llama-3.1-8b-q4-k-m": "Unsloth Llama 3.1 8B Q4_K_M (~5GB)",
+  "unsloth-llama-3.1-8b-q5-k-m": "Unsloth Llama 3.1 8B Q5_K_M (~6GB)",
+  "unsloth-llama-3.1-8b-q8-0": "Unsloth Llama 3.1 8B Q8_0 (~8GB)",
+  "unsloth-llama-3.1-70b-q4-k-m": "Unsloth Llama 3.1 70B Q4_K_M (~41GB)",
+  "unsloth-llama-3.1-70b-q5-k-m": "Unsloth Llama 3.1 70B Q5_K_M (~48GB)",
+  "unsloth-mistral-7b-q4-k-m": "Unsloth Mistral 7B Q4_K_M (~4GB)",
+  "unsloth-mistral-7b-q5-k-m": "Unsloth Mistral 7B Q5_K_M (~5GB)",
+  "unsloth-codellama-7b-q4-k-m": "Unsloth CodeLlama 7B Q4_K_M (~4GB)",
+  "unsloth-codellama-13b-q4-k-m": "Unsloth CodeLlama 13B Q4_K_M (~8GB)",
 }
 
 def get_repo(model_id: str, inference_engine_classname: str) -> Optional[str]:
