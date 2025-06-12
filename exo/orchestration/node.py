@@ -136,6 +136,12 @@ class Node:
         self.buffered_token_output[request_id][0].append(token.item())
         is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
         if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
+        if DEBUG >= 1: 
+            try:
+                decoded_token = self.inference_engine.tokenizer.decode([token.item()])
+                print(f"[{request_id}] Generated token: {token.item()} ('{decoded_token}'), EOS token ID: {self.inference_engine.tokenizer.eos_token_id}, is_finished: {is_finished}")
+            except Exception as e:
+                print(f"[{request_id}] Generated token: {token.item()}, EOS token ID: {self.inference_engine.tokenizer.eos_token_id}, is_finished: {is_finished}, decode error: {e}")
         forward = token.reshape(1, -1)
         intermediate_result = [self.buffered_token_output[request_id][0][-1]]
       else:
