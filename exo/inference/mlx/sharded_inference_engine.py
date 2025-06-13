@@ -76,17 +76,25 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
   async def load_checkpoint(self, shard: Shard, path: str):
     await self.ensure_shard(shard)
     await asyncio.get_running_loop().run_in_executor(self._mlx_thread, lambda: self.model.load_weights(path))
-
   async def infer_tensor(self, request_id: str, shard: Shard, input_data: np.ndarray, inference_state: Optional[dict] = None) -> tuple[np.ndarray, Optional[dict]]:
     await self.ensure_shard(shard)
     state = await self.poll_state(request_id) if self.model.model_type != 'StableDiffusionPipeline' else {}
     x = mx.array(input_data)
 
     if self.model.model_type != 'StableDiffusionPipeline':
-      output_data = await asyncio.get_running_loop().run_in_executor(
-        self._mlx_thread,
-        lambda: self.model(x, **state, **(inference_state or {}))
-      )
+      # Add timeout to prevent hanging
+      try:
+        output_data = await asyncio.wait_for(
+          asyncio.get_running_loop().run_in_executor(
+            self._mlx_thread,
+            lambda: self.model(x, **state, **(inference_state or {}))
+          ),
+          timeout=30.0  # 30 second timeout
+        )
+      except asyncio.TimeoutError:
+        if DEBUG >= 1:
+          print(f"MLX inference timed out for request {request_id}")
+        raise RuntimeError(f"MLX inference timed out after 30 seconds for request {request_id}")
       inference_state = None
     else:
       result = await asyncio.get_running_loop().run_in_executor(

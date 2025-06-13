@@ -24,9 +24,10 @@ import platform
 from exo.download.download_progress import RepoProgressEvent
 from exo.download.new_shard_download import delete_model
 import tempfile
-from exo.apputil import create_animation_mp4
+# Animation functionality removed due to missing dependencies
 from collections import defaultdict
 import mimetypes
+import re
 
 # Configure MIME types globally
 mimetypes.add_type('text/css', '.css')
@@ -36,6 +37,80 @@ if platform.system().lower() == "darwin" and platform.machine().lower() == "arm6
   import mlx.core as mx
 else:
   import numpy as mx
+
+
+def clean_response_content(content: str) -> str:
+  """Clean system tokens and artifacts from LLM response content."""
+  if not content or not isinstance(content, str):
+    return content
+  
+  # Remove system tokens that commonly leak through
+  system_tokens = [
+    '<|begin_of_text|>',
+    '<|end_of_text|>',
+    '<|start_header_id|>',
+    '<|end_header_id|>', 
+    '<|eot_id|>',
+    '<|im_start|>',
+    '<|im_end|>',
+    '<|endoftext|>',
+    '</s>',
+    '<s>',
+    '<|assistant|>',
+    '<|user|>',
+    '<|system|>',
+    'system<|end_header_id|>',
+    'user<|end_header_id|>',
+    'assistant<|end_header_id|>',
+    'Cutting Knowledge Date: December 2023',
+  ]
+  
+  cleaned = content
+  
+  # Remove system tokens - case insensitive
+  for token in system_tokens:
+    cleaned = re.sub(re.escape(token), '', cleaned, flags=re.IGNORECASE)
+  
+  # Remove system message patterns
+  system_patterns = [
+    r'<\|begin_of_text\|>.*?<\|start_header_id\|>.*?<\|end_header_id\|>',
+    r'Cutting Knowledge Date:.*?(?=\n|$)',
+    r'Today Date:.*?(?=\n|$)',
+    r'You are.*?(?=\n\n|\n[A-Z]|$)',  # Remove system prompt remnants
+    r'^.*?<\|end_header_id\|>\s*',  # Remove header remnants at start
+    r'^\s*system\s*$',  # Remove standalone "system" 
+    r'^\s*assistant\s*$',  # Remove standalone "assistant"
+    r'^\s*user\s*$',  # Remove standalone "user"
+  ]
+  
+  for pattern in system_patterns:
+    cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+  
+  # Remove empty lines and excessive whitespace
+  lines = cleaned.split('\n')
+  non_empty_lines = []
+  
+  for line in lines:
+    stripped = line.strip()
+    if stripped and not stripped.isspace():
+      # Skip lines that are just system tokens or fragments
+      if not any(token.lower() in stripped.lower() for token in ['cutting knowledge', 'today date:', '<|']):
+        non_empty_lines.append(line)
+  
+  # Rejoin and clean up
+  cleaned = '\n'.join(non_empty_lines)
+  
+  # Remove leading/trailing whitespace and normalize spacing
+  cleaned = cleaned.strip()
+  
+  # Remove excessive newlines
+  cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+  
+  # If the result is too short or looks like artifacts, return a helpful fallback
+  if len(cleaned.strip()) < 5 or cleaned.strip().lower() in ['sure', 'ok', 'yes', '**', '*', 'i']:
+    return "I apologize, but I encountered an issue generating a complete response. Could you please rephrase your question?"
+  
+  return cleaned
 
 
 class Message:
@@ -81,6 +156,9 @@ def generate_completion(
     content = tokenizer.decode(tokens)
     prompt_tokens = len(tokenizer.encode(prompt))
     completion_tokens = len(tokens)
+  
+  # Clean system tokens and artifacts from content
+  content = clean_response_content(content)
   
   completion = {
     "id": f"chatcmpl-{request_id}",
@@ -177,34 +255,42 @@ def build_prompt(tokenizer, _messages: List[Message], tools: Optional[List[Dict]
   # If no system message, add one
   if not has_system:
     conversation_with_system.insert(0, {"role": "system", "content": "You are a helpful assistant. Always respond in English only."})
+    chat_template_args = {"conversation": conversation_with_system, "tokenize": False, "add_generation_prompt": True}
   
-  chat_template_args = {"conversation": conversation_with_system, "tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
+  # Only add enable_thinking parameter for models that support it
+  # For models that don't support it, omit the parameter entirely
+  model_supports_thinking = hasattr(tokenizer, 'chat_template') and tokenizer.chat_template and 'enable_thinking' in str(tokenizer.chat_template)
+  # Additional check for DeepSeek and other thinking models
+  model_name = getattr(tokenizer, 'name_or_path', '').lower()
+  is_thinking_model = any(keyword in model_name for keyword in ['deepseek', 'qwen', 'o1']) if model_name else False
+  
+  if model_supports_thinking or is_thinking_model:
+    chat_template_args["enable_thinking"] = False
+    
   if tools: 
     chat_template_args["tools"] = tools
-
   try:
     prompt = tokenizer.apply_chat_template(**chat_template_args)
     if DEBUG >= 3: print(f"!!! Prompt: {prompt}")
     return prompt
-  except (UnicodeEncodeError, TypeError) as e:
-    if isinstance(e, TypeError) and "enable_thinking" in str(e):
+  except (UnicodeEncodeError, TypeError, ValueError) as e:
+    if DEBUG >= 1: print(f"Chat template error: {e}")
+    if isinstance(e, (TypeError, ValueError)) and ("enable_thinking" in str(e) or "unexpected keyword" in str(e).lower()):
       # Fallback: try without enable_thinking parameter for models that don't support it
       chat_template_args.pop("enable_thinking", None)
       try:
         prompt = tokenizer.apply_chat_template(**chat_template_args)
         if DEBUG >= 3: print(f"!!! Prompt (without enable_thinking): {prompt}")
         return prompt
-      except UnicodeEncodeError:
-        pass  # Fall through to Unicode handling below
-    
-    # Handle Unicode encoding by ensuring everything is UTF-8
+      except Exception as fallback_e:
+        if DEBUG >= 1: print(f"Fallback also failed: {fallback_e}")
+        # Fall through to Unicode handling below
     chat_template_args["conversation"] = [
       {k: v.encode('utf-8').decode('utf-8') if isinstance(v, str) else v 
        for k, v in item.items()}
       for item in conversation_with_system
-    ]
-    # Try to keep enable_thinking=False if it was originally set
-    if "enable_thinking" not in chat_template_args:
+    ]    # Only add enable_thinking if the model supports it
+    if (model_supports_thinking or is_thinking_model) and "enable_thinking" not in chat_template_args:
       chat_template_args["enable_thinking"] = False
     prompt = tokenizer.apply_chat_template(**chat_template_args)
     if DEBUG >= 3: print(f"!!! Prompt (UTF-8 encoded): {prompt}")
@@ -279,10 +365,11 @@ class ChatGPTAPI:
     cors.add(self.app.router.add_post("/quit", self.handle_quit), {"*": cors_options})
     cors.add(self.app.router.add_delete("/models/{model_name}", self.handle_delete_model), {"*": cors_options})
     cors.add(self.app.router.add_get("/initial_models", self.handle_get_initial_models), {"*": cors_options})
-    cors.add(self.app.router.add_post("/create_animation", self.handle_create_animation), {"*": cors_options})
+    # Animation endpoint removed due to missing dependencies
     cors.add(self.app.router.add_post("/download", self.handle_post_download), {"*": cors_options})
     cors.add(self.app.router.add_get("/v1/topology", self.handle_get_topology), {"*": cors_options})
     cors.add(self.app.router.add_get("/topology", self.handle_get_topology), {"*": cors_options})
+    cors.add(self.app.router.add_get("/debug/gpu", self.handle_debug_gpu), {"*": cors_options})
 
     # Add static routes
     if "__compiled__" not in globals():
@@ -412,6 +499,28 @@ class ChatGPTAPI:
         {"detail": f"Unsupported model: {chat_request.model} with inference engine {self.inference_engine_classname}. Supported models for this engine: {supported_models}"},
         status=400,
       )
+    
+    # Ensure model is loaded into GPU memory (especially important on Windows)
+    if DEBUG >= 1: 
+      print(f"[ChatGPTAPI] Loading model {chat_request.model} with shard {shard.start_layer}-{shard.end_layer}")
+      if platform.system().lower() == "windows":
+        print(f"[Windows] Ensuring GPU model loading for inference engine: {self.inference_engine_classname}")
+    
+    # Pre-load the model shard to ensure it's ready for inference
+    try:
+      await self.node.inference_engine.ensure_shard(shard)
+      if DEBUG >= 1:
+        print(f"[ChatGPTAPI] Model shard loaded successfully")
+        # On Windows, explicitly check if GPU is being used
+        if platform.system().lower() == "windows" and hasattr(self.node.inference_engine, 'gpu_offload_available'):
+          if getattr(self.node.inference_engine, 'gpu_offload_available', False):
+            print(f"[Windows] GPU offload is available and should be active")
+          else:
+            print(f"[Windows] WARNING: GPU offload not available - using CPU only")
+    except Exception as e:
+      if DEBUG >= 1:
+        print(f"[ChatGPTAPI] Error loading model shard: {e}")
+      # Continue anyway, let the node handle loading during inference
 
     # For GGUF models, extract repository part from file path for tokenizer
     repo_id = get_repo(shard.model_id, self.inference_engine_classname)
@@ -461,6 +570,10 @@ class ChatGPTAPI:
 
         try:
           # Stream tokens while waiting for inference to complete
+          consecutive_empty_tokens = 0
+          total_tokens_received = 0
+          max_total_tokens = 4096  # Hard limit to prevent infinite loops
+          
           while True:
             if DEBUG >= 2: print(f"[ChatGPTAPI] Waiting for token from queue: {request_id=}")
             tokens, is_finished = await asyncio.wait_for(
@@ -469,13 +582,38 @@ class ChatGPTAPI:
             )
             if DEBUG >= 2: print(f"[ChatGPTAPI] Got token from queue: {request_id=} {tokens=} {is_finished=}")
 
+            # More lenient circuit breaker for empty tokens
+            if not tokens or len(tokens) == 0:
+              consecutive_empty_tokens += 1
+              if consecutive_empty_tokens > 10:  # Increased threshold
+                if DEBUG >= 1: print(f"[ChatGPTAPI] Too many empty tokens, breaking: {request_id=}")
+                break
+            else:
+              consecutive_empty_tokens = 0
+              total_tokens_received += len(tokens)
+            
+            # Higher hard limit to allow longer responses
+            if total_tokens_received > max_total_tokens * 2:  # Doubled limit
+              if DEBUG >= 1: print(f"[ChatGPTAPI] Hard token limit reached: {total_tokens_received}")
+              is_finished = True
+
+            # Handle multiple potential EOS token IDs
+            common_eos_tokens = [2, 128001, 151645]
             eos_token_id = None
-            if tokenizer and not eos_token_id and hasattr(tokenizer, "eos_token_id"): eos_token_id = tokenizer.eos_token_id
-            if tokenizer and not eos_token_id and hasattr(tokenizer, "_tokenizer"): eos_token_id = tokenizer.special_tokens_map.get("eos_token_id")
+            if tokenizer and hasattr(tokenizer, "eos_token_id"): 
+              eos_token_id = tokenizer.eos_token_id
+              common_eos_tokens.append(eos_token_id)
+            if tokenizer and hasattr(tokenizer, "_tokenizer"): 
+              alt_eos = tokenizer.special_tokens_map.get("eos_token_id")
+              if alt_eos: common_eos_tokens.append(alt_eos)
 
             finish_reason = None
-            if is_finished: finish_reason = "stop" if tokens[-1] == eos_token_id else "length"
-            if DEBUG >= 2: print(f"{eos_token_id=} {tokens[-1]=} {finish_reason=}")
+            if is_finished: 
+              if tokens and any(tokens[-1] == eos for eos in common_eos_tokens):
+                finish_reason = "stop"
+              else:
+                finish_reason = "length"
+            if DEBUG >= 2: print(f"{eos_token_id=} {tokens[-1] if tokens else None} {finish_reason=}")
 
             completion = generate_completion(
               chat_request,
@@ -513,7 +651,17 @@ class ChatGPTAPI:
           # Clean up the queue for this request
           if request_id in self.token_queues:
             if DEBUG >= 2: print(f"[ChatGPTAPI] Cleaning up token queue: {request_id=}")
+            # Drain any remaining tokens to prevent memory leaks
+            try:
+              while not self.token_queues[request_id].empty():
+                self.token_queues[request_id].get_nowait()
+            except:
+              pass
             del self.token_queues[request_id]
+          
+          # Clean up any orphaned callback handlers
+          if hasattr(self.node, 'callback_system') and self.node.callback_system:
+            self.node.callback_system.unregister_token_callback(request_id)
       else:
         tokens = []
         while True:
@@ -650,36 +798,7 @@ class ChatGPTAPI:
       }
     return web.json_response(model_data)
 
-  async def handle_create_animation(self, request):
-    try:
-      data = await request.json()
-      replacement_image_path = data.get("replacement_image_path")
-      device_name = data.get("device_name", "Local Device")
-      prompt_text = data.get("prompt", "")
-
-      if DEBUG >= 2: print(f"Creating animation with params: replacement_image={replacement_image_path}, device={device_name}, prompt={prompt_text}")
-
-      if not replacement_image_path:
-        return web.json_response({"error": "replacement_image_path is required"}, status=400)
-
-      # Create temp directory if it doesn't exist
-      tmp_dir = Path(tempfile.gettempdir())/"exo_animations"
-      tmp_dir.mkdir(parents=True, exist_ok=True)
-
-      # Generate unique output filename in temp directory
-      output_filename = f"animation_{uuid.uuid4()}.mp4"
-      output_path = str(tmp_dir/output_filename)
-
-      if DEBUG >= 2: print(f"Animation temp directory: {tmp_dir}, output file: {output_path}, directory exists: {tmp_dir.exists()}, directory permissions: {oct(tmp_dir.stat().st_mode)[-3:]}")
-
-      # Create the animation
-      create_animation_mp4(replacement_image_path, output_path, device_name, prompt_text)
-
-      return web.json_response({"status": "success", "output_path": output_path})
-
-    except Exception as e:
-      if DEBUG >= 2: traceback.print_exc()
-      return web.json_response({"error": str(e)}, status=500)
+  # Animation handler removed due to missing dependencies
   async def handle_post_download(self, request):
     try:
       data = await request.json()
@@ -754,3 +873,60 @@ class ChatGPTAPI:
     img = (img[:, :, :3].astype(mx.float32)/255)*2 - 1
     img = img[None]
     return img
+
+  async def handle_debug_gpu(self, request):
+    """Debug endpoint to check GPU status and model loading"""
+    try:
+      debug_info = {
+        "platform": platform.system(),
+        "inference_engine": self.inference_engine_classname,
+        "gpu_offload_available": False,
+        "current_model": None,
+        "gpu_memory_usage": None,
+        "cuda_available": False
+      }
+      
+      # Check inference engine GPU support
+      if hasattr(self.node.inference_engine, 'gpu_offload_available'):
+        debug_info["gpu_offload_available"] = getattr(self.node.inference_engine, 'gpu_offload_available', False)
+      
+      # Check current model
+      if hasattr(self.node.inference_engine, 'shard') and self.node.inference_engine.shard:
+        debug_info["current_model"] = self.node.inference_engine.shard.model_id
+      
+      # Check CUDA availability (Windows specific)
+      if platform.system().lower() == "windows":
+        try:
+          import subprocess
+          result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'], 
+                                capture_output=True, text=True, timeout=5)
+          if result.returncode == 0:
+            debug_info["cuda_available"] = True
+            memory_line = result.stdout.strip().split('\n')[0]
+            used, total = memory_line.split(', ')
+            debug_info["gpu_memory_usage"] = {
+              "used_mb": int(used),
+              "total_mb": int(total),
+              "free_mb": int(total) - int(used),
+              "usage_percent": round((int(used) / int(total)) * 100, 1)
+            }
+        except Exception as e:
+          debug_info["gpu_error"] = str(e)
+      
+      # Test llamacpp GPU support if available
+      if self.inference_engine_classname == "LlamaCppInferenceEngine":
+        try:
+          from llama_cpp import llama_cpp
+          debug_info["llamacpp_gpu_support"] = llama_cpp.llama_supports_gpu_offload() if hasattr(llama_cpp, 'llama_supports_gpu_offload') else False
+          if hasattr(llama_cpp, 'llama_get_device_count'):
+            try:
+              debug_info["cuda_device_count"] = llama_cpp.llama_get_device_count()
+            except:
+              debug_info["cuda_device_count"] = "Error calling function"
+        except ImportError:
+          debug_info["llamacpp_error"] = "llama-cpp-python not available"
+      
+      return web.json_response(debug_info)
+      
+    except Exception as e:
+      return web.json_response({"error": str(e)}, status=500)

@@ -129,8 +129,22 @@ shard_downloader: ShardDownloader = new_shard_downloader(max_downloads) if args.
 inference_engine_name = args.inference_engine or "llamacpp"
 print(f"Inference engine name after selection: {inference_engine_name}")
 
+# Windows-specific debugging
+if platform.system().lower() == "windows":
+  print(f"[Windows] Platform detected, using inference engine: {inference_engine_name}")
+  if inference_engine_name == "llamacpp":
+    print(f"[Windows] LlamaCpp engine selected - checking GPU support")
+
 inference_engine = get_inference_engine(inference_engine_name, shard_downloader)
 print(f"Using inference engine: {inference_engine.__class__.__name__} with shard downloader: {shard_downloader.__class__.__name__}")
+
+# Windows-specific GPU status check
+if platform.system().lower() == "windows" and hasattr(inference_engine, 'gpu_offload_available'):
+  gpu_available = getattr(inference_engine, 'gpu_offload_available', False)
+  print(f"[Windows] GPU offload available: {gpu_available}")
+  if not gpu_available:
+    print(f"[Windows] WARNING: GPU offload not available! Install llama-cpp-python with CUDA support")
+    print(f"[Windows] Run: pip install -e . (auto-detects GPU) or ./fix_llamacpp_gpu.bat")
 
 if args.node_port is None:
   args.node_port = find_available_port(args.node_host)

@@ -307,29 +307,69 @@ async def windows_device_capabilities() -> DeviceCapabilities:
   contains_nvidia = any('nvidia' in gpu_name.lower() for gpu_name in gpu_names)
   contains_amd = any('amd' in gpu_name.lower() for gpu_name in gpu_names)
   if contains_nvidia:
-    import pynvml
+    # Try PyTorch first for RTX 50 series detection (better compatibility)
+    try:
+      import torch
+      if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        props = torch.cuda.get_device_properties(0)
+        gpu_name = props.name.upper()
+        gpu_memory = props.total_memory // (1024**2)  # Convert to MB
+        system_memory = psutil.virtual_memory().total // 2**20
+        total_memory = system_memory + gpu_memory
+        
+        # Check for PyTorch 2.6+ RTX 50 series support
+        if "RTX 50" in gpu_name or "5070" in gpu_name or "5080" in gpu_name or "5090" in gpu_name:
+          torch_version = torch.__version__.split('.')
+          major, minor = int(torch_version[0]), int(torch_version[1])
+          if major >= 2 and minor >= 6:
+            if DEBUG >= 1: print(f"✅ RTX 50 series detected via PyTorch {torch.__version__}")
+          else:
+            if DEBUG >= 1: print(f"⚠️ RTX 50 series detected but PyTorch {torch.__version__} may not fully support it")
+        
+        if DEBUG >= 2: print(f"PyTorch NVIDIA device {gpu_name=} GPU VRAM: {gpu_memory}MB, System RAM: {system_memory}MB, Total: {total_memory}MB")
+        
+        return DeviceCapabilities(
+          model=f"Windows Box ({gpu_name})",
+          chip=gpu_name,
+          memory=total_memory,
+          gpu_memory=gpu_memory,
+          system_memory=system_memory,
+          flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+        )
+    except ImportError:
+      if DEBUG >= 1: print("PyTorch not available, falling back to pynvml")
+    except Exception as e:
+      if DEBUG >= 1: print(f"PyTorch GPU detection failed: {e}, falling back to pynvml")
+    
+    # Fallback to pynvml
+    try:
+      import pynvml
 
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
-    gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
-    gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    system_memory = psutil.virtual_memory().total // 2**20
-    gpu_memory = gpu_memory_info.total // 2**20
-    total_memory = system_memory + gpu_memory
+      pynvml.nvmlInit()
+      handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+      gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
+      gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
+      gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+      system_memory = psutil.virtual_memory().total // 2**20
+      gpu_memory = gpu_memory_info.total // 2**20
+      total_memory = system_memory + gpu_memory
 
-    if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=} System RAM: {system_memory}MB, GPU VRAM: {gpu_memory}MB, Total: {total_memory}MB")
+      if DEBUG >= 2: print(f"NVML NVIDIA device {gpu_name=} {gpu_memory_info=} System RAM: {system_memory}MB, GPU VRAM: {gpu_memory}MB, Total: {total_memory}MB")
 
-    pynvml.nvmlShutdown()
+      pynvml.nvmlShutdown()
 
-    return DeviceCapabilities(
-      model=f"Windows Box ({gpu_name})",
-      chip=gpu_name,
-      memory=total_memory,
-      gpu_memory=gpu_memory,
-      system_memory=system_memory,
-      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
-    )
+      return DeviceCapabilities(
+        model=f"Windows Box ({gpu_name})",
+        chip=gpu_name,
+        memory=total_memory,
+        gpu_memory=gpu_memory,
+        system_memory=system_memory,
+        flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+      )
+    except ImportError:
+      if DEBUG >= 1: print("pynvml not available for NVIDIA GPU detection")
+    except Exception as e:
+      if DEBUG >= 1: print(f"NVML GPU detection failed: {e}")
   elif contains_amd:
     # For AMD GPUs, pyrsmi is the way (Official python package for rocm-smi)
     try:

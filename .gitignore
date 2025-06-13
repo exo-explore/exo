@@ -178,3 +178,22 @@ exo/tinychat/images/*.png
 
 venv-windows/
 venv-linux/
+
+# Temporary diagnostic files
+*diagnostic*.py
+*diagnostic*.json
+comprehensive_*_test.py
+fix_*_gpu.py
+quick_*_fix.py
+post_install_*_test.py
+
+# Documentation files (keep main README.md only)
+GRPC_TIMEOUT_FIX.md
+INSTALLATION_GUIDE.md
+RTX_*_SUPPORT.md
+WINDOWS_*_SETUP.md
+WINDOWS_*_FIX.md
+WINDOWS_*_OPTIMIZATION.md
+
+# Animation assets
+exo/apputil/baseimages/

@@ -410,6 +410,20 @@
     class="input-button">
     <i :class="generating ? 'fa-spinner fa-spin' : 'fa-paper-plane'" class="fas"></i>
 </button>
+<!-- Emergency reset button for stuck generating state -->
+<button
+    x-show="generating"
+    @click="
+        generating = false; 
+        generatingStartTime = null;
+        console.log('Emergency reset: Generating state manually reset');
+        $nextTick(() => $refs.inputForm.focus());
+    "
+    class="input-button"
+    style="background-color: #a52e4d; margin-left: 0.5rem;"
+    title="Reset if stuck generating">
+    <i class="fas fa-stop"></i>
+</button>
 </div>
 </div>
 </main>

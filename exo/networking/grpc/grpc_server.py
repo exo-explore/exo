@@ -2,6 +2,7 @@ import grpc
 from concurrent import futures
 import numpy as np
 from asyncio import CancelledError
+import zlib
 
 import platform
 
@@ -24,6 +25,21 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     self.host = host
     self.port = port
     self.server = None
+
+  def _compress_tensor_data(self, tensor_data: bytes) -> bytes:
+    """Compress tensor data using zlib for efficient transmission"""
+    if len(tensor_data) > 1024:  # Only compress if larger than 1KB
+      return zlib.compress(tensor_data, level=1)  # Fast compression
+    return tensor_data
+
+  def _decompress_tensor_data(self, compressed_data: bytes, original_size: int) -> bytes:
+    """Decompress tensor data, with fallback for uncompressed data"""
+    try:
+      if len(compressed_data) < original_size:  # Likely compressed
+        return zlib.decompress(compressed_data)
+    except zlib.error:
+      pass  # Not compressed or corrupted
+    return compressed_data
 
   async def start(self) -> None:
     self.server = grpc.aio.server(
@@ -81,15 +97,25 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       end_layer=request.shard.end_layer,
       n_layers=request.shard.n_layers,
     )
-    tensor = np.frombuffer(request.tensor.tensor_data, dtype=np.dtype(request.tensor.dtype)).reshape(request.tensor.shape)
+    
+    # Decompress incoming tensor data
+    original_size = np.prod(request.tensor.shape) * np.dtype(request.tensor.dtype).itemsize
+    decompressed_data = self._decompress_tensor_data(request.tensor.tensor_data, original_size)
+    tensor = np.frombuffer(decompressed_data, dtype=np.dtype(request.tensor.dtype)).reshape(request.tensor.shape)
+    
     request_id = request.request_id
-
     inference_state = None if request.inference_state is None else self.deserialize_inference_state(request.inference_state)
 
     result = await self.node.process_tensor(shard, tensor, request_id, inference_state)
     if DEBUG >= 5: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
-    tensor_data = result.tobytes() if result is not None else None
-    return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
+    
+    if result is not None:
+      # Compress response tensor data
+      result_bytes = result.tobytes()
+      compressed_result = self._compress_tensor_data(result_bytes)
+      return node_service_pb2.Tensor(tensor_data=compressed_result, shape=result.shape, dtype=str(result.dtype))
+    else:
+      return node_service_pb2.Tensor()
 
   async def SendExample(self, request, context):
     shard = Shard(
