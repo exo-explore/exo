@@ -1,7 +1,7 @@
 [project]
-name = "shared"
+name = "exo-shared"
 version = "0.1.0"
-description = "Add your description here"
+description = "Shared utilities for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

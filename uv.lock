@@ -13,10 +13,10 @@ supported-markers = [
 [manifest]
 members = [
     "exo",
-    "master",
-    "mlx",
-    "shared",
-    "worker",
+    "exo-engine-mlx",
+    "exo-master",
+    "exo-shared",
+    "exo-worker",
 ]
 
 [[package]]
@@ -45,8 +45,8 @@ name = "exo"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "master", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "worker", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "exo-master", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "exo-worker", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.optional-dependencies]
@@ -64,9 +64,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "master", virtual = "master" },
-    { name = "mlx", marker = "extra == 'darwin'", virtual = "engines/mlx" },
-    { name = "worker", virtual = "worker" },
+    { name = "exo-master", virtual = "master" },
+    { name = "exo-worker", virtual = "worker" },
+    { name = "mlx", marker = "extra == 'darwin'" },
 ]
 provides-extras = ["darwin"]
 
@@ -77,6 +77,36 @@ dev = [
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "ruff", specifier = ">=0.11.13" },
 ]
+
+[[package]]
+name = "exo-engine-mlx"
+version = "0.1.0"
+source = { virtual = "engines/mlx" }
+
+[[package]]
+name = "exo-master"
+version = "0.1.0"
+source = { virtual = "master" }
+
+[[package]]
+name = "exo-shared"
+version = "0.1.0"
+source = { virtual = "shared" }
+dependencies = [
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "rich", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "rich", specifier = ">=14.0.0" },
+]
+
+[[package]]
+name = "exo-worker"
+version = "0.1.0"
+source = { virtual = "worker" }
 
 [[package]]
 name = "iniconfig"
@@ -100,11 +130,6 @@ wheels = [
 ]
 
 [[package]]
-name = "master"
-version = "0.1.0"
-source = { virtual = "master" }
-
-[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -115,8 +140,14 @@ wheels = [
 
 [[package]]
 name = "mlx"
-version = "0.1.0"
-source = { virtual = "engines/mlx" }
+version = "0.26.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/a7/871c451fe81274d37022a62f825c1dcd22b30e1f8bd2241f91d9f508c9b9/mlx-0.26.1-cp313-cp313-macosx_13_0_arm64.whl", hash = "sha256:ccd8662abad0f1340326412d6051c116fcb5c923c4d2a25ba1277ae65ab140dd", size = 32396333 },
+    { url = "https://files.pythonhosted.org/packages/82/77/720bea5a67934b50372dfd5043864458f103743edcc7c30049e788ea3762/mlx-0.26.1-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:0c113dd7c7ac13af6e39f0132d33a8dc78928e858ba8d18f8c89f8bfa694a358", size = 31871172 },
+    { url = "https://files.pythonhosted.org/packages/15/4f/83f67bc4fe012dffffd2d96d2767b83fee9b2d7d185611d554ac659cfa4d/mlx-0.26.1-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:2ec37131dbb06c0be78ce56b1731ddab6e56183012e7b83bea79b5329ef7d695", size = 31871791 },
+    { url = "https://files.pythonhosted.org/packages/4f/fb/4123952002fd91f096ba07ce797b6bb6a32cc7a89c988565e261559f77dd/mlx-0.26.1-cp313-cp313-manylinux_2_31_x86_64.whl", hash = "sha256:db96a53466d8efc6cf2a2918b2d4e29cbf9f25174c838fb3c380c8717a40752f", size = 10120515 },
+]
 
 [[package]]
 name = "nodejs-wheel-binaries"
@@ -286,21 +317,6 @@ wheels = [
 ]
 
 [[package]]
-name = "shared"
-version = "0.1.0"
-source = { virtual = "shared" }
-dependencies = [
-    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "rich", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "rich", specifier = ">=14.0.0" },
-]
-
-[[package]]
 name = "typing-extensions"
 version = "4.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -320,8 +336,3 @@ sdist = { url = "https://files.pythonhosted.org/packages/f8/b1/0c11f5058406b3af7
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/69/cd203477f944c353c31bade965f880aa1061fd6bf05ded0726ca845b6ff7/typing_inspection-0.4.1-py3-none-any.whl", hash = "sha256:389055682238f53b04f7badcb49b989835495a96700ced5dab2d8feae4b26f51", size = 14552 },
 ]
-
-[[package]]
-name = "worker"
-version = "0.1.0"
-source = { virtual = "worker" }

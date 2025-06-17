@@ -5,8 +5,8 @@ description = "Exo"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "master",
-    "worker",
+    "exo-master",
+    "exo-worker",
 ]
 
 # dependencies only required for development
@@ -41,10 +41,10 @@ members = [
 ]
 
 [tool.uv.sources]
-shared = { workspace = true }
-master = { workspace = true }
-worker = { workspace = true }
-mlx = { workspace = true }
+exo-shared = { workspace = true }
+exo-master = { workspace = true }
+exo-worker = { workspace = true }
+exo-engine-mlx = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
