@@ -16,7 +16,7 @@ dev = [
 
 [tool.uv.workspace]
 members = [
-    "master", "worker", "shared",
+    "master", "worker", "shared", "engines/*",
 ]
 
 [tool.basedpyright] 
