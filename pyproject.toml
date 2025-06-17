@@ -26,9 +26,10 @@ darwin = [
 
 # task runner configuration
 [tool.poe.tasks]
-fmt = { shell = "ruff format .", help = "Format the code" }
+fmt = { shell = "ruff format master worker shared", help = "Format the code" }
+lint = { shell = "ruff check --fix master worker shared", help = "Run the linter" }
 test = { shell = "pytest master worker shared", help = "Run the tests" }
-check = { shell = "basedpyright --project .", help = "Run type checker" }
+check = { shell = "basedpyright --project master worker shared", help = "Run type checker" }
 
 ###
 # workspace configuration
@@ -91,3 +92,10 @@ environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
 ]
+
+###
+# ruff configuration
+###
+
+[tool.ruff.lint]
+extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
