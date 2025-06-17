@@ -26,10 +26,10 @@ darwin = [
 
 # task runner configuration
 [tool.poe.tasks]
-fmt = { shell = "ruff format master worker shared", help = "Format the code" }
-lint = { shell = "ruff check --fix master worker shared", help = "Run the linter" }
-test = { shell = "pytest master worker shared", help = "Run the tests" }
-check = { shell = "basedpyright --project master worker shared", help = "Run type checker" }
+fmt = { shell = "ruff format master worker shared engines/*", help = "Format the code" }
+lint = { shell = "ruff check --fix master worker shared engines/*", help = "Run the linter" }
+test = { shell = "pytest master worker shared engines/*", help = "Run the tests" }
+check = { shell = "basedpyright --project master worker shared engines/*", help = "Run type checker" }
 
 ###
 # workspace configuration
