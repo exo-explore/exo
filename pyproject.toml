@@ -4,8 +4,12 @@ version = "0.2.0"
 description = "Exo"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "master",
+    "worker",
+]
 
+# dependencies only required for development
 [dependency-groups]
 dev = [
     "basedpyright>=1.29.4",
@@ -14,10 +18,51 @@ dev = [
     "ruff>=0.11.13",
 ]
 
+# dependencies only required for Apple Silicon
+[project.optional-dependencies]
+darwin = [
+    "mlx",
+]
+
+# task runner configuration
+[tool.poe.tasks]
+fmt = { shell = "ruff format .", help = "Format the code" }
+test = { shell = "pytest master worker shared", help = "Run the tests" }
+check = { shell = "basedpyright --project .", help = "Run type checker" }
+
+###
+# workspace configuration
+###
+
 [tool.uv.workspace]
 members = [
     "master", "worker", "shared", "engines/*",
 ]
+
+[tool.uv.sources]
+shared = { workspace = true }
+master = { workspace = true }
+worker = { workspace = true }
+mlx = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+clean = true
+
+[tool.hatch.build.targets.wheel]
+packages = []
+only-include = ["pyproject.toml", "README.md"]
+
+[tool.hatch.build.targets.sdist]
+packages = []
+only-include = ["pyproject.toml", "README.md"]
+
+###
+# type-checker configuration
+###
 
 [tool.basedpyright] 
 typeCheckingMode = "strict"
@@ -36,7 +81,13 @@ include = ["master", "worker", "shared", "engines/*"]
 pythonVersion  = "3.13"
 pythonPlatform = "Darwin"
 
-[tool.poe.tasks]
-fmt = { shell = "ruff format .", help = "Format the code" }
-test = { shell = "pytest master worker shared", help = "Run the tests" }
-check = { shell = "basedpyright --project .", help = "Run type checker" }
+###
+# uv configuration
+###
+
+# supported platforms for this project
+[tool.uv]
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+]
