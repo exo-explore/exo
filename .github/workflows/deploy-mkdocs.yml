@@ -1,0 +1,32 @@
+# Deploy MkDocs to GitHub Pages
+# This workflow will build your MkDocs site and deploy it to the gh-pages branch on every push to main.
+
+name: Deploy MkDocs to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install mkdocs mkdocs-material
+
+      - name: Build and deploy
+        run: |
+          mkdocs gh-deploy --force --config-file docs/mkdocs/mkdocs.yml
