@@ -298,3 +298,15 @@ exo supports the following inference engines:
 
 - ✅ [GRPC](exo/networking/grpc)
 - 🚧 NCCL
+
+---
+
+## Bounties & Contribution Status
+
+- The exo project previously offered bounties for specific features and improvements (see `docs/exo bounties - Bounties.csv`).
+- **Note:** As of June 2025, some bounties—especially vision-related ones—may not be actively paid out. Please check the relevant GitHub issue or ask on [Discord](https://discord.gg/EUnjGpsmWw) before starting work if you are seeking a reward.
+- We still value and encourage contributions! Even if a bounty is not officially active, high-quality work may be eligible for a retrospective reward.
+- The bounty list is for reference and inspiration. If you have an idea or improvement, feel free to implement it and open a PR.
+- For the latest status, see the [GitHub Issues](https://github.com/exo-explore/exo/issues) or contact the maintainers on Discord.
+
+_Last updated: June 2025_
