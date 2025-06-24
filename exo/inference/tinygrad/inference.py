@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 from exo.inference.tinygrad.models.llama import Transformer, TransformerShard, convert_from_huggingface, fix_bf16, sample_logits
+from exo.inference.tinygrad.models.deepseek_v3 import DeepseekV3Transformer, convert_deepseek_v3_from_huggingface
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import safe_save, safe_load, get_state_dict, load_state_dict
@@ -38,9 +39,92 @@ MODEL_PARAMS = {
   "70B": {"args": {"dim": 8192, "n_heads": 64, "n_kv_heads": 8, "n_layers": 80, "norm_eps": 1e-5, "rope_theta": 500000, "vocab_size": 128256, "hidden_dim": 28672}, "files": 8}
 }
 
+DEEPSEEK_V3_PARAMS = {
+  "deepseek-v3": {
+    "args": {
+      "dim": 7168,
+      "n_heads": 128,
+      "n_kv_heads": 128,
+      "n_layers": 61,
+      "norm_eps": 1e-6,
+      "vocab_size": 129280,
+      "intermediate_size": 18432,
+      "max_seq_len": 163840,
+      "n_routed_experts": 64,
+      "n_shared_experts": 2,
+      "qk_nope_head_dim": 128,
+      "qk_rope_head_dim": 64,
+      "v_head_dim": 128,
+      "q_lora_rank": 1536,
+      "rope_theta": 10000,
+      "rope_scaling": {"type": "deepseek", "mscale": 1.0, "mscale_all": 1.0},
+      "moe_layer_indices": list(range(1, 61, 3))  # Every 3rd layer starting from layer 1
+    }, "files": 1
+  }
+}
+
+
+def build_deepseek_v3_transformer(model_path: Path, shard: Shard, config: dict, device=None):
+  """Build Deepseek V3 transformer model"""
+  linear = nn.Linear
+  
+  # Use config from Hugging Face model
+  model_args = {
+    "dim": config.get("hidden_size", 7168),
+    "n_heads": config.get("num_attention_heads", 128),
+    "n_kv_heads": config.get("num_key_value_heads", 128),
+    "n_layers": config.get("num_hidden_layers", 61),
+    "norm_eps": config.get("rms_norm_eps", 1e-6),
+    "vocab_size": config.get("vocab_size", 129280),
+    "intermediate_size": config.get("intermediate_size", 18432),
+    "max_seq_len": config.get("max_position_embeddings", 163840),
+    "n_routed_experts": config.get("n_routed_experts", 64),
+    "n_shared_experts": config.get("n_shared_experts", 2),
+    "qk_nope_head_dim": config.get("qk_nope_head_dim", 128),
+    "qk_rope_head_dim": config.get("qk_rope_head_dim", 64),
+    "v_head_dim": config.get("v_head_dim", 128),
+    "q_lora_rank": config.get("q_lora_rank", 1536),
+    "rope_theta": config.get("rope_theta", 10000),
+    "rope_scaling": config.get("rope_scaling"),
+    "moe_layer_indices": config.get("moe_layer_indices", list(range(1, 61, 3))),
+    "shard": shard,
+    "linear": linear,
+    "jit": True,
+  }
+  
+  model = DeepseekV3Transformer(**model_args)
+
+  # Load weights
+  if model_path.is_dir():
+    if (model_path/"model.safetensors.index.json").exists(): 
+      weights = load(str(model_path/"model.safetensors.index.json"), shard)
+    elif (model_path/"model.safetensors").exists(): 
+      weights = load(str(model_path/"model.safetensors"), shard)
+    else: 
+      weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(1)], device[0] if isinstance(device, tuple) else device)
+  else:
+    weights = load(str(model_path), shard)
+  
+  weights = convert_deepseek_v3_from_huggingface(weights, model, model_args["n_heads"], model_args["n_kv_heads"])
+  weights = fix_bf16(weights)
+
+  with Context(BEAM=0):
+    # Replace weights in model
+    load_state_dict(model, weights, strict=False, consume=False)
+
+  return model
+
 
 def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
-  # build model
+  # Check if it's a Deepseek V3 model
+  config_path = model_path / "config.json" if model_path.is_dir() else model_path.parent / "config.json"
+  if config_path.exists():
+    with open(config_path) as f:
+      config = json.load(f)
+    if config.get("model_type") == "deepseek_v3":
+      return build_deepseek_v3_transformer(model_path, shard, config, device)
+  
+  # Build Llama model (existing code)
   linear = nn.Linear
   model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
 

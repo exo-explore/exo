@@ -88,9 +88,21 @@ model_cards = {
   ### deepseek
   "deepseek-coder-v2-lite": { "layers": 27, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx", }, },
   "deepseek-coder-v2.5": { "layers": 60, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-V2.5-MLX-AQ4_1_64", }, },
-  "deepseek-v3": { "layers": 61, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-V3-4bit", }, },
+  "deepseek-v3": { 
+    "layers": 61, 
+    "repo": { 
+      "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-V3-4bit",
+      "TinygradDynamicShardInferenceEngine": "deepseek-ai/DeepSeek-V3",
+    }, 
+  },
   "deepseek-v3-3bit": { "layers": 61, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-V3-3bit", }, },
-  "deepseek-r1": { "layers": 61, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-R1-4bit", }, },
+  "deepseek-r1": { 
+    "layers": 61, 
+    "repo": { 
+      "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-R1-4bit",
+      "TinygradDynamicShardInferenceEngine": "deepseek-ai/DeepSeek-R1",
+    }, 
+  },
   "deepseek-r1-3bit": { "layers": 61, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/DeepSeek-R1-3bit", }, },
   ### deepseek distills
   "deepseek-r1-distill-qwen-1.5b": { "layers": 28, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/deepseek-r1-distill-qwen-1.5b", }, },
