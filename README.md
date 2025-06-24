@@ -85,13 +85,47 @@ The current recommended way to install exo is from source.
 
 ### From source
 
+#### Option 1: Using Python Virtual Environment (Recommended)
+
+```sh
+# Clone the repository
+git clone https://github.com/exo-explore/exo.git
+cd exo
+
+# Create a virtual environment
+python3 -m venv exo-env
+
+# Activate the virtual environment
+# On macOS/Linux:
+source exo-env/bin/activate
+# On Windows:
+# exo-env\Scripts\activate
+
+# Install exo in editable mode
+pip install -e .
+```
+
+To run exo after installation:
+```sh
+# Make sure the virtual environment is activated
+source exo-env/bin/activate  # or exo-env\Scripts\activate on Windows
+exo
+```
+
+#### Option 2: Using the install script
+
+```sh
+git clone https://github.com/exo-explore/exo.git
+cd exo
+source install.sh
+```
+
+#### Option 3: Direct pip install (not recommended for development)
 
 ```sh
 git clone https://github.com/exo-explore/exo.git
 cd exo
 pip install -e .
-# alternatively, with venv
-source install.sh
 ```
 
 
