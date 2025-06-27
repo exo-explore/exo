@@ -30,6 +30,7 @@ fmt = { shell = "ruff format master worker shared engines/*", help = "Format the
 lint = { shell = "ruff check --fix master worker shared engines/*", help = "Run the linter" }
 test = { shell = "pytest master worker shared engines/*", help = "Run the tests" }
 check = { shell = "basedpyright --project master worker shared engines/*", help = "Run type checker" }
+sync = { shell = "uv sync --all-packages", help = "Sync the dependencies" }
 
 ###
 # workspace configuration
