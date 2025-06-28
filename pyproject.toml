@@ -13,7 +13,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "basedpyright>=1.29.4",
-    "poethepoet>=0.35.0",
     "pytest>=8.4.0",
     "ruff>=0.11.13",
 ]
@@ -23,16 +22,6 @@ dev = [
 darwin = [
     "mlx",
 ]
-
-# task runner configuration
-[tool.poe.tasks]
-fmt = { shell = "ruff format master worker shared engines/*", help = "Format the code" }
-lint = { shell = "ruff check --fix master worker shared engines/*", help = "Run the linter" }
-test = { shell = "pytest master worker shared engines/*", help = "Run the tests" }
-check = { shell = "basedpyright --project pyproject.toml", help = "Run type checker" }
-sync = { shell = "uv sync --all-packages", help = "Sync the dependencies" }
-protobufs = { shell = "just regenerate-protobufs", help = "Regenerate the protobufs" }
-build = { shell = "just regenerate-protobufs && uv build --all-packages", help = "Build the project" }
 
 ###
 # workspace configuration
