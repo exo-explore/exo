@@ -4,4 +4,21 @@ version = "0.1.0"
 description = "Worker for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["exo-shared"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+clean = true
+
+[tool.hatch.build.targets.wheel]
+packages = []
+include = ["*"]
+exclude = ["*.md", "pyproject.toml"]
+
+[tool.hatch.build.targets.sdist]
+packages = []
+include = ["*"]
+exclude = ["*.md", "pyproject.toml"]
