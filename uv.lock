@@ -64,7 +64,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exo-master", virtual = "master" },
+    { name = "exo-master", editable = "master" },
     { name = "exo-worker", virtual = "worker" },
     { name = "mlx", marker = "extra == 'darwin'" },
 ]
@@ -81,12 +81,12 @@ dev = [
 [[package]]
 name = "exo-engine-mlx"
 version = "0.1.0"
-source = { virtual = "engines/mlx" }
+source = { editable = "engines/mlx" }
 
 [[package]]
 name = "exo-master"
 version = "0.1.0"
-source = { virtual = "master" }
+source = { editable = "master" }
 
 [[package]]
 name = "exo-shared"
