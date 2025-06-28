@@ -6,5 +6,5 @@ runs:
   using: "composite"
   steps:
     - name: Lint code
-      run: uv run poe lint
-      shell: bash 
+      run: nix develop -c just lint
+      shell: bash

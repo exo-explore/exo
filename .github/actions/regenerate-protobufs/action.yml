@@ -7,4 +7,4 @@ runs:
   steps:
     - name: Regenerate protobufs
       run: nix develop -c just regenerate-protobufs
-      shell: bash 
+      shell: bash

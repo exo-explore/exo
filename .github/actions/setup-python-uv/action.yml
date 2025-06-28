@@ -13,7 +13,7 @@ runs:
 
     - name: Install Python
       run: uv python install
-      shell: bash 
+      shell: bash
 
     - name: Sync
       run: uv sync --locked --all-extras --dev

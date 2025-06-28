@@ -6,5 +6,5 @@ runs:
   using: "composite"
   steps:
     - name: Run type checker
-      run: uv run poe check
-      shell: bash 
+      run: nix develop -c just check
+      shell: bash

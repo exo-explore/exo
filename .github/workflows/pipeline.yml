@@ -14,7 +14,7 @@ jobs:
   typecheck:
     runs-on: ubuntu-22.04
     steps:
-      - uses: ./.github/workflows/type-check.yml
+      - uses: ./.github/actions/typecheck
   ci:
     needs: typecheck
     runs-on: ubuntu-22.04
@@ -37,9 +37,6 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Python and uv
-        uses: ./.github/actions/setup-python-uv
 
       - uses: ./.github/actions/regenerate-protobufs
 

@@ -6,5 +6,5 @@ runs:
   using: "composite"
   steps:
     - name: Format code
-      run: uv run poe fmt
-      shell: bash 
+      run: nix develop -c just fmt
+      shell: bash
