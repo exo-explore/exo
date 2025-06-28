@@ -5,6 +5,7 @@ description = "Shared utilities for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "protobuf>=6.31.1",
     "pydantic>=2.11.7",
     "rich>=14.0.0",
 ]
