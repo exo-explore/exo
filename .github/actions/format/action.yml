@@ -1,0 +1,10 @@
+name: Format Code
+
+description: "Run code formatter"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Format code
+      run: uv run poe fmt
+      shell: bash 

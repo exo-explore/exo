@@ -1,0 +1,10 @@
+name: Type Check
+
+description: "Run static type checker"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run type checker
+      run: uv run poe check
+      shell: bash 

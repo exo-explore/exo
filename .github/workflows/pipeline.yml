@@ -1,0 +1,67 @@
+name: ci-pipeline
+
+on:
+  push:
+    branches:
+      - staging
+      - main
+  pull_request:
+    branches:
+      - staging
+      - main
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: ./.github/workflows/type-check.yml
+  ci:
+    needs: typecheck
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git user
+        run: |
+          git config --local user.email "github-actions@users.noreply.github.com"
+          git config --local user.name  "github-actions bot"
+        shell: bash
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python and uv
+        uses: ./.github/actions/setup-python-uv
+
+      - uses: ./.github/actions/regenerate-protobufs
+
+      - name: Commit regenerated protobufs
+        uses: ./.github/actions/conditional-commit
+        with:
+          message: "chore(proto) regenerate protobufs"
+
+      - uses: ./.github/actions/format
+
+      - name: Commit formatted code
+        uses: ./.github/actions/conditional-commit
+        with:
+          message: "chore(format): format code"
+
+      - uses: ./.github/actions/lint
+
+      - name: Commit lint fixes
+        uses: ./.github/actions/conditional-commit
+        with:
+          message: "chore(lint): fix linting errors"
+
+      - name: Push changes
+        run: git push
+        shell: bash

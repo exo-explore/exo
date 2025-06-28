@@ -1,0 +1,10 @@
+name: Lint Code
+
+description: "Run code linter"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Lint code
+      run: uv run poe lint
+      shell: bash 
