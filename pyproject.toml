@@ -31,6 +31,8 @@ lint = { shell = "ruff check --fix master worker shared engines/*", help = "Run 
 test = { shell = "pytest master worker shared engines/*", help = "Run the tests" }
 check = { shell = "basedpyright --project master worker shared engines/*", help = "Run type checker" }
 sync = { shell = "uv sync --all-packages", help = "Sync the dependencies" }
+protobufs = { shell = "just regenerate-protobufs", help = "Regenerate the protobufs" }
+build = { shell = "just regenerate-protobufs && uv build --all-packages", help = "Build the project" }
 
 ###
 # workspace configuration
@@ -83,6 +85,8 @@ include = ["master", "worker", "shared", "engines/*"]
 pythonVersion  = "3.13"
 pythonPlatform = "Darwin"
 
+exclude = ["shared/protobufs/**"]
+
 ###
 # uv configuration
 ###
@@ -97,6 +101,9 @@ environments = [
 ###
 # ruff configuration
 ###
+
+[tool.ruff]
+extend-exclude = ["shared/protobufs/**"]
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]

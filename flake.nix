@@ -20,6 +20,8 @@
             packages = [
               pkgs.python313
               pkgs.uv
+              pkgs.just
+              pkgs.protobuf
             ];
           };
         }
