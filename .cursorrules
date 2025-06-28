@@ -1,0 +1,64 @@
+# follow **every** rule exactly; report any violation instead of silently fixing it.
+
+You must prioritize straightforward code semantics, well-named types, clear function signatures, and robust, carefully-chosen abstractions. Think about how your decisions might impact these aspects of code quality before proposing any changes.
+
+You can use the advanced features of `typing`. You have access to all of the new features from Python 3.13, 3.12, 3.11...
+
+**When you're done making your changes, remove any redundant comments that you may have left; the comments that remain should only apply to complex segments of code, adding relevant context.**
+
+## 1. Code Discipline
+
+* Eliminate superfluous `try` / `catch` and `if` branches through strict typing and static analysis.
+* Use pure functions unless you must mutate fixed state—then wrap that state in a class.
+* Every function is **referentially transparent**: same inputs ⇒ same outputs, no hidden state, no unintended I/O.
+* Put side-effects in injectable “effect handlers”; keep core logic pure.
+
+## 2. Naming
+
+* Choose descriptive, non-abbreviated names—no 3-letter acronyms or non-standard contractions.
+* Anyone reading a function’s type signature alone should grasp its purpose without extra context.
+
+## 3. Typing
+
+* Maintain **strict, exhaustive** typing; never bypass the type-checker.
+* Default to `Literal[...]` when an enum-like set is needed.
+* Prefer built-in types; when two values share structure but differ in meaning, enforce separation:
+  * Use `typing.NewType` for primitives (zero runtime cost).
+  * For serialisable objects, add a `type: str` field that states the object’s identity.
+
+## 4. Pydantic
+
+* Read, respect, and rely on Pydantic docs.
+* Centralise a common `ConfigDict` with `frozen=True` and `strict=True` (or stricter) and reuse it everywhere.
+* For hierarchies of `BaseModel` variants, declare a discriminated union with `typing.Annotated[Base, Field(discriminator='variant')]`; publish a single `TypeAdapter[Base]` so all variants share one strict validator.
+
+## 5. IDs & UUIDs
+
+* Subclass Pydantic’s `UUID4` for custom ID types.
+* Generate fresh IDs with `uuid.uuid4()`.
+* Create idempotency keys by hashing *persisted* state plus a **function-specific salt** to avoid collisions after crashes.
+
+## 6. Error Handling
+
+* Catch an exception **only** where you can handle or transform it meaningfully.
+* State in the docstring **where** each exception is expected to be handled and **why**.
+
+## 7. Dependencies
+
+* Introduce new external dependencies only after approval.
+* Request only libraries common in production environments.
+
+## 8. Use of `@final` & Freezing
+
+* Mark classes, methods, and variables as `@final` or otherwise immutable wherever applicable.
+
+## 9. Repository Workflow
+
+If you spot a rule violation within code that you've not been asked to work on directly, inform the user rather than patching it ad-hoc.
+
+
+---
+
+### One-Sentence Summary
+
+Write strictly-typed, pure, self-describing Python that uses Pydantic, well-scoped side-effects, immutable state, approved dependencies, and explicit error handling
