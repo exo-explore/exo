@@ -9,3 +9,25 @@ dependencies = [
     "pydantic>=2.11.7",
     "rich>=14.0.0",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+clean = true
+
+[tool.hatch.build.targets.wheel]
+packages = []
+include = ["*"]
+exclude = ["protobufs/schemas", "*.md", "pyproject.toml"]
+
+[tool.hatch.build.targets.sdist]
+packages = []
+include = ["*"]
+exclude = ["protobufs/schemas", "*.md", "pyproject.toml"]
+
+[dependency-groups]
+dev = [
+    "types-protobuf>=6.30.2.20250516",
+]
