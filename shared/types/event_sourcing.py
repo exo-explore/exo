@@ -15,17 +15,55 @@ from pydantic import BaseModel, Field, TypeAdapter
 from pydantic.types import UuidVersion
 
 _EventId = Annotated[UUID, UuidVersion(4)]
-EventId = type("EventID", (UUID,), {})
+EventId = type("EventId", (UUID,), {})
 EventIdParser: TypeAdapter[EventId] = TypeAdapter(_EventId)
 
-EventTypes = Literal["create", "update", "delete"]
+EventTypes = Literal[
+    "ChatCompletionsRequestStarted",
+    "ChatCompletionsRequestCompleted",
+    "ChatCompletionsRequestFailed",
+    "InferenceSagaStarted",
+    "InferencePrepareStarted",
+    "InferencePrepareCompleted",
+    "InferenceTriggerStarted",
+    "InferenceTriggerCompleted",
+    "InferenceCompleted",
+    "InferenceSagaCompleted",
+    "InstanceSetupSagaStarted",
+    "InstanceSetupSagaCompleted",
+    "InstanceSetupSagaFailed",
+    "ShardAssigned",
+    "ShardAssignFailed",
+    "ShardUnassigned",
+    "ShardUnassignFailed",
+    "ShardKilled",
+    "ShardDied",
+    "ShardSpawned",
+    "ShardSpawnedFailed",
+    "ShardDespawned",
+    "NodeConnected",
+    "NodeConnectionProfiled",
+    "NodeDisconnected",
+    "NodeStarted",
+    "DeviceRegistered",
+    "DeviceProfiled",
+    "TokenGenerated",
+    "RepoProgressEvent",
+    "TimerScheduled",
+    "TimerFired",
+]
 EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
 TEventType = TypeVar("TEventType", bound=EventTypes, covariant=True)
 
 
 class Event(BaseModel, Generic[TEventType]):
     event_type: TEventType
-    idem_key: EventId
+    event_id: EventId
+
+class PersistedEvent(BaseModel, Generic[TEventType]):
+    event: Event[TEventType]
+    sequence_number: int = Field(gt=0)
+
 
 
 class State(BaseModel, Generic[EventTypeT]):
@@ -81,7 +119,7 @@ def get_effects_from_sagas(
 IdemKeyGenerator = Callable[[State[EventTypeT], int], Sequence[EventId]]
 
 _CommandId = Annotated[UUID, UuidVersion(4)]
-CommandId = type("CommandID", (UUID,), {})
+CommandId = type("CommandId", (UUID,), {})
 CommandIdParser: TypeAdapter[CommandId] = TypeAdapter(_CommandId)
 
 CommandTypes = Literal["create", "update", "delete"]
@@ -91,7 +129,7 @@ TCommandType = TypeVar("TCommandType", bound=EventTypes, covariant=True)
 
 class Command(BaseModel, Generic[TEventType, TCommandType]):
     command_type: TCommandType
-    idem_key: CommandId
+    command_id: CommandId
 
 
 Decide = Callable[
