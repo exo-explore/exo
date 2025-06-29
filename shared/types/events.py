@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter, UuidVersion
 
+from shared.openai import FinishReason, chat
 from shared.types.event_sourcing import Event
 from shared.types.model import ModelId
 
@@ -24,15 +25,6 @@ _TimerId = Annotated[UUID, UuidVersion(4)]
 TimerId = type("TimerId", (UUID,), {})
 TimerIdParser: TypeAdapter[TimerId] = TypeAdapter(_TimerId)
 
-class ModelMetadata(BaseModel):
-    model_id: ModelId
-    repo_id: str
-    model_size: int
-
-class ChatRequest(BaseModel):
-    # TODO: from OpenAI
-    prompt: str
-
 class Shard(BaseModel):
     # TODO: this has changed
     model_id: ModelId
@@ -48,27 +40,21 @@ class Timer(BaseModel):
 class ChatCompletionsRequestStarted(Event[Literal["ChatCompletionsRequestStarted"]]):
     event_type = "ChatCompletionsRequestStarted"
     request_id: RequestId
-    user_id: str
     model_id: ModelId
-    request: ChatRequest
+    request: chat.completion_create_params.CompletionCreateParams
 
 
 class ChatCompletionsRequestCompleted(Event[Literal["ChatCompletionsRequestCompleted"]]):
     event_type = "ChatCompletionsRequestCompleted"
     request_id: RequestId
-    user_id: str
-    model_id: str
-    request: ChatRequest
-    result: str
+    model_id: ModelId
 
 
 class ChatCompletionsRequestFailed(Event[Literal["ChatCompletionsRequestFailed"]]):
     event_type = "ChatCompletionsRequestFailed"
     request_id: RequestId
-    user_id: str
-    model_id: str
-    request: ChatRequest
-    reason: str
+    model_id: ModelId
+    error_message: str
 
 
 # Inference saga ------------------------------------------------------------------
@@ -76,9 +62,8 @@ class InferenceSagaStarted(Event[Literal["InferenceSagaStarted"]]):
     event_type = "InferenceSagaStarted"
     request_id: RequestId
     instance_id: InstanceId
-    user_id: str
-    model_id: str
-    request: ChatRequest
+    model_id: ModelId
+    request: chat.completion_create_params.CompletionCreateParams
 
 
 class InferencePrepareStarted(Event[Literal["InferencePrepareStarted"]]):
@@ -87,9 +72,8 @@ class InferencePrepareStarted(Event[Literal["InferencePrepareStarted"]]):
     instance_id: InstanceId
     target_node_id: NodeId
     hosts: List[str]
-    user_id: str
     shard: Shard  # replaces model_id, rank, start_layer, end_layer
-    request: ChatRequest
+    request: chat.completion_create_params.CompletionCreateParams
 
 
 class InferencePrepareCompleted(Event[Literal["InferencePrepareCompleted"]]):
@@ -98,9 +82,7 @@ class InferencePrepareCompleted(Event[Literal["InferencePrepareCompleted"]]):
     instance_id: InstanceId
     target_node_id: NodeId
     hosts: List[str]
-    user_id: str
     shard: Shard
-    request: ChatRequest
 
 
 class InferenceTriggerStarted(Event[Literal["InferenceTriggerStarted"]]):
@@ -109,9 +91,8 @@ class InferenceTriggerStarted(Event[Literal["InferenceTriggerStarted"]]):
     instance_id: InstanceId
     target_node_id: NodeId
     hosts: List[str]
-    user_id: str
     shard: Shard
-    request: ChatRequest
+    request: chat.completion_create_params.CompletionCreateParams
 
 
 class InferenceTriggerCompleted(Event[Literal["InferenceTriggerCompleted"]]):
@@ -120,29 +101,21 @@ class InferenceTriggerCompleted(Event[Literal["InferenceTriggerCompleted"]]):
     instance_id: InstanceId
     target_node_id: NodeId
     hosts: List[str]
-    user_id: str
     shard: Shard
-    request: ChatRequest
 
 
 class InferenceCompleted(Event[Literal["InferenceCompleted"]]):
     event_type = "InferenceCompleted"
     request_id: RequestId
     instance_id: InstanceId
-    user_id: str
-    model_id: str
-    request: ChatRequest
-    result: str
+    model_id: ModelId
 
 
 class InferenceSagaCompleted(Event[Literal["InferenceSagaCompleted"]]):
     event_type = "InferenceSagaCompleted"
     request_id: RequestId
     instance_id: InstanceId
-    user_id: str
-    model_id: str
-    request: ChatRequest
-    result: str
+    model_id: ModelId
 
 
 # Instance setup saga ------------------------------------------------------------
@@ -294,14 +267,14 @@ class DeviceProfiled(Event[Literal["DeviceProfiled"]]):
 
 # Token streaming ----------------------------------------------------------------
 class TokenGenerated(Event[Literal["TokenGenerated"]]):
+    # TODO: replace with matt chunk code
     event_type = "TokenGenerated"
     request_id: RequestId
     instance_id: InstanceId
-    model_id: str
     hosts: List[str]
     token: int
     text: str
-    finish_reason: Optional[str] = None
+    finish_reason: FinishReason
 
 
 # Repo download progress ----------------------------------------------------------

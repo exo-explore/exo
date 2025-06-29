@@ -1,6 +1,7 @@
-from typing import Any, Literal, Annotated, final, TypeVar, Generic
-from pydantic import Field, BaseModel, AnyHttpUrl, TypeAdapter
+from typing import Annotated, Any, Generic, Literal, TypeVar, final
 from uuid import UUID
+
+from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter
 from pydantic.types import UuidVersion
 
 SourceType = Literal["HuggingFace", "GitHub"]
