@@ -6,10 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, TypeAdapter, UuidVersion
 
 from shared.types.event_sourcing import Event
-
-_ModelId = Annotated[UUID, UuidVersion(4)]
-ModelId = type("ModelId", (UUID,), {})
-ModelIdParser: TypeAdapter[ModelId] = TypeAdapter(_ModelId)
+from shared.types.model import ModelId
 
 _NodeId = Annotated[UUID, UuidVersion(4)]
 NodeId = type("NodeId", (UUID,), {})
