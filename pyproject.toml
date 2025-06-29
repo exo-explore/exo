@@ -13,6 +13,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "basedpyright>=1.29.4",
+    "maturin>=1.9.0",
     "pytest>=8.4.0",
     "ruff>=0.11.13",
 ]
@@ -29,7 +30,11 @@ darwin = [
 
 [tool.uv.workspace]
 members = [
-    "master", "worker", "shared", "engines/*",
+    "master",
+    "worker",
+    "shared",
+    "engines/*",
+    "networking",
 ]
 
 [tool.uv.sources]
@@ -37,6 +42,7 @@ exo-shared = { workspace = true }
 exo-master = { workspace = true }
 exo-worker = { workspace = true }
 exo-engine-mlx = { workspace = true }
+exo-networking = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

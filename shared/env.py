@@ -2,9 +2,20 @@ import logging
 import os
 from typing import TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-EnvSchema = TypeVar("EnvSchema", bound=BaseModel)
+env_model_config = ConfigDict(
+    strict=True,
+    frozen=True,
+    extra="forbid",
+)
+
+
+class BaseEnv(BaseModel):
+    model_config = env_model_config
+
+
+EnvSchema = TypeVar("EnvSchema", bound=BaseEnv)
 
 
 def get_validated_env(

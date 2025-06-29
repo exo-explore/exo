@@ -1,0 +1,22 @@
+[project]
+name = "exo-networking"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Arbion Halili", email = "99731180+ToxicPine@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+networking = "networking:main"
+
+[tool.maturin]
+module-name = "networking._core"
+python-packages = ["networking"]
+python-source = "src"
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
