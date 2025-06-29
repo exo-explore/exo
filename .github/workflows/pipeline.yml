@@ -15,6 +15,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure git user
+        run: |
+          git config --local user.email "github-actions@users.noreply.github.com"
+          git config --local user.name  "github-actions bot"
+        shell: bash
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: ./.github/actions/typecheck
   ci:
     needs: typecheck
