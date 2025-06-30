@@ -1,0 +1,10 @@
+name: Lint Check
+
+description: "Check for lint errors"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Lint check
+      run: nix develop -c just lint-check
+      shell: bash

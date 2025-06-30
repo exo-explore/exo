@@ -13,6 +13,9 @@ fmt:
 lint:
     uv run ruff check --fix master worker shared engines/*
 
+lint-check:
+    uv run ruff check master worker shared engines/*
+
 test:
     uv run pytest master worker shared engines/*
 

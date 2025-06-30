@@ -50,20 +50,8 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: ./.github/actions/regenerate-protobufs
-
       - uses: ./.github/actions/verify-clean
         with:
           step: regenerate-protobufs
 
-      - uses: ./.github/actions/format
-
-      - uses: ./.github/actions/verify-clean
-        with:
-          step: format
-
-      - uses: ./.github/actions/lint
-
-      - uses: ./.github/actions/verify-clean
-        with:
-          step: lint
+      - uses: ./.github/actions/lint-check
