@@ -25,16 +25,20 @@ _TimerId = Annotated[UUID, UuidVersion(4)]
 TimerId = type("TimerId", (UUID,), {})
 TimerIdParser: TypeAdapter[TimerId] = TypeAdapter(_TimerId)
 
+
 class Shard(BaseModel):
     # TODO: this has changed
     model_id: ModelId
+
 
 class InstanceComputePlan(BaseModel):
     # TODO: this has changed
     model_id: ModelId
 
+
 class Timer(BaseModel):
     timer_id: TimerId
+
 
 # Chat completions ----------------------------------------------------------------
 class ChatCompletionsRequestStarted(Event[Literal["ChatCompletionsRequestStarted"]]):
@@ -44,7 +48,9 @@ class ChatCompletionsRequestStarted(Event[Literal["ChatCompletionsRequestStarted
     request: chat.completion_create_params.CompletionCreateParams
 
 
-class ChatCompletionsRequestCompleted(Event[Literal["ChatCompletionsRequestCompleted"]]):
+class ChatCompletionsRequestCompleted(
+    Event[Literal["ChatCompletionsRequestCompleted"]]
+):
     event_type = "ChatCompletionsRequestCompleted"
     request_id: RequestId
     model_id: ModelId
@@ -264,6 +270,7 @@ class DeviceProfiled(Event[Literal["DeviceProfiled"]]):
     total_memory_bytes: int
     available_memory_bytes: int
     total_flops_fp16: int
+
 
 # Token streaming ----------------------------------------------------------------
 class TokenGenerated(Event[Literal["TokenGenerated"]]):
