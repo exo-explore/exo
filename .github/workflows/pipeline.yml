@@ -31,7 +31,7 @@ jobs:
     needs: typecheck
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -52,25 +52,18 @@ jobs:
 
       - uses: ./.github/actions/regenerate-protobufs
 
-      - name: Commit regenerated protobufs
-        uses: ./.github/actions/conditional-commit
+      - uses: ./.github/actions/verify-clean
         with:
-          message: "chore(proto) regenerate protobufs"
+          step: regenerate-protobufs
 
       - uses: ./.github/actions/format
 
-      - name: Commit formatted code
-        uses: ./.github/actions/conditional-commit
+      - uses: ./.github/actions/verify-clean
         with:
-          message: "chore(format): format code"
+          step: format
 
       - uses: ./.github/actions/lint
 
-      - name: Commit lint fixes
-        uses: ./.github/actions/conditional-commit
+      - uses: ./.github/actions/verify-clean
         with:
-          message: "chore(lint): fix linting errors"
-
-      - name: Push changes
-        run: git push
-        shell: bash
+          step: lint
