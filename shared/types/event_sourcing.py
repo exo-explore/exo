@@ -76,9 +76,7 @@ EventTypeParser: TypeAdapter[AnnotatedEventType] = TypeAdapter(AnnotatedEventTyp
 
 Applicator = Callable[[State[EventTypeT], Event[TEventType]], State[EventTypeT]]
 Apply = Callable[[State[EventTypeT], Event[EventTypeT]], State[EventTypeT]]
-SagaApplicator = Callable[
-    [State[EventTypeT], Event[TEventType]], Sequence[Event[EventTypeT]]
-]
+SagaApplicator = Callable[[State[EventTypeT], Event[TEventType]], Sequence[Event[EventTypeT]]]
 Saga = Callable[[State[EventTypeT], Event[EventTypeT]], Sequence[Event[EventTypeT]]]
 
 StateAndEvent = Tuple[State[EventTypeT], Event[EventTypeT]]
@@ -132,6 +130,4 @@ class Command(BaseModel, Generic[TEventType, TCommandType]):
     command_id: CommandId
 
 
-Decide = Callable[
-    [State[EventTypeT], Command[TEventType, TCommandType]], Sequence[Event[EventTypeT]]
-]
+Decide = Callable[[State[EventTypeT], Command[TEventType, TCommandType]], Sequence[Event[EventTypeT]]]
