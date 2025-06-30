@@ -1,8 +1,8 @@
+from enum import Enum
 from typing import (
     Annotated,
     Callable,
     Generic,
-    Literal,
     Protocol,
     Sequence,
     Tuple,
@@ -18,40 +18,42 @@ _EventId = Annotated[UUID, UuidVersion(4)]
 EventId = type("EventId", (UUID,), {})
 EventIdParser: TypeAdapter[EventId] = TypeAdapter(_EventId)
 
-EventTypes = Literal[
-    "ChatCompletionsRequestStarted",
-    "ChatCompletionsRequestCompleted",
-    "ChatCompletionsRequestFailed",
-    "InferenceSagaStarted",
-    "InferencePrepareStarted",
-    "InferencePrepareCompleted",
-    "InferenceTriggerStarted",
-    "InferenceTriggerCompleted",
-    "InferenceCompleted",
-    "InferenceSagaCompleted",
-    "InstanceSetupSagaStarted",
-    "InstanceSetupSagaCompleted",
-    "InstanceSetupSagaFailed",
-    "ShardAssigned",
-    "ShardAssignFailed",
-    "ShardUnassigned",
-    "ShardUnassignFailed",
-    "ShardKilled",
-    "ShardDied",
-    "ShardSpawned",
-    "ShardSpawnedFailed",
-    "ShardDespawned",
-    "NodeConnected",
-    "NodeConnectionProfiled",
-    "NodeDisconnected",
-    "NodeStarted",
-    "DeviceRegistered",
-    "DeviceProfiled",
-    "TokenGenerated",
-    "RepoProgressEvent",
-    "TimerScheduled",
-    "TimerFired",
-]
+
+class EventTypes(str, Enum):
+    ChatCompletionsRequestStarted = "ChatCompletionsRequestStarted"
+    ChatCompletionsRequestCompleted = "ChatCompletionsRequestCompleted"
+    ChatCompletionsRequestFailed = "ChatCompletionsRequestFailed"
+    InferenceSagaStarted = "InferenceSagaStarted"
+    InferencePrepareStarted = "InferencePrepareStarted"
+    InferencePrepareCompleted = "InferencePrepareCompleted"
+    InferenceTriggerStarted = "InferenceTriggerStarted"
+    InferenceTriggerCompleted = "InferenceTriggerCompleted"
+    InferenceCompleted = "InferenceCompleted"
+    InferenceSagaCompleted = "InferenceSagaCompleted"
+    InstanceSetupSagaStarted = "InstanceSetupSagaStarted"
+    InstanceSetupSagaCompleted = "InstanceSetupSagaCompleted"
+    InstanceSetupSagaFailed = "InstanceSetupSagaFailed"
+    ShardAssigned = "ShardAssigned"
+    ShardAssignFailed = "ShardAssignFailed"
+    ShardUnassigned = "ShardUnassigned"
+    ShardUnassignFailed = "ShardUnassignFailed"
+    ShardKilled = "ShardKilled"
+    ShardDied = "ShardDied"
+    ShardSpawned = "ShardSpawned"
+    ShardSpawnedFailed = "ShardSpawnedFailed"
+    ShardDespawned = "ShardDespawned"
+    NodeConnected = "NodeConnected"
+    NodeConnectionProfiled = "NodeConnectionProfiled"
+    NodeDisconnected = "NodeDisconnected"
+    NodeStarted = "NodeStarted"
+    DeviceRegistered = "DeviceRegistered"
+    DeviceProfiled = "DeviceProfiled"
+    TokenGenerated = "TokenGenerated"
+    RepoProgressEvent = "RepoProgressEvent"
+    TimerScheduled = "TimerScheduled"
+    TimerFired = "TimerFired"
+
+
 EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
 TEventType = TypeVar("TEventType", bound=EventTypes, covariant=True)
 
@@ -122,7 +124,13 @@ _CommandId = Annotated[UUID, UuidVersion(4)]
 CommandId = type("CommandId", (UUID,), {})
 CommandIdParser: TypeAdapter[CommandId] = TypeAdapter(_CommandId)
 
-CommandTypes = Literal["create", "update", "delete"]
+
+class CommandTypes(str, Enum):
+    Create = "Create"
+    Update = "Update"
+    Delete = "Delete"
+
+
 CommandTypeT = TypeVar("CommandTypeT", bound=EventTypes)
 TCommandType = TypeVar("TCommandType", bound=EventTypes, covariant=True)
 
