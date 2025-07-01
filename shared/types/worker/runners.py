@@ -1,0 +1,61 @@
+from collections.abc import Mapping, Sequence
+from enum import Enum
+from typing import Generic, Literal, TypeVar
+
+from pydantic import BaseModel
+
+from shared.types.common import NodeId
+from shared.types.models.common import ModelId
+from shared.types.worker.common import RunnerId
+from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
+from shared.types.worker.shards import Shard, ShardType
+
+
+class RunnerStateType(str, Enum):
+    Rejected = "Rejected"
+    Starting = "Starting"
+    Downloading = "Downloading"
+    Running = "Running"
+    Failed = "Failed"
+
+
+RunnerStateTypeT = TypeVar("RunnerStateTypeT", bound=RunnerStateType)
+
+
+class RunnerState(BaseModel, Generic[RunnerStateTypeT]):
+    runner_state: RunnerStateTypeT
+
+
+class RejectedRunnerState(RunnerState[RunnerStateType.Rejected]):
+    runner_state: Literal[RunnerStateType.Rejected]
+
+
+class StartingRunnerState(RunnerState[RunnerStateType.Starting]):
+    runner_state: Literal[RunnerStateType.Starting]
+
+
+class DownloadingRunnerState(RunnerState[RunnerStateType.Downloading]):
+    runner_state: Literal[RunnerStateType.Downloading]
+    download_progress: BaseDownloadProgress[DownloadStatus]
+
+
+class RunningRunnerState(RunnerState[RunnerStateType.Running]):
+    runner_state: Literal[RunnerStateType.Running]
+
+
+class FailedRunnerState(RunnerState[RunnerStateType.Failed]):
+    runner_state: Literal[RunnerStateType.Failed]
+    error_message: str | None = None
+
+
+class RunnerData(BaseModel):
+    runner_id: RunnerId
+    runner_state: RunnerState[RunnerStateType] = RunnerState(
+        runner_state=RunnerStateType.Starting
+    )
+
+
+class RunnerPlacement(BaseModel):
+    model_id: ModelId
+    runner_to_shard: Mapping[RunnerId, Shard[ShardType]]
+    node_to_runner: Mapping[NodeId, Sequence[RunnerId]]

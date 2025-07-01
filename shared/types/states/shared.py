@@ -1,10 +1,12 @@
+from collections.abc import Mapping
+
 from pydantic import BaseModel
 
 from shared.types.common import NodeId
 from shared.types.worker.common import InstanceId
-from shared.types.worker.shards import ShardPlacement
+from shared.types.worker.instances import InstanceData
 
 
 class SharedState(BaseModel):
     node_id: NodeId
-    compute_instances: dict[InstanceId, ShardPlacement]
+    compute_instances: Mapping[InstanceId, InstanceData]

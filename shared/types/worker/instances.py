@@ -1,18 +1,24 @@
-from typing import Generic, TypeVar
+from collections.abc import Mapping
 
 from pydantic import BaseModel
 
 from shared.types.worker.common import InstanceId
-from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
-from shared.types.worker.shards import ShardPlacement
+from shared.types.worker.runners import (
+    RunnerId,
+    RunnerPlacement,
+    RunnerState,
+    RunnerStateType,
+)
 
-DownloadStatusT = TypeVar("DownloadStatusT", bound=DownloadStatus)
 
-
-class Instance(ShardPlacement):
+class InstanceBase(BaseModel):
     instance_id: InstanceId
 
 
-class InstanceDownloadProgress(BaseModel, Generic[DownloadStatusT]):
-    instance_id: InstanceId
-    download_progress: BaseDownloadProgress[DownloadStatusT]
+class InstanceData(BaseModel):
+    runner_placements: RunnerPlacement
+    runner_states: Mapping[RunnerId, RunnerState[RunnerStateType]]
+
+
+class Instance(InstanceBase):
+    instance_data: InstanceData

@@ -1,5 +1,5 @@
-from typing import Annotated, Any, Generic, Literal, TypeVar, Union, final
 from enum import Enum
+from typing import Annotated, Any, Generic, Literal, TypeVar, Union, final
 
 from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter
 

@@ -49,7 +49,6 @@ class EdgeMetadata(BaseModel, Generic[TE, TF]): ...
 
 
 @final
-@dataclass
 class MLXEdgeContext(EdgeMetadata[AddressingProtocol.IPvAny, ApplicationProtocol.MLX]):
     source_ip: IPvAnyAddress
     sink_ip: IPvAnyAddress
