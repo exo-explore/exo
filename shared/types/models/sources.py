@@ -1,10 +1,15 @@
 from typing import Annotated, Any, Generic, Literal, TypeVar, Union, final
+from enum import Enum
 
 from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter
 
 from shared.types.models.common import ModelId
 
-SourceType = Literal["HuggingFace", "GitHub"]
+
+class SourceType(str, Enum):
+    HuggingFace = "HuggingFace"
+    GitHub = "GitHub"
+
 
 T = TypeVar("T", bound=SourceType)
 
@@ -28,14 +33,14 @@ class GitHubModelSourceData(BaseModel):
 
 
 @final
-class HuggingFaceModelSource(BaseModelSource[Literal["HuggingFace"]]):
-    source_type: Literal["HuggingFace"] = "HuggingFace"
+class HuggingFaceModelSource(BaseModelSource[SourceType.HuggingFace]):
+    source_type: Literal[SourceType.HuggingFace] = SourceType.HuggingFace
     source_data: HuggingFaceModelSourceData
 
 
 @final
-class GitHubModelSource(BaseModelSource[Literal["GitHub"]]):
-    source_type: Literal["GitHub"] = "GitHub"
+class GitHubModelSource(BaseModelSource[SourceType.GitHub]):
+    source_type: Literal[SourceType.GitHub] = SourceType.GitHub
     source_data: GitHubModelSourceData
 
 
