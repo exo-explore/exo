@@ -6,20 +6,14 @@ from uuid import UUID
 from pydantic import BaseModel, TypeAdapter, UuidVersion
 
 from shared.openai import FinishReason, chat
-from shared.types.event_sourcing import Event, EventTypes
-from shared.types.model import ModelId
-
-_NodeId = Annotated[UUID, UuidVersion(4)]
-NodeId = type("NodeId", (UUID,), {})
-NodeIdParser: TypeAdapter[NodeId] = TypeAdapter(_NodeId)
+from shared.types.common import NodeId
+from shared.types.events.common import Event, EventTypes
+from shared.types.models.common import ModelId
+from shared.types.worker.common import InstanceId
 
 _RequestId = Annotated[UUID, UuidVersion(4)]
 RequestId = type("RequestId", (UUID,), {})
 RequestIdParser: TypeAdapter[RequestId] = TypeAdapter(_RequestId)
-
-_InstanceId = Annotated[UUID, UuidVersion(4)]
-InstanceId = type("InstanceId", (UUID,), {})
-InstanceIdParser: TypeAdapter[InstanceId] = TypeAdapter(_InstanceId)
 
 _TimerId = Annotated[UUID, UuidVersion(4)]
 TimerId = type("TimerId", (UUID,), {})

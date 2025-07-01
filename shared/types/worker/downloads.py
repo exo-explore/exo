@@ -1,33 +1,21 @@
-from typing import Annotated, Literal, Generic, TypeVar, Union
 from enum import Enum
-from pydantic import BaseModel, UUID4, PositiveInt, Field
+from typing import (
+    Annotated,
+    Callable,
+    Generic,
+    Literal,
+    NewType,
+    Sequence,
+    TypeVar,
+    Union,
+)
 
-from shared.types.model import ModelId
+from pydantic import BaseModel, Field, PositiveInt
 
-InstanceId = Annotated[str, UUID4]
-NodeId = Annotated[str, UUID4]
-RunnerId = Annotated[str, UUID4]
-
-
-class ShardType(str, Enum):
-    PipelineParallel = "PipelineParallel"
-
-
-ShardTypeT = TypeVar("ShardTypeT", bound=ShardType)
-
-
-class ShardData(BaseModel, Generic[ShardTypeT]):
-    shard_type: ShardTypeT
-
-
-class Shard(BaseModel, Generic[ShardTypeT]):
-    shard_data: ShardData[ShardTypeT]
-    runner_id: RunnerId
-
-
-class ShardPlacement(BaseModel):
-    model_id: ModelId
-    shard_assignments: dict[NodeId, Shard[ShardType]]
+from shared.types.common import NodeId
+from shared.types.models.common import ModelId
+from shared.types.models.sources import ModelSource
+from shared.types.worker.shards import ShardData, ShardType
 
 
 class DownloadProgressData(BaseModel):
@@ -81,10 +69,17 @@ DownloadProgress = Annotated[
 ]
 
 
-class Instance(ShardPlacement):
-    instance_id: InstanceId
+BytesToDownload = NewType("BytesToDownload", int)
+BytesDownloaded = NewType("BytesDownloaded", int)
+
+DownloadEffectHandler = Callable[
+    [ModelId, DownloadStatus, BytesToDownload, BytesDownloaded], None
+]
 
 
-class InstanceDownloadProgress(BaseModel, Generic[DownloadStatusT]):
-    instance_id: InstanceId
-    download_progress: BaseDownloadProgress[DownloadStatusT]
+def download_shard(
+    model_id: ModelId,
+    model_source: ModelSource,
+    shard_data: ShardData[ShardType],
+    effect_handlers: Sequence[DownloadEffectHandler],
+) -> None: ...

@@ -1,16 +1,12 @@
-from typing import Annotated, Any, Generic, Literal, Sequence, TypeVar, Union, final
-from uuid import UUID
+from typing import Annotated, Any, Generic, Literal, TypeVar, Union, final
 
-from pydantic import AnyHttpUrl, BaseModel, Field, PositiveInt, TypeAdapter
-from pydantic.types import UuidVersion
+from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter
+
+from shared.types.models.common import ModelId
 
 SourceType = Literal["HuggingFace", "GitHub"]
 
 T = TypeVar("T", bound=SourceType)
-
-_ModelId = Annotated[UUID, UuidVersion(4)]
-ModelId = type("ModelId", (UUID,), {})
-ModelIdParser: TypeAdapter[ModelId] = TypeAdapter(_ModelId)
 
 RepoPath = Annotated[str, Field(pattern=r"^[^/]+/[^/]+$")]
 
@@ -43,11 +39,6 @@ class GitHubModelSource(BaseModelSource[Literal["GitHub"]]):
     source_data: GitHubModelSourceData
 
 
-class ModelMetadata(BaseModel):
-    storage_size_kilobytes: Annotated[int, PositiveInt]
-    n_layers: Annotated[int, PositiveInt]
-
-
 _ModelSource = Annotated[
     Union[
         HuggingFaceModelSource,
@@ -56,14 +47,4 @@ _ModelSource = Annotated[
     Field(discriminator="source_type"),
 ]
 ModelSource = BaseModelSource[SourceType]
-
-
-@final
-class Model(BaseModel):
-    model_id: ModelId
-    model_sources: Sequence[ModelSource]
-    model_metadata: ModelMetadata
-
-
-ModelIdAdapter: TypeAdapter[ModelId] = TypeAdapter(_ModelId)
 ModelSourceAdapter: TypeAdapter[ModelSource] = TypeAdapter(_ModelSource)

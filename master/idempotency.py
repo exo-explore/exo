@@ -1,7 +1,7 @@
 from hashlib import sha3_224 as hasher
 from typing import Sequence, TypeVar
 
-from shared.types.event_sourcing import EventId, EventTypes, IdemKeyGenerator, State
+from shared.types.events.common import EventId, EventTypes, IdemKeyGenerator, State
 
 EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
 
