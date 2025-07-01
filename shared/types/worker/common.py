@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Annotated
 from uuid import UUID
 
@@ -11,3 +12,9 @@ InstanceIdParser: TypeAdapter[InstanceId] = TypeAdapter(_InstanceId)
 _RunnerId = Annotated[UUID, UuidVersion(4)]
 RunnerId = type("RunnerId", (UUID,), {})
 RunnerIdParser: TypeAdapter[RunnerId] = TypeAdapter(_RunnerId)
+
+
+class NodeState(str, Enum):
+    Idle = "Idle"
+    Running = "Running"
+    Paused = "Paused"

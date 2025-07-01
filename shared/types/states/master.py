@@ -9,6 +9,7 @@ from shared.types.graphs.resource_graph import ResourceGraph
 from shared.types.networking.topology import NetworkState
 from shared.types.profiling.common import NodeProfile
 from shared.types.states.shared import SharedState
+from shared.types.worker.common import NodeState
 from shared.types.worker.instances import InstanceData, InstanceId
 
 
@@ -17,7 +18,8 @@ class ExternalCommand(BaseModel): ...
 
 class MasterState(SharedState):
     network_state: NetworkState
-    node_profiles: dict[NodeId, NodeProfile]
+    node_profiles: Mapping[NodeId, NodeProfile]
+    node_states: Mapping[NodeId, NodeState]
     job_inbox: Queue[ExternalCommand]
     job_outbox: Queue[ExternalCommand]
 

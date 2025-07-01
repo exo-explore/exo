@@ -7,6 +7,7 @@ from typing import (
     Sequence,
     Tuple,
     TypeVar,
+    Union,
     get_args,
 )
 from uuid import UUID
@@ -19,40 +20,53 @@ EventId = type("EventId", (UUID,), {})
 EventIdParser: TypeAdapter[EventId] = TypeAdapter(_EventId)
 
 
-class EventTypes(str, Enum):
-    ChatCompletionsRequestStarted = "ChatCompletionsRequestStarted"
-    ChatCompletionsRequestCompleted = "ChatCompletionsRequestCompleted"
-    ChatCompletionsRequestFailed = "ChatCompletionsRequestFailed"
-    InferenceSagaStarted = "InferenceSagaStarted"
-    InferencePrepareStarted = "InferencePrepareStarted"
-    InferencePrepareCompleted = "InferencePrepareCompleted"
-    InferenceTriggerStarted = "InferenceTriggerStarted"
-    InferenceTriggerCompleted = "InferenceTriggerCompleted"
-    InferenceCompleted = "InferenceCompleted"
-    InferenceSagaCompleted = "InferenceSagaCompleted"
-    InstanceSetupSagaStarted = "InstanceSetupSagaStarted"
-    InstanceSetupSagaCompleted = "InstanceSetupSagaCompleted"
-    InstanceSetupSagaFailed = "InstanceSetupSagaFailed"
-    ShardAssigned = "ShardAssigned"
-    ShardAssignFailed = "ShardAssignFailed"
-    ShardUnassigned = "ShardUnassigned"
-    ShardUnassignFailed = "ShardUnassignFailed"
-    ShardKilled = "ShardKilled"
-    ShardDied = "ShardDied"
-    ShardSpawned = "ShardSpawned"
-    ShardSpawnedFailed = "ShardSpawnedFailed"
-    ShardDespawned = "ShardDespawned"
-    NodeConnected = "NodeConnected"
-    NodeConnectionProfiled = "NodeConnectionProfiled"
-    NodeDisconnected = "NodeDisconnected"
-    NodeStarted = "NodeStarted"
-    DeviceRegistered = "DeviceRegistered"
-    DeviceProfiled = "DeviceProfiled"
-    TokenGenerated = "TokenGenerated"
-    RepoProgressEvent = "RepoProgressEvent"
-    TimerScheduled = "TimerScheduled"
+class MLXEventTypes(str, Enum):
+    MLXInferenceSagaPrepare = "MLXInferenceSagaPrepare"
+    MLXInferenceSagaStartPrepare = "MLXInferenceSagaStartPrepare"
+
+
+class TaskEventTypes(str, Enum):
+    TaskCreated = "TaskCreated"
+    TaskUpdated = "TaskUpdated"
+    TaskDeleted = "TaskDeleted"
+
+
+class StreamingEventTypes(str, Enum):
+    ChunkGenerated = "ChunkGenerated"
+
+
+class InstanceEventTypes(str, Enum):
+    InstanceCreated = "InstanceCreated"
+    InstanceDeleted = "InstanceDeleted"
+    InstanceReplacedAtomically = "InstanceReplacedAtomically"
+    InstanceRunnerStateUpdated = "InstanceRunnerStateUpdated"
+
+
+class NodeEventTypes(str, Enum):
+    NodeStateUpdated = "NodeStateUpdated"
+    NodeProfileUpdated = "NodeProfileUpdated"
+
+
+class EdgeEventTypes(str, Enum):
+    EdgeCreated = "EdgeCreated"
+    EdgeUpdated = "EdgeUpdated"
+    EdgeDeleted = "EdgeDeleted"
+
+
+class TimerEventTypes(str, Enum):
+    TimerCreated = "TimerCreated"
     TimerFired = "TimerFired"
 
+
+EventTypes = Union[
+    TaskEventTypes,
+    StreamingEventTypes,
+    InstanceEventTypes,
+    NodeEventTypes,
+    EdgeEventTypes,
+    TimerEventTypes,
+    MLXEventTypes,
+]
 
 EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
 TEventType = TypeVar("TEventType", bound=EventTypes, covariant=True)
@@ -73,7 +87,7 @@ class State(BaseModel, Generic[EventTypeT]):
     sequence_number: int = Field(default=0, ge=0)
 
 
-AnnotatedEventType = Annotated[EventTypes, Field(discriminator="event_type")]
+AnnotatedEventType = Annotated[Event[EventTypes], Field(discriminator="event_type")]
 EventTypeParser: TypeAdapter[AnnotatedEventType] = TypeAdapter(AnnotatedEventType)
 
 Applicator = Callable[[State[EventTypeT], Event[TEventType]], State[EventTypeT]]
@@ -131,8 +145,8 @@ class CommandTypes(str, Enum):
     Delete = "Delete"
 
 
-CommandTypeT = TypeVar("CommandTypeT", bound=EventTypes)
-TCommandType = TypeVar("TCommandType", bound=EventTypes, covariant=True)
+CommandTypeT = TypeVar("CommandTypeT", bound=CommandTypes)
+TCommandType = TypeVar("TCommandType", bound=CommandTypes, covariant=True)
 
 
 class Command(BaseModel, Generic[TEventType, TCommandType]):

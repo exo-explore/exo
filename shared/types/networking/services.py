@@ -6,9 +6,9 @@ from shared.types.common import NodeId
 from shared.types.networking.edges import (
     AddressingProtocol,
     ApplicationProtocol,
-    EdgeDirection,
+    Edge,
+    EdgeDataType,
     EdgeId,
-    EdgeInfo,
 )
 
 TopicName = NewType("TopicName", str)
@@ -21,7 +21,8 @@ class WrappedMessage(BaseModel):
 
 PubSubMessageHandler = Callable[[TopicName, WrappedMessage], None]
 NodeConnectedHandler = Callable[
-    [EdgeId, EdgeDirection, EdgeInfo[AddressingProtocol, ApplicationProtocol]], None
+    [EdgeId, Edge[AddressingProtocol, ApplicationProtocol, EdgeDataType.DISCOVERED]],
+    None,
 ]
 NodeDisconnectedHandler = Callable[[EdgeId], None]
 

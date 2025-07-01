@@ -1,9 +1,9 @@
-from dataclasses import dataclass
+from collections.abc import Mapping
 from enum import Enum
 from typing import Annotated, Generic, NamedTuple, TypeVar, final
 from uuid import UUID
 
-from pydantic import BaseModel, IPvAnyAddress, TypeAdapter
+from pydantic import AfterValidator, BaseModel, IPvAnyAddress, TypeAdapter
 from pydantic.types import UuidVersion
 
 from shared.types.common import NodeId
@@ -11,13 +11,6 @@ from shared.types.common import NodeId
 _EdgeId = Annotated[UUID, UuidVersion(4)]
 EdgeId = type("EdgeId", (UUID,), {})
 EdgeIdParser: TypeAdapter[EdgeId] = TypeAdapter(_EdgeId)
-
-
-@final
-class EdgeDataTransferRate(BaseModel):
-    throughput: float
-    latency: float
-    jitter: float
 
 
 class AddressingProtocol(str, Enum):
@@ -28,14 +21,24 @@ class ApplicationProtocol(str, Enum):
     MLX = "MLX"
 
 
-TE = TypeVar("TE", bound=AddressingProtocol)
-TF = TypeVar("TF", bound=ApplicationProtocol)
+AdP = TypeVar("AdP", bound=AddressingProtocol)
+ApP = TypeVar("ApP", bound=ApplicationProtocol)
 
 
 @final
-class EdgeType(BaseModel, Generic[TE, TF]):
-    addressing_protocol: TE
-    application_protocol: TF
+class EdgeDataTransferRate(BaseModel):
+    throughput: float
+    latency: float
+    jitter: float
+
+
+class EdgeMetadata(BaseModel, Generic[AdP, ApP]): ...
+
+
+@final
+class EdgeType(BaseModel, Generic[AdP, ApP]):
+    addressing_protocol: AdP
+    application_protocol: ApP
 
 
 @final
@@ -44,41 +47,63 @@ class EdgeDirection(NamedTuple):
     sink: NodeId
 
 
-@dataclass
-class EdgeMetadata(BaseModel, Generic[TE, TF]): ...
-
-
 @final
 class MLXEdgeContext(EdgeMetadata[AddressingProtocol.IPvAny, ApplicationProtocol.MLX]):
     source_ip: IPvAnyAddress
     sink_ip: IPvAnyAddress
 
 
-@final
-class EdgeInfo(BaseModel, Generic[TE, TF]):
-    edge_type: EdgeType[TE, TF]
+class EdgeDataType(str, Enum):
+    DISCOVERED = "discovered"
+    PROFILED = "profiled"
+    UNKNOWN = "unknown"
+
+
+EdgeDataTypeT = TypeVar("EdgeDataTypeT", bound=EdgeDataType)
+
+
+class EdgeData(BaseModel, Generic[EdgeDataTypeT]):
+    edge_data_type: EdgeDataTypeT
+
+
+class EdgeProfile(EdgeData[EdgeDataType.PROFILED]):
     edge_data_transfer_rate: EdgeDataTransferRate
-    edge_metadata: EdgeMetadata[TE, TF]
 
 
-@final
-class DirectedEdge(BaseModel, Generic[TE, TF]):
+def validate_mapping(
+    edge_data: Mapping[EdgeDataType, EdgeData[EdgeDataType]],
+) -> Mapping[EdgeDataType, EdgeData[EdgeDataType]]:
+    """Validates that each EdgeData value has an edge_data_type matching its key."""
+    for key, value in edge_data.items():
+        if key != value.edge_data_type:
+            raise ValueError(
+                f"Edge Data Type Mismatch: key {key} != value {value.edge_data_type}"
+            )
+    return edge_data
+
+
+class Edge(BaseModel, Generic[AdP, ApP, EdgeDataTypeT]):
+    edge_type: EdgeType[AdP, ApP]
     edge_direction: EdgeDirection
-    edge_identifier: EdgeId
-    edge_info: EdgeInfo[TE, TF]
+    edge_data: Annotated[
+        Mapping[EdgeDataType, EdgeData[EdgeDataType]], AfterValidator(validate_mapping)
+    ]
+    edge_metadata: EdgeMetadata[AdP, ApP]
 
 
 """
-an_edge: DirectedEdge[Literal[AddressingProtocol.IPvAny], Literal[ApplicationProtocol.MLX]] = DirectedEdge(
-    edge_identifier=UUID(),
-    edge_direction=EdgeDirection(source=NodeId("1"), sink=NodeId("2")),
-    edge_info=EdgeInfo(
+an_edge: UniqueEdge[Literal[AddressingProtocol.IPvAny], Literal[ApplicationProtocol.MLX]] = UniqueEdge(
+    edge_identifier=EdgeId(UUID().hex),
+    edge_info=ProfiledEdge(
+        edge_direction=EdgeDirection(source=NodeId("1"), sink=NodeId("2")),
         edge_type=EdgeType(
-            addressing_protocol=AddressingProtocol.ipv4,
-            application_protocol=ApplicationProtocol.mlx
+            addressing_protocol=AddressingProtocol.IPvAny,
+            application_protocol=ApplicationProtocol.MLX
         ),
-        edge_data_transfer_rate=EdgeDataTransferRate(throughput=1000, latency=0.1, jitter=0.01),
-        edge_metadata=MLXEdgeContext(source_ip=IpV4Addr("192.168.1.1"), sink_ip=IpV4Addr("192.168.1.2"))
+        edge_data=EdgeData(
+            edge_data_transfer_rate=EdgeDataTransferRate(throughput=1000, latency=0.1, jitter=0.01)
+        ),
+        edge_metadata=MLXEdgeContext(source_ip=IPv4Address("192.168.1.1"), sink_ip=IPv4Address("192.168.1.2"))
     )
 )
 """

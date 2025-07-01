@@ -1,10 +1,13 @@
+from collections.abc import Mapping
 from enum import Enum
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 from uuid import UUID
 
 import openai.types.chat as openai
 from pydantic import BaseModel, TypeAdapter
 from pydantic.types import UuidVersion
+
+from shared.types.worker.common import InstanceId, RunnerId
 
 _TaskId = Annotated[UUID, UuidVersion(4)]
 TaskId = type("TaskId", (UUID,), {})
@@ -19,21 +22,60 @@ class TaskType(str, Enum):
 TaskTypeT = TypeVar("TaskTypeT", bound=TaskType)
 
 
-class Task(BaseModel, Generic[TaskTypeT]):
-    task_id: TaskId
+class TaskData(BaseModel, Generic[TaskTypeT]):
     task_type: TaskTypeT
     task_data: Any
 
 
-class ChatCompletionNonStreamingTask(Task[TaskType.ChatCompletionNonStreaming]):
+class ChatCompletionNonStreamingTask(TaskData[TaskType.ChatCompletionNonStreaming]):
     task_type: Literal[TaskType.ChatCompletionNonStreaming] = (
         TaskType.ChatCompletionNonStreaming
     )
     task_data: openai.completion_create_params.CompletionCreateParams
 
 
-class ChatCompletionStreamingTask(Task[TaskType.ChatCompletionStreaming]):
+class ChatCompletionStreamingTask(TaskData[TaskType.ChatCompletionStreaming]):
     task_type: Literal[TaskType.ChatCompletionStreaming] = (
         TaskType.ChatCompletionStreaming
     )
     task_data: openai.completion_create_params.CompletionCreateParams
+
+
+class TaskStatusType(str, Enum):
+    Pending = "Pending"
+    Running = "Running"
+    Failed = "Failed"
+    Complete = "Complete"
+
+
+TaskStatusTypeT = TypeVar(
+    "TaskStatusTypeT", bound=Union[TaskStatusType, Literal["Complete"]]
+)
+
+
+class TaskUpdate(BaseModel, Generic[TaskStatusTypeT]):
+    task_status: TaskStatusTypeT
+
+
+class PendingTask(TaskUpdate[TaskStatusType.Pending]):
+    task_status: Literal[TaskStatusType.Pending]
+
+
+class RunningTask(TaskUpdate[TaskStatusType.Running]):
+    task_status: Literal[TaskStatusType.Running]
+
+
+class CompletedTask(TaskUpdate[TaskStatusType.Complete]):
+    task_status: Literal[TaskStatusType.Complete]
+    task_artifact: bytes
+
+
+class FailedTask(TaskUpdate[TaskStatusType.Failed]):
+    task_status: Literal[TaskStatusType.Failed]
+    error_message: Mapping[RunnerId, str]
+
+
+class Task(BaseModel):
+    task_data: TaskData[TaskType]
+    task_status: TaskUpdate[TaskStatusType]
+    on_instance: InstanceId

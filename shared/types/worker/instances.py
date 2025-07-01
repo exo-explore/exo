@@ -11,14 +11,15 @@ from shared.types.worker.runners import (
 )
 
 
-class InstanceBase(BaseModel):
-    instance_id: InstanceId
+class InstanceState(BaseModel):
+    runner_states: Mapping[RunnerId, RunnerState[RunnerStateType]]
 
 
 class InstanceData(BaseModel):
     runner_placements: RunnerPlacement
-    runner_states: Mapping[RunnerId, RunnerState[RunnerStateType]]
 
 
-class Instance(InstanceBase):
+class Instance(BaseModel):
+    instance_id: InstanceId
     instance_data: InstanceData
+    instance_state: InstanceState

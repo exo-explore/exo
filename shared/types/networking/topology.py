@@ -1,20 +1,26 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Literal
 
 from pydantic import BaseModel
 
 from shared.types.networking.edges import (
     AddressingProtocol,
     ApplicationProtocol,
-    EdgeDirection,
+    Edge,
+    EdgeDataType,
     EdgeId,
-    EdgeInfo,
 )
 
 
 class Topology(BaseModel):
-    edges: dict[
-        EdgeId, tuple[EdgeDirection, EdgeInfo[AddressingProtocol, ApplicationProtocol]]
+    edges: Mapping[
+        EdgeId,
+        Edge[AddressingProtocol, ApplicationProtocol, Literal[EdgeDataType.DISCOVERED]],
     ]
+
+
+class EdgeMap(BaseModel):
+    edges: Mapping[EdgeId, Edge[AddressingProtocol, ApplicationProtocol, EdgeDataType]]
 
 
 class NetworkState(BaseModel):

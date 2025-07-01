@@ -2,7 +2,7 @@ from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
@@ -59,3 +59,13 @@ class RunnerPlacement(BaseModel):
     model_id: ModelId
     runner_to_shard: Mapping[RunnerId, Shard[ShardType]]
     node_to_runner: Mapping[NodeId, Sequence[RunnerId]]
+
+    @model_validator(mode="after")
+    def validate_runners_exist(self) -> "RunnerPlacement":
+        for runners in self.node_to_runner.values():
+            for runner_id in runners:
+                if runner_id not in self.runner_to_shard:
+                    raise ValueError(
+                        f"Runner {runner_id} in node_to_runner does not exist in runner_to_shard"
+                    )
+        return self
