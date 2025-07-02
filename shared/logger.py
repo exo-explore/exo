@@ -1,9 +1,32 @@
 import logging
 import logging.handlers
-from collections.abc import Sequence
+from collections.abc import Sequence, Set
+from enum import Enum
 from queue import Queue
 
+from pydantic import BaseModel
 from rich.logging import RichHandler
+
+
+class LogEntryType(str, Enum):
+    telemetry = "telemetry"
+    metrics = "metrics"
+    cluster = "cluster"
+
+
+class LogEntry(BaseModel):
+    event_type: Set[LogEntryType]
+
+
+class LogFilterByType(logging.Filter):
+    def __init__(self, log_types: Set[LogEntryType]):
+        super().__init__()
+        self.log_types = log_types
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        LogEntry.model_validate_json(message)
+        return True
 
 
 def configure_logger(
@@ -11,11 +34,15 @@ def configure_logger(
     log_level: int = logging.INFO,
     effect_handlers: Sequence[logging.Handler] | None = None,
 ) -> logging.Logger:
+    existing_logger = logging.Logger.manager.loggerDict.get(logger_name)
+    if existing_logger is not None:
+        raise RuntimeError(f"Logger with name '{logger_name}' already exists.")
+
     logger = logging.getLogger(logger_name)
     logger.setLevel(log_level)
     logger.propagate = False
+    logging.raiseExceptions = True
 
-    # If the named logger already has handlers, we assume it has been configured.
     if logger.hasHandlers():
         return logger
 
@@ -33,13 +60,20 @@ def configure_logger(
     return logger
 
 
-def attach_to_queue(logger: logging.Logger, queue: Queue[logging.LogRecord]) -> None:
-    logger.addHandler(logging.handlers.QueueHandler(queue))
+def attach_to_queue(
+    logger: logging.Logger,
+    filter_with: Sequence[logging.Filter],
+    queue: Queue[logging.LogRecord],
+) -> None:
+    handler = logging.handlers.QueueHandler(queue)
+    for log_filter in filter_with:
+        handler.addFilter(log_filter)
+    logger.addHandler(handler)
 
 
 def create_queue_listener(
     log_queue: Queue[logging.LogRecord],
-    effect_handlers: list[logging.Handler],
+    effect_handlers: Sequence[logging.Handler],
 ) -> logging.handlers.QueueListener:
     listener = logging.handlers.QueueListener(
         log_queue, *effect_handlers, respect_handler_level=True
