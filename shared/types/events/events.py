@@ -8,8 +8,10 @@ from shared.types.common import NewUUID, NodeId
 from shared.types.events.common import (
     Event,
     InstanceEventTypes,
+    InstanceStateEventTypes,
     MLXEventTypes,
-    NodeEventTypes,
+    NodeProfileEventTypes,
+    NodeStatusEventTypes,
     StreamingEventTypes,
     TaskEventTypes,
     TimerEventTypes,
@@ -22,8 +24,8 @@ from shared.types.tasks.common import (
     TaskType,
     TaskUpdate,
 )
-from shared.types.worker.common import InstanceId, NodeState
-from shared.types.worker.instances import InstanceData
+from shared.types.worker.common import InstanceId, NodeStatus
+from shared.types.worker.instances import InstanceData, InstanceStatus
 from shared.types.worker.runners import RunnerId, RunnerState, RunnerStateType
 
 
@@ -73,9 +75,19 @@ class InstanceDeleted(Event[InstanceEventTypes.InstanceDeleted]):
     instance_id: InstanceId
 
 
-class InstanceRunnerStateUpdated(Event[InstanceEventTypes.InstanceRunnerStateUpdated]):
-    event_type: Literal[InstanceEventTypes.InstanceRunnerStateUpdated] = (
-        InstanceEventTypes.InstanceRunnerStateUpdated
+class InstanceStatusUpdated(Event[InstanceEventTypes.InstanceStatusUpdated]):
+    event_type: Literal[InstanceEventTypes.InstanceStatusUpdated] = (
+        InstanceEventTypes.InstanceStatusUpdated
+    )
+    instance_id: InstanceId
+    instance_status: InstanceStatus
+
+
+class InstanceRunnerStateUpdated(
+    Event[InstanceStateEventTypes.InstanceRunnerStateUpdated]
+):
+    event_type: Literal[InstanceStateEventTypes.InstanceRunnerStateUpdated] = (
+        InstanceStateEventTypes.InstanceRunnerStateUpdated
     )
     instance_id: InstanceId
     state_update: Tuple[RunnerId, RunnerState[RunnerStateType]]
@@ -106,20 +118,20 @@ class MLXInferenceSagaStartPrepare(Event[MLXEventTypes.MLXInferenceSagaStartPrep
     instance_id: InstanceId
 
 
-class NodeProfileUpdated(Event[NodeEventTypes.NodeProfileUpdated]):
-    event_type: Literal[NodeEventTypes.NodeProfileUpdated] = (
-        NodeEventTypes.NodeProfileUpdated
+class NodeProfileUpdated(Event[NodeProfileEventTypes.NodeProfileUpdated]):
+    event_type: Literal[NodeProfileEventTypes.NodeProfileUpdated] = (
+        NodeProfileEventTypes.NodeProfileUpdated
     )
     node_id: NodeId
     node_profile: NodeProfile
 
 
-class NodeStateUpdated(Event[NodeEventTypes.NodeStateUpdated]):
-    event_type: Literal[NodeEventTypes.NodeStateUpdated] = (
-        NodeEventTypes.NodeStateUpdated
+class NodeStatusUpdated(Event[NodeStatusEventTypes.NodeStatusUpdated]):
+    event_type: Literal[NodeStatusEventTypes.NodeStatusUpdated] = (
+        NodeStatusEventTypes.NodeStatusUpdated
     )
     node_id: NodeId
-    node_state: NodeState
+    node_state: NodeStatus
 
 
 class ChunkGenerated(Event[StreamingEventTypes.ChunkGenerated]):

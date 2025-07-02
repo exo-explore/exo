@@ -1,27 +1,26 @@
-from typing import Annotated, Callable, NewType, Protocol
+from typing import Callable, NewType, Protocol, TypeVar
 
-from pydantic import BaseModel, Field
-
-from shared.types.common import NodeId
 from shared.types.networking.edges import (
     AddressingProtocol,
     ApplicationProtocol,
-    Edge,
-    EdgeDataType,
     EdgeId,
+    NetworkEdge,
 )
 
 TopicName = NewType("TopicName", str)
 
-
-class WrappedMessage(BaseModel):
-    node_id: NodeId
-    unix_timestamp: Annotated[int, Field(gt=0)]
+MessageT = TypeVar("MessageT", bound=object)
 
 
-PubSubMessageHandler = Callable[[TopicName, WrappedMessage], None]
+PubSubMessageHandler = Callable[[TopicName, MessageT], None]
 NodeConnectedHandler = Callable[
-    [EdgeId, Edge[AddressingProtocol, ApplicationProtocol, EdgeDataType.DISCOVERED]],
+    [
+        EdgeId,
+        NetworkEdge[
+            AddressingProtocol,
+            ApplicationProtocol,
+        ],
+    ],
     None,
 ]
 NodeDisconnectedHandler = Callable[[EdgeId], None]
@@ -38,6 +37,6 @@ class DiscoveryService(Protocol):
 
 class PubSubService(Protocol):
     def register_handler(
-        self, key: str, topic_name: TopicName, handler: PubSubMessageHandler
+        self, key: str, topic_name: TopicName, handler: PubSubMessageHandler[MessageT]
     ) -> None: ...
     def deregister_handler(self, key: str) -> None: ...

@@ -11,7 +11,7 @@ class RunnerId(NewUUID):
     pass
 
 
-class NodeState(str, Enum):
+class NodeStatus(str, Enum):
     Idle = "Idle"
     Running = "Running"
     Paused = "Paused"

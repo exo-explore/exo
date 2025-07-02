@@ -1,10 +1,13 @@
-from collections.abc import Mapping
 from enum import Enum
-from typing import Annotated, Generic, NamedTuple, TypeVar, final
+from typing import Generic, Mapping, Tuple, TypeVar, final
 
-from pydantic import AfterValidator, BaseModel, IPvAnyAddress
+from pydantic import BaseModel, IPvAnyAddress
 
 from shared.types.common import NewUUID, NodeId
+from shared.types.graphs.common import (
+    Edge,
+    EdgeData,
+)
 
 
 class EdgeId(NewUUID):
@@ -30,78 +33,50 @@ class EdgeDataTransferRate(BaseModel):
     jitter: float
 
 
-class EdgeMetadata(BaseModel, Generic[AdP, ApP]): ...
+class NetworkEdgeMetadata(BaseModel, Generic[AdP, ApP]): ...
 
 
 @final
-class EdgeType(BaseModel, Generic[AdP, ApP]):
+class NetworkEdgeType(BaseModel, Generic[AdP, ApP]):
     addressing_protocol: AdP
     application_protocol: ApP
 
 
 @final
-class EdgeDirection(NamedTuple):
-    source: NodeId
-    sink: NodeId
-
-
-@final
-class MLXEdgeContext(EdgeMetadata[AddressingProtocol.IPvAny, ApplicationProtocol.MLX]):
+class MLXEdgeContext(
+    NetworkEdgeMetadata[AddressingProtocol.IPvAny, ApplicationProtocol.MLX]
+):
     source_ip: IPvAnyAddress
     sink_ip: IPvAnyAddress
 
 
-class EdgeDataType(str, Enum):
-    DISCOVERED = "discovered"
-    PROFILED = "profiled"
-    UNKNOWN = "unknown"
+class NetworkEdgeInfoType(str, Enum):
+    network_profile = "network_profile"
+    other = "other"
 
 
-EdgeDataTypeT = TypeVar("EdgeDataTypeT", bound=EdgeDataType)
+AllNetworkEdgeInfo = Tuple[NetworkEdgeInfoType.network_profile]
 
 
-class EdgeData(BaseModel, Generic[EdgeDataTypeT]):
-    edge_data_type: EdgeDataTypeT
+NetworkEdgeInfoTypeT = TypeVar(
+    "NetworkEdgeInfoTypeT", bound=NetworkEdgeInfoType, covariant=True
+)
 
 
-class EdgeProfile(EdgeData[EdgeDataType.PROFILED]):
+class NetworkEdgeInfo(BaseModel, Generic[NetworkEdgeInfoTypeT]):
+    edge_info_type: NetworkEdgeInfoTypeT
+
+
+SetOfEdgeInfo = TypeVar("SetOfEdgeInfo", bound=Tuple[NetworkEdgeInfoType, ...])
+
+
+class NetworkEdgeData(EdgeData[NetworkEdgeType[AdP, ApP]], Generic[AdP, ApP]):
+    edge_info: Mapping[NetworkEdgeInfoType, NetworkEdgeInfo[NetworkEdgeInfoType]]
+    edge_metadata: NetworkEdgeMetadata[AdP, ApP]
+
+
+class NetworkEdgeProfile(NetworkEdgeInfo[NetworkEdgeInfoTypeT]):
     edge_data_transfer_rate: EdgeDataTransferRate
 
 
-def validate_mapping(
-    edge_data: Mapping[EdgeDataType, EdgeData[EdgeDataType]],
-) -> Mapping[EdgeDataType, EdgeData[EdgeDataType]]:
-    """Validates that each EdgeData value has an edge_data_type matching its key."""
-    for key, value in edge_data.items():
-        if key != value.edge_data_type:
-            raise ValueError(
-                f"Edge Data Type Mismatch: key {key} != value {value.edge_data_type}"
-            )
-    return edge_data
-
-
-class Edge(BaseModel, Generic[AdP, ApP, EdgeDataTypeT]):
-    edge_type: EdgeType[AdP, ApP]
-    edge_direction: EdgeDirection
-    edge_data: Annotated[
-        Mapping[EdgeDataType, EdgeData[EdgeDataType]], AfterValidator(validate_mapping)
-    ]
-    edge_metadata: EdgeMetadata[AdP, ApP]
-
-
-"""
-an_edge: UniqueEdge[Literal[AddressingProtocol.IPvAny], Literal[ApplicationProtocol.MLX]] = UniqueEdge(
-    edge_identifier=EdgeId(UUID().hex),
-    edge_info=ProfiledEdge(
-        edge_direction=EdgeDirection(source=NodeId("1"), sink=NodeId("2")),
-        edge_type=EdgeType(
-            addressing_protocol=AddressingProtocol.IPvAny,
-            application_protocol=ApplicationProtocol.MLX
-        ),
-        edge_data=EdgeData(
-            edge_data_transfer_rate=EdgeDataTransferRate(throughput=1000, latency=0.1, jitter=0.01)
-        ),
-        edge_metadata=MLXEdgeContext(source_ip=IPv4Address("192.168.1.1"), sink_ip=IPv4Address("192.168.1.2"))
-    )
-)
-"""
+class NetworkEdge(Edge[NetworkEdgeType[AdP, ApP], EdgeId, NodeId]): ...

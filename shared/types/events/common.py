@@ -1,3 +1,4 @@
+import time
 from enum import Enum
 from typing import (
     Annotated,
@@ -11,9 +12,9 @@ from typing import (
     get_args,
 )
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
-from shared.types.common import NewUUID
+from shared.types.common import NewUUID, NodeId
 
 
 class EventId(NewUUID):
@@ -39,11 +40,18 @@ class InstanceEventTypes(str, Enum):
     InstanceCreated = "InstanceCreated"
     InstanceDeleted = "InstanceDeleted"
     InstanceReplacedAtomically = "InstanceReplacedAtomically"
+    InstanceStatusUpdated = "InstanceStatusUpdated"
+
+
+class InstanceStateEventTypes(str, Enum):
     InstanceRunnerStateUpdated = "InstanceRunnerStateUpdated"
 
 
-class NodeEventTypes(str, Enum):
-    NodeStateUpdated = "NodeStateUpdated"
+class NodeStatusEventTypes(str, Enum):
+    NodeStatusUpdated = "NodeStatusUpdated"
+
+
+class NodeProfileEventTypes(str, Enum):
     NodeProfileUpdated = "NodeProfileUpdated"
 
 
@@ -62,7 +70,9 @@ EventTypes = Union[
     TaskEventTypes,
     StreamingEventTypes,
     InstanceEventTypes,
-    NodeEventTypes,
+    InstanceStateEventTypes,
+    NodeStatusEventTypes,
+    NodeProfileEventTypes,
     EdgeEventTypes,
     TimerEventTypes,
     MLXEventTypes,
@@ -72,9 +82,25 @@ EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
 TEventType = TypeVar("TEventType", bound=EventTypes, covariant=True)
 
 
-class Event(BaseModel, Generic[TEventType]):
+class SecureEventProtocol(Protocol):
+    def check_origin_id(self, origin_id: NodeId) -> bool: ...
+
+
+class Event(BaseModel, SecureEventProtocol, Generic[TEventType]):
     event_type: TEventType
     event_id: EventId
+
+
+class WrappedEvent(BaseModel, Generic[TEventType]):
+    event: Event[TEventType]
+    origin_id: NodeId
+    origin_timestamp: int = Field(default_factory=lambda: int(time.time()))
+
+    @model_validator(mode="after")
+    def check_origin_id(self) -> "WrappedEvent[TEventType]":
+        if self.event.check_origin_id(self.origin_id):
+            return self
+        raise ValueError("Invalid Event: Origin ID Does Not Match")
 
 
 class PersistedEvent(BaseModel, Generic[TEventType]):

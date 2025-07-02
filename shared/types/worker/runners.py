@@ -8,7 +8,7 @@ from shared.types.common import NodeId
 from shared.types.models.common import ModelId
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
-from shared.types.worker.shards import Shard, ShardType
+from shared.types.worker.shards import ShardData, ShardType
 
 
 class RunnerStateType(str, Enum):
@@ -57,7 +57,7 @@ class RunnerData(BaseModel):
 
 class RunnerPlacement(BaseModel):
     model_id: ModelId
-    runner_to_shard: Mapping[RunnerId, Shard[ShardType]]
+    runner_to_shard: Mapping[RunnerId, ShardData[ShardType]]
     node_to_runner: Mapping[NodeId, Sequence[RunnerId]]
 
     @model_validator(mode="after")

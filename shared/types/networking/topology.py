@@ -1,28 +1,40 @@
-from collections.abc import Mapping, Sequence
-from typing import Literal
-
-from pydantic import BaseModel
-
+from shared.types.common import NodeId
+from shared.types.graphs.common import Graph, GraphData
 from shared.types.networking.edges import (
     AddressingProtocol,
     ApplicationProtocol,
-    Edge,
-    EdgeDataType,
     EdgeId,
+    NetworkEdge,
 )
 
 
-class Topology(BaseModel):
-    edges: Mapping[
+class Topology(
+    Graph[
+        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        None,
         EdgeId,
-        Edge[AddressingProtocol, ApplicationProtocol, Literal[EdgeDataType.DISCOVERED]],
+        NodeId,
+    ]
+):
+    graph_data: GraphData[
+        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        None,
+        EdgeId,
+        NodeId,
     ]
 
 
-class EdgeMap(BaseModel):
-    edges: Mapping[EdgeId, Edge[AddressingProtocol, ApplicationProtocol, EdgeDataType]]
-
-
-class NetworkState(BaseModel):
-    topology: Topology
-    history: Sequence[Topology]
+class OrphanedPartOfTopology(
+    Graph[
+        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        None,
+        EdgeId,
+        NodeId,
+    ]
+):
+    graph_data: GraphData[
+        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        None,
+        EdgeId,
+        NodeId,
+    ]

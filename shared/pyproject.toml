@@ -10,6 +10,7 @@ dependencies = [
     "protobuf>=6.31.1",
     "pydantic>=2.11.7",
     "rich>=14.0.0",
+    "structlog>=25.4.0",
 ]
 
 [build-system]

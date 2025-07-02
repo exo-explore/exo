@@ -13,7 +13,3 @@ ShardTypeT = TypeVar("ShardTypeT", bound=ShardType)
 
 class ShardData(BaseModel, Generic[ShardTypeT]):
     shard_type: ShardTypeT
-
-
-class Shard(BaseModel, Generic[ShardTypeT]):
-    shard_data: ShardData[ShardTypeT]

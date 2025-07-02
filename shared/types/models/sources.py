@@ -11,14 +11,20 @@ class SourceType(str, Enum):
     GitHub = "GitHub"
 
 
+class SourceFormatType(str, Enum):
+    HuggingFaceTransformers = "HuggingFaceTransformers"
+
+
 T = TypeVar("T", bound=SourceType)
+S = TypeVar("S", bound=SourceFormatType)
 
 RepoPath = Annotated[str, Field(pattern=r"^[^/]+/[^/]+$")]
 
 
-class BaseModelSource(BaseModel, Generic[T]):
+class BaseModelSource(BaseModel, Generic[T, S]):
     model_uuid: ModelId
     source_type: T
+    source_format: S
     source_data: Any
 
 
@@ -33,13 +39,18 @@ class GitHubModelSourceData(BaseModel):
 
 
 @final
-class HuggingFaceModelSource(BaseModelSource[SourceType.HuggingFace]):
+class HuggingFaceModelSource(
+    BaseModelSource[SourceType.HuggingFace, SourceFormatType.HuggingFaceTransformers]
+):
     source_type: Literal[SourceType.HuggingFace] = SourceType.HuggingFace
+    source_format: Literal[SourceFormatType.HuggingFaceTransformers] = (
+        SourceFormatType.HuggingFaceTransformers
+    )
     source_data: HuggingFaceModelSourceData
 
 
 @final
-class GitHubModelSource(BaseModelSource[SourceType.GitHub]):
+class GitHubModelSource(BaseModelSource[SourceType.GitHub, S]):
     source_type: Literal[SourceType.GitHub] = SourceType.GitHub
     source_data: GitHubModelSourceData
 
@@ -47,9 +58,9 @@ class GitHubModelSource(BaseModelSource[SourceType.GitHub]):
 _ModelSource = Annotated[
     Union[
         HuggingFaceModelSource,
-        GitHubModelSource,
+        GitHubModelSource[SourceFormatType.HuggingFaceTransformers],
     ],
     Field(discriminator="source_type"),
 ]
-ModelSource = BaseModelSource[SourceType]
+ModelSource = BaseModelSource[SourceType, SourceFormatType]
 ModelSourceAdapter: TypeAdapter[ModelSource] = TypeAdapter(_ModelSource)

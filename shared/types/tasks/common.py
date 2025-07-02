@@ -74,7 +74,11 @@ class FailedTask(TaskUpdate[TaskStatusType.Failed]):
     error_message: Mapping[RunnerId, str]
 
 
-class Task(BaseModel):
+class BaseTask(BaseModel):
     task_data: TaskData[TaskType]
     task_status: TaskUpdate[TaskStatusType]
     on_instance: InstanceId
+
+
+class Task(BaseTask):
+    task_id: TaskId
