@@ -1,9 +1,16 @@
-from typing import Annotated
-from uuid import UUID
+from uuid import uuid4
 
-from pydantic import TypeAdapter
-from pydantic.types import UuidVersion
+from pydantic import UUID4, Field
+from pydantic.dataclasses import dataclass
 
-_NodeId = Annotated[UUID, UuidVersion(4)]
-NodeId = type("NodeId", (UUID,), {})
-NodeIdParser: TypeAdapter[NodeId] = TypeAdapter(_NodeId)
+
+@dataclass(frozen=True)
+class NewUUID:
+    uuid: UUID4 = Field(default_factory=lambda: uuid4())
+
+    def __hash__(self) -> int:
+        return hash(self.uuid)
+
+
+class NodeId(NewUUID):
+    pass

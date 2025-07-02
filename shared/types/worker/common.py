@@ -1,17 +1,14 @@
 from enum import Enum
-from typing import Annotated
-from uuid import UUID
 
-from pydantic import TypeAdapter
-from pydantic.types import UuidVersion
+from shared.types.common import NewUUID
 
-_InstanceId = Annotated[UUID, UuidVersion(4)]
-InstanceId = type("InstanceId", (UUID,), {})
-InstanceIdParser: TypeAdapter[InstanceId] = TypeAdapter(_InstanceId)
 
-_RunnerId = Annotated[UUID, UuidVersion(4)]
-RunnerId = type("RunnerId", (UUID,), {})
-RunnerIdParser: TypeAdapter[RunnerId] = TypeAdapter(_RunnerId)
+class InstanceId(NewUUID):
+    pass
+
+
+class RunnerId(NewUUID):
+    pass
 
 
 class NodeState(str, Enum):

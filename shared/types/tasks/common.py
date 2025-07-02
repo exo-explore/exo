@@ -1,17 +1,16 @@
 from collections.abc import Mapping
 from enum import Enum
-from typing import Annotated, Any, Generic, Literal, TypeVar, Union
-from uuid import UUID
+from typing import Any, Generic, Literal, TypeVar, Union
 
 import openai.types.chat as openai
-from pydantic import BaseModel, TypeAdapter
-from pydantic.types import UuidVersion
+from pydantic import BaseModel
 
+from shared.types.common import NewUUID
 from shared.types.worker.common import InstanceId, RunnerId
 
-_TaskId = Annotated[UUID, UuidVersion(4)]
-TaskId = type("TaskId", (UUID,), {})
-TaskIdParser: TypeAdapter[TaskId] = TypeAdapter(_TaskId)
+
+class TaskId(NewUUID):
+    pass
 
 
 class TaskType(str, Enum):

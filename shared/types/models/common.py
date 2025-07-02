@@ -1,15 +1,14 @@
-from typing import Annotated, Sequence, final
-from uuid import UUID
+from typing import Sequence, final
 
-from pydantic import BaseModel, TypeAdapter
-from pydantic.types import UuidVersion
+from pydantic import BaseModel
 
+from shared.types.common import NewUUID
 from shared.types.models.metadata import ModelMetadata
 from shared.types.models.sources import ModelSource
 
-_ModelId = Annotated[UUID, UuidVersion(4)]
-ModelId = type("ModelId", (UUID,), {})
-ModelIdParser: TypeAdapter[ModelId] = TypeAdapter(_ModelId)
+
+class ModelId(NewUUID):
+    pass
 
 
 @final
@@ -17,6 +16,3 @@ class Model(BaseModel):
     model_id: ModelId
     model_sources: Sequence[ModelSource]
     model_metadata: ModelMetadata
-
-
-ModelIdAdapter: TypeAdapter[ModelId] = TypeAdapter(_ModelId)

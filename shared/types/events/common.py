@@ -10,14 +10,14 @@ from typing import (
     Union,
     get_args,
 )
-from uuid import UUID
 
 from pydantic import BaseModel, Field, TypeAdapter
-from pydantic.types import UuidVersion
 
-_EventId = Annotated[UUID, UuidVersion(4)]
-EventId = type("EventId", (UUID,), {})
-EventIdParser: TypeAdapter[EventId] = TypeAdapter(_EventId)
+from shared.types.common import NewUUID
+
+
+class EventId(NewUUID):
+    pass
 
 
 class MLXEventTypes(str, Enum):
@@ -134,9 +134,9 @@ def get_effects_from_sagas(
 
 IdemKeyGenerator = Callable[[State[EventTypeT], int], Sequence[EventId]]
 
-_CommandId = Annotated[UUID, UuidVersion(4)]
-CommandId = type("CommandId", (UUID,), {})
-CommandIdParser: TypeAdapter[CommandId] = TypeAdapter(_CommandId)
+
+class CommandId(NewUUID):
+    pass
 
 
 class CommandTypes(str, Enum):

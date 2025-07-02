@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Tuple
-from uuid import UUID
+from typing import Any, Literal, Tuple
 
-from pydantic import BaseModel, TypeAdapter, UuidVersion
+from pydantic import BaseModel
 
-from shared.types.common import NodeId
+from shared.types.common import NewUUID, NodeId
 from shared.types.events.common import (
     Event,
     InstanceEventTypes,
@@ -27,13 +26,13 @@ from shared.types.worker.common import InstanceId, NodeState
 from shared.types.worker.instances import InstanceData
 from shared.types.worker.runners import RunnerId, RunnerState, RunnerStateType
 
-_RequestId = Annotated[UUID, UuidVersion(4)]
-RequestId = type("RequestId", (UUID,), {})
-RequestIdParser: TypeAdapter[RequestId] = TypeAdapter(_RequestId)
 
-_TimerId = Annotated[UUID, UuidVersion(4)]
-TimerId = type("TimerId", (UUID,), {})
-TimerIdParser: TypeAdapter[TimerId] = TypeAdapter(_TimerId)
+class RequestId(NewUUID):
+    pass
+
+
+class TimerId(NewUUID):
+    pass
 
 
 class TimerData(BaseModel):

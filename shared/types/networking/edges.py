@@ -1,16 +1,14 @@
 from collections.abc import Mapping
 from enum import Enum
 from typing import Annotated, Generic, NamedTuple, TypeVar, final
-from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, IPvAnyAddress, TypeAdapter
-from pydantic.types import UuidVersion
+from pydantic import AfterValidator, BaseModel, IPvAnyAddress
 
-from shared.types.common import NodeId
+from shared.types.common import NewUUID, NodeId
 
-_EdgeId = Annotated[UUID, UuidVersion(4)]
-EdgeId = type("EdgeId", (UUID,), {})
-EdgeIdParser: TypeAdapter[EdgeId] = TypeAdapter(_EdgeId)
+
+class EdgeId(NewUUID):
+    pass
 
 
 class AddressingProtocol(str, Enum):

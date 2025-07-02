@@ -1,5 +1,6 @@
 from hashlib import sha3_224 as hasher
 from typing import Sequence, TypeVar
+from uuid import UUID
 
 from shared.types.events.common import EventId, EventTypes, IdemKeyGenerator, State
 
@@ -18,7 +19,10 @@ def get_idem_tag_generator(base: str) -> IdemKeyGenerator[EventTypeT]:
             if n == 0:
                 return []
             next_hash = hasher(last).digest()
-            return (EventId(next_hash.hex()), *recurse(n - 1, next_hash))
+            return (
+                EventId(UUID(bytes=next_hash, version=4)),
+                *recurse(n - 1, next_hash),
+            )
 
         initial_bytes = state.sequence_number.to_bytes(8, byteorder="big", signed=False)
         return recurse(num_keys, initial_bytes)
