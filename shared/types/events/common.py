@@ -108,8 +108,8 @@ class PersistedEvent(BaseModel, Generic[TEventType]):
     sequence_number: int = Field(gt=0)
 
 
-class State(BaseModel, Generic[EventTypeT]):
-    event_types: tuple[EventTypeT, ...] = get_args(EventTypeT)
+class State(BaseModel, Generic[TEventType]):
+    event_types: tuple[TEventType, ...] = get_args(TEventType)
     sequence_number: int = Field(default=0, ge=0)
 
 
@@ -128,17 +128,31 @@ EffectHandler = Callable[[StateAndEvent[EventTypeT], State[EventTypeT]], None]
 EventPublisher = Callable[[Event[EventTypeT]], None]
 
 
+class MutableState(Protocol, Generic[EventTypeT]):
+    def apply(
+        self,
+        event: Event[TEventType],
+        applicator: Applicator[EventTypeT, TEventType],
+        effect_handlers: Sequence[EffectHandler[TEventType]],
+    ) -> None: ...
+
+
 class EventOutbox(Protocol):
     def send(self, events: Sequence[Event[EventTypeT]]) -> None: ...
 
 
 class EventProcessor(Protocol):
+    # TODO: is .update() an anti-pattern?
     def update(
         self,
         state: State[EventTypeT],
         apply: Apply[EventTypeT],
         effect_handlers: Sequence[EffectHandler[EventTypeT]],
     ) -> State[EventTypeT]: ...
+
+    def get_events_to_apply(
+        self, state: State[TEventType]
+    ) -> Sequence[Event[TEventType]]: ...
 
 
 def get_saga_effect_handler(
