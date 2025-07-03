@@ -1,4 +1,3 @@
-import time
 from enum import Enum
 from typing import (
     Annotated,
@@ -94,7 +93,6 @@ class Event(BaseModel, SecureEventProtocol, Generic[TEventType]):
 class WrappedEvent(BaseModel, Generic[TEventType]):
     event: Event[TEventType]
     origin_id: NodeId
-    origin_timestamp: int = Field(default_factory=lambda: int(time.time()))
 
     @model_validator(mode="after")
     def check_origin_id(self) -> "WrappedEvent[TEventType]":
