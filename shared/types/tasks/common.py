@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from enum import Enum
-from typing import Any, Generic, Literal, TypeVar, Union
+from typing import Generic, Literal, TypeVar, Union
 
 import openai.types.chat as openai
 from pydantic import BaseModel
@@ -23,7 +23,6 @@ TaskTypeT = TypeVar("TaskTypeT", bound=TaskType)
 
 class TaskData(BaseModel, Generic[TaskTypeT]):
     task_type: TaskTypeT
-    task_data: Any
 
 
 class ChatCompletionNonStreamingTask(TaskData[TaskType.ChatCompletionNonStreaming]):
@@ -52,33 +51,36 @@ TaskStatusTypeT = TypeVar(
 )
 
 
-class TaskUpdate(BaseModel, Generic[TaskStatusTypeT]):
+class TaskArtifact(BaseModel, Generic[TaskTypeT]): ...
+
+
+class TaskUpdate(BaseModel, Generic[TaskStatusTypeT, TaskTypeT]):
     task_status: TaskStatusTypeT
 
 
-class PendingTask(TaskUpdate[TaskStatusType.Pending]):
+class PendingTask(TaskUpdate[TaskStatusType.Pending, TaskTypeT]):
     task_status: Literal[TaskStatusType.Pending]
 
 
-class RunningTask(TaskUpdate[TaskStatusType.Running]):
+class RunningTask(TaskUpdate[TaskStatusType.Running, TaskTypeT]):
     task_status: Literal[TaskStatusType.Running]
 
 
-class CompletedTask(TaskUpdate[TaskStatusType.Complete]):
+class CompletedTask(TaskUpdate[TaskStatusType.Complete, TaskTypeT]):
     task_status: Literal[TaskStatusType.Complete]
-    task_artifact: bytes
+    task_artifact: TaskArtifact[TaskTypeT]
 
 
-class FailedTask(TaskUpdate[TaskStatusType.Failed]):
+class FailedTask(TaskUpdate[TaskStatusType.Failed, TaskTypeT]):
     task_status: Literal[TaskStatusType.Failed]
     error_message: Mapping[RunnerId, str]
 
 
-class BaseTask(BaseModel):
-    task_data: TaskData[TaskType]
-    task_status: TaskUpdate[TaskStatusType]
+class BaseTask(BaseModel, Generic[TaskTypeT]):
+    task_data: TaskData[TaskTypeT]
+    task_status: TaskUpdate[TaskStatusType, TaskTypeT]
     on_instance: InstanceId
 
 
-class Task(BaseTask):
+class Task(BaseTask[TaskTypeT]):
     task_id: TaskId

@@ -1,40 +1,74 @@
 from shared.types.common import NodeId
 from shared.types.graphs.common import Graph, GraphData
-from shared.types.networking.edges import (
+from shared.types.networking.control_plane import ControlPlaneEdgeId
+from shared.types.networking.data_plane import (
     AddressingProtocol,
     ApplicationProtocol,
-    EdgeId,
-    NetworkEdge,
+    DataPlaneEdge,
+    DataPlaneEdgeId,
 )
+from shared.types.worker.common import NodeStatus
 
 
-class Topology(
+class DataPlaneTopology(
     Graph[
-        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        DataPlaneEdge[AddressingProtocol, ApplicationProtocol],
         None,
-        EdgeId,
+        DataPlaneEdgeId,
         NodeId,
     ]
 ):
     graph_data: GraphData[
-        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        DataPlaneEdge[AddressingProtocol, ApplicationProtocol],
         None,
-        EdgeId,
+        DataPlaneEdgeId,
         NodeId,
     ]
 
 
-class OrphanedPartOfTopology(
+class OrphanedPartOfDataPlaneTopology(
     Graph[
-        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        DataPlaneEdge[AddressingProtocol, ApplicationProtocol],
         None,
-        EdgeId,
+        DataPlaneEdgeId,
         NodeId,
     ]
 ):
     graph_data: GraphData[
-        NetworkEdge[AddressingProtocol, ApplicationProtocol],
+        DataPlaneEdge[AddressingProtocol, ApplicationProtocol],
         None,
-        EdgeId,
+        DataPlaneEdgeId,
+        NodeId,
+    ]
+
+
+class ControlPlaneTopology(
+    Graph[
+        None,
+        NodeStatus,
+        ControlPlaneEdgeId,
+        NodeId,
+    ]
+):
+    graph_data: GraphData[
+        None,
+        NodeStatus,
+        ControlPlaneEdgeId,
+        NodeId,
+    ]
+
+
+class OrphanedPartOfControlPlaneTopology(
+    Graph[
+        None,
+        NodeStatus,
+        ControlPlaneEdgeId,
+        NodeId,
+    ]
+):
+    graph_data: GraphData[
+        None,
+        NodeStatus,
+        ControlPlaneEdgeId,
         NodeId,
     ]

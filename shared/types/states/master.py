@@ -7,24 +7,28 @@ from pydantic import BaseModel
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
-    EdgeEventTypes,
+    ControlPlaneEventTypes,
+    DataPlaneEventTypes,
     Event,
     EventTypes,
-    NodeProfileEventTypes,
-    NodeStatusEventTypes,
+    NodePerformanceEventTypes,
     State,
 )
 from shared.types.graphs.resource_graph import ResourceGraph
-from shared.types.networking.edges import (
+from shared.types.networking.data_plane import (
     AddressingProtocol,
     ApplicationProtocol,
-    EdgeId,
-    NetworkEdge,
+    DataPlaneEdge,
+    DataPlaneEdgeId,
 )
-from shared.types.networking.topology import OrphanedPartOfTopology, Topology
-from shared.types.profiling.common import NodeProfile
+from shared.types.networking.topology import (
+    ControlPlaneTopology,
+    DataPlaneTopology,
+    OrphanedPartOfControlPlaneTopology,
+    OrphanedPartOfDataPlaneTopology,
+)
+from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.states.shared import SharedState
-from shared.types.worker.common import NodeStatus
 from shared.types.worker.instances import InstanceData, InstanceId
 
 
@@ -42,28 +46,33 @@ class CachePolicy(BaseModel, Generic[CachePolicyTypeT]):
     policy_type: CachePolicyTypeT
 
 
-class NodeProfileState(State[NodeProfileEventTypes]):
-    node_profiles: Mapping[NodeId, NodeProfile]
+class NodePerformanceProfileState(State[NodePerformanceEventTypes]):
+    node_profiles: Mapping[NodeId, NodePerformanceProfile]
 
 
-class NodeStatusState(State[NodeStatusEventTypes]):
-    node_status: Mapping[NodeId, NodeStatus]
+class DataPlaneNetworkState(State[DataPlaneEventTypes]):
+    topology: DataPlaneTopology
+    history: Sequence[OrphanedPartOfDataPlaneTopology]
 
-
-class NetworkState(State[EdgeEventTypes]):
-    topology: Topology
-    history: Sequence[OrphanedPartOfTopology]
-
-    def delete_edge(self, edge_id: EdgeId) -> None: ...
+    def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
     def add_edge(
-        self, edge: NetworkEdge[AddressingProtocol, ApplicationProtocol]
+        self, edge: DataPlaneEdge[AddressingProtocol, ApplicationProtocol]
+    ) -> None: ...
+
+
+class ControlPlaneNetworkState(State[ControlPlaneEventTypes]):
+    topology: ControlPlaneTopology
+    history: Sequence[OrphanedPartOfControlPlaneTopology]
+
+    def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
+    def add_edge(
+        self, edge: DataPlaneEdge[AddressingProtocol, ApplicationProtocol]
     ) -> None: ...
 
 
 class MasterState(SharedState):
-    network_state: NetworkState
-    node_profiles: NodeProfileState
-    node_status: NodeStatusState
+    data_plane_network_state: DataPlaneNetworkState
+    control_plane_network_state: ControlPlaneNetworkState
     job_inbox: Queue[ExternalCommand]
     job_outbox: Queue[ExternalCommand]
     cache_policy: CachePolicy[CachePolicyType]

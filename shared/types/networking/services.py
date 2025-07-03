@@ -1,10 +1,8 @@
 from typing import Callable, NewType, Protocol, TypeVar
 
-from shared.types.networking.edges import (
-    AddressingProtocol,
-    ApplicationProtocol,
-    EdgeId,
-    NetworkEdge,
+from shared.types.networking.control_plane import (
+    ControlPlaneEdgeId,
+    ControlPlaneEdgeType,
 )
 
 TopicName = NewType("TopicName", str)
@@ -15,15 +13,12 @@ MessageT = TypeVar("MessageT", bound=object)
 PubSubMessageHandler = Callable[[TopicName, MessageT], None]
 NodeConnectedHandler = Callable[
     [
-        EdgeId,
-        NetworkEdge[
-            AddressingProtocol,
-            ApplicationProtocol,
-        ],
+        ControlPlaneEdgeId,
+        ControlPlaneEdgeType,
     ],
     None,
 ]
-NodeDisconnectedHandler = Callable[[EdgeId], None]
+NodeDisconnectedHandler = Callable[[ControlPlaneEdgeId], None]
 
 
 class DiscoveryService(Protocol):

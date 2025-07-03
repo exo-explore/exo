@@ -38,6 +38,7 @@ class StreamingEventTypes(str, Enum):
 class InstanceEventTypes(str, Enum):
     InstanceCreated = "InstanceCreated"
     InstanceDeleted = "InstanceDeleted"
+    InstanceToBeReplacedAtomically = "InstanceToBeReplacedAtomically"
     InstanceReplacedAtomically = "InstanceReplacedAtomically"
     InstanceStatusUpdated = "InstanceStatusUpdated"
 
@@ -46,18 +47,20 @@ class InstanceStateEventTypes(str, Enum):
     InstanceRunnerStateUpdated = "InstanceRunnerStateUpdated"
 
 
-class NodeStatusEventTypes(str, Enum):
-    NodeStatusUpdated = "NodeStatusUpdated"
+class NodePerformanceEventTypes(str, Enum):
+    NodePerformanceProfiled = "NodePerformanceProfiled"
 
 
-class NodeProfileEventTypes(str, Enum):
-    NodeProfileUpdated = "NodeProfileUpdated"
+class DataPlaneEventTypes(str, Enum):
+    DataPlaneEdgeCreated = "DataPlaneEdgeCreated"
+    DataPlaneEdgeProfiled = "DataPlaneEdgeProfiled"
+    DataPlaneEdgeDeleted = "DataPlaneEdgeDeleted"
 
 
-class EdgeEventTypes(str, Enum):
-    EdgeCreated = "EdgeCreated"
-    EdgeUpdated = "EdgeUpdated"
-    EdgeDeleted = "EdgeDeleted"
+class ControlPlaneEventTypes(str, Enum):
+    WorkerConnected = "WorkerConnected"
+    WorkerStatusUpdated = "WorkerStatusUpdated"
+    WorkerDisconnected = "WorkerDisconnected"
 
 
 class TimerEventTypes(str, Enum):
@@ -70,9 +73,9 @@ EventTypes = Union[
     StreamingEventTypes,
     InstanceEventTypes,
     InstanceStateEventTypes,
-    NodeStatusEventTypes,
-    NodeProfileEventTypes,
-    EdgeEventTypes,
+    NodePerformanceEventTypes,
+    ControlPlaneEventTypes,
+    DataPlaneEventTypes,
     TimerEventTypes,
     MLXEventTypes,
 ]

@@ -2,14 +2,14 @@ from collections.abc import Mapping
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
-    NodeStatusEventTypes,
+    ControlPlaneEventTypes,
     State,
 )
 from shared.types.states.shared import SharedState
 from shared.types.worker.common import NodeStatus
 
 
-class NodeStatusState(State[NodeStatusEventTypes]):
+class NodeStatusState(State[ControlPlaneEventTypes]):
     node_status: Mapping[NodeId, NodeStatus]
 
 

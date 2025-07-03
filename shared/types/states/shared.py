@@ -10,7 +10,7 @@ from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import BaseInstance
 
 
-class Instances(State[InstanceStateEventTypes]):
+class KnownInstances(State[InstanceStateEventTypes]):
     instances: Mapping[InstanceId, BaseInstance]
 
 
@@ -20,5 +20,11 @@ class Tasks(State[TaskEventTypes]):
 
 class SharedState(BaseModel):
     node_id: NodeId
-    known_instances: Instances
+    known_instances: KnownInstances
     compute_tasks: Sequence[Task[TaskType]]
+
+    def get_node_id(self) -> NodeId: ...
+
+    def get_tasks_by_instance(
+        self, instance_id: InstanceId
+    ) -> Sequence[Task[TaskType]]: ...

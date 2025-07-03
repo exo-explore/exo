@@ -3,16 +3,15 @@ from collections.abc import Mapping
 from pydantic import BaseModel
 
 from shared.types.common import NodeId
-from shared.types.networking.topology import Topology
-from shared.types.profiling.common import NodeProfile
-from shared.types.worker.common import NodeStatus
+from shared.types.networking.topology import ControlPlaneTopology, DataPlaneTopology
+from shared.types.profiling.common import NodePerformanceProfile
 
 
 class ResourceGraph(BaseModel): ...
 
 
 def get_graph_of_compute_resources(
-    network_topology: Topology,
-    node_statuses: Mapping[NodeId, NodeStatus],
-    node_profiles: Mapping[NodeId, NodeProfile],
+    control_plane_topology: ControlPlaneTopology,
+    data_plane_topology: DataPlaneTopology,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> ResourceGraph: ...
