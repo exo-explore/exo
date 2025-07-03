@@ -342,7 +342,9 @@ async def main():
   def handle_exit():
     asyncio.ensure_future(shutdown(signal.SIGTERM, loop, node.server))
 
-  if platform.system() != "Windows":
+  # Signal handlers are not supported on Windows, KeyboardInterrupt is handled by the run() function
+  # Signal handlers are not supported on Windows, KeyboardInterrupt is handled by the run() function
+  if not psutil.WINDOWS:
     for s in [signal.SIGINT, signal.SIGTERM]:
       loop.add_signal_handler(s, handle_exit)
 
