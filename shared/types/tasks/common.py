@@ -1,9 +1,9 @@
 from collections.abc import Mapping
 from enum import Enum
-from typing import Generic, Literal, TypeVar, Union
+from typing import Annotated, Generic, Literal, TypeVar, Union
 
 import openai.types.chat as openai
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.common import NewUUID
 from shared.types.worker.common import InstanceId, RunnerId
@@ -18,11 +18,10 @@ class TaskType(str, Enum):
     ChatCompletionStreaming = "ChatCompletionStreaming"
 
 
-TaskTypeT = TypeVar("TaskTypeT", bound=TaskType)
+TaskTypeT = TypeVar("TaskTypeT", bound=TaskType, covariant=True)
 
 
-class TaskData(BaseModel, Generic[TaskTypeT]):
-    task_type: TaskTypeT
+class TaskData(BaseModel, Generic[TaskTypeT]): ...
 
 
 class ChatCompletionNonStreamingTask(TaskData[TaskType.ChatCompletionNonStreaming]):
@@ -39,48 +38,84 @@ class ChatCompletionStreamingTask(TaskData[TaskType.ChatCompletionStreaming]):
     task_data: openai.completion_create_params.CompletionCreateParams
 
 
-class TaskStatusType(str, Enum):
+class TaskStatusIncompleteType(str, Enum):
     Pending = "Pending"
     Running = "Running"
     Failed = "Failed"
+
+
+class TaskStatusCompleteType(str, Enum):
     Complete = "Complete"
 
 
-TaskStatusTypeT = TypeVar(
-    "TaskStatusTypeT", bound=Union[TaskStatusType, Literal["Complete"]]
-)
+TaskStatusType = Union[TaskStatusIncompleteType, TaskStatusCompleteType]
 
 
-class TaskArtifact(BaseModel, Generic[TaskTypeT]): ...
+TaskStatusTypeT = TypeVar("TaskStatusTypeT", bound=TaskStatusType, covariant=True)
 
 
-class TaskUpdate(BaseModel, Generic[TaskStatusTypeT, TaskTypeT]):
+class TaskArtifact[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel): ...
+
+
+class IncompleteTaskArtifact[TaskTypeT: TaskType](
+    TaskArtifact[TaskTypeT, TaskStatusIncompleteType]
+):
+    pass
+
+
+class TaskStatusUpdate[TaskStatusTypeT: TaskStatusType](BaseModel):
     task_status: TaskStatusTypeT
 
 
-class PendingTask(TaskUpdate[TaskStatusType.Pending, TaskTypeT]):
-    task_status: Literal[TaskStatusType.Pending]
+class PendingTaskStatus(TaskStatusUpdate[TaskStatusIncompleteType.Pending]):
+    task_status: Literal[TaskStatusIncompleteType.Pending] = (
+        TaskStatusIncompleteType.Pending
+    )
 
 
-class RunningTask(TaskUpdate[TaskStatusType.Running, TaskTypeT]):
-    task_status: Literal[TaskStatusType.Running]
+class RunningTaskStatus(TaskStatusUpdate[TaskStatusIncompleteType.Running]):
+    task_status: Literal[TaskStatusIncompleteType.Running] = (
+        TaskStatusIncompleteType.Running
+    )
 
 
-class CompletedTask(TaskUpdate[TaskStatusType.Complete, TaskTypeT]):
-    task_status: Literal[TaskStatusType.Complete]
-    task_artifact: TaskArtifact[TaskTypeT]
+class CompletedTaskStatus(TaskStatusUpdate[TaskStatusCompleteType.Complete]):
+    task_status: Literal[TaskStatusCompleteType.Complete] = (
+        TaskStatusCompleteType.Complete
+    )
 
 
-class FailedTask(TaskUpdate[TaskStatusType.Failed, TaskTypeT]):
-    task_status: Literal[TaskStatusType.Failed]
+class FailedTaskStatus(TaskStatusUpdate[TaskStatusIncompleteType.Failed]):
+    task_status: Literal[TaskStatusIncompleteType.Failed] = (
+        TaskStatusIncompleteType.Failed
+    )
     error_message: Mapping[RunnerId, str]
 
 
-class BaseTask(BaseModel, Generic[TaskTypeT]):
+class TaskState(BaseModel, Generic[TaskTypeT, TaskStatusTypeT]):
+    task_status: TaskStatusUpdate[TaskStatusTypeT]
+    task_artifact: TaskArtifact[TaskTypeT, TaskStatusTypeT]
+
+
+class BaseTask(BaseModel, Generic[TaskTypeT, TaskStatusTypeT]):
+    task_type: TaskTypeT
     task_data: TaskData[TaskTypeT]
-    task_status: TaskUpdate[TaskStatusType, TaskTypeT]
+    task_state: TaskState[TaskTypeT, TaskStatusTypeT]
     on_instance: InstanceId
 
 
-class Task(BaseTask[TaskTypeT]):
+BaseTaskAnnotated = Annotated[
+    Union[
+        BaseTask[Literal[TaskType.ChatCompletionNonStreaming], TaskStatusType],
+        BaseTask[Literal[TaskType.ChatCompletionStreaming], TaskStatusType],
+    ],
+    Field(discriminator="task_type"),
+]
+
+BaseTaskValidator: TypeAdapter[BaseTask[TaskType, TaskStatusType]] = TypeAdapter(
+    BaseTaskAnnotated
+)
+
+
+class Task(BaseTask[TaskTypeT, TaskStatusTypeT]):
     task_id: TaskId

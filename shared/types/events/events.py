@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Generic, Literal, Tuple, TypeVar
+from typing import Any, Literal, Tuple
 
 from pydantic import BaseModel
 
@@ -33,9 +33,10 @@ from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.tasks.common import (
     TaskData,
     TaskId,
+    TaskState,
+    TaskStatusIncompleteType,
     TaskStatusType,
     TaskType,
-    TaskUpdate,
 )
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceData, InstanceStatus
@@ -54,21 +55,18 @@ class TimerData(BaseModel):
     timer_id: TimerId
 
 
-TaskTypeT = TypeVar("TaskTypeT", bound=TaskType)
-
-
-class TaskCreated(Event[TaskEventTypes.TaskCreated], Generic[TaskTypeT]):
+class TaskCreated[TaskTypeT: TaskType](Event[TaskEventTypes.TaskCreated]):
     event_type: Literal[TaskEventTypes.TaskCreated] = TaskEventTypes.TaskCreated
     task_id: TaskId
     task_data: TaskData[TaskTypeT]
-    task_state: TaskUpdate[Literal[TaskStatusType.Pending], TaskTypeT]
+    task_state: TaskState[TaskTypeT, Literal[TaskStatusIncompleteType.Pending]]
     on_instance: InstanceId
 
 
-class TaskUpdated(Event[TaskEventTypes.TaskUpdated], Generic[TaskTypeT]):
+class TaskUpdated[TaskTypeT: TaskType](Event[TaskEventTypes.TaskUpdated]):
     event_type: Literal[TaskEventTypes.TaskUpdated] = TaskEventTypes.TaskUpdated
     task_id: TaskId
-    update_data: TaskUpdate[TaskStatusType, TaskTypeT]
+    update_data: TaskState[TaskTypeT, TaskStatusType]
 
 
 class TaskDeleted(Event[TaskEventTypes.TaskDeleted]):
