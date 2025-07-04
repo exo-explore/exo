@@ -21,7 +21,7 @@ class Tasks(State[TaskEventTypes]):
 class SharedState(BaseModel):
     node_id: NodeId
     known_instances: KnownInstances
-    compute_tasks: Sequence[Task[TaskType]]
+    compute_tasks: Tasks
 
     def get_node_id(self) -> NodeId: ...
 
