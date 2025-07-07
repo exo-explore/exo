@@ -66,6 +66,7 @@ only-include = ["pyproject.toml", "README.md"]
 [tool.basedpyright] 
 typeCheckingMode = "strict"
 failOnWarnings = true 
+stubPath = "stubs"
 
 reportAny = "error"
 reportUnknownVariableType = "error"

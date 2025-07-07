@@ -4,7 +4,8 @@ from typing import Any, Literal, Tuple
 
 from pydantic import BaseModel
 
-from shared.types.common import NewUUID, NodeId
+from shared.types.common import NodeId
+from shared.types.events.common import TimerId
 from shared.types.events.common import (
     ControlPlaneEventTypes,
     DataPlaneEventTypes,
@@ -16,6 +17,7 @@ from shared.types.events.common import (
     StreamingEventTypes,
     TaskEventTypes,
     TimerEventTypes,
+    ResourceEventTypes,
 )
 from shared.types.networking.control_plane import (
     ControlPlaneEdgeId,
@@ -41,14 +43,7 @@ from shared.types.tasks.common import (
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceData, InstanceStatus
 from shared.types.worker.runners import RunnerId, RunnerState, RunnerStateType
-
-
-class RequestId(NewUUID):
-    pass
-
-
-class TimerId(NewUUID):
-    pass
+from shared.types.profiling.common import ProfiledResourceName
 
 
 class TimerData(BaseModel):
@@ -205,3 +200,10 @@ class TimerScheduled(Event[TimerEventTypes.TimerCreated]):
 class TimerFired(Event[TimerEventTypes.TimerFired]):
     event_type: Literal[TimerEventTypes.TimerFired] = TimerEventTypes.TimerFired
     timer_data: TimerData
+
+class ResourceProfiled(Event[ResourceEventTypes.ResourceProfiled]):
+    event_type: Literal[ResourceEventTypes.ResourceProfiled] = (
+        ResourceEventTypes.ResourceProfiled
+    ) 
+    resource_name: ProfiledResourceName
+    resource_profile: NodePerformanceProfile

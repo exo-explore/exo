@@ -1,6 +1,7 @@
 from typing import Protocol
 
-from shared.types.models.common import Model, ModelId
+from shared.types.models.common import ModelId
+from shared.types.models.model import ModelInfo
 from shared.types.models.sources import ModelSource
 from shared.types.networking.topology import ControlPlaneTopology, DataPlaneTopology
 from shared.types.worker.common import InstanceId
@@ -21,7 +22,7 @@ class ControlPlaneAPI(Protocol):
 
     def remove_instance(self, instance_id: InstanceId) -> None: ...
 
-    def get_model_data(self, model_id: ModelId) -> Model: ...
+    def get_model_data(self, model_id: ModelId) -> ModelInfo: ...
 
     def download_model(self, model_id: ModelId, model_source: ModelSource) -> None: ...
 

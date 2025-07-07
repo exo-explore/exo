@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar, Union
+from typing import Annotated, Generic, Literal, TypeVar
 
 import openai.types.chat as openai
 from pydantic import BaseModel, Field, TypeAdapter

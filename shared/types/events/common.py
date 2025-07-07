@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from shared.types.common import NewUUID, NodeId
 
 
-class EventId(NewUUID):
-    pass
+class EventId(NewUUID): pass
+class TimerId(NewUUID): pass
 
 
 class MLXEventTypes(str, Enum):
@@ -67,6 +67,9 @@ class TimerEventTypes(str, Enum):
     TimerCreated = "TimerCreated"
     TimerFired = "TimerFired"
 
+class ResourceEventTypes(str, Enum):
+    ResourceProfiled = "ResourceProfiled"
+
 
 EventTypes = Union[
     TaskEventTypes,
@@ -78,6 +81,7 @@ EventTypes = Union[
     DataPlaneEventTypes,
     TimerEventTypes,
     MLXEventTypes,
+    ResourceEventTypes,
 ]
 
 EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
