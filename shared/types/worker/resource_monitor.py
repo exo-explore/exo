@@ -3,11 +3,11 @@ from collections.abc import Coroutine
 
 import asyncio
 
-from shared.types.events.events import ResourceProfiledEvent
+from shared.types.events.events import ResourceProfiled
 from shared.types.profiling.common import NodePerformanceProfile, MemoryPerformanceProfile, SystemPerformanceProfile
 
 class EventLog:
-    def append(self, event: ResourceProfiledEvent) -> None:
+    def append(self, event: ResourceProfiled) -> None:
         ...
 
 class ResourceCollector(ABC):

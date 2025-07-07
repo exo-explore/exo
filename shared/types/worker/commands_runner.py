@@ -11,7 +11,7 @@ from shared.openai import FinishReason
 
 class MessageType(str, Enum):
     Setup = 'setup'
-    ChatTask = "chat_task"
+    ChatTask = 'chat_task'
     Exit = 'exit'
 
 MT = TypeVar(name='MT', bound=MessageType)
