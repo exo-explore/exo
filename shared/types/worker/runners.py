@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from typing import Generic, Literal, TypeVar, Self
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, model_validator
 
@@ -8,7 +8,7 @@ from shared.types.common import NodeId
 from shared.types.models.common import ModelId
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
-from shared.types.worker.shards import BaseModelShardMeta, PartitionStrategyT
+from shared.types.worker.shards import PartitionStrategy, ShardMetadata
 
 
 class RunnerStateType(str, Enum):
@@ -55,17 +55,16 @@ class RunnerData(BaseModel):
     )
 
 
-# Runner placement must be consistent in its partitioning strategy across all shards.
-# Using a generic type parameter enforces this constraint at type-checking time.
+PartitionStrategyT = TypeVar(name="PartitionStrategyT", bound=PartitionStrategy)
 
 
-class RunnerPlacement(BaseModel, Generic[PartitionStrategyT]):
+class ShardAssignments(BaseModel):
     model_id: ModelId
-    runner_to_shard: Mapping[RunnerId, BaseModelShardMeta[PartitionStrategyT]]
+    runner_to_shard: Mapping[RunnerId, ShardMetadata[PartitionStrategy]]
     node_to_runner: Mapping[NodeId, Sequence[RunnerId]]
 
     @model_validator(mode="after")
-    def validate_runners_exist(self) -> Self:
+    def validate_runners_exist(self) -> "ShardAssignments":
         for runners in self.node_to_runner.values():
             for runner_id in runners:
                 if runner_id not in self.runner_to_shard:

@@ -2,6 +2,7 @@ from enum import Enum
 
 from shared.types.common import NewUUID
 
+
 class InstanceId(NewUUID):
     pass
 

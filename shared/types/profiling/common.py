@@ -1,20 +1,22 @@
-from typing import Annotated, Literal, Coroutine, Generic, TypeVar
 from enum import Enum
-from abc import ABC
+from typing import Annotated, Generic, Literal, TypeVar
+
 from pydantic import BaseModel, Field, TypeAdapter
 
 
 class ProfiledResourceName(str, Enum):
-    memory = 'memory'   
-    system = 'system'
+    memory = "memory"
+    system = "system"
 
-ProfiledResourceT = TypeVar(name='ProfiledResourceT', bound=ProfiledResourceName)
+
+ProfiledResourceT = TypeVar(name="ProfiledResourceT", bound=ProfiledResourceName)
+
 
 class BasePerformanceProfile(BaseModel, Generic[ProfiledResourceT]):
     """
     Details a single resource (or resource type) that is being monitored by the resource monitor.
     """
-    pass
+
 
 class MemoryPerformanceProfile(BasePerformanceProfile[ProfiledResourceName.memory]):
     resource_name: Literal[ProfiledResourceName.memory] = Field(
@@ -25,10 +27,12 @@ class MemoryPerformanceProfile(BasePerformanceProfile[ProfiledResourceName.memor
     swap_total: int
     swap_used: int
 
+
 class NetworkInterfaceInfo(BaseModel):
     name: str
     ip_address: str
     type: str
+
 
 class SystemPerformanceProfile(BasePerformanceProfile[ProfiledResourceName.system]):
     resource_name: Literal[ProfiledResourceName.system] = Field(
@@ -39,9 +43,12 @@ class SystemPerformanceProfile(BasePerformanceProfile[ProfiledResourceName.syste
     memory: int
     network_interfaces: list[NetworkInterfaceInfo] = Field(default_factory=list)
 
+
 NodePerformanceProfile = Annotated[
     MemoryPerformanceProfile | SystemPerformanceProfile,
-    Field(discriminator="resource_name")
+    Field(discriminator="resource_name"),
 ]
 
-NodePerformanceProfileTypeAdapter: TypeAdapter[NodePerformanceProfile] = TypeAdapter(NodePerformanceProfile)
+NodePerformanceProfileTypeAdapter: TypeAdapter[NodePerformanceProfile] = TypeAdapter(
+    NodePerformanceProfile
+)

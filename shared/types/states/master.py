@@ -7,17 +7,12 @@ from pydantic import BaseModel
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
-    ControlPlaneEventTypes,
-    DataPlaneEventTypes,
     Event,
-    EventTypes,
-    NodePerformanceEventTypes,
+    EventCategories,
     State,
 )
 from shared.types.graphs.resource_graph import ResourceGraph
 from shared.types.networking.data_plane import (
-    AddressingProtocol,
-    ApplicationProtocol,
     DataPlaneEdge,
     DataPlaneEdgeId,
 )
@@ -46,28 +41,24 @@ class CachePolicy(BaseModel, Generic[CachePolicyTypeT]):
     policy_type: CachePolicyTypeT
 
 
-class NodePerformanceProfileState(State[NodePerformanceEventTypes]):
+class NodePerformanceProfileState(State[EventCategories.NodePerformanceEventTypes]):
     node_profiles: Mapping[NodeId, NodePerformanceProfile]
 
 
-class DataPlaneNetworkState(State[DataPlaneEventTypes]):
+class DataPlaneNetworkState(State[EventCategories.DataPlaneEventTypes]):
     topology: DataPlaneTopology
     history: Sequence[OrphanedPartOfDataPlaneTopology]
 
     def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
-    def add_edge(
-        self, edge: DataPlaneEdge[AddressingProtocol, ApplicationProtocol]
-    ) -> None: ...
+    def add_edge(self, edge: DataPlaneEdge) -> None: ...
 
 
-class ControlPlaneNetworkState(State[ControlPlaneEventTypes]):
+class ControlPlaneNetworkState(State[EventCategories.ControlPlaneEventTypes]):
     topology: ControlPlaneTopology
     history: Sequence[OrphanedPartOfControlPlaneTopology]
 
     def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
-    def add_edge(
-        self, edge: DataPlaneEdge[AddressingProtocol, ApplicationProtocol]
-    ) -> None: ...
+    def add_edge(self, edge: DataPlaneEdge) -> None: ...
 
 
 class MasterState(SharedState):
@@ -87,10 +78,7 @@ def get_inference_plan(
 ) -> Mapping[InstanceId, InstanceData]: ...
 
 
-TransitionEventTypes = EventTypes
-
-
 def get_transition_events(
     current_instances: Mapping[InstanceId, InstanceData],
     target_instances: Mapping[InstanceId, InstanceData],
-) -> Sequence[Event[TransitionEventTypes]]: ...
+) -> Sequence[Event[EventCategories]]: ...

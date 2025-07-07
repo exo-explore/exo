@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, PositiveInt
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
 from shared.types.models.sources import ModelSource
-from shared.types.worker.shards import ShardMeta
+from shared.types.worker.shards import PartitionStrategy, ShardMetadata
 
 
 class DownloadProgressData(BaseModel):
@@ -80,6 +80,6 @@ DownloadEffectHandler = Callable[
 def download_shard(
     model_id: ModelId,
     model_source: ModelSource,
-    shard_meta: ShardMeta,
+    shard_meta: ShardMetadata[PartitionStrategy],
     effect_handlers: Sequence[DownloadEffectHandler],
 ) -> None: ...

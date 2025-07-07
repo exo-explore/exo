@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar, Union
 
 import openai.types.chat as openai
 from pydantic import BaseModel, Field, TypeAdapter
@@ -51,9 +51,6 @@ class TaskStatusCompleteType(str, Enum):
 TaskStatusType = Union[TaskStatusIncompleteType, TaskStatusCompleteType]
 
 
-TaskStatusTypeT = TypeVar("TaskStatusTypeT", bound=TaskStatusType, covariant=True)
-
-
 class TaskArtifact[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel): ...
 
 
@@ -92,15 +89,15 @@ class FailedTaskStatus(TaskStatusUpdate[TaskStatusIncompleteType.Failed]):
     error_message: Mapping[RunnerId, str]
 
 
-class TaskState(BaseModel, Generic[TaskTypeT, TaskStatusTypeT]):
+class TaskState[TaskStatusTypeT: TaskStatusType, TaskTypeT: TaskType](BaseModel):
     task_status: TaskStatusUpdate[TaskStatusTypeT]
     task_artifact: TaskArtifact[TaskTypeT, TaskStatusTypeT]
 
 
-class BaseTask(BaseModel, Generic[TaskTypeT, TaskStatusTypeT]):
+class BaseTask[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel):
     task_type: TaskTypeT
     task_data: TaskData[TaskTypeT]
-    task_state: TaskState[TaskTypeT, TaskStatusTypeT]
+    task_state: TaskState[TaskStatusTypeT, TaskTypeT]
     on_instance: InstanceId
 
 
@@ -117,5 +114,7 @@ BaseTaskValidator: TypeAdapter[BaseTask[TaskType, TaskStatusType]] = TypeAdapter
 )
 
 
-class Task(BaseTask[TaskTypeT, TaskStatusTypeT]):
+class Task[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](
+    BaseTask[TaskTypeT, TaskStatusTypeT]
+):
     task_id: TaskId

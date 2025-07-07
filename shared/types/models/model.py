@@ -1,4 +1,4 @@
-from typing import final, Sequence
+from typing import Sequence, final
 
 from pydantic import BaseModel, TypeAdapter
 

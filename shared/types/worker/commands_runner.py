@@ -1,30 +1,34 @@
-from typing import Annotated, Generic, Literal, TypeVar
 from enum import Enum
+from typing import Annotated, Generic, Literal, TypeVar
+
 from pydantic import BaseModel, Field, TypeAdapter
 
-from shared.types.api import ChatTask
-from shared.types.worker.shards import ShardMeta
-from shared.types.worker.mlx import Host
 from shared.openai import FinishReason
+from shared.types.api import ChatTask
+from shared.types.worker.mlx import Host
+from shared.types.worker.shards import PartitionStrategy, ShardMetadata
 
 ## Messages passed TO the runner
 
-class MessageType(str, Enum):
-    Setup = 'setup'
-    ChatTask = 'chat_task'
-    Exit = 'exit'
 
-MT = TypeVar(name='MT', bound=MessageType)
+class MessageType(str, Enum):
+    Setup = "setup"
+    ChatTask = "chat_task"
+    Exit = "exit"
+
+
+MT = TypeVar(name="MT", bound=MessageType)
+
 
 class BaseRunnerMessage(BaseModel, Generic[MT]):
     pass
 
+
 class SetupMessage(BaseRunnerMessage[MessageType.Setup]):
-    type: Literal[MessageType.Setup] = Field(
-        default=MessageType.Setup, frozen=True
-    )
-    model_shard_meta: ShardMeta
+    type: Literal[MessageType.Setup] = Field(default=MessageType.Setup, frozen=True)
+    model_shard_meta: ShardMetadata[PartitionStrategy]
     hosts: list[Host]
+
 
 class ChatTaskMessage(BaseRunnerMessage[MessageType.ChatTask]):
     type: Literal[MessageType.ChatTask] = Field(
@@ -32,18 +36,18 @@ class ChatTaskMessage(BaseRunnerMessage[MessageType.ChatTask]):
     )
     task: ChatTask
 
+
 class ExitMessage(BaseRunnerMessage[MessageType.Exit]):
-    type: Literal[MessageType.Exit] = Field(
-        default=MessageType.Exit, frozen=True
-    )
+    type: Literal[MessageType.Exit] = Field(default=MessageType.Exit, frozen=True)
+
 
 RunnerMessage = Annotated[
-    SetupMessage | ChatTaskMessage | ExitMessage,
-    Field(discriminator="type")
+    SetupMessage | ChatTaskMessage | ExitMessage, Field(discriminator="type")
 ]
 RunnerMessageTypeAdapter: TypeAdapter[RunnerMessage] = TypeAdapter(RunnerMessage)
 
 ## Responses passed FROM the runner
+
 
 class RunnerResponseType(str, Enum):
     GenerationResponse = "generation_response"
@@ -51,41 +55,48 @@ class RunnerResponseType(str, Enum):
     PrintResponse = "print_response"
     ErrorResponse = "error_response"
 
-RRT = TypeVar(name='RRT', bound=RunnerResponseType)
+
+RRT = TypeVar(name="RRT", bound=RunnerResponseType)
+
 
 class BaseRunnerResponse(BaseModel, Generic[RRT]):
     pass
 
+
 class GenerationResponse(BaseRunnerResponse[RunnerResponseType.GenerationResponse]):
-  type: Literal[RunnerResponseType.GenerationResponse] = Field(
-    default=RunnerResponseType.GenerationResponse, frozen=True
-  )
-  text: str
-  token: int
-  # logprobs: Optional[list[float]] = None # too big. we can change to be top-k
-  finish_reason: FinishReason | None = None
+    type: Literal[RunnerResponseType.GenerationResponse] = Field(
+        default=RunnerResponseType.GenerationResponse, frozen=True
+    )
+    text: str
+    token: int
+    # logprobs: Optional[list[float]] = None # too big. we can change to be top-k
+    finish_reason: FinishReason | None = None
+
 
 class PrintResponse(BaseRunnerResponse[RunnerResponseType.PrintResponse]):
-  type: Literal[RunnerResponseType.PrintResponse] = Field(
-    default=RunnerResponseType.PrintResponse, frozen=True
-  )
-  text: str
+    type: Literal[RunnerResponseType.PrintResponse] = Field(
+        default=RunnerResponseType.PrintResponse, frozen=True
+    )
+    text: str
+
 
 class FinishedResponse(BaseRunnerResponse[RunnerResponseType.FinishedResponse]):
-  type: Literal[RunnerResponseType.FinishedResponse] = Field(
-    default=RunnerResponseType.FinishedResponse, frozen=True
-  )
+    type: Literal[RunnerResponseType.FinishedResponse] = Field(
+        default=RunnerResponseType.FinishedResponse, frozen=True
+    )
+
 
 class ErrorResponse(BaseRunnerResponse[RunnerResponseType.ErrorResponse]):
-  type: Literal[RunnerResponseType.ErrorResponse] = Field(
-    default=RunnerResponseType.ErrorResponse, frozen=True
-  )
-  error_type: str
-  error_message: str
-  traceback: str | None = None
+    type: Literal[RunnerResponseType.ErrorResponse] = Field(
+        default=RunnerResponseType.ErrorResponse, frozen=True
+    )
+    error_type: str
+    error_message: str
+    traceback: str | None = None
+
 
 RunnerResponse = Annotated[
     GenerationResponse | PrintResponse | FinishedResponse | ErrorResponse,
-    Field(discriminator="type")
+    Field(discriminator="type"),
 ]
 RunnerResponseTypeAdapter: TypeAdapter[RunnerResponse] = TypeAdapter(RunnerResponse)

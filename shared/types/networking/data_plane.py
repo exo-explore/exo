@@ -3,7 +3,8 @@ from typing import Annotated, Literal, TypeVar, Union, final
 
 from pydantic import BaseModel, Field, IPvAnyAddress, TypeAdapter
 
-from shared.types.common import NewUUID
+from shared.types.common import NewUUID, NodeId
+from shared.types.graphs.common import Edge
 
 
 class DataPlaneEdgeId(NewUUID):
@@ -23,14 +24,14 @@ ApP = TypeVar("ApP", bound=ApplicationProtocol)
 
 
 @final
-class DataPlaneEdgeBenchmarkData(BaseModel):
+class DataPlaneEdgeProfile(BaseModel):
     throughput: float
     latency: float
     jitter: float
 
 
 class CommonDataPlaneEdgeData(BaseModel):
-    edge_data_transfer_rate: DataPlaneEdgeBenchmarkData | None = None
+    edge_data_transfer_rate: DataPlaneEdgeProfile | None = None
 
 
 class MlxEdgeMetadata(BaseModel):
@@ -63,3 +64,5 @@ _DataPlaneEdgeData = Annotated[
     Field(discriminator="addressing_protocol"),
 ]
 DataPlaneEdgeAdapter: TypeAdapter[DataPlaneEdgeData] = TypeAdapter(_DataPlaneEdgeData)
+
+DataPlaneEdge = Edge[DataPlaneEdgeData, DataPlaneEdgeId, NodeId]

@@ -6,9 +6,9 @@ from pydantic import BaseModel
 from shared.types.worker.common import InstanceId
 from shared.types.worker.runners import (
     RunnerId,
-    RunnerPlacement,
     RunnerState,
     RunnerStateType,
+    ShardAssignments,
 )
 
 
@@ -22,7 +22,7 @@ class InstanceState(BaseModel):
 
 
 class InstanceData(BaseModel):
-    runner_placements: RunnerPlacement
+    shard_assignments: ShardAssignments
 
 
 class BaseInstance(BaseModel):

@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, auto
 from typing import (
     Annotated,
     Callable,
@@ -7,8 +7,6 @@ from typing import (
     Sequence,
     Tuple,
     TypeVar,
-    Union,
-    get_args,
 )
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
@@ -16,8 +14,12 @@ from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from shared.types.common import NewUUID, NodeId
 
 
-class EventId(NewUUID): pass
-class TimerId(NewUUID): pass
+class EventId(NewUUID):
+    pass
+
+
+class TimerId(NewUUID):
+    pass
 
 
 class MLXEventTypes(str, Enum):
@@ -67,117 +69,186 @@ class TimerEventTypes(str, Enum):
     TimerCreated = "TimerCreated"
     TimerFired = "TimerFired"
 
+
 class ResourceEventTypes(str, Enum):
     ResourceProfiled = "ResourceProfiled"
 
 
-EventTypes = Union[
-    TaskEventTypes,
-    StreamingEventTypes,
-    InstanceEventTypes,
-    InstanceStateEventTypes,
-    NodePerformanceEventTypes,
-    ControlPlaneEventTypes,
-    DataPlaneEventTypes,
-    TimerEventTypes,
-    MLXEventTypes,
-    ResourceEventTypes,
-]
-
-EventTypeT = TypeVar("EventTypeT", bound=EventTypes)
-TEventType = TypeVar("TEventType", bound=EventTypes, covariant=True)
+class EventCategories(str, Enum):
+    TaskEventTypes = auto()
+    StreamingEventTypes = auto()
+    InstanceEventTypes = auto()
+    InstanceStateEventTypes = auto()
+    NodePerformanceEventTypes = auto()
+    ControlPlaneEventTypes = auto()
+    DataPlaneEventTypes = auto()
+    TimerEventTypes = auto()
+    MLXEventTypes = auto()
 
 
-class SecureEventProtocol(Protocol):
-    def check_origin_id(self, origin_id: NodeId) -> bool: ...
+PossibleEventOfEventTypeT = TypeVar("PossibleEventOfEventTypeT", bound=Enum)
+
+#  T=(A|B) <: U=(A|B|C)  ==>  Event[A|B] <: Event[A|BCategoryOfEventsT_cov = TypeVar(name="CategoryOfEventsT_cov", bound=EventCategories, covariant=True)
+CategoryOfEventsT_cov = TypeVar(
+    name="CategoryOfEventsT_cov", bound=EventCategories, contravariant=True
+)
+CategoryOfEventsT_con = TypeVar(
+    name="CategoryOfEventsT_con", bound=EventCategories, contravariant=True
+)
+CategoryOfEventsT_inv = TypeVar(
+    name="CategoryOfEventsT_inv",
+    bound=EventCategories,
+    covariant=False,
+    contravariant=False,
+)
 
 
-class Event(BaseModel, SecureEventProtocol, Generic[TEventType]):
-    event_type: TEventType
+class Event(BaseModel, Generic[PossibleEventOfEventTypeT]):
+    event_type: PossibleEventOfEventTypeT
+    event_category: EventCategories
     event_id: EventId
 
+    def check_origin_id(self, origin_id: NodeId) -> bool:
+        return True
 
-class WrappedEvent(BaseModel, Generic[TEventType]):
-    event: Event[TEventType]
+
+class TaskEvent(Event[TaskEventTypes]):
+    event_type: TaskEventTypes
+
+
+class InstanceEvent(Event[InstanceEventTypes]):
+    event_type: InstanceEventTypes
+
+
+class InstanceStateEvent(Event[InstanceStateEventTypes]):
+    event_type: InstanceStateEventTypes
+
+
+class MLXEvent(Event[MLXEventTypes]):
+    event_type: MLXEventTypes
+
+
+class NodePerformanceEvent(Event[NodePerformanceEventTypes]):
+    event_type: NodePerformanceEventTypes
+
+
+class ControlPlaneEvent(Event[ControlPlaneEventTypes]):
+    event_type: ControlPlaneEventTypes
+
+
+class StreamingEvent(Event[StreamingEventTypes]):
+    event_type: StreamingEventTypes
+
+
+class DataPlaneEvent(Event[DataPlaneEventTypes]):
+    event_type: DataPlaneEventTypes
+
+
+class TimerEvent(Event[TimerEventTypes]):
+    event_type: TimerEventTypes
+
+
+class ResourceEvent(Event[ResourceEventTypes]):
+    event_type: ResourceEventTypes
+
+
+class WrappedMessage(BaseModel, Generic[PossibleEventOfEventTypeT]):
+    message: Event[PossibleEventOfEventTypeT]
     origin_id: NodeId
 
     @model_validator(mode="after")
-    def check_origin_id(self) -> "WrappedEvent[TEventType]":
-        if self.event.check_origin_id(self.origin_id):
+    def check_origin_id(self) -> "WrappedMessage[PossibleEventOfEventTypeT]":
+        if self.message.check_origin_id(self.origin_id):
             return self
         raise ValueError("Invalid Event: Origin ID Does Not Match")
 
 
-class PersistedEvent(BaseModel, Generic[TEventType]):
-    event: Event[TEventType]
+class PersistedEvent(BaseModel, Generic[PossibleEventOfEventTypeT]):
+    event: Event[PossibleEventOfEventTypeT]
     sequence_number: int = Field(gt=0)
 
 
-class State(BaseModel, Generic[TEventType]):
-    event_types: tuple[TEventType, ...] = get_args(TEventType)
+class State(BaseModel, Generic[CategoryOfEventsT_cov]):
+    event_category: CategoryOfEventsT_cov
     sequence_number: int = Field(default=0, ge=0)
 
 
-AnnotatedEventType = Annotated[Event[EventTypes], Field(discriminator="event_type")]
+AnnotatedEventType = Annotated[
+    Event[EventCategories], Field(discriminator="event_category")
+]
 EventTypeParser: TypeAdapter[AnnotatedEventType] = TypeAdapter(AnnotatedEventType)
 
-Applicator = Callable[[State[EventTypeT], Event[TEventType]], State[EventTypeT]]
-Apply = Callable[[State[EventTypeT], Event[EventTypeT]], State[EventTypeT]]
+
+# it's not possible to enforce this at compile time, so we have to do it at runtime
+def mock_todo[T](something: T | None) -> T: ...
+
+
+def apply(
+    state: State[CategoryOfEventsT_inv], event: Event[CategoryOfEventsT_inv]
+) -> State[CategoryOfEventsT_inv]: ...
+
+
+#  T=(A|B) <: U=(A|B|C)  ==>  Apply[A|B] <: Apply[A|B|C]
 SagaApplicator = Callable[
-    [State[EventTypeT], Event[TEventType]], Sequence[Event[EventTypeT]]
+    [State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]],
+    Sequence[Event[CategoryOfEventsT_inv]],
 ]
-Saga = Callable[[State[EventTypeT], Event[EventTypeT]], Sequence[Event[EventTypeT]]]
+Saga = Callable[
+    [State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]],
+    Sequence[Event[CategoryOfEventsT_inv]],
+]
+Apply = Callable[
+    [State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]],
+    State[CategoryOfEventsT_inv],
+]
+StateAndEvent = Tuple[State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]]
+EffectHandler = Callable[
+    [StateAndEvent[CategoryOfEventsT_inv], State[CategoryOfEventsT_inv]], None
+]
+EventPublisher = Callable[[Event[CategoryOfEventsT_inv]], None]
 
-StateAndEvent = Tuple[State[EventTypeT], Event[EventTypeT]]
-EffectHandler = Callable[[StateAndEvent[EventTypeT], State[EventTypeT]], None]
-EventPublisher = Callable[[Event[EventTypeT]], None]
 
-
-class MutableState(Protocol, Generic[EventTypeT]):
+class MutableState[EventCategoryT: EventCategories](Protocol):
     def apply(
         self,
-        event: Event[TEventType],
-        applicator: Applicator[EventTypeT, TEventType],
-        effect_handlers: Sequence[EffectHandler[TEventType]],
+        event: Event[EventCategoryT],
+        applicator: Apply[EventCategoryT],
+        effect_handlers: Sequence[EffectHandler[EventCategoryT]],
     ) -> None: ...
 
 
 class EventOutbox(Protocol):
-    def send(self, events: Sequence[Event[EventTypeT]]) -> None: ...
+    def send(self, events: Sequence[Event[EventCategories]]) -> None: ...
 
 
-class EventProcessor(Protocol):
-    # TODO: is .update() an anti-pattern?
-    def update(
-        self,
-        state: State[EventTypeT],
-        apply: Apply[EventTypeT],
-        effect_handlers: Sequence[EffectHandler[EventTypeT]],
-    ) -> State[EventTypeT]: ...
-
+#
+#  T=[A|B] <: U=[A|B|C]   =>   EventProcessor[A|B] :> EventProcessor[A|B|C]
+#
+class EventProcessor[EventCategoryT: EventCategories](Protocol):
     def get_events_to_apply(
-        self, state: State[TEventType]
-    ) -> Sequence[Event[TEventType]]: ...
+        self, state: State[EventCategoryT]
+    ) -> Sequence[Event[EventCategoryT]]: ...
 
 
-def get_saga_effect_handler(
-    sagas: Saga[EventTypeT], event_publisher: EventPublisher[EventTypeT]
-) -> EffectHandler[EventTypeT]:
-    def effect_handler(state_and_event: StateAndEvent[EventTypeT]) -> None:
+def get_saga_effect_handler[EventCategoryT: EventCategories](
+    saga: Saga[EventCategoryT], event_publisher: EventPublisher[EventCategoryT]
+) -> EffectHandler[EventCategoryT]:
+    def effect_handler(state_and_event: StateAndEvent[EventCategoryT]) -> None:
         trigger_state, trigger_event = state_and_event
-        for event in sagas(trigger_state, trigger_event):
+        for event in saga(trigger_state, trigger_event):
             event_publisher(event)
 
     return lambda state_and_event, _: effect_handler(state_and_event)
 
 
-def get_effects_from_sagas(
-    sagas: Sequence[Saga[EventTypeT]], event_publisher: EventPublisher[EventTypeT]
-) -> Sequence[EffectHandler[EventTypeT]]:
+def get_effects_from_sagas[EventCategoryT: EventCategories](
+    sagas: Sequence[Saga[EventCategoryT]],
+    event_publisher: EventPublisher[EventCategoryT],
+) -> Sequence[EffectHandler[EventCategoryT]]:
     return [get_saga_effect_handler(saga, event_publisher) for saga in sagas]
 
 
-IdemKeyGenerator = Callable[[State[EventTypeT], int], Sequence[EventId]]
+IdemKeyGenerator = Callable[[State[CategoryOfEventsT_cov], int], Sequence[EventId]]
 
 
 class CommandId(NewUUID):
@@ -190,15 +261,14 @@ class CommandTypes(str, Enum):
     Delete = "Delete"
 
 
-CommandTypeT = TypeVar("CommandTypeT", bound=CommandTypes)
-TCommandType = TypeVar("TCommandType", bound=CommandTypes, covariant=True)
-
-
-class Command(BaseModel, Generic[TEventType, TCommandType]):
-    command_type: TCommandType
+class Command[EventCategoryT: EventCategories, CommandType: CommandTypes](BaseModel):
+    command_type: CommandType
     command_id: CommandId
 
 
+CommandTypeT = TypeVar("CommandTypeT", bound=CommandTypes, covariant=True)
+
 Decide = Callable[
-    [State[EventTypeT], Command[TEventType, TCommandType]], Sequence[Event[EventTypeT]]
+    [State[CategoryOfEventsT_cov], Command[CategoryOfEventsT_cov, CommandTypeT]],
+    Sequence[Event[CategoryOfEventsT_cov]],
 ]
