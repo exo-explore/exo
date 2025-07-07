@@ -70,7 +70,7 @@ class MasterState(SharedState):
     cache_policy: CachePolicy[CachePolicyType]
 
 
-def get_inference_plan(
+def get_shard_assignments(
     inbox: Queue[ExternalCommand],
     outbox: Queue[ExternalCommand],
     resource_graph: ResourceGraph,
