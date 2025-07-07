@@ -16,7 +16,7 @@ class InferenceEngine(ABC):
     pass
 
   @abstractmethod
-  async def sample(self, x: np.ndarray) -> np.ndarray:
+  async def sample(self, x: np.ndarray, mask: Optional[np.ndarray] = None) -> np.ndarray:
     pass
 
   @abstractmethod
@@ -49,6 +49,9 @@ class InferenceEngine(ABC):
     output_data, inference_state = await self.infer_tensor(request_id, shard, x, inference_state)
 
     return output_data, inference_state
+
+  async def get_flops(self) -> float:
+    return self.device_capabilities.flops.fp32
 
 
 inference_engine_classes = {

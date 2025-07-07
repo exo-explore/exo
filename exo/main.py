@@ -8,6 +8,7 @@ import os
 import time
 import traceback
 import uuid
+from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 from exo.train.dataset import load_dataset, iterate_batches
@@ -22,11 +23,11 @@ from exo.api import ChatGPTAPI
 from exo.download.shard_download import ShardDownloader, NoopShardDownloader
 from exo.download.download_progress import RepoProgressEvent
 from exo.download.new_shard_download import new_shard_downloader, has_exo_home_read_access, has_exo_home_write_access, ensure_exo_home, seed_models
-from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown
+from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system_info, get_or_create_node_id, get_all_ip_addresses_and_interfaces, terminal_link, shutdown, get_device_capabilities_json
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine
 from exo.inference.tokenizers import resolve_tokenizer
-from exo.models import build_base_shard, get_repo
+from exo.models import build_base_shard, get_repo, load_additional_models
 from exo.viz.topology_viz import TopologyViz
 import uvloop
 import concurrent.futures
@@ -77,6 +78,7 @@ parser.add_argument("--broadcast-port", type=int, default=5678, help="Broadcast 
 parser.add_argument("--discovery-module", type=str, choices=["udp", "tailscale", "manual"], default="udp", help="Discovery module to use")
 parser.add_argument("--discovery-timeout", type=int, default=30, help="Discovery timeout in seconds")
 parser.add_argument("--discovery-config-path", type=str, default=None, help="Path to discovery config json file")
+parser.add_argument("--get-device-capabilities", action="store_true", help="Output the current device's auto-detected capabilities in JSON format and exit")
 parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of peers to wait to connect to before starting")
 parser.add_argument("--chatgpt-api-port", type=int, default=52415, help="ChatGPT API port")
 parser.add_argument("--chatgpt-api-response-timeout", type=int, default=900, help="ChatGPT API response timeout in seconds")
@@ -91,7 +93,14 @@ parser.add_argument("--tailnet-name", type=str, default=None, help="Tailnet name
 parser.add_argument("--node-id-filter", type=str, default=None, help="Comma separated list of allowed node IDs (only for UDP and Tailscale discovery)")
 parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
+parser.add_argument("--additional-models", type=str, default=None, help="A JSON file of additional models to serve")
 args = parser.parse_args()
+
+# Handle the --get-device-capabilities option before printing anything else so it can be used for automation
+if args.get_device_capabilities:
+    print(get_device_capabilities_json())
+    exit(0)
+
 print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
@@ -149,8 +158,19 @@ elif args.discovery_module == "tailscale":
 elif args.discovery_module == "manual":
   if not args.discovery_config_path:
     raise ValueError(f"--discovery-config-path is required when using manual discovery. Please provide a path to a config json file.")
+  # Manual discovery uses a JSON config file that defines all nodes in the network
+  # The config file should contain a "peers" object mapping node_ids to their connection details
+  # See NetworkTopology class in exo/networking/manual/network_topology_config.py for the expected format
   discovery = ManualDiscovery(args.discovery_config_path, args.node_id, create_peer_handle=lambda peer_id, address, description, device_capabilities: GRPCPeerHandle(peer_id, address, description, device_capabilities))
 topology_viz = TopologyViz(chatgpt_api_endpoints=chatgpt_api_endpoints, web_chat_urls=web_chat_urls) if not args.disable_tui else None
+
+if args.additional_models is not None:
+  path = Path(args.additional_models)
+  if not path.exists():
+    raise ValueError(f"Additional models file {path} does not exist")
+
+  load_additional_models(path)
+
 node = Node(
   args.node_id,
   None,
@@ -173,7 +193,7 @@ api = ChatGPTAPI(
   system_prompt=args.system_prompt
 )
 buffered_token_output = {}
-def update_topology_viz(req_id, tokens, __):
+def update_topology_viz(req_id, tokens, __, ___):
   if not topology_viz: return
   if not node.inference_engine.shard: return
   if node.inference_engine.shard.model_id == 'stable-diffusion-2-1-base': return

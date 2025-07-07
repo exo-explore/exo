@@ -1,41 +1,18 @@
-<div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="/docs/exo-logo-black-bg.jpg">
-  <img alt="exo logo" src="/docs/exo-logo-transparent.png" width="50%" height="50%">
-</picture>
+Exo Community
+===
+> [!NOTE]  
+> This is an unoffically maintained fork of [Exo](https://github.com/exo-explore/exo).
+> The aim of this project is mainly maintenance upgrades and stability. 
 
-exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
+> [!WARNING]
+> No claim of ownership or future claim of stewardship is being made; No warranty is provided for this fork; use at your own risk.
 
+# Contributing
 
-<h3>
+I am looking for maintainers. Please open an issue if you are interested. 
 
-[Discord](https://discord.gg/EUnjGpsmWw) | [Telegram](https://t.me/+Kh-KqHTzFYg3MGNk) | [X](https://x.com/exolabs)
-
-</h3>
-
-[![GitHub Repo stars](https://img.shields.io/github/stars/exo-explore/exo)](https://github.com/exo-explore/exo/stargazers)
-[![Tests](https://dl.circleci.com/status-badge/img/circleci/TrkofJDoGzdQAeL6yVHKsg/4i5hJuafuwZYZQxbRAWS71/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/circleci/TrkofJDoGzdQAeL6yVHKsg/4i5hJuafuwZYZQxbRAWS71/tree/main)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-
-<a href="https://trendshift.io/repositories/11849" target="_blank"><img src="https://trendshift.io/api/badge/repositories/11849" alt="exo-explore%2Fexo | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-</div>
-
----
-
-Unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, NVIDIA, Raspberry Pi, pretty much any device!
-
-<div align="center">
-  <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
-  <h2>Interested in running exo in your business? <a href="mailto:hello@exolabs.net">Contact us</a> to discuss.</h2>
-</div>
-
-## Get Involved
-
-exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
-
-We also welcome contributions from the community. We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/d/1cTCpTIp48UnnIvHeLEUNg1iMy_Q6lRybgECSFCoVJpE/edit?usp=sharing).
+<hr>
 
 ## Features
 
@@ -87,13 +64,12 @@ The current recommended way to install exo is from source.
 
 
 ```sh
-git clone https://github.com/exo-explore/exo.git
+git clone https://github.com/ai-at-home-community/exo.git
 cd exo
 pip install -e .
 # alternatively, with venv
 source install.sh
 ```
-
 
 ### Troubleshooting
 
@@ -274,8 +250,6 @@ python3 format.py ./exo
 ```sh
 /Applications/Python 3.x/Install Certificates.command
 ```
-
-- 🚧 As the library is evolving so quickly, the iOS implementation has fallen behind Python. We have decided for now not to put out the buggy iOS version and receive a bunch of GitHub issues for outdated code. We are working on solving this properly and will make an announcement when it's ready. If you would like access to the iOS implementation now, please email alex@exolabs.net with your GitHub username explaining your use-case and you will be granted access on GitHub.
 
 ## Inference Engines
 

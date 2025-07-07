@@ -19,7 +19,7 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.caches = OrderedDict()
-    self.sampler_params: tuple[float, float] = (0.0, 0.0, 0.0, 1)
+    self.sampler_params: tuple[float, float, float] = (0.0, 0.0, 0.0, 1)
     self.sampler = make_sampler(*self.sampler_params)
     self._mlx_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
     self._tokenizer_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tokenizer")
@@ -39,12 +39,17 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       self.caches[request_id] = newcache
     return {"cache": self.caches[request_id]}
 
-  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0) -> np.ndarray:
+  async def sample(self, x: np.ndarray, temp: float = 0.0, top_p: float = 1.0, mask: Optional[np.ndarray] = None) -> np.ndarray:
     if (temp, top_p, 0.0, 1) != self.sampler_params:
       self.sampler_params = (temp, top_p, 0.0, 1)
       self.sampler = make_sampler(*self.sampler_params)
     logits = mx.array(x)
     logits = logits[:, -1, :]
+
+    if mask is not None:
+      # Why doesn't apply_token_bitmask work here?
+      logits = mx.where(mask == 0, float('-inf'), logits)
+
     logprobs = logits - mx.logsumexp(logits, keepdims=True)
     result = self.sampler(logprobs)
     await self._eval_mlx(result)
@@ -95,11 +100,21 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       output_data, inference_state = result
 
     await self._eval_mlx(output_data)
-    output_data = await asyncio.get_running_loop().run_in_executor(
+
+    output_data_mx = output_data # Because it stores results from MLX model(mx.array)
+
+    def convert_output_to_numpy(tensor):
+      # If the tensor is bfloat16, then convert to float32 as numpy doesn't support bfloat16.
+      if tensor.dtype == mx.bfloat16:
+        return np.array(tensor.astype(mx.float32), copy=False)
+      else:
+        return np.array(tensor, copy=False)
+
+    output_data_np = await asyncio.get_running_loop().run_in_executor(
       self._mlx_thread,
-      lambda: np.array(output_data, copy=False)
+      lambda: convert_output_to_numpy(output_data_mx)
     )
-    return output_data, inference_state
+    return output_data_np, inference_state
 
   async def evaluate(self, request_id: str, shard: Shard, inputs, targets, lengths, loss: str = "length_masked_ce"):
     await self.ensure_shard(shard)
@@ -152,10 +167,26 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     )
     await self._eval_mlx(*eval_args)
 
+    first_layer_np = np.array([])
     layers = [{k: v["weight"] for k, v in layer.items() if 'weight' in v} for layer in gradients if layer]
-    first_layer = np.array(layers[0]['input_layernorm'], copy=False)
-    await self._eval_mlx(first_layer)
-    return score, first_layer
+
+    if layers and 'input_layernorm' in layers[0]:
+      first_layer_mx = layers[0]['input_layernorm']
+      await self._eval_mlx(first_layer_mx)
+      
+      def convert_gradient_to_numpy(grad_tensor):
+        # If the tensor is bfloat16, then convert to float32 as numpy doesn't support bfloat16.
+        if grad_tensor.dtype == mx.bfloat16:
+          return np.array(grad_tensor.astype(mx.float32), copy=False)
+        else:
+          return np.array(grad_tensor, copy=False)
+
+    first_layer_np = await asyncio.get_running_loop().run_in_executor(
+            self._mlx_thread, 
+            lambda: convert_gradient_to_numpy(first_layer_mx)
+        )      
+      
+    return score, first_layer_np
 
   async def ensure_shard(self, shard: Shard):
     async with self._shard_lock:
@@ -177,3 +208,6 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
   async def cleanup(self):
     self._mlx_thread.shutdown(wait=True)
+
+  async def get_flops(self) -> float:
+    return self.device_capabilities.flops.fp32

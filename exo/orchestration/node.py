@@ -4,18 +4,21 @@ import asyncio
 import uuid
 import time
 import traceback
-from typing import List, Dict, Optional, Tuple, Union, Set
+from typing import List, Dict, Optional, Tuple
+from exo.inference.buffered_output import BufferedOutput
 from exo.networking import Discovery, PeerHandle, Server
-from exo.inference.inference_engine import InferenceEngine, Shard
+from exo.inference.inference_engine import Shard
 from exo.topology.topology import Topology
 from exo.topology.device_capabilities import device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
-from exo.topology.partitioning_strategy import Partition, PartitioningStrategy, map_partitions_to_shards
+from exo.topology.partitioning_strategy import PartitioningStrategy, map_partitions_to_shards
+from exo.inference.generation_options import GenerationOptions
 from exo import DEBUG
 from exo.helpers import AsyncCallbackSystem
 from exo.viz.topology_viz import TopologyViz
 from exo.download.download_progress import RepoProgressEvent
 from exo.inference.inference_engine import get_inference_engine, InferenceEngine
 from exo.download.shard_download import ShardDownloader
+
 
 class Node:
   def __init__(
@@ -39,16 +42,16 @@ class Node:
     self.peers: List[PeerHandle] = {}
     self.topology: Topology = Topology()
     self.device_capabilities = UNKNOWN_DEVICE_CAPABILITIES
-    self.buffered_token_output: Dict[str, Tuple[List[int], bool]] = {}
+    self.buffered_token_output: Dict[str, BufferedOutput] = {}
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
     self.buffered_partials: Dict[str, List[np.ndarray]] = {}
     self.checkpoints: Dict[str, Dict[str, int]] = {}
-    
+
     self.max_generate_tokens = max_generate_tokens
     self.topology_viz = topology_viz
     self.default_sample_temperature = default_sample_temperature
-    self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool]]()
+    self._on_token = AsyncCallbackSystem[str, Tuple[str, List[int], bool, Optional[str]]]()
     self._on_opaque_status = AsyncCallbackSystem[str, Tuple[str, str]]()
     self._on_opaque_status.register("node_status").on_next(self.on_node_status)
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
@@ -110,49 +113,101 @@ class Node:
 
   def get_topology_inference_engines(self) -> List[List[str]]:
     return self.topology_inference_engines_pool
-  
-  token_count = 0
-  first_token_time = 0
+
   async def process_inference_result(
     self,
     shard,
     result: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ):
-    if shard.model_id != 'stable-diffusion-2-1-base':
-      if request_id not in self.buffered_token_output:
-        self.buffered_token_output[request_id] = ([], False)
-      is_finished = len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
-      if shard.is_last_layer() and not is_finished:
-        token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
-        await self.inference_engine.ensure_shard(shard)
-        self.buffered_token_output[request_id][0].append(token.item())
-        is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
-        if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
-        forward = token.reshape(1, -1)
-        intermediate_result = [self.buffered_token_output[request_id][0][-1]]
-      else:
-        forward = result
-    else:
-      await self.inference_engine.ensure_shard(shard)
-      is_finished = inference_state.get("is_finished", False)
-      intermediate_result, inference_state = self.handle_stable_diffusion(inference_state, result)
-      forward = result
-    if shard.is_last_layer():
-      self.trigger_on_token_callbacks(request_id, intermediate_result, is_finished)
-      asyncio.create_task(self.broadcast_result(request_id, intermediate_result, is_finished))
+    await self.inference_engine.ensure_shard(shard)
 
+    if shard.model_id == 'stable-diffusion-2-1-base':
+      # Stable Diffusion specific processing. This will mutate inference_state.
+      forward, intermediate_result, is_finished = await self.handle_stable_diffusion_inference(
+        result, inference_state
+      )
+
+      # We don't do finish reason determination here for stable diffusion
+      finish_reason = None
+    else:
+      # LLM specific processing
+      forward, intermediate_result, is_finished, finish_reason = await self.handle_llm_inference(
+        shard, result, request_id, generation_options
+      )
+
+    # Yield the intermediate result before continuing further generation (for LLMs this will be the next token in the
+    # output).
+    if shard.is_last_layer():
+      if intermediate_result is None:
+        raise ValueError("Intermediate result is None")
+
+      self.trigger_on_token_callbacks(request_id, intermediate_result, is_finished, finish_reason)
+      asyncio.create_task(self.broadcast_result(request_id, intermediate_result, is_finished, finish_reason))
+
+    # Common completion handling
     if is_finished:
-      if shard.model_id != 'stable-diffusion-2-1-base':
-        self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
-      self.outstanding_requests.pop(request_id)
+      self.buffered_token_output.pop(request_id, None)
+      self.outstanding_requests.pop(request_id, None)
     else:
       self.outstanding_requests[request_id] = "waiting"
-      asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1), inference_state))
+      asyncio.create_task(self.forward_tensor(
+        shard, forward, request_id, self.get_partition_index(offset=1),
+        inference_state, generation_options
+      ))
 
-    return  np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
+    if shard.model_id == 'stable-diffusion-2-1-base':
+      return intermediate_result
+    else:
+      return None
 
+  async def handle_llm_inference(self, shard: Shard, result, request_id: str, generation_options: GenerationOptions):
+    """Handle LLM-specific inference results processing"""
+    if not shard.is_last_layer():
+      return result, None, False, None
+
+    if request_id not in self.buffered_token_output:
+      max_tokens = self.max_generate_tokens
+      if generation_options.max_completion_tokens is not None:
+        max_tokens = min(max_tokens, generation_options.max_completion_tokens)
+
+      tokenizer = self.inference_engine.tokenizer
+      self.buffered_token_output[request_id] = BufferedOutput(
+        eos_token_id=tokenizer.eos_token_id,
+        max_tokens=max_tokens,
+        stop_sequences=generation_options.stop or [],
+        tokenizer=tokenizer,
+        grammar_definition=generation_options.grammar_definition,
+      )
+
+    buffered_output = self.buffered_token_output[request_id]
+
+    token = await self.inference_engine.sample(
+      result,
+      temp=self.default_sample_temperature,
+      mask=buffered_output.get_token_mask()
+    )
+
+    buffered_output.append(token.item())
+
+    if DEBUG >= 2:
+      print(f"[{request_id}] LLM result size: {result.size}, finished: {buffered_output.is_finished}, tokens: {buffered_output.token_count()}, finish_reason: {buffered_output.finish_reason}")
+
+    return token.reshape(1, -1), buffered_output.next_tokens(), buffered_output.is_finished, buffered_output.finish_reason
+
+  async def handle_stable_diffusion_inference(self, result, inference_state):
+    """Handle Stable Diffusion-specific inference results processing"""
+    is_finished = inference_state.get("is_finished", False)
+
+    if inference_state['is_step_finished']:
+      inference_state['step'] += 1
+
+    if inference_state['step'] == inference_state['total_steps']:
+      is_finished = True
+
+    return result, result, is_finished
 
   async def process_prompt(
     self,
@@ -160,6 +215,7 @@ class Node:
     prompt: str,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = {},
+    generation_options: Optional[GenerationOptions] = None,
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     start_time = time.perf_counter_ns()
@@ -178,7 +234,7 @@ class Node:
       )
     )
     start_time = time.perf_counter_ns()
-    resp = await self._process_prompt(base_shard, prompt, request_id, inference_state)
+    resp = await self._process_prompt(base_shard, prompt, request_id, inference_state, generation_options)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     asyncio.create_task(
@@ -198,7 +254,9 @@ class Node:
     )
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {elapsed_time_ns=}")
 
-  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[dict] = None) -> Optional[np.ndarray]:
+  async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None,
+                            inference_state: Optional[dict] = None,
+                            generation_options: Optional[GenerationOptions] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
     shard = self.get_current_shard(base_shard)
@@ -207,19 +265,19 @@ class Node:
     if not shard.is_first_layer():
       if DEBUG >= 2: print(f"[{request_id}] forwarding to next shard: {base_shard=} {shard=} {prompt=}")
       self.outstanding_requests[request_id] = "waiting"
-      resp = await self.forward_prompt(shard, prompt, request_id, 0, inference_state)
+      resp = await self.forward_prompt(shard, prompt, request_id, 0, inference_state, generation_options)
       return None
     else:
       self.outstanding_requests[request_id] = "processing"
       result, inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
-      ret = await self.process_inference_result(shard, result, request_id, inference_state)
+      ret = await self.process_inference_result(shard, result, request_id, inference_state, generation_options)
       return result
 
   async def enqueue_example(
     self,
     base_shard: Shard,
     example: np.ndarray,
-    target: np.ndarray, 
+    target: np.ndarray,
     length: np.ndarray,
     request_id: Optional[str] = None,
     train: bool = False,
@@ -232,7 +290,7 @@ class Node:
       if request_id is None:
         request_id = str(uuid.uuid4())
       self.outstanding_requests[request_id] = "waiting"
-      loss = await self.forward_example(shard, example, target, length, train, request_id, 0) 
+      loss = await self.forward_example(shard, example, target, length, train, request_id, 0)
     return loss
 
   async def coordinate_save(
@@ -263,7 +321,7 @@ class Node:
     self,
     base_shard: Shard,
     example: np.ndarray,
-    target: np.ndarray, 
+    target: np.ndarray,
     length: np.ndarray,
     train: bool = False,
     request_id: Optional[str] = None,
@@ -308,7 +366,7 @@ class Node:
     self,
     base_shard: Shard,
     example: np.ndarray,
-    target: np.ndarray, 
+    target: np.ndarray,
     length: np.ndarray,
     train: bool = False,
     request_id: Optional[str] = None,
@@ -351,17 +409,18 @@ class Node:
       print(f"Error processing example for shard {shard}: {e}")
       traceback.print_exc()
       return None
-        
+
   async def process_tensor(
     self,
     base_shard: Shard,
     tensor: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> Optional[np.ndarray]:
     shard = self.get_current_shard(base_shard)
     start_time = time.perf_counter_ns()
-    resp = await self._process_tensor(shard, tensor, request_id, inference_state)
+    resp = await self._process_tensor(shard, tensor, request_id, inference_state, generation_options)
     end_time = time.perf_counter_ns()
     elapsed_time_ns = end_time - start_time
     if DEBUG >= 2: print(f"[{request_id}] process_tensor: {base_shard=} {shard=} {tensor.size=} {tensor.shape=} {elapsed_time_ns=}")
@@ -372,6 +431,7 @@ class Node:
     tensor: np.ndarray,
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
@@ -380,13 +440,13 @@ class Node:
     try:
       self.outstanding_requests[request_id] = "processing"
       result, inference_state = await self.inference_engine.infer_tensor(request_id, shard, tensor, inference_state)
-      ret = await self.process_inference_result(shard, result, request_id, inference_state) 
+      ret = await self.process_inference_result(shard, result, request_id, inference_state, generation_options)
       return ret
     except Exception as e:
       self.outstanding_requests.pop(request_id)
       print(f"Error processing tensor for shard {shard}: {e}")
       traceback.print_exc()
-  
+
   async def forward_example(
     self,
     base_shard: Shard,
@@ -415,20 +475,21 @@ class Node:
     request_id: str,
     target_index: int,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> None:
     if DEBUG >= 1: print(f"target partition index: {target_index}")
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
     next_shard = self.get_current_shard(base_shard, target_index)
     if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. next shard: {next_shard}")
     if target_id == self.id:
-      await self.process_prompt(next_shard, prompt, request_id, inference_state)
+      await self.process_prompt(next_shard, prompt, request_id, inference_state, generation_options)
     else:
       target_peer = next((p for p in self.peers if p.id() == target_id), None)
       if not target_peer:
         raise ValueError(f"Peer for {target_index} not found")
       if DEBUG >= 1: print(f"Sending prompt to {target_peer.id()}: {prompt}")
-      await target_peer.send_prompt(next_shard, prompt, request_id=request_id, inference_state=inference_state)
-  
+      await target_peer.send_prompt(next_shard, prompt, request_id=request_id, inference_state=inference_state, generation_options=generation_options)
+
   async def forward_tensor(
     self,
     base_shard: Shard,
@@ -436,19 +497,20 @@ class Node:
     request_id: str,
     target_index: int,
     inference_state: Optional[dict] = None,
+    generation_options: Optional[GenerationOptions] = None,
   ) -> None:
     if DEBUG >= 1: print(f"target partition index: {target_index}")
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
     next_shard = self.get_current_shard(base_shard, target_index)
     if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. target shard: {next_shard}")
     if target_id == self.id:
-      await self.process_tensor(next_shard, tensor, request_id, inference_state)
+      await self.process_tensor(next_shard, tensor, request_id, inference_state, generation_options)
     else:
       target_peer = next((p for p in self.peers if p.id() == target_id), None)
       if not target_peer:
         raise ValueError(f"Peer for {target_index} not found")
       if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
-      await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state)
+      await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state, generation_options=generation_options)
 
   def get_partition_index(self, offset: int = 0):
     if not self.partitioning_strategy:
@@ -574,22 +636,22 @@ class Node:
     return self.topology
 
   @property
-  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool]]:
+  def on_token(self) -> AsyncCallbackSystem[str, Tuple[str, List[int], bool, Optional[str]]]:
     return self._on_token
 
   @property
   def on_opaque_status(self) -> AsyncCallbackSystem[str, Tuple[str, str]]:
     return self._on_opaque_status
 
-  def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool) -> None:
-    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} {tokens=} {is_finished=}")
-    self.on_token.trigger_all(request_id, tokens, is_finished)
-  
-  async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
-    if DEBUG >= 2: print(f"Broadcasting result: {request_id=} {result=} {is_finished=}")
+  def trigger_on_token_callbacks(self, request_id: str, tokens: List[int], is_finished: bool, finish_reason: Optional[str] = None) -> None:
+    if DEBUG >= 2: print(f"Triggering all on_token callbacks with {request_id=} {tokens=} {is_finished=} {finish_reason=}")
+    self.on_token.trigger_all(request_id, tokens, is_finished, finish_reason)
+
+  async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool, finish_reason: Optional[str] = None) -> None:
+    if DEBUG >= 2: print(f"Broadcasting result: {request_id=} {result=} {is_finished=} {finish_reason=}")
     async def send_result_to_peer(peer):
       try:
-        await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=15.0)
+        await asyncio.wait_for(peer.send_result(request_id, result, is_finished, finish_reason), timeout=15.0)
       except asyncio.TimeoutError:
         print(f"Timeout broadcasting result to {peer.id()}")
       except Exception as e:
@@ -626,3 +688,6 @@ class Node:
     if progress[0] == progress[1]:
       intermediate_result = result
     return intermediate_result, inference_state
+
+  def sort_nodes_by_flops(self) -> List[PeerHandle]:
+    return sorted(self.peers, key=lambda peer: peer.device_capabilities().flops.fp32, reverse=True)

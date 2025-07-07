@@ -7,7 +7,7 @@ from typing import List, Dict, Callable, Tuple, Coroutine, Optional
 from exo.networking.discovery import Discovery
 from exo.networking.peer_handle import PeerHandle
 from exo.topology.device_capabilities import DeviceCapabilities, device_capabilities, UNKNOWN_DEVICE_CAPABILITIES
-from exo.helpers import DEBUG, DEBUG_DISCOVERY, get_all_ip_addresses_and_interfaces, get_interface_priority_and_type
+from exo.helpers import DEBUG, DEBUG_DISCOVERY, get_all_ip_addresses_and_interfaces, get_interface_priority_and_type, get_network_interface_info
 
 
 class ListenProtocol(asyncio.DatagramProtocol):
@@ -23,28 +23,37 @@ class ListenProtocol(asyncio.DatagramProtocol):
     asyncio.create_task(self.on_message(data, addr))
 
 
-def get_broadcast_address(ip_addr: str) -> str:
-  try:
-    # Split IP into octets and create broadcast address for the subnet
+async def get_broadcast_address(ip_addr: str) -> str:
+  try:    
+    # Get network interface info (netmask and broadcast)
+    interface_info = await get_network_interface_info(ip_addr)
+    
+    if interface_info:
+      _, broadcast_address = interface_info
+      return broadcast_address
+    
+    # If we couldn't get interface info, fall back to the old method
+    if DEBUG_DISCOVERY >= 2: print(f"Could not determine broadcast address for {ip_addr}, using fallback")
     ip_parts = ip_addr.split('.')
     return f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.255"
-  except:
+  except Exception as e:
+    if DEBUG_DISCOVERY >= 2: print(f"Error calculating broadcast address: {e}")
     return "255.255.255.255"
 
 
 class BroadcastProtocol(asyncio.DatagramProtocol):
-  def __init__(self, message: str, broadcast_port: int, source_ip: str):
+  def __init__(self, message: str, broadcast_port: int, source_ip: str, broadcast_addr: str):
     self.message = message
     self.broadcast_port = broadcast_port
     self.source_ip = source_ip
+    self.broadcast_addr = broadcast_addr
 
   def connection_made(self, transport):
     sock = transport.get_extra_info("socket")
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     # Try both subnet-specific and global broadcast
-    broadcast_addr = get_broadcast_address(self.source_ip)
-    transport.sendto(self.message.encode("utf-8"), (broadcast_addr, self.broadcast_port))
-    if broadcast_addr != "255.255.255.255":
+    transport.sendto(self.message.encode("utf-8"), (self.broadcast_addr, self.broadcast_port))
+    if self.broadcast_addr != "255.255.255.255":
       transport.sendto(self.message.encode("utf-8"), ("255.255.255.255", self.broadcast_port))
 
 
@@ -122,8 +131,9 @@ class UDPDiscovery(Discovery):
             pass
           sock.bind((addr, 0))
           
+          broadcast_addr = await get_broadcast_address(addr)
           transport, _ = await asyncio.get_event_loop().create_datagram_endpoint(
-            lambda: BroadcastProtocol(message, self.broadcast_port, addr),
+            lambda: BroadcastProtocol(message, self.broadcast_port, addr, broadcast_addr),
             sock=sock
           )
         except Exception as e:

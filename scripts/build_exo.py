@@ -19,7 +19,9 @@ def run():
         "--output-filename=exo",
         "--python-flag=no_site",
         "--onefile",
-        f"--include-data-dir={baseimages_dir}=exo/apputil/baseimages"
+        f"--include-data-dir={baseimages_dir}=exo/apputil/baseimages",
+        "--nofollow-import-to=cv2",
+        "--include-package=cv2"
     ]
 
     if sys.platform == "darwin": 

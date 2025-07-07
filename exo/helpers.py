@@ -15,6 +15,7 @@ import tempfile
 import json
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+import struct
 
 DEBUG = int(os.getenv("DEBUG", default="0"))
 DEBUG_DISCOVERY = int(os.getenv("DEBUG_DISCOVERY", default="0"))
@@ -63,11 +64,15 @@ def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 6
 
   while available_ports:
     port = random.choice(list(available_ports))
-    if DEBUG >= 2: print(f"Trying to find available port {port=}")
+    if DEBUG >= 2: print(f"Trying to bind port {port=} on address {host=}")
     try:
       with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
-      write_used_port(port, used_ports)
+      try:
+        write_used_port(port, used_ports)
+      except Exception as e:
+        if DEBUG >= 2: print(f"Unable to write to file using the write_used_port function")
+        raise RuntimeError (e)
       return port
     except socket.error:
       available_ports.remove(port)
@@ -331,6 +336,135 @@ def is_frozen():
     or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
     or '__nuitka__' in globals() or getattr(sys, '__compiled__', False)
 
+# Cache for network interface information
+_network_interface_cache: Dict[str, Tuple[str, str]] = {}
+
+async def get_network_interface_info(ip_addr: str) -> Optional[Tuple[str, str]]:
+    """
+    Get network interface information for a given IP address.
+    Returns (netmask, broadcast_address) if found, None otherwise.
+    
+    Results are cached to avoid repeated system calls for the same IP address.
+    """
+    # Check if we already have this information cached
+    if ip_addr in _network_interface_cache:
+        if DEBUG >= 2: print(f"Using cached network info for {ip_addr}")
+        return _network_interface_cache[ip_addr]
+    
+    try:
+        result = None
+        if platform.system() == "Darwin":  # macOS
+            result = await get_macos_interface_info(ip_addr)
+        elif platform.system() == "Linux":
+            result = await get_linux_interface_info(ip_addr)
+        elif platform.system() == "Windows":
+            result = await get_windows_interface_info(ip_addr)
+        else:
+            if DEBUG >= 2: print(f"Unsupported platform: {platform.system()}")
+
+        # Cache the result if we found something
+        if result is not None:
+            _network_interface_cache[ip_addr] = result
+            if DEBUG_DISCOVERY >= 2: print(f"Found broadcast address {result[1]} for IP {ip_addr}")
+            
+        return result
+    except Exception as e:
+        if DEBUG >= 2: print(f"Error getting network interface info: {e}")
+        return None
+
+async def get_macos_interface_info(ip_addr: str) -> Optional[Tuple[str, str]]:
+    try:
+        output = await asyncio.get_running_loop().run_in_executor(
+            subprocess_pool,
+            lambda: subprocess.check_output(["ifconfig"]).decode("utf-8")
+        )
+        
+        # Find the interface with our IP
+        ip_pattern = re.escape(ip_addr)
+        ip_match = re.search(r'inet ' + ip_pattern + '(.*)', output)
+        
+        if ip_match:
+            inet_line = ip_match.group(1)
+            netmask_match = re.search(r'netmask\s+(?:0x([0-9a-fA-F]{8})|(\d+\.\d+\.\d+\.\d+))', inet_line)
+            broadcast_match = re.search(r'broadcast\s+(\d+\.\d+\.\d+\.\d+)', inet_line)
+            
+            if netmask_match:
+                netmask = netmask_match.group(2)
+                if not netmask:  # Convert hex format netmask to dotted quad
+                    hex_mask = netmask_match.group(1)
+                    netmask = socket.inet_ntoa(struct.pack('!I', int(hex_mask, 16)))
+                
+                # If broadcast is directly available, use it. Will not be present for lo0 and other special devices
+                if broadcast_match:
+                    broadcast = broadcast_match.group(1)
+                    return (netmask, broadcast)
+                
+                # Otherwise calculate it
+                ip_int = struct.unpack("!I", socket.inet_aton(ip_addr))[0]
+                mask_int = struct.unpack("!I", socket.inet_aton(netmask))[0]
+                broadcast_int = ip_int | (~mask_int & 0xffffffff)
+                broadcast = socket.inet_ntoa(struct.pack("!I", broadcast_int))
+                return (netmask, broadcast)
+        
+        return None
+    except Exception as e:
+        if DEBUG >= 2: print(f"Error getting macOS interface info: {e}")
+        return None
+
+async def get_linux_interface_info(ip_addr: str) -> Optional[Tuple[str, str]]:
+    try:
+        output = await asyncio.get_running_loop().run_in_executor(
+            subprocess_pool,
+            lambda: subprocess.check_output(["ip", "addr"]).decode("utf-8")
+        )
+        
+        # Find the interface with our IP
+        ip_pattern = re.escape(ip_addr)
+        ip_match = re.search(r'inet\s+' + ip_pattern + r'/(\d+)', output)
+        
+        if ip_match:
+            prefix_len = int(ip_match.group(1))
+            # Calculate netmask from prefix length, don't use the "brd" field which is not always present
+            mask_int = (0xffffffff << (32 - prefix_len)) & 0xffffffff
+            netmask = socket.inet_ntoa(struct.pack('!I', mask_int))
+            
+            # Calculate broadcast address
+            ip_int = struct.unpack("!I", socket.inet_aton(ip_addr))[0]
+            broadcast_int = ip_int | (~mask_int & 0xffffffff)
+            broadcast = socket.inet_ntoa(struct.pack("!I", broadcast_int))
+            
+            return (netmask, broadcast)
+        
+        return None
+    except Exception as e:
+        if DEBUG >= 2: print(f"Error getting Linux interface info: {e}")
+        return None
+
+async def get_windows_interface_info(ip_addr: str) -> Optional[Tuple[str, str]]:
+    try:
+        output = await asyncio.get_running_loop().run_in_executor(
+            subprocess_pool,
+            lambda: subprocess.check_output(["ipconfig", "/all"], universal_newlines=True)
+        )
+        # Find the interface with our IP, handling different interface formats
+        # as liberally as possible, then calculate broadcast from netmask
+        sections = output.split('\n\n')
+        for section in sections:
+            if ip_addr in section:
+                mask_match = re.search(r'Subnet Mask[.\s]+:\s+(\d+\.\d+\.\d+\.\d+)', section)
+                if mask_match:
+                    netmask = mask_match.group(1)
+                    ip_int = struct.unpack("!I", socket.inet_aton(ip_addr))[0]
+                    mask_int = struct.unpack("!I", socket.inet_aton(netmask))[0]
+                    broadcast_int = ip_int | (~mask_int & 0xffffffff)
+                    broadcast = socket.inet_ntoa(struct.pack("!I", broadcast_int))
+                    return (netmask, broadcast)
+        
+        return None
+    except Exception as e:
+        if DEBUG >= 2: print(f"Error getting Windows interface info: {e}")
+        return None
+
 async def get_mac_system_info() -> Tuple[str, str, int]:
     """Get Mac system information using system_profiler."""
     try:
@@ -370,3 +504,14 @@ def get_exo_images_dir() -> Path:
   images_dir = exo_home/"Images"
   if not images_dir.exists(): images_dir.mkdir(exist_ok=True)
   return images_dir
+
+def get_device_capabilities_json():
+  from exo.topology.device_capabilities import device_capabilities
+  loop = asyncio.new_event_loop()
+  asyncio.set_event_loop(loop)
+  try:
+    caps = loop.run_until_complete(device_capabilities())
+    caps_dict = caps.model_dump()
+    return json.dumps(caps_dict, indent=2)
+  finally:
+    loop.close()

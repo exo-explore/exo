@@ -19,11 +19,20 @@ message Shard {
   int32 n_layers = 4;
 }
 
+message GenerationOptions {
+  optional int32 max_completion_tokens = 1;
+  repeated string stop = 2;
+
+  // This is the LLGuidance grammar serialised as JSON which will be used for guided generation
+  optional string grammar_definition = 4;
+}
+
 message PromptRequest {
   Shard shard = 1;
   string prompt = 2;
   optional string request_id = 3;
   optional InferenceState inference_state = 4;
+  optional GenerationOptions generation_options = 5;
 }
 
 message TensorRequest {
@@ -31,6 +40,7 @@ message TensorRequest {
   Tensor tensor = 2;
   optional string request_id = 3;
   optional InferenceState inference_state = 4;
+  optional GenerationOptions generation_options = 5;
 }
 
 message ExampleRequest {
@@ -100,6 +110,7 @@ message SendResultRequest {
   repeated int32 result = 2;
   optional Tensor tensor = 3;
   bool is_finished = 4;
+  optional string finish_reason = 5;
 }
 
 message SendOpaqueStatusRequest {
