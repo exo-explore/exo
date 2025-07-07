@@ -1,4 +1,4 @@
-from typing import Callable, NewType, Protocol, TypeVar
+from typing import Callable, NewType, Protocol
 
 from shared.types.networking.control_plane import (
     ControlPlaneEdgeId,
@@ -7,10 +7,7 @@ from shared.types.networking.control_plane import (
 
 TopicName = NewType("TopicName", str)
 
-MessageT = TypeVar("MessageT", bound=object)
-
-
-PubSubMessageHandler = Callable[[TopicName, MessageT], None]
+PubSubMessageHandler = Callable[[TopicName, object], None]
 NodeConnectedHandler = Callable[
     [
         ControlPlaneEdgeId,
@@ -22,16 +19,11 @@ NodeDisconnectedHandler = Callable[[ControlPlaneEdgeId], None]
 
 
 class DiscoveryService(Protocol):
-    def register_node_connected_handler(
-        self, handler: NodeConnectedHandler
-    ) -> None: ...
-    def register_node_disconnected_handler(
-        self, handler: NodeDisconnectedHandler
-    ) -> None: ...
+    def on_node_connected(self, handler: NodeConnectedHandler) -> None: ...
+    def on_node_disconnected(self, handler: NodeDisconnectedHandler) -> None: ...
 
 
 class PubSubService(Protocol):
-    def register_handler(
-        self, key: str, topic_name: TopicName, handler: PubSubMessageHandler[MessageT]
+    def on_message_received(
+        self, topic_name: TopicName, handler: PubSubMessageHandler
     ) -> None: ...
-    def deregister_handler(self, key: str) -> None: ...

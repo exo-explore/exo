@@ -1,13 +1,9 @@
 from enum import Enum
-from typing import Generic, Mapping, Tuple, TypeVar, final
+from typing import Annotated, Literal, TypeVar, Union, final
 
-from pydantic import BaseModel, IPvAnyAddress
+from pydantic import BaseModel, Field, IPvAnyAddress, TypeAdapter
 
-from shared.types.common import NewUUID, NodeId
-from shared.types.graphs.common import (
-    Edge,
-    EdgeData,
-)
+from shared.types.common import NewUUID
 
 
 class DataPlaneEdgeId(NewUUID):
@@ -15,7 +11,7 @@ class DataPlaneEdgeId(NewUUID):
 
 
 class AddressingProtocol(str, Enum):
-    IPvAny = "IPvAny"
+    IPvAnyAddress = "IPvAnyAddress"
 
 
 class ApplicationProtocol(str, Enum):
@@ -27,56 +23,43 @@ ApP = TypeVar("ApP", bound=ApplicationProtocol)
 
 
 @final
-class EdgeDataTransferRate(BaseModel):
+class DataPlaneEdgeBenchmarkData(BaseModel):
     throughput: float
     latency: float
     jitter: float
 
 
-class DataPlaneEdgeMetadata(BaseModel, Generic[AdP, ApP]): ...
+class CommonDataPlaneEdgeData(BaseModel):
+    edge_data_transfer_rate: DataPlaneEdgeBenchmarkData | None = None
 
 
-@final
-class DataPlaneEdgeType(BaseModel, Generic[AdP, ApP]):
-    addressing_protocol: AdP
-    application_protocol: ApP
-
-
-@final
-class MLXEdgeContext(
-    DataPlaneEdgeMetadata[AddressingProtocol.IPvAny, ApplicationProtocol.MLX]
-):
+class MlxEdgeMetadata(BaseModel):
     source_ip: IPvAnyAddress
     sink_ip: IPvAnyAddress
 
 
-class DataPlaneEdgeInfoType(str, Enum):
-    network_profile = "network_profile"
-    other = "other"
+class BaseDataPlaneEdgeData[AdP: AddressingProtocol, ApP: ApplicationProtocol](
+    BaseModel
+):
+    addressing_protocol: AdP
+    application_protocol: ApP
+    common_data: CommonDataPlaneEdgeData
 
 
-AllDataPlaneEdgeInfo = Tuple[DataPlaneEdgeInfoType.network_profile]
+class MlxEdge(
+    BaseDataPlaneEdgeData[AddressingProtocol.IPvAnyAddress, ApplicationProtocol.MLX]
+):
+    addressing_protocol: Literal[AddressingProtocol.IPvAnyAddress] = (
+        AddressingProtocol.IPvAnyAddress
+    )
+    application_protocol: Literal[ApplicationProtocol.MLX] = ApplicationProtocol.MLX
+    mlx_metadata: MlxEdgeMetadata
 
 
-DataPlaneEdgeInfoTypeT = TypeVar(
-    "DataPlaneEdgeInfoTypeT", bound=DataPlaneEdgeInfoType, covariant=True
-)
+DataPlaneEdgeData = Union[MlxEdge]
 
-
-class DataPlaneEdgeInfo(BaseModel, Generic[DataPlaneEdgeInfoTypeT]):
-    edge_info_type: DataPlaneEdgeInfoTypeT
-
-
-SetOfEdgeInfo = TypeVar("SetOfEdgeInfo", bound=Tuple[DataPlaneEdgeInfoType, ...])
-
-
-class DataPlaneEdgeData(EdgeData[DataPlaneEdgeType[AdP, ApP]], Generic[AdP, ApP]):
-    edge_info: Mapping[DataPlaneEdgeInfoType, DataPlaneEdgeInfo[DataPlaneEdgeInfoType]]
-    edge_metadata: DataPlaneEdgeMetadata[AdP, ApP]
-
-
-class DataPlaneEdgeProfile(DataPlaneEdgeInfo[DataPlaneEdgeInfoTypeT]):
-    edge_data_transfer_rate: EdgeDataTransferRate
-
-
-class DataPlaneEdge(Edge[DataPlaneEdgeType[AdP, ApP], DataPlaneEdgeId, NodeId]): ...
+_DataPlaneEdgeData = Annotated[
+    DataPlaneEdgeData,
+    Field(discriminator="addressing_protocol"),
+]
+DataPlaneEdgeAdapter: TypeAdapter[DataPlaneEdgeData] = TypeAdapter(_DataPlaneEdgeData)
