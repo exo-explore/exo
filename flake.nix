@@ -22,6 +22,8 @@
               pkgs.uv
               pkgs.just
               pkgs.protobuf
+              pkgs.rustc
+              pkgs.cargo
             ];
           };
         }

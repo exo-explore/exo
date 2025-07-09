@@ -14,12 +14,24 @@ jobs:
   typecheck:
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git user
+        run: |
+          git config --local user.email "github-actions@users.noreply.github.com"
+          git config --local user.name  "github-actions bot"
+        shell: bash
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: ./.github/actions/typecheck
   ci:
     needs: typecheck
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -38,27 +50,8 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: ./.github/actions/regenerate-protobufs
-
-      - name: Commit regenerated protobufs
-        uses: ./.github/actions/conditional-commit
+      - uses: ./.github/actions/verify-clean
         with:
-          message: "chore(proto) regenerate protobufs"
+          step: regenerate-protobufs
 
-      - uses: ./.github/actions/format
-
-      - name: Commit formatted code
-        uses: ./.github/actions/conditional-commit
-        with:
-          message: "chore(format): format code"
-
-      - uses: ./.github/actions/lint
-
-      - name: Commit lint fixes
-        uses: ./.github/actions/conditional-commit
-        with:
-          message: "chore(lint): fix linting errors"
-
-      - name: Push changes
-        run: git push
-        shell: bash
+      - uses: ./.github/actions/lint-check
