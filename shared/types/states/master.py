@@ -24,7 +24,7 @@ from shared.types.networking.topology import (
 )
 from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.states.shared import SharedState
-from shared.types.tasks.common import TaskData, TaskType
+from shared.types.tasks.common import TaskData
 from shared.types.worker.instances import InstanceData, InstanceId
 
 
@@ -65,8 +65,8 @@ class ControlPlaneNetworkState(State[EventCategories.ControlPlaneEventTypes]):
 class MasterState(SharedState):
     data_plane_network_state: DataPlaneNetworkState
     control_plane_network_state: ControlPlaneNetworkState
-    job_inbox: Queue[TaskData[TaskType]]
-    job_outbox: Queue[TaskData[TaskType]]
+    job_inbox: Queue[TaskData]
+    job_outbox: Queue[TaskData]
     cache_policy: CachePolicy[CachePolicyType]
 
 

@@ -8,7 +8,19 @@ from shared.types.common import NodeId
 from shared.types.models.common import ModelId
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
-from shared.types.worker.shards import PartitionStrategy, ShardMetadata
+from shared.types.worker.shards import BaseShardMeta, PartitionStrategy
+
+
+class RunnerError(Exception):
+    error_type: str
+    error_message: str
+    traceback: str
+
+    def __init__(self, error_type: str, error_message: str, traceback: str):
+        self.error_type = error_type
+        self.error_message = error_message
+        self.traceback = traceback
+        super().__init__(f"{error_type}: {error_message}\n{traceback}")
 
 
 class RunnerStateType(str, Enum):
@@ -60,7 +72,7 @@ PartitionStrategyT = TypeVar(name="PartitionStrategyT", bound=PartitionStrategy)
 
 class ShardAssignments(BaseModel):
     model_id: ModelId
-    runner_to_shard: Mapping[RunnerId, ShardMetadata[PartitionStrategy]]
+    runner_to_shard: Mapping[RunnerId, BaseShardMeta[PartitionStrategy]]
     node_to_runner: Mapping[NodeId, Sequence[RunnerId]]
 
     @model_validator(mode="after")

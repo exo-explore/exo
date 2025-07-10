@@ -15,6 +15,7 @@ dev = [
     "basedpyright>=1.29.4",
     "maturin>=1.9.0",
     "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
     "ruff>=0.11.13",
 ]
 
@@ -105,3 +106,7 @@ extend-exclude = ["shared/protobufs/**"]
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+asyncio_mode = "auto"

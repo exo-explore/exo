@@ -58,7 +58,7 @@ class TimerData(BaseModel):
 class TaskCreated[TaskTypeT: TaskType](TaskEvent):
     event_type: TaskEventTypes = TaskEventTypes.TaskCreated
     task_id: TaskId
-    task_data: TaskData[TaskTypeT]
+    task_data: TaskData
     task_state: TaskState[Literal[TaskStatusIncompleteType.Pending], TaskTypeT]
     on_instance: InstanceId
 
