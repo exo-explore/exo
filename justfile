@@ -20,7 +20,7 @@ test:
     uv run pytest master worker shared engines/*
 
 check:
-    uv run basedpyright --project pyproject.toml
+    basedpyright --project pyproject.toml
 
 sync:
     uv sync --all-packages

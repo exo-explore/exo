@@ -12,7 +12,6 @@ dependencies = [
 # dependencies only required for development
 [dependency-groups]
 dev = [
-    "basedpyright>=1.29.4",
     "maturin>=1.9.0",
     "pytest>=8.4.0",
     "ruff>=0.11.13",

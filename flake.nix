@@ -24,6 +24,7 @@
               pkgs.protobuf
               pkgs.rustc
               pkgs.cargo
+              pkgs.basedpyright
             ];
           };
         }
