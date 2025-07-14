@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from typing import Generic, Literal, TypeVar, Annotated
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
@@ -11,7 +11,7 @@ from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
 from shared.types.worker.shards import PartitionStrategy, ShardMetadata
 
 
-class RunnerStateType(str, Enum):
+class RunnerStatusType(str, Enum):
     Rejected = "Rejected"
     Starting = "Starting"
     Downloading = "Downloading"
@@ -19,44 +19,46 @@ class RunnerStateType(str, Enum):
     Failed = "Failed"
 
 
-RunnerStateTypeT = TypeVar("RunnerStateTypeT", bound=RunnerStateType)
+RunnerStatusTypeT = TypeVar("RunnerStatusTypeT", bound=RunnerStatusType)
 
 
-class RunnerState(BaseModel, Generic[RunnerStateTypeT]):
-    runner_state: RunnerStateTypeT
+class RunnerStatus(BaseModel, Generic[RunnerStatusTypeT]):
+    runner_status: RunnerStatusTypeT
 
 
-class RejectedRunnerState(RunnerState[RunnerStateType.Rejected]):
-    runner_state: Literal[RunnerStateType.Rejected]
+class RejectedRunnerStatus(RunnerStatus[RunnerStatusType.Rejected]):
+    runner_status: Literal[RunnerStatusType.Rejected]
 
 
-class StartingRunnerState(RunnerState[RunnerStateType.Starting]):
-    runner_state: Literal[RunnerStateType.Starting]
+class StartingRunnerStatus(RunnerStatus[RunnerStatusType.Starting]):
+    runner_status: Literal[RunnerStatusType.Starting]
 
 
-class DownloadingRunnerState(RunnerState[RunnerStateType.Downloading]):
-    runner_state: Literal[RunnerStateType.Downloading]
+class DownloadingRunnerStatus(RunnerStatus[RunnerStatusType.Downloading]):
+    runner_status: Literal[RunnerStatusType.Downloading]
     download_progress: BaseDownloadProgress[DownloadStatus]
 
 
-class RunningRunnerState(RunnerState[RunnerStateType.Running]):
-    runner_state: Literal[RunnerStateType.Running]
+class RunningRunnerStatus(RunnerStatus[RunnerStatusType.Running]):
+    runner_status: Literal[RunnerStatusType.Running]
 
 
-class FailedRunnerState(RunnerState[RunnerStateType.Failed]):
-    runner_state: Literal[RunnerStateType.Failed]
+class FailedRunnerStatus(RunnerStatus[RunnerStatusType.Failed]):
+    runner_status: Literal[RunnerStatusType.Failed]
     error_message: str | None = None
 
 
-_RunnerState = Annotated[
-    RejectedRunnerState
-    | StartingRunnerState
-    | DownloadingRunnerState
-    | RunningRunnerState
-    | FailedRunnerState,
+_RunnerStatus = Annotated[
+    RejectedRunnerStatus
+    | StartingRunnerStatus
+    | DownloadingRunnerStatus
+    | RunningRunnerStatus
+    | FailedRunnerStatus,
     Field,
 ]
-RunnerStateParser: TypeAdapter[RunnerState[RunnerStateType]] = TypeAdapter(_RunnerState)
+RunnerStatusParser: TypeAdapter[RunnerStatus[RunnerStatusType]] = TypeAdapter(
+    _RunnerStatus
+)
 
 
 class ShardAssignments(BaseModel):

@@ -1,5 +1,5 @@
-from pathlib import Path
 import inspect
+from pathlib import Path
 
 EXO_HOME = Path.home() / ".exo"
 EXO_EVENT_DB = EXO_HOME / "event_db.sqlite3"

@@ -1,5 +1,5 @@
-from typing import Literal
 from collections.abc import Set
+from typing import Literal
 
 from shared.logging.common import LogEntry, LogEntryType
 

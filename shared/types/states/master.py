@@ -4,19 +4,19 @@ from queue import Queue
 from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
-from shared.types.worker.common import NodeStatus
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
     Event,
     EventCategory,
+    EventCategoryEnum,
     State,
 )
 from shared.types.graphs.resource_graph import ResourceGraph
 from shared.types.networking.data_plane import (
     DataPlaneEdge,
-    DataPlaneEdgeId,
     DataPlaneEdgeAdapter,
+    DataPlaneEdgeId,
 )
 from shared.types.networking.topology import (
     ControlPlaneTopology,
@@ -27,7 +27,8 @@ from shared.types.networking.topology import (
 from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.states.shared import SharedState
 from shared.types.tasks.common import TaskParams, TaskType
-from shared.types.worker.instances import InstanceParams, InstanceId
+from shared.types.worker.common import NodeStatus
+from shared.types.worker.instances import InstanceId, InstanceParams
 
 
 class ExternalCommand(BaseModel): ...
@@ -44,13 +45,13 @@ class CachePolicy(BaseModel, Generic[CachePolicyTypeT]):
     policy_type: CachePolicyTypeT
 
 
-class NodePerformanceProfileState(State[EventCategory.MutatesNodePerformanceState]):
+class NodePerformanceProfileState(State[EventCategoryEnum.MutatesNodePerformanceState]):
     node_profiles: Mapping[NodeId, NodePerformanceProfile]
 
 
-class DataPlaneNetworkState(State[EventCategory.MutatesDataPlaneState]):
-    event_category: Literal[EventCategory.MutatesDataPlaneState] = (
-        EventCategory.MutatesDataPlaneState
+class DataPlaneNetworkState(State[EventCategoryEnum.MutatesDataPlaneState]):
+    event_category: Literal[EventCategoryEnum.MutatesDataPlaneState] = (
+        EventCategoryEnum.MutatesDataPlaneState
     )
     topology: DataPlaneTopology = DataPlaneTopology(
         edge_base=DataPlaneEdgeAdapter, vertex_base=TypeAdapter(None)
@@ -61,9 +62,9 @@ class DataPlaneNetworkState(State[EventCategory.MutatesDataPlaneState]):
     def add_edge(self, edge: DataPlaneEdge) -> None: ...
 
 
-class ControlPlaneNetworkState(State[EventCategory.MutatesControlPlaneState]):
-    event_category: Literal[EventCategory.MutatesControlPlaneState] = (
-        EventCategory.MutatesControlPlaneState
+class ControlPlaneNetworkState(State[EventCategoryEnum.MutatesControlPlaneState]):
+    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = (
+        EventCategoryEnum.MutatesControlPlaneState
     )
     topology: ControlPlaneTopology = ControlPlaneTopology(
         edge_base=TypeAdapter(None), vertex_base=TypeAdapter(NodeStatus)

@@ -1,38 +1,56 @@
+from asyncio import Lock, Queue, Task, create_task, gather
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import List, LiteralString, Protocol, Literal
 from logging import Logger
+from typing import Any, List, Literal, Protocol, Type, TypedDict
 
+from master.logging import (
+    StateUpdateEffectHandlerErrorLogEntry,
+    StateUpdateErrorLogEntry,
+    StateUpdateLoopAlreadyRunningLogEntry,
+    StateUpdateLoopNotRunningLogEntry,
+    StateUpdateLoopStartedLogEntry,
+    StateUpdateLoopStoppedLogEntry,
+)
+from shared.constants import EXO_ERROR_REPORTING_MESSAGE
+from shared.logger import log
 from shared.types.events.common import (
+    Apply,
     EffectHandler,
+    Event,
     EventCategories,
     EventCategory,
-    Event,
     EventCategoryEnum,
-    EventFromEventLog,
     EventFetcherProtocol,
+    EventFromEventLog,
+    StateAndEvent,
     State,
-    Apply,
-)
-from asyncio import Lock, Queue, Task, gather, create_task
-from typing import Any, Type, TypedDict
-from collections.abc import Mapping
-from shared.logger import log
-from shared.constants import EXO_ERROR_REPORTING_MESSAGE
-from master.logging import (
-    StateUpdateLoopAlreadyRunningLogEntry,
-    StateUpdateLoopStartedLogEntry,
-    StateUpdateLoopNotRunningLogEntry,
-    StateUpdateLoopStoppedLogEntry,
-    StateUpdateErrorLogEntry,
-    StateUpdateEffectHandlerErrorLogEntry,
 )
 
+
 class QueueMapping(TypedDict):
-    MutatesTaskState: Queue[EventFromEventLog[Literal[EventCategoryEnum.MutatesTaskState]]]
-    MutatesControlPlaneState: Queue[EventFromEventLog[Literal[EventCategoryEnum.MutatesControlPlaneState]]]
-    MutatesDataPlaneState: Queue[EventFromEventLog[Literal[EventCategoryEnum.MutatesDataPlaneState]]]
-    MutatesInstanceState: Queue[EventFromEventLog[Literal[EventCategoryEnum.MutatesInstanceState]]]
-    MutatesNodePerformanceState: Queue[EventFromEventLog[Literal[EventCategoryEnum.MutatesNodePerformanceState]]]
+    MutatesTaskState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesTaskState]]
+    ]
+    MutatesControlPlaneState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesControlPlaneState]]
+    ]
+    MutatesDataPlaneState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesDataPlaneState]]
+    ]
+    MutatesInstanceState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesInstanceState]]
+    ]
+    MutatesNodePerformanceState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesNodePerformanceState]]
+    ]
+    MutatesRunnerStatus: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesRunnerStatus]]
+    ]
+    MutatesTaskSagaState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesTaskSagaState]]
+    ]
+
 
 def check_keys_in_map_match_enum_values[TEnum: StrEnum](
     mapping_type: Type[Mapping[Any, Any]],
@@ -44,7 +62,9 @@ def check_keys_in_map_match_enum_values[TEnum: StrEnum](
         f"StateDomainMapping keys {mapping_keys} do not match EventCategories values {category_values}"
     )
 
+
 check_keys_in_map_match_enum_values(QueueMapping, EventCategoryEnum)
+
 
 class AsyncUpdateStateFromEvents[EventCategoryT: EventCategory](Protocol):
     """Protocol for services that manage a specific state domain."""
@@ -119,7 +139,7 @@ class AsyncUpdateStateFromEvents[EventCategoryT: EventCategory](Protocol):
                 raise e
             try:
                 for effect_handler in self._default_effects + self.extra_effects:
-                    effect_handler((previous_state, event), updated_state)
+                    effect_handler(StateAndEvent(previous_state, event), updated_state)
             except Exception as e:
                 log(self._logger, StateUpdateEffectHandlerErrorLogEntry(error=e))
                 raise e
@@ -149,7 +169,9 @@ class EventRouter:
             await self.queue_map[category].put(event_to_process)
         return None
 
-    async def _submit_events(self, events: list[Event[EventCategory | EventCategories]]) -> None:
+    async def _submit_events(
+        self, events: list[Event[EventCategory | EventCategories]]
+    ) -> None:
         """Route multiple events to their appropriate services."""
         for event in events:
             for category in event.event_category:

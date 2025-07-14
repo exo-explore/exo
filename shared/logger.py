@@ -2,14 +2,13 @@ import logging
 import logging.handlers
 from collections.abc import Sequence, Set
 from queue import Queue
+from typing import Annotated
 
+from pydantic import Field, TypeAdapter
 from rich.logging import RichHandler
 
-from typing import Annotated
-from pydantic import Field, TypeAdapter
-
-from shared.logging.common import LogEntryType
 from master.logging import MasterLogEntries
+from shared.logging.common import LogEntryType
 from worker.logging import WorkerLogEntries
 
 LogEntries = Annotated[

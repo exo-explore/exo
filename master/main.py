@@ -1,35 +1,41 @@
+from asyncio import CancelledError, Lock, Queue, Task, create_task
+from contextlib import asynccontextmanager
+from enum import Enum
+from logging import Logger, LogRecord
+from typing import Annotated, Literal
+
 from fastapi import FastAPI, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, TypeAdapter
-from logging import Logger
 
-from shared.types.events.common import Event, EventCategories, EventFetcherProtocol, EventPublisher, State
-from shared.logger import (
-    configure_logger,
-    LogEntryType,
-    FilterLogByType,
-    create_queue_listener,
-    attach_to_queue,
+from master.env import MasterEnvironmentSchema
+from master.event_routing import AsyncUpdateStateFromEvents
+from master.logging import (
+    MasterCommandReceivedLogEntry,
+    MasterInvalidCommandReceivedLogEntry,
+    MasterUninitializedLogEntry,
 )
-from shared.types.worker.common import InstanceId
-from shared.types.worker.instances import Instance
+from shared.constants import EXO_MASTER_STATE
+from shared.logger import (
+    FilterLogByType,
+    LogEntryType,
+    attach_to_queue,
+    configure_logger,
+    create_queue_listener,
+    log,
+)
+from shared.types.events.common import (
+    Event,
+    EventCategories,
+    EventFetcherProtocol,
+    EventPublisher,
+    State,
+)
 from shared.types.models.common import ModelId
 from shared.types.models.model import ModelInfo
 from shared.types.states.master import MasterState
-from shared.constants import EXO_MASTER_STATE
-from contextlib import asynccontextmanager
-from logging import LogRecord
-from typing import Annotated, Literal
-from master.env import MasterEnvironmentSchema
-from master.logging import (
-    MasterUninitializedLogEntry,
-    MasterCommandReceivedLogEntry,
-    MasterInvalidCommandReceivedLogEntry,
-)
-from master.event_routing import AsyncUpdateStateFromEvents
-from shared.logger import log
-from asyncio import Lock, Task, CancelledError, Queue, create_task
-from enum import Enum
+from shared.types.worker.common import InstanceId
+from shared.types.worker.instances import Instance
 
 
 # Restore State
@@ -76,6 +82,7 @@ ExternalCommandParser: TypeAdapter[ExternalCommand] = TypeAdapter(ExternalComman
 class MasterBackgroundServices(str, Enum):
     MAIN_LOOP = "main_loop"
 
+
 class StateManager[T: EventCategories]:
     state: State[T]
     queue: Queue[Event[T]]
@@ -85,8 +92,8 @@ class StateManager[T: EventCategories]:
         self,
         state: State[T],
         queue: Queue[Event[T]],
-    ) -> None:
-        ...
+    ) -> None: ...
+
 
 class MasterStateManager:
     """Thread-safe manager for MasterState with independent event loop."""
@@ -126,7 +133,9 @@ class MasterStateManager:
                 case MasterBackgroundServices.MAIN_LOOP:
                     if self._services[service]:
                         raise RuntimeError("State manager is already running")
-                    self._services[service]: Task[None] = create_task(self._event_loop())
+                    self._services[service]: Task[None] = create_task(
+                        self._event_loop()
+                    )
                     log(self._logger, MasterStateManagerStartedLogEntry())
                 case _:
                     raise ValueError(f"Unknown service: {service}")
@@ -155,7 +164,7 @@ class MasterStateManager:
                             events_one = self._event_processor.get_events_to_apply(
                                 self._state.data_plane_network_state
                             )
-                        case EventCategories.InstanceStateEventTypes:
+                        case EventCategories.InstanceEventTypes:
                             events_one = self._event_processor.get_events_to_apply(
                                 self._state.control_plane_network_state
                             )

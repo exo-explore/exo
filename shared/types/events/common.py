@@ -1,24 +1,22 @@
 from enum import Enum, StrEnum
 from typing import (
-    Annotated,
     Any,
+    Callable,
     FrozenSet,
     Literal,
     NamedTuple,
+    Protocol,
+    Sequence,
     cast,
-)
-
-import annotated_types
-
-from shared.types.events.sanity_checking import (
-    check_event_type_union_is_consistent_with_registry,
-    assert_literal_union_covers_enum,
 )
 
 from pydantic import BaseModel, Field, model_validator
 
 from shared.types.common import NewUUID, NodeId
-from typing import Callable, Sequence, Protocol
+from shared.types.events.sanity_checking import (
+    assert_literal_union_covers_enum,
+    check_event_type_union_is_consistent_with_registry,
+)
 
 
 class EventId(NewUUID):
@@ -31,7 +29,7 @@ class TimerId(NewUUID):
 
 # Here are all the unique kinds of events that can be sent over the network.
 # I've defined them in different enums for clarity, but they're all part of the same set of possible events.
-class MLXEventTypes(str, Enum):
+class TaskSagaEventTypes(str, Enum):
     MLXInferenceSagaPrepare = "MLXInferenceSagaPrepare"
     MLXInferenceSagaStartPrepare = "MLXInferenceSagaStartPrepare"
 
@@ -54,8 +52,8 @@ class InstanceEventTypes(str, Enum):
     InstanceReplacedAtomically = "InstanceReplacedAtomically"
 
 
-class InstanceStateEventTypes(str, Enum):
-    InstanceSagaRunnerStateUpdated = "InstanceSagaRunnerStateUpdated"
+class RunnerStatusEventTypes(str, Enum):
+    RunnerStatusUpdated = "RunnerStatusUpdated"
 
 
 class NodePerformanceEventTypes(str, Enum):
@@ -84,12 +82,12 @@ EVENT_TYPE_ENUMS = [
     TaskEventTypes,
     StreamingEventTypes,
     InstanceEventTypes,
-    InstanceStateEventTypes,
+    RunnerStatusEventTypes,
     NodePerformanceEventTypes,
     DataPlaneEventTypes,
     ControlPlaneEventTypes,
     TimerEventTypes,
-    MLXEventTypes,
+    TaskSagaEventTypes,
 ]
 
 
@@ -98,12 +96,12 @@ EventTypes = (
     TaskEventTypes
     | StreamingEventTypes
     | InstanceEventTypes
-    | InstanceStateEventTypes
+    | RunnerStatusEventTypes
     | NodePerformanceEventTypes
     | ControlPlaneEventTypes
     | DataPlaneEventTypes
     | TimerEventTypes
-    | MLXEventTypes
+    | TaskSagaEventTypes
 )
 
 
@@ -112,6 +110,8 @@ check_event_type_union_is_consistent_with_registry(EVENT_TYPE_ENUMS, EventTypes)
 
 class EventCategoryEnum(StrEnum):
     MutatesTaskState = "MutatesTaskState"
+    MutatesRunnerStatus = "MutatesRunnerStatus"
+    MutatesTaskSagaState = "MutatesTaskSagaState"
     MutatesInstanceState = "MutatesInstanceState"
     MutatesNodePerformanceState = "MutatesNodePerformanceState"
     MutatesControlPlaneState = "MutatesControlPlaneState"
@@ -121,6 +121,8 @@ class EventCategoryEnum(StrEnum):
 EventCategory = (
     Literal[EventCategoryEnum.MutatesControlPlaneState]
     | Literal[EventCategoryEnum.MutatesTaskState]
+    | Literal[EventCategoryEnum.MutatesTaskSagaState]
+    | Literal[EventCategoryEnum.MutatesRunnerStatus]
     | Literal[EventCategoryEnum.MutatesInstanceState]
     | Literal[EventCategoryEnum.MutatesNodePerformanceState]
     | Literal[EventCategoryEnum.MutatesDataPlaneState]
@@ -129,6 +131,7 @@ EventCategory = (
 EventCategories = FrozenSet[EventCategory]
 
 assert_literal_union_covers_enum(EventCategory, EventCategoryEnum)
+
 
 class Event[SetMembersT: EventCategories | EventCategory](BaseModel):
     event_type: EventTypes

@@ -3,20 +3,20 @@ from __future__ import annotations
 from typing import Literal, Tuple
 
 from shared.types.common import NodeId
+from shared.types.events.chunks import GenerationChunk
 from shared.types.events.common import (
-    Event,
-    EventTypes,
-    EventCategoryEnum,
     ControlPlaneEventTypes,
     DataPlaneEventTypes,
+    Event,
+    EventCategoryEnum,
+    EventTypes,
     InstanceEventTypes,
-    InstanceStateEventTypes,
-    MLXEventTypes,
     NodePerformanceEventTypes,
+    RunnerStatusEventTypes,
     StreamingEventTypes,
     TaskEventTypes,
+    TaskSagaEventTypes,
 )
-from shared.types.events.chunks import GenerationChunk
 from shared.types.networking.control_plane import (
     ControlPlaneEdgeId,
     ControlPlaneEdgeType,
@@ -37,7 +37,7 @@ from shared.types.tasks.common import (
 )
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
-from shared.types.worker.runners import RunnerId, RunnerState, RunnerStateType
+from shared.types.worker.runners import RunnerId, RunnerStatus, RunnerStatusType
 
 MLXEvent = Event[
     frozenset(
@@ -101,22 +101,22 @@ class InstanceReplacedAtomically(Event[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceReplacedAtomically
     instance_to_replace: InstanceId
     new_instance_id: InstanceId
-    
 
-class InstanceSagaRunnerStateUpdated(Event[EventCategoryEnum.MutatesInstanceState]):
-    event_type: EventTypes = InstanceStateEventTypes.InstanceSagaRunnerStateUpdated
+
+class RunnerStatusUpdated(Event[EventCategoryEnum.MutatesRunnerStatus]):
+    event_type: EventTypes = RunnerStatusEventTypes.RunnerStatusUpdated
     instance_id: InstanceId
-    state_update: Tuple[RunnerId, RunnerState[RunnerStateType]]
+    state_update: Tuple[RunnerId, RunnerStatus[RunnerStatusType]]
 
 
-class MLXInferenceSagaPrepare(Event[EventCategoryEnum.MutatesTaskState]):
-    event_type: EventTypes = MLXEventTypes.MLXInferenceSagaPrepare
+class MLXInferenceSagaPrepare(Event[EventCategoryEnum.MutatesTaskSagaState]):
+    event_type: EventTypes = TaskSagaEventTypes.MLXInferenceSagaPrepare
     task_id: TaskId
     instance_id: InstanceId
 
 
-class MLXInferenceSagaStartPrepare(Event[EventCategoryEnum.MutatesTaskState]):
-    event_type: EventTypes = MLXEventTypes.MLXInferenceSagaStartPrepare
+class MLXInferenceSagaStartPrepare(Event[EventCategoryEnum.MutatesTaskSagaState]):
+    event_type: EventTypes = TaskSagaEventTypes.MLXInferenceSagaStartPrepare
     task_id: TaskId
     instance_id: InstanceId
 

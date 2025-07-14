@@ -83,7 +83,7 @@ class TaskState[TaskStatusTypeT: TaskStatusType, TaskTypeT: TaskType](BaseModel)
 class BaseTask[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel):
     task_type: TaskTypeT
     task_params: TaskParams[TaskTypeT]
-    task_state: TaskState[TaskStatusTypeT, TaskTypeT]
+    task_stats: TaskState[TaskStatusTypeT, TaskTypeT]
     on_instance: InstanceId
 
 
@@ -98,6 +98,11 @@ BaseTaskAnnotated = Annotated[
 BaseTaskParser: TypeAdapter[BaseTask[TaskType, TaskStatusType]] = TypeAdapter(
     BaseTaskAnnotated
 )
+
+
+class TaskSagaEntry(BaseModel):
+    task_id: TaskId
+    instance_id: InstanceId
 
 
 @final

@@ -1,41 +1,41 @@
-from typing import Any, Mapping, Type, get_args
 from types import UnionType
+from typing import Annotated, Any, Mapping, Type, get_args
+
+from pydantic import Field, TypeAdapter
+
 from shared.constants import EXO_ERROR_REPORTING_MESSAGE
 from shared.types.events.common import (
+    ControlPlaneEventTypes,
+    DataPlaneEventTypes,
     Event,
+    EventCategories,
     EventTypes,
-    TaskEventTypes,
     InstanceEventTypes,
     NodePerformanceEventTypes,
-    ControlPlaneEventTypes,
+    RunnerStatusEventTypes,
     StreamingEventTypes,
-    DataPlaneEventTypes,
-    MLXEventTypes,
-    InstanceStateEventTypes,
+    TaskEventTypes,
+    TaskSagaEventTypes,
 )
 from shared.types.events.events import (
-    TaskCreated,
-    TaskStateUpdated,
-    TaskDeleted,
+    ChunkGenerated,
+    DataPlaneEdgeCreated,
+    DataPlaneEdgeDeleted,
+    DataPlaneEdgeReplacedAtomically,
     InstanceCreated,
     InstanceDeleted,
     InstanceReplacedAtomically,
-    InstanceSagaRunnerStateUpdated,
-    NodePerformanceMeasured,
-    WorkerConnected,
-    WorkerStatusUpdated,
-    WorkerDisconnected,
-    ChunkGenerated,
-    DataPlaneEdgeCreated,
-    DataPlaneEdgeReplacedAtomically,
-    DataPlaneEdgeDeleted,
     MLXInferenceSagaPrepare,
     MLXInferenceSagaStartPrepare,
+    NodePerformanceMeasured,
+    RunnerStatusUpdated,
+    TaskCreated,
+    TaskDeleted,
+    TaskStateUpdated,
+    WorkerConnected,
+    WorkerDisconnected,
+    WorkerStatusUpdated,
 )
-from pydantic import TypeAdapter
-from typing import Annotated
-from pydantic import Field
-from shared.types.events.common import EventCategories
 
 """
 class EventTypeNames(StrEnum):
@@ -58,7 +58,7 @@ EventRegistry: Mapping[EventTypes, Type[Any]] = {
     InstanceEventTypes.InstanceCreated: InstanceCreated,
     InstanceEventTypes.InstanceDeleted: InstanceDeleted,
     InstanceEventTypes.InstanceReplacedAtomically: InstanceReplacedAtomically,
-    InstanceStateEventTypes.InstanceSagaRunnerStateUpdated: InstanceSagaRunnerStateUpdated,
+    RunnerStatusEventTypes.RunnerStatusUpdated: RunnerStatusUpdated,
     NodePerformanceEventTypes.NodePerformanceMeasured: NodePerformanceMeasured,
     ControlPlaneEventTypes.WorkerConnected: WorkerConnected,
     ControlPlaneEventTypes.WorkerStatusUpdated: WorkerStatusUpdated,
@@ -67,8 +67,8 @@ EventRegistry: Mapping[EventTypes, Type[Any]] = {
     DataPlaneEventTypes.DataPlaneEdgeCreated: DataPlaneEdgeCreated,
     DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically: DataPlaneEdgeReplacedAtomically,
     DataPlaneEventTypes.DataPlaneEdgeDeleted: DataPlaneEdgeDeleted,
-    MLXEventTypes.MLXInferenceSagaPrepare: MLXInferenceSagaPrepare,
-    MLXEventTypes.MLXInferenceSagaStartPrepare: MLXInferenceSagaStartPrepare,
+    TaskSagaEventTypes.MLXInferenceSagaPrepare: MLXInferenceSagaPrepare,
+    TaskSagaEventTypes.MLXInferenceSagaStartPrepare: MLXInferenceSagaStartPrepare,
 }
 
 
@@ -86,9 +86,7 @@ def check_registry_has_all_event_types() -> None:
 def check_union_of_all_events_is_consistent_with_registry(
     registry: Mapping[EventTypes, Type[Any]], union_type: UnionType
 ) -> None:
-    type_of_each_registry_entry = set(
-        type(event_type) for event_type in registry.keys()
-    )
+    type_of_each_registry_entry = set(type(event_type) for event_type in registry)
     type_of_each_entry_in_union = set(get_args(union_type))
     missing_from_union = type_of_each_registry_entry - type_of_each_entry_in_union
 
@@ -112,7 +110,7 @@ AllEvents = (
     | InstanceCreated
     | InstanceDeleted
     | InstanceReplacedAtomically
-    | InstanceSagaRunnerStateUpdated
+    | RunnerStatusUpdated
     | NodePerformanceMeasured
     | WorkerConnected
     | WorkerStatusUpdated

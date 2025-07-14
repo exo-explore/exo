@@ -1,3 +1,4 @@
+from shared.graphs.networkx import NetworkXGraph
 from shared.types.common import NodeId
 from shared.types.networking.control_plane import ControlPlaneEdgeId
 from shared.types.networking.data_plane import (
@@ -5,7 +6,6 @@ from shared.types.networking.data_plane import (
     DataPlaneEdgeId,
 )
 from shared.types.worker.common import NodeStatus
-from shared.graphs.networkx import NetworkXGraph
 
 
 class DataPlaneTopology(

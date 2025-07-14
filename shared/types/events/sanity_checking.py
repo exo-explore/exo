@@ -1,6 +1,6 @@
-from typing import LiteralString, Sequence, Set, Any, Type, get_args
-from types import UnionType
 from enum import Enum, StrEnum
+from types import UnionType
+from typing import Any, LiteralString, Sequence, Set, Type, get_args
 
 from shared.constants import EXO_ERROR_REPORTING_MESSAGE
 

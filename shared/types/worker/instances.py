@@ -1,13 +1,9 @@
-from collections.abc import Mapping
 from enum import Enum
 
 from pydantic import BaseModel
 
 from shared.types.worker.common import InstanceId
 from shared.types.worker.runners import (
-    RunnerId,
-    RunnerState,
-    RunnerStateType,
     ShardAssignments,
 )
 
@@ -27,12 +23,4 @@ class BaseInstance(BaseModel):
 
 
 class Instance(BaseInstance):
-    instance_id: InstanceId
-
-
-class BaseInstanceSaga(BaseModel):
-    runner_states: Mapping[RunnerId, RunnerState[RunnerStateType]]
-
-
-class InstanceSaga(BaseInstanceSaga):
     instance_id: InstanceId

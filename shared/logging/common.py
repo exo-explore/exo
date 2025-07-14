@@ -1,8 +1,8 @@
+from collections.abc import Set
 from enum import Enum
 from typing import Generic, TypeVar
-from pydantic import BaseModel
 
-from collections.abc import Set
+from pydantic import BaseModel
 
 LogEntryTypeT = TypeVar("LogEntryTypeT", bound=str)
 

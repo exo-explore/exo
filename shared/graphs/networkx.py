@@ -1,18 +1,18 @@
-from typing import Set, Mapping
 from dataclasses import dataclass
-from pydantic import TypeAdapter
+from typing import Mapping, Set
 
 import rustworkx as rx
+from pydantic import TypeAdapter
 
 from shared.types.graphs.common import (
     Edge,
     EdgeData,
+    EdgeIdT,
+    EdgeTypeT,
     MutableGraphProtocol,
     Vertex,
     VertexData,
-    EdgeIdT,
     VertexIdT,
-    EdgeTypeT,
     VertexTypeT,
 )
 
