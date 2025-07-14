@@ -80,6 +80,16 @@ class InstanceCreated(Event[EventCategoryEnum.MutatesInstanceState]):
     instance_type: TypeOfInstance
 
 
+class InstanceActivated(Event[EventCategoryEnum.MutatesInstanceState]):
+    event_type: EventTypes = InstanceEventTypes.InstanceActivated
+    instance_id: InstanceId
+
+
+class InstanceDeactivated(Event[EventCategoryEnum.MutatesInstanceState]):
+    event_type: EventTypes = InstanceEventTypes.InstanceDeactivated
+    instance_id: InstanceId
+
+
 class InstanceDeleted(Event[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceDeleted
     instance_id: InstanceId
@@ -91,9 +101,7 @@ class InstanceReplacedAtomically(Event[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceReplacedAtomically
     instance_to_replace: InstanceId
     new_instance_id: InstanceId
-    new_instance_params: InstanceParams
-    new_instance_type: TypeOfInstance
-
+    
 
 class InstanceSagaRunnerStateUpdated(Event[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceStateEventTypes.InstanceSagaRunnerStateUpdated

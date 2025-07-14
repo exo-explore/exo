@@ -49,6 +49,8 @@ class StreamingEventTypes(str, Enum):
 class InstanceEventTypes(str, Enum):
     InstanceCreated = "InstanceCreated"
     InstanceDeleted = "InstanceDeleted"
+    InstanceActivated = "InstanceActivated"
+    InstanceDeactivated = "InstanceDeactivated"
     InstanceReplacedAtomically = "InstanceReplacedAtomically"
 
 
