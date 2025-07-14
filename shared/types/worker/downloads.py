@@ -2,11 +2,9 @@ from enum import Enum
 from typing import (
     Annotated,
     Callable,
-    Generic,
     Literal,
     NewType,
     Sequence,
-    TypeVar,
     Union,
 )
 
@@ -30,10 +28,7 @@ class DownloadStatus(str, Enum):
     Failed = "Failed"
 
 
-DownloadStatusT = TypeVar("DownloadStatusT", bound=DownloadStatus)
-
-
-class BaseDownloadProgress(BaseModel, Generic[DownloadStatusT]):
+class BaseDownloadProgress[DownloadStatusT: DownloadStatus](BaseModel):
     node_id: NodeId
     download_status: DownloadStatusT
 
@@ -80,6 +75,6 @@ DownloadEffectHandler = Callable[
 def download_shard(
     model_id: ModelId,
     model_source: ModelSource,
-    shard_meta: ShardMetadata[PartitionStrategy],
+    shard_metadata: ShardMetadata[PartitionStrategy],
     effect_handlers: Sequence[DownloadEffectHandler],
 ) -> None: ...

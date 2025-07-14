@@ -1,17 +1,24 @@
-from enum import Enum, auto
+from enum import Enum, StrEnum
 from typing import (
     Annotated,
-    Callable,
-    Generic,
-    Protocol,
-    Sequence,
-    Tuple,
-    TypeVar,
+    Any,
+    FrozenSet,
+    Literal,
+    NamedTuple,
+    cast,
 )
 
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+import annotated_types
+
+from shared.types.events.sanity_checking import (
+    check_event_type_union_is_consistent_with_registry,
+    assert_literal_union_covers_enum,
+)
+
+from pydantic import BaseModel, Field, model_validator
 
 from shared.types.common import NewUUID, NodeId
+from typing import Callable, Sequence, Protocol
 
 
 class EventId(NewUUID):
@@ -22,6 +29,8 @@ class TimerId(NewUUID):
     pass
 
 
+# Here are all the unique kinds of events that can be sent over the network.
+# I've defined them in different enums for clarity, but they're all part of the same set of possible events.
 class MLXEventTypes(str, Enum):
     MLXInferenceSagaPrepare = "MLXInferenceSagaPrepare"
     MLXInferenceSagaStartPrepare = "MLXInferenceSagaStartPrepare"
@@ -29,7 +38,7 @@ class MLXEventTypes(str, Enum):
 
 class TaskEventTypes(str, Enum):
     TaskCreated = "TaskCreated"
-    TaskUpdated = "TaskUpdated"
+    TaskStateUpdated = "TaskStateUpdated"
     TaskDeleted = "TaskDeleted"
 
 
@@ -40,22 +49,20 @@ class StreamingEventTypes(str, Enum):
 class InstanceEventTypes(str, Enum):
     InstanceCreated = "InstanceCreated"
     InstanceDeleted = "InstanceDeleted"
-    InstanceToBeReplacedAtomically = "InstanceToBeReplacedAtomically"
     InstanceReplacedAtomically = "InstanceReplacedAtomically"
-    InstanceStatusUpdated = "InstanceStatusUpdated"
 
 
 class InstanceStateEventTypes(str, Enum):
-    InstanceRunnerStateUpdated = "InstanceRunnerStateUpdated"
+    InstanceSagaRunnerStateUpdated = "InstanceSagaRunnerStateUpdated"
 
 
 class NodePerformanceEventTypes(str, Enum):
-    NodePerformanceProfiled = "NodePerformanceProfiled"
+    NodePerformanceMeasured = "NodePerformanceMeasured"
 
 
 class DataPlaneEventTypes(str, Enum):
     DataPlaneEdgeCreated = "DataPlaneEdgeCreated"
-    DataPlaneEdgeProfiled = "DataPlaneEdgeProfiled"
+    DataPlaneEdgeReplacedAtomically = "DataPlaneEdgeReplacedAtomically"
     DataPlaneEdgeDeleted = "DataPlaneEdgeDeleted"
 
 
@@ -70,168 +77,132 @@ class TimerEventTypes(str, Enum):
     TimerFired = "TimerFired"
 
 
-class ResourceEventTypes(str, Enum):
-    ResourceProfiled = "ResourceProfiled"
+# Registry of all event type enums
+EVENT_TYPE_ENUMS = [
+    TaskEventTypes,
+    StreamingEventTypes,
+    InstanceEventTypes,
+    InstanceStateEventTypes,
+    NodePerformanceEventTypes,
+    DataPlaneEventTypes,
+    ControlPlaneEventTypes,
+    TimerEventTypes,
+    MLXEventTypes,
+]
 
 
-class EventCategories(str, Enum):
-    TaskEventTypes = auto()
-    StreamingEventTypes = auto()
-    InstanceEventTypes = auto()
-    InstanceStateEventTypes = auto()
-    NodePerformanceEventTypes = auto()
-    ControlPlaneEventTypes = auto()
-    DataPlaneEventTypes = auto()
-    TimerEventTypes = auto()
-    MLXEventTypes = auto()
-
-
-PossibleEventOfEventTypeT = TypeVar("PossibleEventOfEventTypeT", bound=Enum)
-
-#  T=(A|B) <: U=(A|B|C)  ==>  Event[A|B] <: Event[A|BCategoryOfEventsT_cov = TypeVar(name="CategoryOfEventsT_cov", bound=EventCategories, covariant=True)
-CategoryOfEventsT_cov = TypeVar(
-    name="CategoryOfEventsT_cov", bound=EventCategories, contravariant=True
-)
-CategoryOfEventsT_con = TypeVar(
-    name="CategoryOfEventsT_con", bound=EventCategories, contravariant=True
-)
-CategoryOfEventsT_inv = TypeVar(
-    name="CategoryOfEventsT_inv",
-    bound=EventCategories,
-    covariant=False,
-    contravariant=False,
+# Here's the set of all possible events.
+EventTypes = (
+    TaskEventTypes
+    | StreamingEventTypes
+    | InstanceEventTypes
+    | InstanceStateEventTypes
+    | NodePerformanceEventTypes
+    | ControlPlaneEventTypes
+    | DataPlaneEventTypes
+    | TimerEventTypes
+    | MLXEventTypes
 )
 
 
-class Event(BaseModel, Generic[PossibleEventOfEventTypeT]):
-    event_type: PossibleEventOfEventTypeT
-    event_category: EventCategories
+check_event_type_union_is_consistent_with_registry(EVENT_TYPE_ENUMS, EventTypes)
+
+
+class EventCategoryEnum(StrEnum):
+    MutatesTaskState = "MutatesTaskState"
+    MutatesInstanceState = "MutatesInstanceState"
+    MutatesNodePerformanceState = "MutatesNodePerformanceState"
+    MutatesControlPlaneState = "MutatesControlPlaneState"
+    MutatesDataPlaneState = "MutatesDataPlaneState"
+
+
+EventCategory = (
+    Literal[EventCategoryEnum.MutatesControlPlaneState]
+    | Literal[EventCategoryEnum.MutatesTaskState]
+    | Literal[EventCategoryEnum.MutatesInstanceState]
+    | Literal[EventCategoryEnum.MutatesNodePerformanceState]
+    | Literal[EventCategoryEnum.MutatesDataPlaneState]
+)
+
+EventCategories = FrozenSet[EventCategory]
+
+assert_literal_union_covers_enum(EventCategory, EventCategoryEnum)
+
+class Event[SetMembersT: EventCategories | EventCategory](BaseModel):
+    event_type: EventTypes
+    event_category: SetMembersT
     event_id: EventId
 
-    def check_origin_id(self, origin_id: NodeId) -> bool:
-        return True
+    def check_event_was_sent_by_correct_node(self, origin_id: NodeId) -> bool: ...
 
 
-class TaskEvent(Event[TaskEventTypes]):
-    event_type: TaskEventTypes
-
-
-class InstanceEvent(Event[InstanceEventTypes]):
-    event_type: InstanceEventTypes
-
-
-class InstanceStateEvent(Event[InstanceStateEventTypes]):
-    event_type: InstanceStateEventTypes
-
-
-class MLXEvent(Event[MLXEventTypes]):
-    event_type: MLXEventTypes
-
-
-class NodePerformanceEvent(Event[NodePerformanceEventTypes]):
-    event_type: NodePerformanceEventTypes
-
-
-class ControlPlaneEvent(Event[ControlPlaneEventTypes]):
-    event_type: ControlPlaneEventTypes
-
-
-class StreamingEvent(Event[StreamingEventTypes]):
-    event_type: StreamingEventTypes
-
-
-class DataPlaneEvent(Event[DataPlaneEventTypes]):
-    event_type: DataPlaneEventTypes
-
-
-class TimerEvent(Event[TimerEventTypes]):
-    event_type: TimerEventTypes
-
-
-class ResourceEvent(Event[ResourceEventTypes]):
-    event_type: ResourceEventTypes
-
-
-class WrappedMessage(BaseModel, Generic[PossibleEventOfEventTypeT]):
-    message: Event[PossibleEventOfEventTypeT]
-    origin_id: NodeId
+class EventFromEventLog[SetMembersT: EventCategories | EventCategory](BaseModel):
+    event: Event[SetMembersT]
+    origin: NodeId
+    idx_in_log: int = Field(gt=0)
 
     @model_validator(mode="after")
-    def check_origin_id(self) -> "WrappedMessage[PossibleEventOfEventTypeT]":
-        if self.message.check_origin_id(self.origin_id):
+    def check_event_was_sent_by_correct_node(
+        self,
+    ) -> "EventFromEventLog[SetMembersT]":
+        if self.event.check_event_was_sent_by_correct_node(self.origin):
             return self
         raise ValueError("Invalid Event: Origin ID Does Not Match")
 
 
-class PersistedEvent(BaseModel, Generic[PossibleEventOfEventTypeT]):
-    event: Event[PossibleEventOfEventTypeT]
-    sequence_number: int = Field(gt=0)
+def narrow_event_type[T: EventCategory](
+    event: Event[EventCategories],
+    target_category: T,
+) -> Event[T]:
+    if target_category not in event.event_category:
+        raise ValueError(f"Event Does Not Contain Target Category {target_category}")
+
+    narrowed_event = event.model_copy(update={"event_category": {target_category}})
+    return cast(Event[T], narrowed_event)
 
 
-class State(BaseModel, Generic[CategoryOfEventsT_cov]):
-    event_category: CategoryOfEventsT_cov
-    sequence_number: int = Field(default=0, ge=0)
+class State[EventCategoryT: EventCategory](BaseModel):
+    event_category: EventCategoryT
+    last_event_applied_idx: int = Field(default=0, ge=0)
 
 
-AnnotatedEventType = Annotated[
-    Event[EventCategories], Field(discriminator="event_category")
+# Definitions for Type Variables
+type Saga[EventCategoryT: EventCategory] = Callable[
+    [State[EventCategoryT], EventFromEventLog[EventCategoryT]],
+    Sequence[Event[EventCategories]],
 ]
-EventTypeParser: TypeAdapter[AnnotatedEventType] = TypeAdapter(AnnotatedEventType)
-
-
-# it's not possible to enforce this at compile time, so we have to do it at runtime
-def mock_todo[T](something: T | None) -> T: ...
-
-
-def apply(
-    state: State[CategoryOfEventsT_inv], event: Event[CategoryOfEventsT_inv]
-) -> State[CategoryOfEventsT_inv]: ...
-
-
-#  T=(A|B) <: U=(A|B|C)  ==>  Apply[A|B] <: Apply[A|B|C]
-SagaApplicator = Callable[
-    [State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]],
-    Sequence[Event[CategoryOfEventsT_inv]],
+type Apply[EventCategoryT: EventCategory] = Callable[
+    [State[EventCategoryT], EventFromEventLog[EventCategoryT]],
+    State[EventCategoryT],
 ]
-Saga = Callable[
-    [State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]],
-    Sequence[Event[CategoryOfEventsT_inv]],
+
+
+class StateAndEvent[EventCategoryT: EventCategory](NamedTuple):
+    state: State[EventCategoryT]
+    event: EventFromEventLog[EventCategoryT]
+
+
+type EffectHandler[EventCategoryT: EventCategory] = Callable[
+    [StateAndEvent[EventCategoryT], State[EventCategoryT]], None
 ]
-Apply = Callable[
-    [State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]],
-    State[CategoryOfEventsT_inv],
-]
-StateAndEvent = Tuple[State[CategoryOfEventsT_inv], Event[CategoryOfEventsT_inv]]
-EffectHandler = Callable[
-    [StateAndEvent[CategoryOfEventsT_inv], State[CategoryOfEventsT_inv]], None
-]
-EventPublisher = Callable[[Event[CategoryOfEventsT_inv]], None]
+type EventPublisher = Callable[[Event[Any]], None]
 
 
-class MutableState[EventCategoryT: EventCategories](Protocol):
-    def apply(
-        self,
-        event: Event[EventCategoryT],
-        applicator: Apply[EventCategoryT],
-        effect_handlers: Sequence[EffectHandler[EventCategoryT]],
-    ) -> None: ...
-
-
-class EventOutbox(Protocol):
+# A component that can publish events
+class EventPublisherProtocol(Protocol):
     def send(self, events: Sequence[Event[EventCategories]]) -> None: ...
 
 
-#
-#  T=[A|B] <: U=[A|B|C]   =>   EventProcessor[A|B] :> EventProcessor[A|B|C]
-#
-class EventProcessor[EventCategoryT: EventCategories](Protocol):
+# A component that can fetch events to apply
+class EventFetcherProtocol[EventCategoryT: EventCategory](Protocol):
     def get_events_to_apply(
         self, state: State[EventCategoryT]
     ) -> Sequence[Event[EventCategoryT]]: ...
 
 
-def get_saga_effect_handler[EventCategoryT: EventCategories](
-    saga: Saga[EventCategoryT], event_publisher: EventPublisher[EventCategoryT]
+# A component that can get the effect handler for a saga
+def get_saga_effect_handler[EventCategoryT: EventCategory](
+    saga: Saga[EventCategoryT], event_publisher: EventPublisher
 ) -> EffectHandler[EventCategoryT]:
     def effect_handler(state_and_event: StateAndEvent[EventCategoryT]) -> None:
         trigger_state, trigger_event = state_and_event
@@ -241,14 +212,16 @@ def get_saga_effect_handler[EventCategoryT: EventCategories](
     return lambda state_and_event, _: effect_handler(state_and_event)
 
 
-def get_effects_from_sagas[EventCategoryT: EventCategories](
+def get_effects_from_sagas[EventCategoryT: EventCategory](
     sagas: Sequence[Saga[EventCategoryT]],
-    event_publisher: EventPublisher[EventCategoryT],
+    event_publisher: EventPublisher,
 ) -> Sequence[EffectHandler[EventCategoryT]]:
     return [get_saga_effect_handler(saga, event_publisher) for saga in sagas]
 
 
-IdemKeyGenerator = Callable[[State[CategoryOfEventsT_cov], int], Sequence[EventId]]
+type IdemKeyGenerator[EventCategoryT: EventCategory] = Callable[
+    [State[EventCategoryT], int], Sequence[EventId]
+]
 
 
 class CommandId(NewUUID):
@@ -261,14 +234,15 @@ class CommandTypes(str, Enum):
     Delete = "Delete"
 
 
-class Command[EventCategoryT: EventCategories, CommandType: CommandTypes](BaseModel):
+class Command[
+    EventCategoryT: EventCategories | EventCategory,
+    CommandType: CommandTypes,
+](BaseModel):
     command_type: CommandType
     command_id: CommandId
 
 
-CommandTypeT = TypeVar("CommandTypeT", bound=CommandTypes, covariant=True)
-
-Decide = Callable[
-    [State[CategoryOfEventsT_cov], Command[CategoryOfEventsT_cov, CommandTypeT]],
-    Sequence[Event[CategoryOfEventsT_cov]],
+type Decide[EventCategoryT: EventCategory, CommandTypeT: CommandTypes] = Callable[
+    [State[EventCategoryT], Command[EventCategoryT, CommandTypeT]],
+    Sequence[Event[EventCategoryT]],
 ]

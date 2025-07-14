@@ -1,33 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Tuple
-
-from pydantic import BaseModel
+from typing import Literal, Tuple
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
-    ControlPlaneEvent,
+    Event,
+    EventTypes,
+    EventCategoryEnum,
     ControlPlaneEventTypes,
-    DataPlaneEvent,
     DataPlaneEventTypes,
-    InstanceEvent,
     InstanceEventTypes,
-    InstanceStateEvent,
     InstanceStateEventTypes,
-    MLXEvent,
     MLXEventTypes,
-    NodePerformanceEvent,
     NodePerformanceEventTypes,
-    ResourceEvent,
-    ResourceEventTypes,
-    StreamingEvent,
     StreamingEventTypes,
-    TaskEvent,
     TaskEventTypes,
-    TimerEvent,
-    TimerEventTypes,
-    TimerId,
 )
+from shared.types.events.chunks import GenerationChunk
 from shared.types.networking.control_plane import (
     ControlPlaneEdgeId,
     ControlPlaneEdgeType,
@@ -37,149 +26,132 @@ from shared.types.networking.data_plane import (
     DataPlaneEdgeId,
     DataPlaneEdgeProfile,
 )
-from shared.types.profiling.common import NodePerformanceProfile, ProfiledResourceName
+from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.tasks.common import (
-    TaskData,
     TaskId,
+    TaskParams,
     TaskState,
-    TaskStatusIncompleteType,
+    TaskStatusOtherType,
     TaskStatusType,
     TaskType,
 )
 from shared.types.worker.common import InstanceId, NodeStatus
-from shared.types.worker.instances import InstanceData, InstanceStatus
+from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerState, RunnerStateType
 
+MLXEvent = Event[
+    frozenset(
+        {
+            EventCategoryEnum.MutatesTaskState,
+            EventCategoryEnum.MutatesControlPlaneState,
+        }
+    )
+]
+TaskEvent = Event[EventCategoryEnum.MutatesTaskState]
+InstanceEvent = Event[EventCategoryEnum.MutatesInstanceState]
+ControlPlaneEvent = Event[EventCategoryEnum.MutatesControlPlaneState]
+DataPlaneEvent = Event[EventCategoryEnum.MutatesDataPlaneState]
+NodePerformanceEvent = Event[EventCategoryEnum.MutatesNodePerformanceState]
 
-class TimerData(BaseModel):
-    timer_id: TimerId
 
-
-class TaskCreated[TaskTypeT: TaskType](TaskEvent):
-    event_type: TaskEventTypes = TaskEventTypes.TaskCreated
+class TaskCreated(Event[EventCategoryEnum.MutatesTaskState]):
+    event_type: EventTypes = TaskEventTypes.TaskCreated
     task_id: TaskId
-    task_data: TaskData[TaskTypeT]
-    task_state: TaskState[Literal[TaskStatusIncompleteType.Pending], TaskTypeT]
+    task_params: TaskParams[TaskType]
+    task_state: TaskState[Literal[TaskStatusOtherType.Pending], TaskType]
     on_instance: InstanceId
 
 
-class TaskUpdated[TaskTypeT: TaskType](TaskEvent):
-    event_type: TaskEventTypes = TaskEventTypes.TaskUpdated
-    task_id: TaskId
-    update_data: TaskState[TaskStatusType, TaskTypeT]
-
-
-class TaskDeleted(TaskEvent):
-    event_type: TaskEventTypes = TaskEventTypes.TaskDeleted
+# Covers Cancellation Of Task, Non-Cancelled Tasks Perist
+class TaskDeleted(Event[EventCategoryEnum.MutatesTaskState]):
+    event_type: EventTypes = TaskEventTypes.TaskDeleted
     task_id: TaskId
 
 
-class InstanceCreated(InstanceEvent):
-    event_type: InstanceEventTypes = InstanceEventTypes.InstanceCreated
+class TaskStateUpdated(Event[EventCategoryEnum.MutatesTaskState]):
+    event_type: EventTypes = TaskEventTypes.TaskStateUpdated
+    task_state: TaskState[TaskStatusType, TaskType]
+
+
+class InstanceCreated(Event[EventCategoryEnum.MutatesInstanceState]):
+    event_type: EventTypes = InstanceEventTypes.InstanceCreated
     instance_id: InstanceId
-    instance_data: InstanceData
-    target_status: InstanceStatus
+    instance_params: InstanceParams
+    instance_type: TypeOfInstance
 
 
-class InstanceDeleted(InstanceEvent):
-    event_type: InstanceEventTypes = InstanceEventTypes.InstanceDeleted
+class InstanceDeleted(Event[EventCategoryEnum.MutatesInstanceState]):
+    event_type: EventTypes = InstanceEventTypes.InstanceDeleted
     instance_id: InstanceId
 
-
-class InstanceStatusUpdated(InstanceEvent):
-    event_type: InstanceEventTypes = InstanceEventTypes.InstanceStatusUpdated
-    instance_id: InstanceId
-    instance_status: InstanceStatus
+    transition: Tuple[InstanceId, InstanceId]
 
 
-class InstanceRunnerStateUpdated(InstanceStateEvent):
-    event_type: InstanceStateEventTypes = (
-        InstanceStateEventTypes.InstanceRunnerStateUpdated
-    )
+class InstanceReplacedAtomically(Event[EventCategoryEnum.MutatesInstanceState]):
+    event_type: EventTypes = InstanceEventTypes.InstanceReplacedAtomically
+    instance_to_replace: InstanceId
+    new_instance_id: InstanceId
+    new_instance_params: InstanceParams
+    new_instance_type: TypeOfInstance
+
+
+class InstanceSagaRunnerStateUpdated(Event[EventCategoryEnum.MutatesInstanceState]):
+    event_type: EventTypes = InstanceStateEventTypes.InstanceSagaRunnerStateUpdated
     instance_id: InstanceId
     state_update: Tuple[RunnerId, RunnerState[RunnerStateType]]
 
 
-class InstanceToBeReplacedAtomically(InstanceEvent):
-    event_type: InstanceEventTypes = InstanceEventTypes.InstanceToBeReplacedAtomically
-    transition: Tuple[InstanceId, InstanceId]
-
-
-class InstanceReplacedAtomically(InstanceEvent):
-    event_type: InstanceEventTypes = InstanceEventTypes.InstanceReplacedAtomically
-    transition: Tuple[InstanceId, InstanceId]
-
-
-class MLXInferenceSagaPrepare(MLXEvent):
-    event_type: MLXEventTypes = MLXEventTypes.MLXInferenceSagaPrepare
+class MLXInferenceSagaPrepare(Event[EventCategoryEnum.MutatesTaskState]):
+    event_type: EventTypes = MLXEventTypes.MLXInferenceSagaPrepare
     task_id: TaskId
     instance_id: InstanceId
 
 
-class MLXInferenceSagaStartPrepare(MLXEvent):
-    event_type: MLXEventTypes = MLXEventTypes.MLXInferenceSagaStartPrepare
+class MLXInferenceSagaStartPrepare(Event[EventCategoryEnum.MutatesTaskState]):
+    event_type: EventTypes = MLXEventTypes.MLXInferenceSagaStartPrepare
     task_id: TaskId
     instance_id: InstanceId
 
 
-class NodePerformanceProfiled(NodePerformanceEvent):
-    event_type: NodePerformanceEventTypes = (
-        NodePerformanceEventTypes.NodePerformanceProfiled
-    )
+class NodePerformanceMeasured(Event[EventCategoryEnum.MutatesNodePerformanceState]):
+    event_type: EventTypes = NodePerformanceEventTypes.NodePerformanceMeasured
     node_id: NodeId
     node_profile: NodePerformanceProfile
 
 
-class WorkerConnected(ControlPlaneEvent):
-    event_type: ControlPlaneEventTypes = ControlPlaneEventTypes.WorkerConnected
+class WorkerConnected(Event[EventCategoryEnum.MutatesControlPlaneState]):
+    event_type: EventTypes = ControlPlaneEventTypes.WorkerConnected
     edge: DataPlaneEdge
 
 
-class WorkerStatusUpdated(ControlPlaneEvent):
-    event_type: ControlPlaneEventTypes = ControlPlaneEventTypes.WorkerStatusUpdated
+class WorkerStatusUpdated(Event[EventCategoryEnum.MutatesControlPlaneState]):
+    event_type: EventTypes = ControlPlaneEventTypes.WorkerStatusUpdated
     node_id: NodeId
     node_state: NodeStatus
 
 
-class WorkerDisconnected(ControlPlaneEvent):
-    event_type: ControlPlaneEventTypes = ControlPlaneEventTypes.WorkerConnected
+class WorkerDisconnected(Event[EventCategoryEnum.MutatesControlPlaneState]):
+    event_type: EventTypes = ControlPlaneEventTypes.WorkerConnected
     vertex_id: ControlPlaneEdgeId
 
 
-class ChunkGenerated(StreamingEvent):
-    event_type: StreamingEventTypes = StreamingEventTypes.ChunkGenerated
+class ChunkGenerated(Event[EventCategoryEnum.MutatesTaskState]):
+    event_type: EventTypes = StreamingEventTypes.ChunkGenerated
     task_id: TaskId
-    instance_id: InstanceId
-    chunk: Any
+    chunk: GenerationChunk
 
 
-class DataPlaneEdgeCreated(DataPlaneEvent):
-    event_type: DataPlaneEventTypes = DataPlaneEventTypes.DataPlaneEdgeCreated
+class DataPlaneEdgeCreated(Event[EventCategoryEnum.MutatesDataPlaneState]):
+    event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeCreated
     vertex: ControlPlaneEdgeType
 
 
-class DataPlaneEdgeProfiled(DataPlaneEvent):
-    event_type: DataPlaneEventTypes = DataPlaneEventTypes.DataPlaneEdgeProfiled
+class DataPlaneEdgeReplacedAtomically(Event[EventCategoryEnum.MutatesDataPlaneState]):
+    event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically
     edge_id: DataPlaneEdgeId
     edge_profile: DataPlaneEdgeProfile
 
 
-class DataPlaneEdgeDeleted(DataPlaneEvent):
-    event_type: DataPlaneEventTypes = DataPlaneEventTypes.DataPlaneEdgeDeleted
+class DataPlaneEdgeDeleted(Event[EventCategoryEnum.MutatesDataPlaneState]):
+    event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeDeleted
     edge_id: DataPlaneEdgeId
-
-
-class TimerScheduled(TimerEvent):
-    event_type: TimerEventTypes = TimerEventTypes.TimerCreated
-    timer_data: TimerData
-
-
-class TimerFired(TimerEvent):
-    event_type: TimerEventTypes = TimerEventTypes.TimerFired
-    timer_data: TimerData
-
-
-class ResourceProfiled(ResourceEvent):
-    event_type: ResourceEventTypes = ResourceEventTypes.ResourceProfiled
-    resource_name: ProfiledResourceName
-    resource_profile: NodePerformanceProfile

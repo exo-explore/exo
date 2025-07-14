@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Sequence
+from typing import Literal, Sequence
 
 from pydantic import BaseModel
 
@@ -11,17 +11,22 @@ from shared.types.worker.instances import BaseInstance
 
 
 class KnownInstances(State[EventCategories.InstanceStateEventTypes]):
-    instances: Mapping[InstanceId, BaseInstance]
+    event_category: Literal[EventCategories.InstanceStateEventTypes] = (
+        EventCategories.InstanceStateEventTypes
+    )
+    instances: Mapping[InstanceId, BaseInstance] = {}
 
 
 class Tasks(State[EventCategories.TaskEventTypes]):
-    tasks: Mapping[TaskId, Task[TaskType, TaskStatusType]]
+    event_category: Literal[EventCategories.TaskEventTypes] = (
+        EventCategories.TaskEventTypes
+    )
+    tasks: Mapping[TaskId, Task[TaskType, TaskStatusType]] = {}
 
 
 class SharedState(BaseModel):
-    node_id: NodeId
-    known_instances: KnownInstances
-    compute_tasks: Tasks
+    known_instances: KnownInstances = KnownInstances()
+    compute_tasks: Tasks = Tasks()
 
     def get_node_id(self) -> NodeId: ...
 

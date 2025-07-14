@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, DirectoryPath, Field, TypeAdapter
 
@@ -11,22 +11,20 @@ class PartitionStrategy(str, Enum):
     pipeline = "pipeline"
 
 
-PartitionStrategyT = TypeVar(name="PartitionStrategyT", bound=PartitionStrategy)
-
-
-class ShardMetadata(BaseModel, Generic[PartitionStrategyT]):
+class ShardMetadata[PartitionStrategyT: PartitionStrategy](BaseModel):
     """
     Defines a specific shard of the model that is ready to be run on a device.
     Replaces previous `Shard` object.
     """
 
+    partition_strategy: PartitionStrategyT
     device_rank: int
     world_size: int
     model_id: ModelId
     model_path: DirectoryPath
 
 
-class PipelineShardMeta(ShardMetadata[PartitionStrategy.pipeline]):
+class PipelineShardMetadata(ShardMetadata[PartitionStrategy.pipeline]):
     """
     Pipeline parallelism shard meta.
     """
@@ -38,13 +36,15 @@ class PipelineShardMeta(ShardMetadata[PartitionStrategy.pipeline]):
     end_layer: Annotated[int, Field(ge=0)]
 
 
-_ShardMeta = Annotated[PipelineShardMeta, Field(discriminator="partition_strategy")]
-ShardMetaAdapter: TypeAdapter[ShardMetadata[PartitionStrategy]] = TypeAdapter(
-    _ShardMeta
+_ShardMetadata = Annotated[
+    PipelineShardMetadata, Field(discriminator="partition_strategy")
+]
+ShardMetaParser: TypeAdapter[ShardMetadata[PartitionStrategy]] = TypeAdapter(
+    _ShardMetadata
 )
 
 
-class ShardPlacement(BaseModel, Generic[PartitionStrategyT]):
+class ShardPlacement[PartitionStrategyT: PartitionStrategy](BaseModel):
     """
     A shard placement is the description of a model distributed across a set of nodes.
     The Generic[PartitionStrategyT] enforces that the shard assignments all use the same partition strategy.

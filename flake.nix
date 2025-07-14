@@ -25,7 +25,20 @@
               pkgs.rustc
               pkgs.cargo
               pkgs.basedpyright
+              pkgs.ruff
             ];
+          };
+        }
+      );
+      
+      apps = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          python-lsp = {
+            type = "app";
+            program = "${pkgs.basedpyright}/bin/basedpyright-langserver";
           };
         }
       );

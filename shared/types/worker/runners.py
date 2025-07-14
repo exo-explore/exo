@@ -1,8 +1,8 @@
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from typing import Generic, Literal, TypeVar
+from typing import Generic, Literal, TypeVar, Annotated
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
@@ -48,14 +48,15 @@ class FailedRunnerState(RunnerState[RunnerStateType.Failed]):
     error_message: str | None = None
 
 
-class RunnerData(BaseModel):
-    runner_id: RunnerId
-    runner_state: RunnerState[RunnerStateType] = RunnerState(
-        runner_state=RunnerStateType.Starting
-    )
-
-
-PartitionStrategyT = TypeVar(name="PartitionStrategyT", bound=PartitionStrategy)
+_RunnerState = Annotated[
+    RejectedRunnerState
+    | StartingRunnerState
+    | DownloadingRunnerState
+    | RunningRunnerState
+    | FailedRunnerState,
+    Field,
+]
+RunnerStateParser: TypeAdapter[RunnerState[RunnerStateType]] = TypeAdapter(_RunnerState)
 
 
 class ShardAssignments(BaseModel):

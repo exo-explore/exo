@@ -1,17 +1,13 @@
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+# from openai.types.chat.chat_completion import ChatCompletion
+# from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai import FinishReason
 from shared.types.models.common import ModelId
 from shared.types.tasks.common import TaskId
-
-OpenAIResponse = (
-    ChatCompletion | ChatCompletionChunk
-)  ## Currently we only support chat completions
 
 
 class ChunkType(str, Enum):
@@ -19,10 +15,8 @@ class ChunkType(str, Enum):
     image = "image"
 
 
-ChunkT = TypeVar("ChunkT", bound=ChunkType)
-
-
-class BaseChunk(BaseModel, Generic[ChunkT]):
+class BaseChunk[ChunkTypeT: ChunkType](BaseModel):
+    chunk_type: ChunkTypeT
     task_id: TaskId
     idx: int
     model: ModelId
@@ -58,6 +52,10 @@ class ImageChunk(BaseChunk[ChunkType.image]):
 
 GenerationChunk = Annotated[TokenChunk | ImageChunk, Field(discriminator="chunk_type")]
 GenerationChunkTypeAdapter: TypeAdapter[GenerationChunk] = TypeAdapter(GenerationChunk)
+
+## OpenAIResponse = (
+##    ChatCompletion | ChatCompletionChunk
+## )  ## Currently we only support chat completions
 
 # my_chunk: dict[str, Any] = TokenChunk(
 #     task_id=TaskId('nicerid'),

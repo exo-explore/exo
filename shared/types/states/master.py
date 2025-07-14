@@ -1,20 +1,22 @@
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from queue import Queue
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
+from shared.types.worker.common import NodeStatus
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
     Event,
-    EventCategories,
+    EventCategory,
     State,
 )
 from shared.types.graphs.resource_graph import ResourceGraph
 from shared.types.networking.data_plane import (
     DataPlaneEdge,
     DataPlaneEdgeId,
+    DataPlaneEdgeAdapter,
 )
 from shared.types.networking.topology import (
     ControlPlaneTopology,
@@ -24,8 +26,8 @@ from shared.types.networking.topology import (
 )
 from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.states.shared import SharedState
-from shared.types.tasks.common import TaskData, TaskType
-from shared.types.worker.instances import InstanceData, InstanceId
+from shared.types.tasks.common import TaskParams, TaskType
+from shared.types.worker.instances import InstanceParams, InstanceId
 
 
 class ExternalCommand(BaseModel): ...
@@ -42,44 +44,56 @@ class CachePolicy(BaseModel, Generic[CachePolicyTypeT]):
     policy_type: CachePolicyTypeT
 
 
-class NodePerformanceProfileState(State[EventCategories.NodePerformanceEventTypes]):
+class NodePerformanceProfileState(State[EventCategory.MutatesNodePerformanceState]):
     node_profiles: Mapping[NodeId, NodePerformanceProfile]
 
 
-class DataPlaneNetworkState(State[EventCategories.DataPlaneEventTypes]):
-    topology: DataPlaneTopology
-    history: Sequence[OrphanedPartOfDataPlaneTopology]
+class DataPlaneNetworkState(State[EventCategory.MutatesDataPlaneState]):
+    event_category: Literal[EventCategory.MutatesDataPlaneState] = (
+        EventCategory.MutatesDataPlaneState
+    )
+    topology: DataPlaneTopology = DataPlaneTopology(
+        edge_base=DataPlaneEdgeAdapter, vertex_base=TypeAdapter(None)
+    )
+    history: Sequence[OrphanedPartOfDataPlaneTopology] = []
 
     def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
     def add_edge(self, edge: DataPlaneEdge) -> None: ...
 
 
-class ControlPlaneNetworkState(State[EventCategories.ControlPlaneEventTypes]):
-    topology: ControlPlaneTopology
-    history: Sequence[OrphanedPartOfControlPlaneTopology]
+class ControlPlaneNetworkState(State[EventCategory.MutatesControlPlaneState]):
+    event_category: Literal[EventCategory.MutatesControlPlaneState] = (
+        EventCategory.MutatesControlPlaneState
+    )
+    topology: ControlPlaneTopology = ControlPlaneTopology(
+        edge_base=TypeAdapter(None), vertex_base=TypeAdapter(NodeStatus)
+    )
+    history: Sequence[OrphanedPartOfControlPlaneTopology] = []
 
     def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
     def add_edge(self, edge: DataPlaneEdge) -> None: ...
 
 
 class MasterState(SharedState):
-    data_plane_network_state: DataPlaneNetworkState
-    control_plane_network_state: ControlPlaneNetworkState
-    job_inbox: Queue[TaskData[TaskType]]
-    job_outbox: Queue[TaskData[TaskType]]
-    cache_policy: CachePolicy[CachePolicyType]
+    data_plane_network_state: DataPlaneNetworkState = DataPlaneNetworkState()
+    control_plane_network_state: ControlPlaneNetworkState = ControlPlaneNetworkState()
+    job_inbox: Queue[TaskParams[TaskType]] = Queue()
+    job_outbox: Queue[TaskParams[TaskType]] = Queue()
+    cache_policy: CachePolicy[CachePolicyType] = CachePolicy[CachePolicyType](
+        policy_type=CachePolicyType.KeepAll
+    )
 
 
 def get_shard_assignments(
     inbox: Queue[ExternalCommand],
     outbox: Queue[ExternalCommand],
     resource_graph: ResourceGraph,
-    current_instances: Mapping[InstanceId, InstanceData],
+    current_instances: Mapping[InstanceId, InstanceParams],
     cache_policy: CachePolicy[CachePolicyType],
-) -> Mapping[InstanceId, InstanceData]: ...
+) -> Mapping[InstanceId, InstanceParams]: ...
 
 
 def get_transition_events(
-    current_instances: Mapping[InstanceId, InstanceData],
-    target_instances: Mapping[InstanceId, InstanceData],
-) -> Sequence[Event[EventCategories]]: ...
+    current_instances: Mapping[InstanceId, InstanceParams],
+    target_instances: Mapping[InstanceId, InstanceParams],
+) -> Sequence[Event[EventCategory]]: ...

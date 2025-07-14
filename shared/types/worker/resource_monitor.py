@@ -1,9 +1,8 @@
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Coroutine
-from typing import Callable, Set
+from typing import Callable, List, Set
 
-from shared.types.events.events import ResourceProfiled
 from shared.types.profiling.common import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
@@ -11,58 +10,44 @@ from shared.types.profiling.common import (
 )
 
 
-class EventLog:
-    def append(self, event: ResourceProfiled) -> None: ...
-
-
 class ResourceCollector(ABC):
     """
     Details a single resource (or resource type) that is being monitored by the resource monitor.
     """
 
-    def __init__(self, name: str):
-        self.name = name
+    name = str
 
     @abstractmethod
     async def collect(self) -> NodePerformanceProfile: ...
 
 
 class SystemResourceCollector(ResourceCollector):
-    def __init__(self):
-        super().__init__("system")
+    name = "system"
 
     @abstractmethod
     async def collect(self) -> SystemPerformanceProfile: ...
 
 
 class MemoryResourceCollector(ResourceCollector):
-    def __init__(self):
-        super().__init__("memory")
+    name = "memory"
 
     @abstractmethod
     async def collect(self) -> MemoryPerformanceProfile: ...
 
 
 class ResourceMonitor:
-    def __init__(
-        self,
-        collectors: list[ResourceCollector],
-        effect_handlers: Set[Callable[[NodePerformanceProfile], None]],
-    ):
-        self.effect_handlers: Set[Callable[[NodePerformanceProfile], None]] = (
-            effect_handlers
-        )
-        self.collectors: list[ResourceCollector] = collectors
+    data_collectors: List[ResourceCollector]
+    effect_handlers: Set[Callable[[NodePerformanceProfile], None]]
 
-        # Since there's no implementation, this breaks the typechecker.
-        # self.collectors: list[ResourceCollector] = [
-        #     SystemResourceCollector(),
-        #     MemoryResourceCollector(),
-        # ]
+    # Since there's no implementation, this breaks the typechecker.
+    # self.collectors: list[ResourceCollector] = [
+    #     SystemResourceCollector(),
+    #     MemoryResourceCollector(),
+    # ]
 
     async def _collect(self) -> list[NodePerformanceProfile]:
         tasks: list[Coroutine[None, None, NodePerformanceProfile]] = [
-            collector.collect() for collector in self.collectors
+            collector.collect() for collector in self.data_collectors
         ]
         return await asyncio.gather(*tasks)
 

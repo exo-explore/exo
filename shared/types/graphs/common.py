@@ -41,8 +41,8 @@ class Edge(
 
 
 class GraphData(BaseModel, Generic[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]):
-    edges: Mapping[EdgeIdT, EdgeData[EdgeTypeT]]
-    vertices: Mapping[VertexIdT, VertexData[VertexTypeT]]
+    edges: Mapping[EdgeIdT, EdgeData[EdgeTypeT]] = {}
+    vertices: Mapping[VertexIdT, VertexData[VertexTypeT]] = {}
 
 
 class GraphProtocol(Protocol, Generic[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]):
@@ -111,11 +111,12 @@ class MutableGraphProtocol(GraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, Vertex
 
 
 class Graph(
-    BaseModel,
     Generic[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
-    GraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    MutableGraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
 ):
-    graph_data: GraphData[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]
+    graph_data: GraphData[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT] = GraphData[
+        EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT
+    ]()
 
 
 # the first element in the return value is the filtered graph; the second is the

@@ -12,24 +12,27 @@ from shared.types.worker.runners import (
 )
 
 
-class InstanceStatus(str, Enum):
+class TypeOfInstance(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
 
 
-class InstanceState(BaseModel):
-    runner_states: Mapping[RunnerId, RunnerState[RunnerStateType]]
-
-
-class InstanceData(BaseModel):
+class InstanceParams(BaseModel):
     shard_assignments: ShardAssignments
 
 
 class BaseInstance(BaseModel):
-    instance_data: InstanceData
-    instance_state: InstanceState
-    instance_status: InstanceStatus
+    instance_params: InstanceParams
+    instance_type: TypeOfInstance
 
 
 class Instance(BaseInstance):
+    instance_id: InstanceId
+
+
+class BaseInstanceSaga(BaseModel):
+    runner_states: Mapping[RunnerId, RunnerState[RunnerStateType]]
+
+
+class InstanceSaga(BaseInstanceSaga):
     instance_id: InstanceId
