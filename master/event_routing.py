@@ -17,7 +17,6 @@ from shared.logger import log
 from shared.types.events.common import (
     Apply,
     EffectHandler,
-    Event,
     EventCategories,
     EventCategory,
     EventCategoryEnum,
@@ -25,6 +24,7 @@ from shared.types.events.common import (
     EventFromEventLog,
     StateAndEvent,
     State,
+    narrow_event_from_event_log_type,
 )
 
 
@@ -32,23 +32,23 @@ class QueueMapping(TypedDict):
     MutatesTaskState: Queue[
         EventFromEventLog[Literal[EventCategoryEnum.MutatesTaskState]]
     ]
+    MutatesTaskSagaState: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesTaskSagaState]]
+    ]
     MutatesControlPlaneState: Queue[
         EventFromEventLog[Literal[EventCategoryEnum.MutatesControlPlaneState]]
     ]
     MutatesDataPlaneState: Queue[
         EventFromEventLog[Literal[EventCategoryEnum.MutatesDataPlaneState]]
     ]
+    MutatesRunnerStatus: Queue[
+        EventFromEventLog[Literal[EventCategoryEnum.MutatesRunnerStatus]]
+    ]
     MutatesInstanceState: Queue[
         EventFromEventLog[Literal[EventCategoryEnum.MutatesInstanceState]]
     ]
     MutatesNodePerformanceState: Queue[
         EventFromEventLog[Literal[EventCategoryEnum.MutatesNodePerformanceState]]
-    ]
-    MutatesRunnerStatus: Queue[
-        EventFromEventLog[Literal[EventCategoryEnum.MutatesRunnerStatus]]
-    ]
-    MutatesTaskSagaState: Queue[
-        EventFromEventLog[Literal[EventCategoryEnum.MutatesTaskSagaState]]
     ]
 
 
@@ -154,32 +154,40 @@ class EventRouter:
 
     async def _get_queue_by_category[T: EventCategory](
         self, category: T
-    ) -> Queue[Event[T]]:
+    ) -> Queue[EventFromEventLog[T]]:
         """Get the queue for a given category."""
         category_str: str = category.value
-        queue: Queue[Event[T]] = self.queue_map[category_str]
+        queue: Queue[EventFromEventLog[T]] = self.queue_map[category_str]
+        return queue
 
     async def _process_events[T: EventCategory](self, category: T) -> None:
         """Process events for a given domain."""
-        queue: Queue[Event[T]] = await self._get_queue_by_category(category)
-        events_to_process: list[Event[T]] = []
+        queue: Queue[EventFromEventLog[T]] = await self._get_queue_by_category(category)
+        events_to_process: list[EventFromEventLog[T]] = []
         while not queue.empty():
             events_to_process.append(await queue.get())
         for event_to_process in events_to_process:
-            await self.queue_map[category].put(event_to_process)
+            await self.queue_map[category.value].put(event_to_process)
         return None
 
-    async def _submit_events(
-        self, events: list[Event[EventCategory | EventCategories]]
+    async def _submit_events[T: EventCategory | EventCategories](
+        self, events: list[EventFromEventLog[T]]
     ) -> None:
         """Route multiple events to their appropriate services."""
         for event in events:
-            for category in event.event_category:
-                await self._event_queues[category].put(event)
-
+            if isinstance(event.event.event_category, EventCategory):
+                q1: Queue[EventFromEventLog[T]] = self.queue_map[event.event.event_category.value]
+                await q1.put(event)
+            elif isinstance(event.event.event_category, EventCategories):
+                for category in event.event.event_category:
+                    narrow_event = narrow_event_from_event_log_type(event, category)
+                    q2: Queue[EventFromEventLog[T]] = self.queue_map[category.value]
+                    await q2.put(narrow_event)
+                
         await gather(
-            *[self._process_events(domain) for domain in self._event_queues.keys()]
+            *[self._process_events(domain) for domain in EventCategoryEnum]
         )
 
-    async def _get_events_to_process(self) -> list[Event[EventCategories]]:
+    async def _get_events_to_process(self) -> list[EventFromEventLog[EventCategories | EventCategory]]:
         """Get events to process from the event fetcher."""
+        ...

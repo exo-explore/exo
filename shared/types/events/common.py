@@ -1,6 +1,5 @@
 from enum import Enum, StrEnum
 from typing import (
-    Any,
     Callable,
     FrozenSet,
     Literal,
@@ -110,8 +109,8 @@ check_event_type_union_is_consistent_with_registry(EVENT_TYPE_ENUMS, EventTypes)
 
 class EventCategoryEnum(StrEnum):
     MutatesTaskState = "MutatesTaskState"
-    MutatesRunnerStatus = "MutatesRunnerStatus"
     MutatesTaskSagaState = "MutatesTaskSagaState"
+    MutatesRunnerStatus = "MutatesRunnerStatus"
     MutatesInstanceState = "MutatesInstanceState"
     MutatesNodePerformanceState = "MutatesNodePerformanceState"
     MutatesControlPlaneState = "MutatesControlPlaneState"
@@ -155,8 +154,8 @@ class EventFromEventLog[SetMembersT: EventCategories | EventCategory](BaseModel)
         raise ValueError("Invalid Event: Origin ID Does Not Match")
 
 
-def narrow_event_type[T: EventCategory](
-    event: Event[EventCategories],
+def narrow_event_type[T: EventCategory, Q: EventCategories | EventCategory](
+    event: Event[Q],
     target_category: T,
 ) -> Event[T]:
     if target_category not in event.event_category:
@@ -164,6 +163,16 @@ def narrow_event_type[T: EventCategory](
 
     narrowed_event = event.model_copy(update={"event_category": {target_category}})
     return cast(Event[T], narrowed_event)
+
+def narrow_event_from_event_log_type[T: EventCategory, Q: EventCategories | EventCategory](
+    event: EventFromEventLog[Q],
+    target_category: T,
+) -> EventFromEventLog[T]:
+    if target_category not in event.event.event_category:
+        raise ValueError(f"Event Does Not Contain Target Category {target_category}")
+    narrowed_event = event.model_copy(update={"event": narrow_event_type(event.event, target_category)})
+
+    return cast(EventFromEventLog[T], narrowed_event)
 
 
 class State[EventCategoryT: EventCategory](BaseModel):
@@ -190,7 +199,7 @@ class StateAndEvent[EventCategoryT: EventCategory](NamedTuple):
 type EffectHandler[EventCategoryT: EventCategory] = Callable[
     [StateAndEvent[EventCategoryT], State[EventCategoryT]], None
 ]
-type EventPublisher = Callable[[Event[Any]], None]
+type EventPublisher[EventCategoryT: EventCategory] = Callable[[Event[EventCategoryT]], None]
 
 
 # A component that can publish events
@@ -207,7 +216,7 @@ class EventFetcherProtocol[EventCategoryT: EventCategory](Protocol):
 
 # A component that can get the effect handler for a saga
 def get_saga_effect_handler[EventCategoryT: EventCategory](
-    saga: Saga[EventCategoryT], event_publisher: EventPublisher
+    saga: Saga[EventCategoryT], event_publisher: EventPublisher[EventCategoryT]
 ) -> EffectHandler[EventCategoryT]:
     def effect_handler(state_and_event: StateAndEvent[EventCategoryT]) -> None:
         trigger_state, trigger_event = state_and_event
@@ -219,7 +228,7 @@ def get_saga_effect_handler[EventCategoryT: EventCategory](
 
 def get_effects_from_sagas[EventCategoryT: EventCategory](
     sagas: Sequence[Saga[EventCategoryT]],
-    event_publisher: EventPublisher,
+    event_publisher: EventPublisher[EventCategoryT],
 ) -> Sequence[EffectHandler[EventCategoryT]]:
     return [get_saga_effect_handler(saga, event_publisher) for saga in sagas]
 
