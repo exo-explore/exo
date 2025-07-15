@@ -1,22 +1,21 @@
-from asyncio import CancelledError, Lock, Task, create_task
+from asyncio import CancelledError, Lock, Task
 from asyncio import Queue as AsyncQueue
-from queue import Queue as PQueue
 from contextlib import asynccontextmanager
-from enum import Enum
 from logging import Logger, LogRecord
-from typing import Annotated, Literal, Type
+from queue import Queue as PQueue
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, TypeAdapter
 
 from master.env import MasterEnvironmentSchema
-from master.event_routing import AsyncUpdateStateFromEvents, QueueMapping
 from master.logging import (
-    MasterCommandReceivedLogEntry,
-    MasterInvalidCommandReceivedLogEntry,
+    MasterCommandRunnerNotRunningLogEntry,
+    MasterStateManagerStoppedLogEntry,
     MasterUninitializedLogEntry,
 )
+from master.state_manager.sync import SyncStateManagerMapping
 from shared.constants import EXO_MASTER_STATE
 from shared.logger import (
     FilterLogByType,
@@ -27,11 +26,9 @@ from shared.logger import (
     log,
 )
 from shared.types.events.common import (
-    Event,
     EventCategory,
     EventFetcherProtocol,
     EventPublisher,
-    State,
 )
 from shared.types.models.common import ModelId
 from shared.types.models.model import ModelInfo
@@ -81,23 +78,7 @@ ExternalCommand = Annotated[
 ExternalCommandParser: TypeAdapter[ExternalCommand] = TypeAdapter(ExternalCommand)
 
 
-class MasterBackgroundServices(str, Enum):
-    MAIN_LOOP = "main_loop"
-
-
-class StateManager[T: EventCategory]:
-    state: State[T]
-    queue: AsyncQueue[Event[T]]
-    manager: AsyncUpdateStateFromEvents[T]
-
-    def __init__(
-        self,
-        state: State[T],
-        queue: AsyncQueue[Event[T]],
-    ) -> None: ...
-
-
-class MasterStateManager:
+class MasterEventLoop:
     """Thread-safe manager for MasterState with independent event loop."""
 
     def __init__(
@@ -105,7 +86,7 @@ class MasterStateManager:
         initial_state: MasterState,
         event_processor: EventFetcherProtocol[EventCategory],
         event_publisher: EventPublisher[EventCategory],
-        state_updater: dict[EventCategory, AsyncUpdateStateFromEvents[EventCategory]],
+        state_managers: SyncStateManagerMapping,
         logger: Logger,
     ):
         self._state = initial_state
@@ -113,13 +94,18 @@ class MasterStateManager:
         self._command_runner: Task[None] | None = None
         self._command_queue: AsyncQueue[ExternalCommand] = AsyncQueue()
         self._response_queue: AsyncQueue[Response | StreamingResponse] = AsyncQueue()
-        self._state_managers: dict[EventCategory, AsyncUpdateStateFromEvents[EventCategory]] = {}
-        self._asyncio_tasks: dict[EventCategory, Task[None]] = {}
+        self._state_managers: SyncStateManagerMapping
+        self._event_fetcher: EventFetcherProtocol[EventCategory]
+        self._event_fetch_task: Task[None] | None = None
         self._logger = logger
 
     @property
     def _is_command_runner_running(self) -> bool:
         return self._command_runner is not None and not self._command_runner.done()
+
+    @property
+    def _is_event_fetcher_running(self) -> bool:
+        return self._event_fetch_task is not None and not self._event_fetch_task.done()
 
     async def send_command(
         self, command: ExternalCommand
@@ -134,19 +120,15 @@ class MasterStateManager:
 
     async def start(self) -> None:
         """Start the background event loop."""
-        for category in self._state_managers:
-            self._asyncio_tasks[category] = create_task(
-                self._state_managers[category].start()
-            )
 
     async def stop(self) -> None:
         """Stop the background event loop and persist state."""
-        if not self._is_command_runner_running:
+        if not self._is_command_runner_running or not self._is_event_fetcher_running:
             raise RuntimeError("Command Runner Is Not Running")
 
-        assert self._command_runner is not None
+        assert self._command_runner is not None and self._event_fetch_task is not None
 
-        for service in [*self._asyncio_tasks.values(), self._command_runner]:
+        for service in [self._event_fetch_task, self._command_runner]:
             service.cancel()
             try:
                 await service
@@ -196,12 +178,14 @@ async def lifespan(app: FastAPI):
     cluster_listener.start()
 
     initial_state = get_master_state(logger)
-    app.state.master_state_manager = MasterStateManager(initial_state, logger)
-    await app.state.master_state_manager.start()
+    app.state.master_event_loop = MasterEventLoop(
+        initial_state, None, None, None, logger
+    )
+    await app.state.master_event_loop.start()
 
     yield
 
-    await app.state.master_state_manager.stop()
+    await app.state.master_event_loop.stop()
 
 
 app = FastAPI(lifespan=lifespan)

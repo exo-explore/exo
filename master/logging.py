@@ -26,6 +26,12 @@ class MasterInvalidCommandReceivedLogEntry(
     command_name: str
 
 
+class MasterCommandRunnerNotRunningLogEntry: ...
+
+
+class MasterStateManagerStoppedLogEntry: ...
+
+
 class EventCategoryUnknownLogEntry(LogEntry[Literal["event_category_unknown"]]):
     entry_destination: Set[LogEntryType] = {LogEntryType.cluster}
     entry_type: Literal["event_category_unknown"] = "event_category_unknown"

@@ -164,13 +164,19 @@ def narrow_event_type[T: EventCategory, Q: EventCategories | EventCategory](
     narrowed_event = event.model_copy(update={"event_category": {target_category}})
     return cast(Event[T], narrowed_event)
 
-def narrow_event_from_event_log_type[T: EventCategory, Q: EventCategories | EventCategory](
+
+def narrow_event_from_event_log_type[
+    T: EventCategory,
+    Q: EventCategories | EventCategory,
+](
     event: EventFromEventLog[Q],
     target_category: T,
 ) -> EventFromEventLog[T]:
     if target_category not in event.event.event_category:
         raise ValueError(f"Event Does Not Contain Target Category {target_category}")
-    narrowed_event = event.model_copy(update={"event": narrow_event_type(event.event, target_category)})
+    narrowed_event = event.model_copy(
+        update={"event": narrow_event_type(event.event, target_category)}
+    )
 
     return cast(EventFromEventLog[T], narrowed_event)
 
@@ -199,7 +205,9 @@ class StateAndEvent[EventCategoryT: EventCategory](NamedTuple):
 type EffectHandler[EventCategoryT: EventCategory] = Callable[
     [StateAndEvent[EventCategoryT], State[EventCategoryT]], None
 ]
-type EventPublisher[EventCategoryT: EventCategory] = Callable[[Event[EventCategoryT]], None]
+type EventPublisher[EventCategoryT: EventCategory] = Callable[
+    [Event[EventCategoryT]], None
+]
 
 
 # A component that can publish events
