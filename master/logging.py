@@ -91,6 +91,8 @@ MasterLogEntries = (
     MasterUninitializedLogEntry
     | MasterCommandReceivedLogEntry
     | MasterInvalidCommandReceivedLogEntry
+    | MasterCommandRunnerNotRunningLogEntry
+    | MasterStateManagerStoppedLogEntry
     | EventCategoryUnknownLogEntry
     | StateUpdateLoopAlreadyRunningLogEntry
     | StateUpdateLoopStartedLogEntry

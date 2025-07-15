@@ -1,13 +1,12 @@
 from asyncio import Queue, gather
 from logging import Logger
-from typing import Literal, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 from master.sanity_checking import check_keys_in_map_match_enum_values
 from shared.types.events.common import (
     EventCategories,
     EventCategory,
     EventCategoryEnum,
-    EventFetcherProtocol,
     EventFromEventLog,
     narrow_event_from_event_log_type,
 )
@@ -40,12 +39,19 @@ class QueueMapping(TypedDict):
 check_keys_in_map_match_enum_values(QueueMapping, EventCategoryEnum)
 
 
-class EventRouter:
+class EventRouterProtocol(Protocol):
+    queue_map: QueueMapping
+    start_idx: int
+
+    def sync_queues(self) -> None: ...
+
+
+class EventRouter(EventRouterProtocol):
     """Routes events to appropriate services based on event categories."""
 
     queue_map: QueueMapping
-    event_fetcher: EventFetcherProtocol[EventCategory]
-    _logger: Logger
+    start_idx: int
+    logger: Logger
 
     async def _get_queue_by_category[T: EventCategory](
         self, category: T
@@ -82,8 +88,3 @@ class EventRouter:
                     await q2.put(narrow_event)
 
         await gather(*[self._process_events(domain) for domain in EventCategoryEnum])
-
-    async def _get_events_to_process(
-        self,
-    ) -> list[EventFromEventLog[EventCategories | EventCategory]]:
-        """Get events to process from the event fetcher."""
