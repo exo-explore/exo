@@ -4,11 +4,9 @@ from typing import Annotated, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai import FinishReason
-
-# Accept TaskData so the runner can handle both streaming and non-streaming chat tasks.
-from shared.types.tasks.common import TaskData
+from shared.types.api import ChatTask
 from shared.types.worker.mlx import Host
-from shared.types.worker.shards import ShardMeta
+from shared.types.worker.shards import PartitionStrategy, ShardMetadata
 
 ## Messages passed TO the runner
 
@@ -28,7 +26,7 @@ class BaseRunnerMessage(BaseModel, Generic[MT]):
 
 class SetupMessage(BaseRunnerMessage[MessageType.Setup]):
     type: Literal[MessageType.Setup] = Field(default=MessageType.Setup, frozen=True)
-    model_shard_meta: ShardMeta
+    model_shard_meta: ShardMetadata[PartitionStrategy]
     hosts: list[Host]
 
 
@@ -36,7 +34,7 @@ class ChatTaskMessage(BaseRunnerMessage[MessageType.ChatTask]):
     type: Literal[MessageType.ChatTask] = Field(
         default=MessageType.ChatTask, frozen=True
     )
-    task: TaskData
+    task: ChatTask
 
 
 class ExitMessage(BaseRunnerMessage[MessageType.Exit]):

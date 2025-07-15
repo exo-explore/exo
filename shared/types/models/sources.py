@@ -1,27 +1,26 @@
 from enum import Enum
-from typing import Annotated, Any, Generic, Literal, TypeVar, Union, final
+from typing import Annotated, Any, Literal, Union, final
 
 from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter
 
 from shared.types.models.common import ModelId
 
 
+@final
 class SourceType(str, Enum):
     HuggingFace = "HuggingFace"
     GitHub = "GitHub"
 
 
+@final
 class SourceFormatType(str, Enum):
     HuggingFaceTransformers = "HuggingFaceTransformers"
 
 
-T = TypeVar("T", bound=SourceType)
-S = TypeVar("S", bound=SourceFormatType)
-
 RepoPath = Annotated[str, Field(pattern=r"^[^/]+/[^/]+$")]
 
 
-class BaseModelSource(BaseModel, Generic[T, S]):
+class BaseModelSource[T: SourceType, S: SourceFormatType](BaseModel):
     model_uuid: ModelId
     source_type: T
     source_format: S
@@ -50,15 +49,16 @@ class HuggingFaceModelSource(
 
 
 @final
-class GitHubModelSource(BaseModelSource[SourceType.GitHub, S]):
+class GitHubModelSource(BaseModelSource[SourceType.GitHub, SourceFormatType]):
     source_type: Literal[SourceType.GitHub] = SourceType.GitHub
+    source_format: SourceFormatType
     source_data: GitHubModelSourceData
 
 
 _ModelSource = Annotated[
     Union[
         HuggingFaceModelSource,
-        GitHubModelSource[SourceFormatType.HuggingFaceTransformers],
+        GitHubModelSource,
     ],
     Field(discriminator="source_type"),
 ]

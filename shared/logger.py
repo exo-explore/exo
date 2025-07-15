@@ -1,11 +1,31 @@
 import logging
 import logging.handlers
 from collections.abc import Sequence, Set
-from enum import Enum
 from queue import Queue
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import Field, TypeAdapter
 from rich.logging import RichHandler
+
+from master.logging import MasterLogEntries
+from shared.logging.common import LogEntryType
+from worker.logging import WorkerLogEntries
+
+LogEntries = Annotated[
+    MasterLogEntries | WorkerLogEntries, Field(discriminator="entry_type")
+]
+LogParser: TypeAdapter[LogEntries] = TypeAdapter(LogEntries)
+
+
+class FilterLogByType(logging.Filter):
+    def __init__(self, log_types: Set[LogEntryType]):
+        super().__init__()
+        self.log_types = log_types
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        LogParser.validate_json(message)
+        return True
 
 
 class LogEntryType(str, Enum):
@@ -79,3 +99,9 @@ def create_queue_listener(
         log_queue, *effect_handlers, respect_handler_level=True
     )
     return listener
+
+
+def log(
+    logger: logging.Logger, log_entry: LogEntries, log_level: int = logging.INFO
+) -> None:
+    logger.log(log_level, log_entry.model_dump_json())
