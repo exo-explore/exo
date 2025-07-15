@@ -23,7 +23,7 @@ check:
     basedpyright --project pyproject.toml
 
 sync:
-    uv sync --all-packages
+    uv sync --all-packages --reinstall
 
 protobufs:
     just regenerate-protobufs
