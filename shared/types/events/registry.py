@@ -85,7 +85,7 @@ def check_registry_has_all_event_types() -> None:
 def check_union_of_all_events_is_consistent_with_registry(
     registry: Mapping[EventTypes, Type[Any]], union_type: UnionType
 ) -> None:
-    type_of_each_registry_entry = set(type(event_type) for event_type in registry)
+    type_of_each_registry_entry = set(registry.values())
     type_of_each_entry_in_union = set(get_args(union_type))
     missing_from_union = type_of_each_registry_entry - type_of_each_entry_in_union
 
