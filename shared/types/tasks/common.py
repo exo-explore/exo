@@ -29,7 +29,7 @@ class ChatCompletionNonStreamingTask(TaskParams[TaskType.ChatCompletionNonStream
     task_type: Literal[TaskType.ChatCompletionNonStreaming] = (
         TaskType.ChatCompletionNonStreaming
     )
-    task_data: openai.completion_create_params.CompletionCreateParams
+    task_data: openai.completion_create_params.CompletionCreateParamsNonStreaming
 
 
 @final
@@ -37,7 +37,7 @@ class ChatCompletionStreamingTask(TaskParams[TaskType.ChatCompletionStreaming]):
     task_type: Literal[TaskType.ChatCompletionStreaming] = (
         TaskType.ChatCompletionStreaming
     )
-    task_data: openai.completion_create_params.CompletionCreateParams
+    task_data: openai.completion_create_params.CompletionCreateParamsStreaming
 
 
 @final
@@ -83,7 +83,7 @@ class TaskState[TaskStatusTypeT: TaskStatusType, TaskTypeT: TaskType](BaseModel)
 class BaseTask[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel):
     task_type: TaskTypeT
     task_params: TaskParams[TaskTypeT]
-    task_stats: TaskState[TaskStatusTypeT, TaskTypeT]
+    task_state: TaskState[TaskStatusTypeT, TaskTypeT]
     on_instance: InstanceId
 
 

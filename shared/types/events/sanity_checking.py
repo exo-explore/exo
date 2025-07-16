@@ -2,7 +2,7 @@ from enum import Enum, StrEnum
 from types import UnionType
 from typing import Any, LiteralString, Sequence, Set, Type, get_args
 
-from shared.constants import EXO_ERROR_REPORTING_MESSAGE
+from shared.constants import get_error_reporting_message
 
 
 def check_event_type_union_is_consistent_with_registry(
@@ -20,7 +20,7 @@ def check_event_type_union_is_consistent_with_registry(
     for tag_of_event_type in event_types_inferred_from_registry:
         event_type = type(tag_of_event_type)
         assert event_type in event_types_inferred_from_union, (
-            f"{EXO_ERROR_REPORTING_MESSAGE()}"
+            f"{get_error_reporting_message()}"
             f"There's a mismatch between the registry of event types and the union of possible event types."
             f"The enum value {tag_of_event_type} for type {event_type} is not covered by {event_types_inferred_from_union}."
         )
@@ -36,7 +36,7 @@ def check_event_categories_are_defined_for_all_event_types(
     ]
     tag_of_event_categories: list[str] = list(event_categories.__members__.values())
     assert tag_of_event_categories == expected_category_tags, (
-        f"{EXO_ERROR_REPORTING_MESSAGE()}"
+        f"{get_error_reporting_message()}"
         f"The values of the enum EventCategories are not named after the event type enums."
         f"These are the missing categories: {set(expected_category_tags) - set(tag_of_event_categories)}"
         f"These are the extra categories: {set(tag_of_event_categories) - set(expected_category_tags)}"
@@ -61,7 +61,7 @@ def assert_literal_union_covers_enum[TEnum: StrEnum](
     literal_values: Set[Any] = _flatten(literal_union)
 
     assert enum_values == literal_values, (
-        f"{EXO_ERROR_REPORTING_MESSAGE()}"
+        f"{get_error_reporting_message()}"
         f"The values of the enum {enum_type} are not covered by the literal union {literal_union}.\n"
         f"These are the missing values: {enum_values - literal_values}\n"
         f"These are the extra values: {literal_values - enum_values}\n"

@@ -41,10 +41,10 @@ from shared.types.worker.runners import RunnerId, RunnerStatus, RunnerStatusType
 
 MLXEvent = Event[
     frozenset(
-        {
+        (
             EventCategoryEnum.MutatesTaskState,
             EventCategoryEnum.MutatesControlPlaneState,
-        }
+        )
     )
 ]
 TaskEvent = Event[EventCategoryEnum.MutatesTaskState]

@@ -26,10 +26,22 @@ class MasterInvalidCommandReceivedLogEntry(
     command_name: str
 
 
-class MasterCommandRunnerNotRunningLogEntry: ...
+class MasterCommandRunnerNotRunningLogEntry(
+    LogEntry[Literal["master_command_runner_not_running"]]
+):
+    entry_destination: Set[LogEntryType] = {LogEntryType.cluster}
+    entry_type: Literal["master_command_runner_not_running"] = (
+        "master_command_runner_not_running"
+    )
+    message: str = "Command Runner Not Running"
 
 
-class MasterStateManagerStoppedLogEntry: ...
+class MasterStateManagerStoppedLogEntry(
+    LogEntry[Literal["master_state_manager_stopped"]]
+):
+    entry_destination: Set[LogEntryType] = {LogEntryType.cluster}
+    entry_type: Literal["master_state_manager_stopped"] = "master_state_manager_stopped"
+    message: str = "State Manager Stopped"
 
 
 class EventCategoryUnknownLogEntry(LogEntry[Literal["event_category_unknown"]]):

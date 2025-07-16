@@ -11,7 +11,7 @@ import mlx.nn as nn
 from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from shared.mlx.utils_mlx import apply_chat_template, initialize_mlx
+from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx
 from shared.openai import FinishReason
 from shared.types.tasks.common import (
     TaskData,
@@ -58,13 +58,15 @@ async def _mlx_generate(
                 response = GenerationResponse(
                     text=generation_response.text,
                     token=generation_response.token,
-                    finish_reason=cast(FinishReason | None, generation_response.finish_reason), # has to be considered as a FinishReason instead of a str.
+                    finish_reason=cast(
+                        FinishReason | None, generation_response.finish_reason
+                    ),  # has to be considered as a FinishReason instead of a str.
                 )
                 _ = loop.call_soon_threadsafe(queue.put_nowait, response)
         except Exception as e:
             _ = loop.call_soon_threadsafe(queue.put_nowait, e)
         finally:
-            _ = loop.call_soon_threadsafe(queue.put_nowait, sentinel) 
+            _ = loop.call_soon_threadsafe(queue.put_nowait, sentinel)
 
     # Currently we support chat-completion tasks only.
     task_data = task.task_data
@@ -91,15 +93,16 @@ async def _mlx_generate(
 
         if isinstance(item, Exception):
             raise item
-        
-        assert isinstance(item, GenerationResponse) # constrain datatype
+
+        assert isinstance(item, GenerationResponse)  # constrain datatype
         yield item
 
     assert future.done()
 
+
 async def main():
     try:
-        runner_print('hello from the runner')        
+        runner_print("hello from the runner")
 
         # Get setup info from worker
         init_message: RunnerMessage = await runner_read_message()
@@ -107,10 +110,12 @@ async def main():
         model_shard_meta: ShardMeta = setup_message.model_shard_meta
         hosts: list[Host] = setup_message.hosts
 
-        mlx_executor: ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        mlx_executor: ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1
+        )
         loop: AbstractEventLoop = asyncio.get_running_loop()
 
-        runner_print(f'got here; {model_shard_meta.model_path}')
+        runner_print(f"got here; {model_shard_meta.model_path}")
 
         model, tokenizer, sampler = await loop.run_in_executor(
             mlx_executor,
@@ -137,7 +142,7 @@ async def main():
                         task=task_data,
                     ):
                         runner_write_response(generation_response)
-                    
+
                     runner_write_response(FinishedResponse())
                 case ExitMessage():
                     break
@@ -146,6 +151,7 @@ async def main():
 
     except Exception as e:
         runner_write_error(e)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

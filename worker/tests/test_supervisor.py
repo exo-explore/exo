@@ -34,7 +34,7 @@ async def test_supervisor_single_node_response(
     try:
         full_response = ""
         stop_reason: FinishReason | None = None
-        
+
         async for chunk in supervisor.stream_response(task=streaming_task):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.chunk_data.text
@@ -42,11 +42,14 @@ async def test_supervisor_single_node_response(
                     stop_reason = chunk.chunk_data.finish_reason
 
         # Case-insensitive check for Paris in the response
-        assert "paris" in full_response.lower(), f"Expected 'Paris' in response, but got: {full_response}"
-        assert stop_reason == 'stop'
-        
+        assert "paris" in full_response.lower(), (
+            f"Expected 'Paris' in response, but got: {full_response}"
+        )
+        assert stop_reason == "stop"
+
     finally:
         await supervisor.astop()
+
 
 @pytest.mark.asyncio
 async def test_supervisor_two_node_response(
@@ -70,32 +73,37 @@ async def test_supervisor_two_node_response(
     try:
         full_response_0 = ""
         full_response_1 = ""
-        
+
         async def collect_response_0():
             nonlocal full_response_0
             async for chunk in supervisor_0.stream_response(task=streaming_task):
                 if isinstance(chunk, TokenChunk):
                     full_response_0 += chunk.chunk_data.text
-        
+
         async def collect_response_1():
             nonlocal full_response_1
             async for chunk in supervisor_1.stream_response(task=streaming_task):
                 if isinstance(chunk, TokenChunk):
                     full_response_1 += chunk.chunk_data.text
-        
+
         # Run both stream responses simultaneously
         _ = await asyncio.gather(collect_response_0(), collect_response_1())
 
         print(f"full_response_0: {full_response_0}")
         print(f"full_response_1: {full_response_1}")
-        
+
         # Case-insensitive check for Paris in both responses
-        assert "paris" in full_response_0.lower(), f"Expected 'Paris' in response, but got: {full_response_0}"
-        assert "paris" in full_response_1.lower(), f"Expected 'Paris' in response, but got: {full_response_1}"
-        
+        assert "paris" in full_response_0.lower(), (
+            f"Expected 'Paris' in response, but got: {full_response_0}"
+        )
+        assert "paris" in full_response_1.lower(), (
+            f"Expected 'Paris' in response, but got: {full_response_1}"
+        )
+
     finally:
         await supervisor_0.astop()
         await supervisor_1.astop()
+
 
 @pytest.mark.asyncio
 async def test_supervisor_early_stopping(
@@ -115,8 +123,10 @@ async def test_supervisor_early_stopping(
 
     try:
         streaming_task.task_data.task_data.max_tokens = max_tokens
-        streaming_task.task_data.task_data.messages[0].content = "Please count from 1 to 100"
-            
+        streaming_task.task_data.task_data.messages[
+            0
+        ].content = "Please count from 1 to 100"
+
         full_response = ""
         count = 0
         stop_reason: FinishReason | None = None
@@ -127,14 +137,14 @@ async def test_supervisor_early_stopping(
                 count += 1
                 if chunk.chunk_data.finish_reason:
                     stop_reason = chunk.chunk_data.finish_reason
-        
+
         print(f"full_response: {full_response}")
 
         assert count == max_tokens + 1
-        assert '7' in full_response.lower()
-        assert '99' not in full_response.lower()
+        assert "7" in full_response.lower()
+        assert "99" not in full_response.lower()
 
-        assert stop_reason == 'length'
+        assert stop_reason == "length"
 
     finally:
         await supervisor.astop()

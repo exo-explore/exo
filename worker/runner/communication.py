@@ -14,12 +14,18 @@ from shared.types.worker.commands_runner import (
 
 ### Utils - MESSAGE TO RUNNER
 
-async def supervisor_write_message(proc: asyncio.subprocess.Process, message: RunnerMessage) -> None:
-    assert proc.stdin is not None, "proc.stdin should not be None when created with stdin=PIPE"
-    
-    encoded: bytes = message.model_dump_json().encode('utf-8') + b'\n'
+
+async def supervisor_write_message(
+    proc: asyncio.subprocess.Process, message: RunnerMessage
+) -> None:
+    assert proc.stdin is not None, (
+        "proc.stdin should not be None when created with stdin=PIPE"
+    )
+
+    encoded: bytes = message.model_dump_json().encode("utf-8") + b"\n"
     proc.stdin.write(encoded)
     await proc.stdin.drain()
+
 
 async def runner_read_message() -> RunnerMessage:
     loop = asyncio.get_running_loop()
@@ -34,17 +40,24 @@ async def runner_read_message() -> RunnerMessage:
     except Exception as e:
         raise ValueError(f"Error validating message: {line}") from e
 
+
 ### Utils - RESPONSE FROM RUNNER
 
+
 def runner_write_response(obj: RunnerResponse) -> None:
-    encoded: bytes = obj.model_dump_json().encode('utf-8') + b'\n'
+    encoded: bytes = obj.model_dump_json().encode("utf-8") + b"\n"
     _ = sys.stdout.buffer.write(encoded)
     _ = sys.stdout.buffer.flush()
 
-async def supervisor_read_response(proc: asyncio.subprocess.Process) -> RunnerResponse | None:
-    assert proc.stdout is not None, "proc.stdout should not be None when created with stdout=PIPE"
+
+async def supervisor_read_response(
+    proc: asyncio.subprocess.Process,
+) -> RunnerResponse | None:
+    assert proc.stdout is not None, (
+        "proc.stdout should not be None when created with stdout=PIPE"
+    )
     line_bytes: bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=10)
-    line: str = line_bytes.decode('utf-8').strip()
+    line: str = line_bytes.decode("utf-8").strip()
 
     if not line:
         raise EOFError("No more data to read")
@@ -57,6 +70,7 @@ async def supervisor_read_response(proc: asyncio.subprocess.Process) -> RunnerRe
 
 ### Utils - Runner Prints
 
+
 def runner_print(text: str) -> None:
     obj = PrintResponse(
         type=RunnerResponseType.PrintResponse,
@@ -65,11 +79,12 @@ def runner_print(text: str) -> None:
 
     runner_write_response(obj)
 
+
 def runner_write_error(error: Exception) -> None:
     error_response: ErrorResponse = ErrorResponse(
-      type=RunnerResponseType.ErrorResponse,
-      error_type=type(error).__name__,
-      error_message=str(error),
-      traceback=traceback.format_exc(),
+        type=RunnerResponseType.ErrorResponse,
+        error_type=type(error).__name__,
+        error_message=str(error),
+        traceback=traceback.format_exc(),
     )
     runner_write_response(error_response)

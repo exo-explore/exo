@@ -10,8 +10,8 @@ from master.logging import (
     StateUpdateLoopStartedLogEntry,
     StateUpdateLoopStoppedLogEntry,
 )
-from master.router import check_keys_in_map_match_enum_values
-from shared.constants import EXO_ERROR_REPORTING_MESSAGE
+from master.sanity_checking import check_keys_in_map_match_enum_values
+from shared.constants import get_error_reporting_message
 from shared.logger import log
 from shared.types.events.common import (
     Apply,
@@ -74,7 +74,7 @@ class AsyncStateManager[EventCategoryT: EventCategory](Protocol):
             raise RuntimeError("State Update Loop Not Running")
 
         assert self._task is not None, (
-            f"{EXO_ERROR_REPORTING_MESSAGE()}"
+            f"{get_error_reporting_message()}"
             "BUG: is_running is True but _task is None, this should never happen!"
         )
         self._task.cancel()

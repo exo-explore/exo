@@ -1,23 +1,16 @@
-from asyncio import CancelledError, Lock, Task, create_task
-from asyncio import Queue as AsyncQueue
 from contextlib import asynccontextmanager
 from logging import Logger, LogRecord
 from queue import Queue as PQueue
-from typing import Callable, Sequence
+from typing import Literal
 
-from fastapi import FastAPI, Response
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI
 
-from master.commands import ExternalCommand
 from master.env import MasterEnvironmentSchema
 from master.logging import (
-    MasterCommandRunnerNotRunningLogEntry,
-    MasterStateManagerStoppedLogEntry,
     MasterUninitializedLogEntry,
 )
-from master.router import QueueMapping
-from master.state_manager.sync import SyncStateManagerMapping
 from shared.constants import EXO_MASTER_STATE
+from shared.event_loops.main import NodeEventLoopProtocol
 from shared.logger import (
     FilterLogByType,
     LogEntryType,
@@ -27,11 +20,7 @@ from shared.logger import (
     log,
 )
 from shared.types.events.common import (
-    Apply,
-    EventCategory,
-    EventFromEventLog,
-    EventPublisher,
-    State,
+    EventCategoryEnum,
 )
 from shared.types.models.common import ModelId
 from shared.types.models.model import ModelInfo
@@ -63,93 +52,20 @@ def get_master_state_dependency(data: object, logger: Logger) -> MasterState:
     return data
 
 
-# Safety on Apply.
-def safely_apply[T: EventCategory](
-    state: State[T], apply_fn: Apply[T], events: Sequence[EventFromEventLog[T]]
-) -> State[T]:
-    sorted_events = sorted(events, key=lambda event: event.idx_in_log)
-    state = state.model_copy()
-    for event in sorted_events:
-        if event.idx_in_log <= state.last_event_applied_idx:
-            continue
-        state.last_event_applied_idx = event.idx_in_log
-        state = apply_fn(state, event)
-    return state
+# What The Master Cares About
+MasterEventCategories = (
+    Literal[EventCategoryEnum.MutatesControlPlaneState]
+    | Literal[EventCategoryEnum.MutatesTaskState]
+    | Literal[EventCategoryEnum.MutatesTaskSagaState]
+    | Literal[EventCategoryEnum.MutatesRunnerStatus]
+    | Literal[EventCategoryEnum.MutatesInstanceState]
+    | Literal[EventCategoryEnum.MutatesNodePerformanceState]
+    | Literal[EventCategoryEnum.MutatesDataPlaneState]
+)
 
 
-class MasterEventLoop:
-    """Thread-safe manager for MasterState with independent event loop."""
-
-    def __init__(
-        self,
-        initial_state: MasterState,
-        push_events_to_queue: Callable[[QueueMapping], None],
-        event_publisher: EventPublisher[EventCategory],
-        state_managers: SyncStateManagerMapping,
-        logger: Logger,
-    ):
-        self._state = initial_state
-        self._state_lock = Lock()
-        self._event_queues: QueueMapping
-        self._command_runner: ...
-        self._command_run_task: Task[None] | None = None
-        self._command_queue: AsyncQueue[ExternalCommand] = AsyncQueue()
-        self._response_queue: AsyncQueue[Response | StreamingResponse] = AsyncQueue()
-        self._state_managers: SyncStateManagerMapping
-        self._state_global_lock: Lock = Lock()
-        self._push_events_to_queue: Callable[[QueueMapping], None]
-        self._event_fetch_task: Task[None] | None = None
-        self._logger = logger
-
-    @property
-    def _is_command_runner_running(self) -> bool:
-        return self._command_run_task is not None and not self._command_run_task.done()
-
-    @property
-    def _is_event_fetcher_running(self) -> bool:
-        return self._event_fetch_task is not None and not self._event_fetch_task.done()
-
-    async def send_command(
-        self, command: ExternalCommand
-    ) -> Response | StreamingResponse:
-        """Send a command to the background event loop."""
-        if self._is_command_runner_running:
-            await self._command_queue.put(command)
-            return await self._response_queue.get()
-        else:
-            log(self._logger, MasterCommandRunnerNotRunningLogEntry())
-            raise RuntimeError("Command Runner Is Not Running")
-
-    async def start(self) -> None:
-        """Start the background event loop."""
-
-        async def fetch_and_apply_events() -> None:
-            while True:
-                async with self._state_global_lock:
-                    for state in self._state_managers.values():
-                        self._push_events_to_queue(self._event_queues)
-                        safely_apply(
-                            state, apply_fn, self._event_queues[state.event_category]
-                        )
-
-        self._event_fetch_task = create_task(fetch_and_apply_events())
-        self._command_run_task = create_task(self._command_runner())
-
-    async def stop(self) -> None:
-        """Stop the background event loop and persist state."""
-        if not self._is_command_runner_running or not self._is_event_fetcher_running:
-            raise RuntimeError("Command Runner Is Not Running")
-
-        assert self._command_run_task is not None and self._event_fetch_task is not None
-
-        for service in [self._event_fetch_task, self._command_run_task]:
-            service.cancel()
-            try:
-                await service
-            except CancelledError:
-                pass
-
-        log(self._logger, MasterStateManagerStoppedLogEntry())
+# Takes Care Of All States And Events Related To The Master
+class MasterEventLoopProtocol(NodeEventLoopProtocol[MasterEventCategories]): ...
 
 
 @asynccontextmanager
@@ -182,7 +98,7 @@ async def lifespan(app: FastAPI):
         cluster_queue,
     )
 
-    # TODO: Add handlers
+    # TODO: Add Handlers For Pushing Logs To Remote Services
     telemetry_listener = create_queue_listener(telemetry_queue, [])
     metrics_listener = create_queue_listener(metrics_queue, [])
     cluster_listener = create_queue_listener(cluster_queue, [])
@@ -191,15 +107,13 @@ async def lifespan(app: FastAPI):
     metrics_listener.start()
     cluster_listener.start()
 
-    initial_state = get_master_state(logger)
-    app.state.master_event_loop = MasterEventLoop(
-        initial_state, None, None, None, logger
-    )
-    await app.state.master_event_loop.start()
+    # initial_state = get_master_state(logger)
+    # app.state.master_event_loop = MasterEventLoop()
+    # await app.state.master_event_loop.start()
 
     yield
 
-    await app.state.master_event_loop.stop()
+    # await app.state.master_event_loop.stop()
 
 
 app = FastAPI(lifespan=lifespan)

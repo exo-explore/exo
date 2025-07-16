@@ -1,5 +1,6 @@
 from enum import Enum, StrEnum
 from typing import (
+    Any,
     Callable,
     FrozenSet,
     Literal,
@@ -205,9 +206,7 @@ class StateAndEvent[EventCategoryT: EventCategory](NamedTuple):
 type EffectHandler[EventCategoryT: EventCategory] = Callable[
     [StateAndEvent[EventCategoryT], State[EventCategoryT]], None
 ]
-type EventPublisher[EventCategoryT: EventCategory] = Callable[
-    [Event[EventCategoryT]], None
-]
+type EventPublisher = Callable[[Event[Any]], None]
 
 
 # A component that can publish events
@@ -224,7 +223,7 @@ class EventFetcherProtocol[EventCategoryT: EventCategory](Protocol):
 
 # A component that can get the effect handler for a saga
 def get_saga_effect_handler[EventCategoryT: EventCategory](
-    saga: Saga[EventCategoryT], event_publisher: EventPublisher[EventCategoryT]
+    saga: Saga[EventCategoryT], event_publisher: EventPublisher
 ) -> EffectHandler[EventCategoryT]:
     def effect_handler(state_and_event: StateAndEvent[EventCategoryT]) -> None:
         trigger_state, trigger_event = state_and_event
@@ -236,7 +235,7 @@ def get_saga_effect_handler[EventCategoryT: EventCategory](
 
 def get_effects_from_sagas[EventCategoryT: EventCategory](
     sagas: Sequence[Saga[EventCategoryT]],
-    event_publisher: EventPublisher[EventCategoryT],
+    event_publisher: EventPublisher,
 ) -> Sequence[EffectHandler[EventCategoryT]]:
     return [get_saga_effect_handler(saga, event_publisher) for saga in sagas]
 

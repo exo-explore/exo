@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import sys
 from collections.abc import AsyncGenerator
-from typing import Callable
+from typing import Any, Callable
 
 from shared.types.events.chunks import GenerationChunk, TokenChunk, TokenChunkData
 from shared.types.tasks.common import Task, TaskStatusType, TaskType
@@ -17,8 +17,7 @@ from shared.types.worker.commands_runner import (
     SetupMessage,
 )
 from shared.types.worker.mlx import Host
-from shared.types.worker.runners import RunnerError
-from shared.types.worker.shards import ShardMeta
+from shared.types.worker.shards import ShardMetadata
 from worker.runner.communication import (
     supervisor_read_response,
     supervisor_write_message,
@@ -31,25 +30,27 @@ class RunnerSupervisor:
     RunnerSupervisor manages the lifecycle of a runner subprocess for model inference.
     Use the class method `create` to properly initialize an instance.
     """
-    
+
     def __init__(
         self,
-        model_shard_meta: ShardMeta,
+        model_shard_meta: ShardMetadata[Any],
         hosts: list[Host],
         runner_process: asyncio.subprocess.Process,
     ):
         """Private constructor. Use RunnerSupervisor.create() instead."""
-        self.model_shard_meta: ShardMeta = model_shard_meta
+        self.model_shard_meta: ShardMetadata[Any] = model_shard_meta
         self.hosts: list[Host] = hosts
         self.runner_process: asyncio.subprocess.Process = runner_process
         self.running: bool = True
 
-        self.running_task: asyncio.Task[None] = asyncio.create_task(self._watch_runner())
+        self.running_task: asyncio.Task[None] = asyncio.create_task(
+            self._watch_runner()
+        )
 
     @classmethod
     async def create(
         cls,
-        model_shard_meta: ShardMeta,
+        model_shard_meta: ShardMetadata[Any],
         hosts: list[Host],
     ) -> "RunnerSupervisor":
         """
@@ -57,12 +58,14 @@ class RunnerSupervisor:
         The .create() classmethod pattern is used to ensure the constructor is asynchronous.
         """
         cmd: list[str] = get_runner_command()
-        
-        runner_process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=sys.stderr,
+
+        runner_process: asyncio.subprocess.Process = (
+            await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=sys.stderr,
+            )
         )
 
         await supervisor_write_message(
@@ -91,7 +94,9 @@ class RunnerSupervisor:
         if self.runner_process.stdout is not None:
             while True:
                 try:
-                    line = await asyncio.wait_for(self.runner_process.stdout.readline(), timeout=0.01)
+                    line = await asyncio.wait_for(
+                        self.runner_process.stdout.readline(), timeout=0.01
+                    )
                     if not line:
                         break
                     print(f"Remaining stdout: {line.decode('utf-8').strip()}")
@@ -100,7 +105,9 @@ class RunnerSupervisor:
 
         try:
             # Give the process a moment to exit gracefully
-            await supervisor_write_message(proc=self.runner_process, message=ExitMessage())
+            await supervisor_write_message(
+                proc=self.runner_process, message=ExitMessage()
+            )
             _ = await asyncio.wait_for(self.runner_process.wait(), timeout=0.1)
         except asyncio.TimeoutError:
             print("Runner process did not terminate, killing...")
@@ -114,7 +121,9 @@ class RunnerSupervisor:
 
     def __del__(self) -> None:
         if not self.running:
-            print('Warning: RunnerSupervisor was not stopped cleanly before garbage collection. Force killing process.')
+            print(
+                "Warning: RunnerSupervisor was not stopped cleanly before garbage collection. Force killing process."
+            )
 
             with contextlib.suppress(ProcessLookupError):
                 self.runner_process.kill()
@@ -150,12 +159,16 @@ class RunnerSupervisor:
         )
 
         while True:
-            line: RunnerResponse | None = await supervisor_read_response(self.runner_process)
+            line: RunnerResponse | None = await supervisor_read_response(
+                self.runner_process
+            )
             if line is None:
                 continue
             else:
                 match line:
-                    case GenerationResponse(text=text, token=token, finish_reason=finish_reason):
+                    case GenerationResponse(
+                        text=text, token=token, finish_reason=finish_reason
+                    ):
                         yield TokenChunk(
                             task_id=task.task_id,
                             idx=token,
@@ -169,7 +182,11 @@ class RunnerSupervisor:
                     case FinishedResponse():
                         break
                     case PrintResponse(text=text):
-                        print(f'runner printed: {text}')
-                    case ErrorResponse(error_type=error_type, error_message=error_message, traceback=traceback):
+                        print(f"runner printed: {text}")
+                    case ErrorResponse(
+                        error_type=error_type,
+                        error_message=error_message,
+                        traceback=traceback,
+                    ):
                         await self.astop()
-                        raise RunnerError(error_type, error_message, traceback or "")
+                        raise Exception(error_type, error_message, traceback or "")

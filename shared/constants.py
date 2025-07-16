@@ -21,7 +21,8 @@ def get_caller_module_name() -> str:
     return mod.__name__
 
 
-EXO_ERROR_REPORTING_MESSAGE = lambda: (
-    f"THIS IS A BUG IN THE EXO SOFTWARE, PLEASE REPORT IT AT https://github.com/exo-explore/exo/\n"
-    f"The module that raised the error was: {get_caller_module_name()}"
-)
+def get_error_reporting_message() -> str:
+    return (
+        f"THIS IS A BUG IN THE EXO SOFTWARE, PLEASE REPORT IT AT https://github.com/exo-explore/exo/\n"
+        f"The module that raised the error was: {get_caller_module_name()}"
+    )

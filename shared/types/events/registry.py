@@ -3,7 +3,7 @@ from typing import Annotated, Any, Mapping, Type, get_args
 
 from pydantic import Field, TypeAdapter
 
-from shared.constants import EXO_ERROR_REPORTING_MESSAGE
+from shared.constants import get_error_reporting_message
 from shared.types.events.common import (
     ControlPlaneEventTypes,
     DataPlaneEventTypes,
@@ -50,7 +50,6 @@ class EventTypeNames(StrEnum):
 
 check_event_categories_are_defined_for_all_event_types(EVENT_TYPE_ENUMS, EventTypeNames)
 """
-
 EventRegistry: Mapping[EventTypes, Type[Any]] = {
     TaskEventTypes.TaskCreated: TaskCreated,
     TaskEventTypes.TaskStateUpdated: TaskStateUpdated,
@@ -78,7 +77,7 @@ def check_registry_has_all_event_types() -> None:
     missing_event_types = set(event_types) - set(EventRegistry.keys())
 
     assert not missing_event_types, (
-        f"{EXO_ERROR_REPORTING_MESSAGE()}"
+        f"{get_error_reporting_message()}"
         f"There's an event missing from the registry: {missing_event_types}"
     )
 
@@ -91,14 +90,14 @@ def check_union_of_all_events_is_consistent_with_registry(
     missing_from_union = type_of_each_registry_entry - type_of_each_entry_in_union
 
     assert not missing_from_union, (
-        f"{EXO_ERROR_REPORTING_MESSAGE()}"
+        f"{get_error_reporting_message()}"
         f"Event classes in registry are missing from all_events union: {missing_from_union}"
     )
 
     extra_in_union = type_of_each_entry_in_union - type_of_each_registry_entry
 
     assert not extra_in_union, (
-        f"{EXO_ERROR_REPORTING_MESSAGE()}"
+        f"{get_error_reporting_message()}"
         f"Event classes in all_events union are missing from registry: {extra_in_union}"
     )
 

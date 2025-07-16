@@ -4,7 +4,7 @@ from collections.abc import Sequence, Set
 from queue import Queue
 from typing import Annotated
 
-from pydantic import Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 from rich.logging import RichHandler
 
 from master.logging import MasterLogEntries
@@ -26,12 +26,6 @@ class FilterLogByType(logging.Filter):
         message = record.getMessage()
         LogParser.validate_json(message)
         return True
-
-
-class LogEntryType(str, Enum):
-    telemetry = "telemetry"
-    metrics = "metrics"
-    cluster = "cluster"
 
 
 class LogEntry(BaseModel):

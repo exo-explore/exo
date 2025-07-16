@@ -21,14 +21,19 @@ from shared.types.worker.shards import ShardMeta
 from worker.runner.communication import runner_print
 
 
-def mx_barrier(): 
-    mx.eval(mx.distributed.all_sum(mx.array(1.0), stream=mx.default_stream(mx.Device(mx.cpu)))) # type: ignore
+def mx_barrier():
+    mx.eval(
+        mx.distributed.all_sum(
+            mx.array(1.0), stream=mx.default_stream(mx.Device(mx.cpu))
+        )
+    )
+
 
 class HostList(RootModel[list[str]]):
-    
     @classmethod
     def from_hosts(cls, hosts: list[Host]) -> "HostList":
         return cls(root=[str(host) for host in hosts])
+
 
 def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group:
     """
@@ -37,10 +42,10 @@ def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group:
     runner_print(f"Starting initialization for rank {rank}")
 
     # Setup distributed environment
-    hostfile = f"./hosts_{rank}.json" # TODO: this needs to be unique?
+    hostfile = f"./hosts_{rank}.json"  # TODO: this needs to be unique?
     hosts_json = HostList.from_hosts(hosts).model_dump_json()
 
-    runner_print(f'rank {rank} hostfile: {hostfile} hosts: {hosts_json}')
+    runner_print(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
 
     with open(hostfile, "w") as f:
         _ = f.write(hosts_json)
@@ -54,6 +59,7 @@ def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group:
     runner_print(f"Rank {rank} mlx distributed initialization complete")
 
     return group
+
 
 def initialize_mlx(
     model_shard_meta: ShardMeta,
@@ -71,8 +77,9 @@ def initialize_mlx(
 
     return model, tokenizer, sampler
 
+
 def shard_and_load(model_shard_meta: ShardMeta) -> tuple[nn.Module, TokenizerWrapper]:
-    runner_print(f'loading model from {model_shard_meta.model_path}')
+    runner_print(f"loading model from {model_shard_meta.model_path}")
 
     model, config = load_model(model_shard_meta.model_path, lazy=True, strict=False)
 
@@ -102,9 +109,11 @@ async def apply_chat_template(
     for message in messages_dicts:
         filtered_message = {k: v for k, v in message.items() if v is not None}
         # Verify we have exactly the expected keys
-        assert set(filtered_message.keys()) == {'role', 'content'}, f"Expected only 'role' and 'content' keys, got: {filtered_message.keys()}"
+        assert set(filtered_message.keys()) == {"role", "content"}, (
+            f"Expected only 'role' and 'content' keys, got: {filtered_message.keys()}"
+        )
         formatted_messages.append(filtered_message)
-    
+
     messages_dicts = formatted_messages
 
     prompt: str = await loop.run_in_executor(
@@ -113,7 +122,7 @@ async def apply_chat_template(
             messages_dicts,
             tokenize=False,
             add_generation_prompt=True,
-        )
+        ),
     )
 
     return prompt

@@ -2,8 +2,15 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from shared.types.common import NewUUID
+
+
+class ExternalCommandId(NewUUID):
+    pass
+
 
 class BaseExternalCommand[T: str](BaseModel):
+    command_id: ExternalCommandId
     command_type: T
 
 
