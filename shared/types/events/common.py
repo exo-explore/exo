@@ -133,7 +133,7 @@ EventCategories = FrozenSet[EventCategory]
 assert_literal_union_covers_enum(EventCategory, EventCategoryEnum)
 
 
-class Event[SetMembersT: EventCategories | EventCategory](BaseModel):
+class BaseEvent[SetMembersT: EventCategories | EventCategory](BaseModel):
     event_type: EventTypes
     event_category: SetMembersT
     event_id: EventId
@@ -142,7 +142,7 @@ class Event[SetMembersT: EventCategories | EventCategory](BaseModel):
 
 
 class EventFromEventLog[SetMembersT: EventCategories | EventCategory](BaseModel):
-    event: Event[SetMembersT]
+    event: BaseEvent[SetMembersT]
     origin: NodeId
     idx_in_log: int = Field(gt=0)
 
@@ -156,14 +156,14 @@ class EventFromEventLog[SetMembersT: EventCategories | EventCategory](BaseModel)
 
 
 def narrow_event_type[T: EventCategory, Q: EventCategories | EventCategory](
-    event: Event[Q],
+    event: BaseEvent[Q],
     target_category: T,
-) -> Event[T]:
+) -> BaseEvent[T]:
     if target_category not in event.event_category:
         raise ValueError(f"Event Does Not Contain Target Category {target_category}")
 
     narrowed_event = event.model_copy(update={"event_category": {target_category}})
-    return cast(Event[T], narrowed_event)
+    return cast(BaseEvent[T], narrowed_event)
 
 
 def narrow_event_from_event_log_type[
@@ -190,7 +190,7 @@ class State[EventCategoryT: EventCategory](BaseModel):
 # Definitions for Type Variables
 type Saga[EventCategoryT: EventCategory] = Callable[
     [State[EventCategoryT], EventFromEventLog[EventCategoryT]],
-    Sequence[Event[EventCategories]],
+    Sequence[BaseEvent[EventCategories]],
 ]
 type Apply[EventCategoryT: EventCategory] = Callable[
     [State[EventCategoryT], EventFromEventLog[EventCategoryT]],
@@ -206,19 +206,19 @@ class StateAndEvent[EventCategoryT: EventCategory](NamedTuple):
 type EffectHandler[EventCategoryT: EventCategory] = Callable[
     [StateAndEvent[EventCategoryT], State[EventCategoryT]], None
 ]
-type EventPublisher = Callable[[Event[Any]], None]
+type EventPublisher = Callable[[BaseEvent[Any]], None]
 
 
 # A component that can publish events
 class EventPublisherProtocol(Protocol):
-    def send(self, events: Sequence[Event[EventCategories]]) -> None: ...
+    def send(self, events: Sequence[BaseEvent[EventCategories]]) -> None: ...
 
 
 # A component that can fetch events to apply
 class EventFetcherProtocol[EventCategoryT: EventCategory](Protocol):
     def get_events_to_apply(
         self, state: State[EventCategoryT]
-    ) -> Sequence[Event[EventCategoryT]]: ...
+    ) -> Sequence[BaseEvent[EventCategoryT]]: ...
 
 
 # A component that can get the effect handler for a saga
@@ -265,5 +265,5 @@ class Command[
 
 type Decide[EventCategoryT: EventCategory, CommandTypeT: CommandTypes] = Callable[
     [State[EventCategoryT], Command[EventCategoryT, CommandTypeT]],
-    Sequence[Event[EventCategoryT]],
+    Sequence[BaseEvent[EventCategoryT]],
 ]

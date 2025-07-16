@@ -5,9 +5,9 @@ from pydantic import Field, TypeAdapter
 
 from shared.constants import get_error_reporting_message
 from shared.types.events.common import (
+    BaseEvent,
     ControlPlaneEventTypes,
     DataPlaneEventTypes,
-    Event,
     EventCategories,
     EventTypes,
     InstanceEventTypes,
@@ -102,7 +102,7 @@ def check_union_of_all_events_is_consistent_with_registry(
     )
 
 
-AllEvents = (
+Event = (
     TaskCreated
     | TaskStateUpdated
     | TaskDeleted
@@ -123,8 +123,8 @@ AllEvents = (
 )
 
 # Run the sanity check
-check_union_of_all_events_is_consistent_with_registry(EventRegistry, AllEvents)
+check_union_of_all_events_is_consistent_with_registry(EventRegistry, Event)
 
 
-_EventType = Annotated[AllEvents, Field(discriminator="event_type")]
-EventParser: TypeAdapter[Event[EventCategories]] = TypeAdapter(_EventType)
+_EventType = Annotated[Event, Field(discriminator="event_type")]
+EventParser: TypeAdapter[BaseEvent[EventCategories]] = TypeAdapter(_EventType)

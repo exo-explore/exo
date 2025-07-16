@@ -7,7 +7,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
-    Event,
+    BaseEvent,
     EventCategory,
     EventCategoryEnum,
     State,
@@ -97,4 +97,4 @@ def get_shard_assignments(
 def get_transition_events(
     current_instances: Mapping[InstanceId, InstanceParams],
     target_instances: Mapping[InstanceId, InstanceParams],
-) -> Sequence[Event[EventCategory]]: ...
+) -> Sequence[BaseEvent[EventCategory]]: ...

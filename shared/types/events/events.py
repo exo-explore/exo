@@ -5,9 +5,9 @@ from typing import Literal, Tuple
 from shared.types.common import NodeId
 from shared.types.events.chunks import GenerationChunk
 from shared.types.events.common import (
+    BaseEvent,
     ControlPlaneEventTypes,
     DataPlaneEventTypes,
-    Event,
     EventCategoryEnum,
     EventTypes,
     InstanceEventTypes,
@@ -39,14 +39,14 @@ from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus, RunnerStatusType
 
-TaskEvent = Event[EventCategoryEnum.MutatesTaskState]
-InstanceEvent = Event[EventCategoryEnum.MutatesInstanceState]
-ControlPlaneEvent = Event[EventCategoryEnum.MutatesControlPlaneState]
-DataPlaneEvent = Event[EventCategoryEnum.MutatesDataPlaneState]
-NodePerformanceEvent = Event[EventCategoryEnum.MutatesNodePerformanceState]
+TaskEvent = BaseEvent[EventCategoryEnum.MutatesTaskState]
+InstanceEvent = BaseEvent[EventCategoryEnum.MutatesInstanceState]
+ControlPlaneEvent = BaseEvent[EventCategoryEnum.MutatesControlPlaneState]
+DataPlaneEvent = BaseEvent[EventCategoryEnum.MutatesDataPlaneState]
+NodePerformanceEvent = BaseEvent[EventCategoryEnum.MutatesNodePerformanceState]
 
 
-class TaskCreated(Event[EventCategoryEnum.MutatesTaskState]):
+class TaskCreated(BaseEvent[EventCategoryEnum.MutatesTaskState]):
     event_type: EventTypes = TaskEventTypes.TaskCreated
     task_id: TaskId
     task_params: TaskParams[TaskType]
@@ -55,104 +55,104 @@ class TaskCreated(Event[EventCategoryEnum.MutatesTaskState]):
 
 
 # Covers Cancellation Of Task, Non-Cancelled Tasks Perist
-class TaskDeleted(Event[EventCategoryEnum.MutatesTaskState]):
+class TaskDeleted(BaseEvent[EventCategoryEnum.MutatesTaskState]):
     event_type: EventTypes = TaskEventTypes.TaskDeleted
     task_id: TaskId
 
 
-class TaskStateUpdated(Event[EventCategoryEnum.MutatesTaskState]):
+class TaskStateUpdated(BaseEvent[EventCategoryEnum.MutatesTaskState]):
     event_type: EventTypes = TaskEventTypes.TaskStateUpdated
     task_state: TaskState[TaskStatusType, TaskType]
 
 
-class InstanceCreated(Event[EventCategoryEnum.MutatesInstanceState]):
+class InstanceCreated(BaseEvent[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceCreated
     instance_id: InstanceId
     instance_params: InstanceParams
     instance_type: TypeOfInstance
 
 
-class InstanceActivated(Event[EventCategoryEnum.MutatesInstanceState]):
+class InstanceActivated(BaseEvent[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceActivated
     instance_id: InstanceId
 
 
-class InstanceDeactivated(Event[EventCategoryEnum.MutatesInstanceState]):
+class InstanceDeactivated(BaseEvent[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceDeactivated
     instance_id: InstanceId
 
 
-class InstanceDeleted(Event[EventCategoryEnum.MutatesInstanceState]):
+class InstanceDeleted(BaseEvent[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceDeleted
     instance_id: InstanceId
 
     transition: Tuple[InstanceId, InstanceId]
 
 
-class InstanceReplacedAtomically(Event[EventCategoryEnum.MutatesInstanceState]):
+class InstanceReplacedAtomically(BaseEvent[EventCategoryEnum.MutatesInstanceState]):
     event_type: EventTypes = InstanceEventTypes.InstanceReplacedAtomically
     instance_to_replace: InstanceId
     new_instance_id: InstanceId
 
 
-class RunnerStatusUpdated(Event[EventCategoryEnum.MutatesRunnerStatus]):
+class RunnerStatusUpdated(BaseEvent[EventCategoryEnum.MutatesRunnerStatus]):
     event_type: EventTypes = RunnerStatusEventTypes.RunnerStatusUpdated
     instance_id: InstanceId
     state_update: Tuple[RunnerId, RunnerStatus[RunnerStatusType]]
 
 
-class MLXInferenceSagaPrepare(Event[EventCategoryEnum.MutatesTaskSagaState]):
+class MLXInferenceSagaPrepare(BaseEvent[EventCategoryEnum.MutatesTaskSagaState]):
     event_type: EventTypes = TaskSagaEventTypes.MLXInferenceSagaPrepare
     task_id: TaskId
     instance_id: InstanceId
 
 
-class MLXInferenceSagaStartPrepare(Event[EventCategoryEnum.MutatesTaskSagaState]):
+class MLXInferenceSagaStartPrepare(BaseEvent[EventCategoryEnum.MutatesTaskSagaState]):
     event_type: EventTypes = TaskSagaEventTypes.MLXInferenceSagaStartPrepare
     task_id: TaskId
     instance_id: InstanceId
 
 
-class NodePerformanceMeasured(Event[EventCategoryEnum.MutatesNodePerformanceState]):
+class NodePerformanceMeasured(BaseEvent[EventCategoryEnum.MutatesNodePerformanceState]):
     event_type: EventTypes = NodePerformanceEventTypes.NodePerformanceMeasured
     node_id: NodeId
     node_profile: NodePerformanceProfile
 
 
-class WorkerConnected(Event[EventCategoryEnum.MutatesControlPlaneState]):
+class WorkerConnected(BaseEvent[EventCategoryEnum.MutatesControlPlaneState]):
     event_type: EventTypes = ControlPlaneEventTypes.WorkerConnected
     edge: DataPlaneEdge
 
 
-class WorkerStatusUpdated(Event[EventCategoryEnum.MutatesControlPlaneState]):
+class WorkerStatusUpdated(BaseEvent[EventCategoryEnum.MutatesControlPlaneState]):
     event_type: EventTypes = ControlPlaneEventTypes.WorkerStatusUpdated
     node_id: NodeId
     node_state: NodeStatus
 
 
-class WorkerDisconnected(Event[EventCategoryEnum.MutatesControlPlaneState]):
+class WorkerDisconnected(BaseEvent[EventCategoryEnum.MutatesControlPlaneState]):
     event_type: EventTypes = ControlPlaneEventTypes.WorkerConnected
     vertex_id: ControlPlaneEdgeId
 
 
-class ChunkGenerated(Event[EventCategoryEnum.MutatesTaskState]):
+class ChunkGenerated(BaseEvent[EventCategoryEnum.MutatesTaskState]):
     event_type: EventTypes = StreamingEventTypes.ChunkGenerated
     task_id: TaskId
     chunk: GenerationChunk
 
 
-class DataPlaneEdgeCreated(Event[EventCategoryEnum.MutatesDataPlaneState]):
+class DataPlaneEdgeCreated(BaseEvent[EventCategoryEnum.MutatesDataPlaneState]):
     event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeCreated
     vertex: ControlPlaneEdgeType
 
 
-class DataPlaneEdgeReplacedAtomically(Event[EventCategoryEnum.MutatesDataPlaneState]):
+class DataPlaneEdgeReplacedAtomically(BaseEvent[EventCategoryEnum.MutatesDataPlaneState]):
     event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically
     edge_id: DataPlaneEdgeId
     edge_profile: DataPlaneEdgeProfile
 
 
-class DataPlaneEdgeDeleted(Event[EventCategoryEnum.MutatesDataPlaneState]):
+class DataPlaneEdgeDeleted(BaseEvent[EventCategoryEnum.MutatesDataPlaneState]):
     event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeDeleted
     edge_id: DataPlaneEdgeId
 
@@ -171,7 +171,7 @@ TEST_EVENT_CATEGORIES = frozenset(
 )
 
 
-class TestEvent(Event[TEST_EVENT_CATEGORIES_TYPE]):
+class TestEvent(BaseEvent[TEST_EVENT_CATEGORIES_TYPE]):
     event_category: TEST_EVENT_CATEGORIES_TYPE = TEST_EVENT_CATEGORIES
     test_id: int
 """

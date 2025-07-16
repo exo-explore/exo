@@ -110,7 +110,7 @@ class MutableGraphProtocol(GraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, Vertex
         self._add_edge(edge.edge_id, edge.edge_data)
 
 
-class Graph(
+class BaseGraph(
     Generic[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
     MutableGraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
 ):
@@ -122,51 +122,51 @@ class Graph(
 # the first element in the return value is the filtered graph; the second is the
 # (possibly empty) set of sub-graphs that were detached during filtering.
 def filter_by_edge_data(
-    graph: Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    graph: BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
     keep: VertexIdT,
     predicate: Callable[[EdgeData[EdgeTypeT]], bool],
 ) -> Tuple[
-    Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
-    Set[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
+    BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    Set[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
 ]: ...
 
 
 # the first element in the return value is the filtered graph; the second is the
 # (possibly empty) set of sub-graphs that were detached during filtering.
 def filter_by_vertex_data(
-    graph: Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    graph: BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
     keep: VertexIdT,
     predicate: Callable[[VertexData[VertexTypeT]], bool],
 ) -> Tuple[
-    Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
-    Set[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
+    BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    Set[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
 ]: ...
 
 
 def map_vertices_onto_graph(
     vertices: Mapping[VertexIdT, VertexData[VertexTypeT]],
-    graph: Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
-) -> Tuple[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT], Set[VertexIdT]]: ...
+    graph: BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+) -> Tuple[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT], Set[VertexIdT]]: ...
 
 
 def map_edges_onto_graph(
     edges: Mapping[EdgeIdT, EdgeData[EdgeTypeT]],
-    graph: Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
-) -> Tuple[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT], Set[EdgeIdT]]: ...
+    graph: BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+) -> Tuple[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT], Set[EdgeIdT]]: ...
 
 
 def split_graph_by_edge(
-    graph: Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    graph: BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
     edge: EdgeIdT,
     keep: VertexIdT,
 ) -> Tuple[
-    Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
-    Set[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
+    BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT],
+    Set[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
 ]: ...
 
 
 def merge_graphs_by_edge(
-    graphs: Set[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
+    graphs: Set[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]],
     edge: EdgeIdT,
     keep: VertexIdT,
-) -> Tuple[Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT], Set[EdgeIdT]]: ...
+) -> Tuple[BaseGraph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT], Set[EdgeIdT]]: ...
