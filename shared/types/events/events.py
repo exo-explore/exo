@@ -39,14 +39,6 @@ from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus, RunnerStatusType
 
-MLXEvent = Event[
-    frozenset(
-        (
-            EventCategoryEnum.MutatesTaskState,
-            EventCategoryEnum.MutatesControlPlaneState,
-        )
-    )
-]
 TaskEvent = Event[EventCategoryEnum.MutatesTaskState]
 InstanceEvent = Event[EventCategoryEnum.MutatesInstanceState]
 ControlPlaneEvent = Event[EventCategoryEnum.MutatesControlPlaneState]
@@ -163,3 +155,23 @@ class DataPlaneEdgeReplacedAtomically(Event[EventCategoryEnum.MutatesDataPlaneSt
 class DataPlaneEdgeDeleted(Event[EventCategoryEnum.MutatesDataPlaneState]):
     event_type: EventTypes = DataPlaneEventTypes.DataPlaneEdgeDeleted
     edge_id: DataPlaneEdgeId
+
+"""
+TEST_EVENT_CATEGORIES_TYPE = FrozenSet[
+    Literal[
+        EventCategoryEnum.MutatesTaskState,
+        EventCategoryEnum.MutatesControlPlaneState,
+    ]
+]
+TEST_EVENT_CATEGORIES = frozenset(
+    (
+        EventCategoryEnum.MutatesTaskState,
+        EventCategoryEnum.MutatesControlPlaneState,
+    )
+)
+
+
+class TestEvent(Event[TEST_EVENT_CATEGORIES_TYPE]):
+    event_category: TEST_EVENT_CATEGORIES_TYPE = TEST_EVENT_CATEGORIES
+    test_id: int
+"""
