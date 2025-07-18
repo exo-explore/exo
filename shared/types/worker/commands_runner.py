@@ -4,9 +4,9 @@ from typing import Annotated, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai import FinishReason
-from shared.types.api import ChatTask
+from shared.types.tasks.common import ChatCompletionTaskData
 from shared.types.worker.mlx import Host
-from shared.types.worker.shards import PartitionStrategy, ShardMetadata
+from shared.types.worker.shards import ShardMetadata
 
 ## Messages passed TO the runner
 
@@ -26,15 +26,16 @@ class BaseRunnerMessage(BaseModel, Generic[MT]):
 
 class SetupMessage(BaseRunnerMessage[MessageType.Setup]):
     type: Literal[MessageType.Setup] = Field(default=MessageType.Setup, frozen=True)
-    model_shard_meta: ShardMetadata[PartitionStrategy]
+    model_shard_meta: ShardMetadata
     hosts: list[Host]
 
 
+# TODO: We probably want a general task message that can take any task type. Can be fixed later.
 class ChatTaskMessage(BaseRunnerMessage[MessageType.ChatTask]):
     type: Literal[MessageType.ChatTask] = Field(
         default=MessageType.ChatTask, frozen=True
     )
-    task: ChatTask
+    task_data: ChatCompletionTaskData
 
 
 class ExitMessage(BaseRunnerMessage[MessageType.Exit]):

@@ -6,5 +6,7 @@ runs:
   using: "composite"
   steps:
     - name: Run type checker
-      run: nix develop -c just check
+      run: |
+        nix develop -c just sync
+        nix develop -c just check
       shell: bash

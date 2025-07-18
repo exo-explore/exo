@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import Literal
 
 from shared.types.common import NodeId
 from shared.types.events.common import (
@@ -10,6 +11,9 @@ from shared.types.worker.common import NodeStatus
 
 
 class NodeStatusState(State[EventCategoryEnum.MutatesControlPlaneState]):
+    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = (
+        EventCategoryEnum.MutatesControlPlaneState
+    )
     node_status: Mapping[NodeId, NodeStatus]
 
 

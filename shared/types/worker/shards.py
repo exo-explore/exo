@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Generic, Literal, TypeAlias, TypeVar
 
 from pydantic import BaseModel, DirectoryPath, Field, TypeAdapter
 
@@ -11,7 +11,10 @@ class PartitionStrategy(str, Enum):
     pipeline = "pipeline"
 
 
-class ShardMetadata[PartitionStrategyT: PartitionStrategy](BaseModel):
+PartitionStrategyT = TypeVar("PartitionStrategyT", bound=PartitionStrategy, covariant=True)
+
+
+class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
     """
     Defines a specific shard of the model that is ready to be run on a device.
     Replaces previous `Shard` object.
@@ -24,7 +27,7 @@ class ShardMetadata[PartitionStrategyT: PartitionStrategy](BaseModel):
     model_path: DirectoryPath
 
 
-class PipelineShardMetadata(ShardMetadata[PartitionStrategy.pipeline]):
+class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):
     """
     Pipeline parallelism shard meta.
     """
@@ -36,19 +39,30 @@ class PipelineShardMetadata(ShardMetadata[PartitionStrategy.pipeline]):
     end_layer: Annotated[int, Field(ge=0)]
 
 
-_ShardMetadata = Annotated[
+ShardMetadata = Annotated[
     PipelineShardMetadata, Field(discriminator="partition_strategy")
 ]
-ShardMetaParser: TypeAdapter[ShardMetadata[PartitionStrategy]] = TypeAdapter(
-    _ShardMetadata
+ShardMetadataParser: TypeAdapter[ShardMetadata] = TypeAdapter(
+    ShardMetadata
 )
 
+# ---------------------------------------------------------------------------
+# Convenience aliases
+# ---------------------------------------------------------------------------
 
-class ShardPlacement[PartitionStrategyT: PartitionStrategy](BaseModel):
+# "ShardMeta" is a widely-used alias for the concrete, fully-parameterised
+# `ShardMetadata` type.  Defining it here avoids repetitive generic
+# parameters at call-sites and resolves unknown-import diagnostics in
+# downstream modules.
+
+ShardMeta: TypeAlias = ShardMetadata
+
+
+class ShardPlacement(BaseModel, Generic[PartitionStrategyT]):
     """
     A shard placement is the description of a model distributed across a set of nodes.
     The Generic[PartitionStrategyT] enforces that the shard assignments all use the same partition strategy.
     """
 
     model_id: ModelId
-    shard_assignments: dict[NodeId, ShardMetadata[PartitionStrategyT]]
+    shard_assignments: dict[NodeId, BaseShardMetadata[PartitionStrategyT]]

@@ -133,10 +133,16 @@ EventCategories = FrozenSet[EventCategory]
 assert_literal_union_covers_enum(EventCategory, EventCategoryEnum)
 
 
-class BaseEvent[SetMembersT: EventCategories | EventCategory](BaseModel):
-    event_type: EventTypes
+EventTypeT = EventTypes  # Type Alias placeholder; generic parameter will override
+
+
+class BaseEvent[
+    SetMembersT: EventCategories | EventCategory,
+    EventTypeLitT: EventTypes = EventTypes,
+](BaseModel):
+    event_type: EventTypeLitT
     event_category: SetMembersT
-    event_id: EventId
+    event_id: EventId = EventId()
 
     def check_event_was_sent_by_correct_node(self, origin_id: NodeId) -> bool: ...
 

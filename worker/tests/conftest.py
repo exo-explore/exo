@@ -1,39 +1,39 @@
+import asyncio
 import uuid
+from logging import Logger, getLogger
 from pathlib import Path
-from typing import Callable, cast
+from typing import Callable, Literal
 
 import pytest
-from openai.types.chat import ChatCompletionUserMessageParam
-from openai.types.chat.completion_create_params import (
-    CompletionCreateParamsNonStreaming,
-    CompletionCreateParamsStreaming,
-)
-from pydantic import TypeAdapter
 
+from shared.types.common import NodeId
 from shared.types.models.common import ModelId
+from shared.types.states.worker import NodeStatusState, WorkerState
 from shared.types.tasks.common import (
-    ChatCompletionStreamingTask,
+    ChatCompletionMessage,
+    ChatCompletionTaskData,
+    CompletionCreateParams,
     Task,
     TaskArtifact,
     TaskId,
     TaskState,
     TaskStatusOtherType,
-    TaskStatusType,
     TaskType,
 )
-from shared.types.worker.common import InstanceId
+from shared.types.worker.common import InstanceId, NodeStatus
+from shared.types.worker.instances import Instance, InstanceParams, TypeOfInstance
 from shared.types.worker.mlx import Host
-from shared.types.worker.shards import PipelineShardMetadata
-
-CompletionCreateParamsStreamingAdapter = TypeAdapter(CompletionCreateParamsStreaming)
-CompletionCreateParamsNonStreamingAdapter = TypeAdapter(
-    CompletionCreateParamsNonStreaming
+from shared.types.worker.ops import (
+    AssignRunnerOp,
+    RunnerUpOp,
 )
+from shared.types.worker.runners import RunnerId, ShardAssignments
+from shared.types.worker.shards import PipelineShardMetadata
+from worker.main import Worker
 
 
-# Concrete TaskArtifact implementation for pending streaming tasks
 class PendingStreamingTaskArtifact(
-    TaskArtifact[TaskType.ChatCompletionStreaming, TaskStatusOtherType.Pending]
+    TaskArtifact[Literal[TaskType.ChatCompletion], Literal[TaskStatusOtherType.Pending]]
 ):
     pass
 
@@ -97,38 +97,119 @@ def user_message():
 
 
 @pytest.fixture
-def chat_completion_params(user_message: str):
+def completion_create_params(user_message: str) -> CompletionCreateParams:
     """Creates ChatCompletionParams with the given message"""
-    return CompletionCreateParamsStreaming(
+    return CompletionCreateParams(
         model="gpt-4",
-        messages=[ChatCompletionUserMessageParam(role="user", content=user_message)],
+        messages=[ChatCompletionMessage(role="user", content=user_message)],
         stream=True,
     )
 
+@pytest.fixture
+def chat_completion_task(completion_create_params: CompletionCreateParams) -> ChatCompletionTaskData:
+    """Creates a ChatCompletionTask directly for serdes testing"""
+    return ChatCompletionTaskData(task_params=completion_create_params)
 
 @pytest.fixture
-def chat_completion_streaming_task_data(
-    chat_completion_params: CompletionCreateParamsStreaming,
-):
-    """Creates ChatCompletionStreamingTask from params"""
-    return ChatCompletionStreamingTask(task_data=chat_completion_params)
-
-
-@pytest.fixture
-def streaming_task(
-    chat_completion_streaming_task_data: CompletionCreateParamsStreaming,
-) -> Task[TaskType, TaskStatusType]:
+def chat_task(
+    completion_create_params: CompletionCreateParams,
+) -> Task[Literal[TaskType.ChatCompletion], TaskStatusOtherType]:
     """Creates the final Task object"""
-    task = Task(
+    return Task[Literal[TaskType.ChatCompletion], TaskStatusOtherType](
         task_id=TaskId(),
-        task_type=TaskType.ChatCompletionStreaming,
-        task_params=ChatCompletionStreamingTask(
-            task_data=chat_completion_streaming_task_data
+        task_type=TaskType.ChatCompletion,
+        task_data=ChatCompletionTaskData(
+            task_params=completion_create_params
         ),
-        task_state=TaskState(
+        task_state=TaskState[TaskStatusOtherType, Literal[TaskType.ChatCompletion]](
             task_status=TaskStatusOtherType.Pending,
             task_artifact=PendingStreamingTaskArtifact(),
         ),
         on_instance=InstanceId(),
     )
-    return cast(Task[TaskType, TaskStatusType], task)
+
+@pytest.fixture
+def worker_state():
+    node_status=NodeStatusState(
+            node_status={
+                NodeId(uuid.uuid4()): NodeStatus.Idle
+            }
+        )
+
+    return WorkerState(
+        node_status=node_status,
+    )
+
+@pytest.fixture
+def logger() -> Logger:
+    return getLogger("test_logger")
+
+@pytest.fixture
+def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], hosts_one: list[Host]):
+    def _instance(node_id: NodeId) -> Instance:
+        model_id = ModelId(uuid.uuid4())
+        runner_id = RunnerId(uuid.uuid4())        
+
+        shard_assignments = ShardAssignments(
+            model_id=model_id,
+            runner_to_shard={
+                runner_id: pipeline_shard_meta(1, 0)
+            },
+            node_to_runner={node_id: runner_id}
+        )
+        
+        instance_params = InstanceParams(
+            shard_assignments=shard_assignments,
+            hosts=hosts_one
+        )
+        
+        return Instance(
+            instance_id=InstanceId(uuid.uuid4()),
+            instance_params=instance_params,
+            instance_type=TypeOfInstance.ACTIVE
+        )
+    return _instance
+
+@pytest.fixture
+def worker(worker_state: WorkerState, logger: Logger):
+    return Worker(NodeId(uuid.uuid4()), worker_state, logger)
+
+@pytest.fixture
+async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId], Instance]):
+    """Fixture that provides a worker with an already assigned runner."""
+    await worker.start()
+    await asyncio.sleep(0.01)
+    
+    instance_obj: Instance = instance(worker.node_id)
+    
+    # Extract runner_id from shard assignments
+    runner_id = next(iter(instance_obj.instance_params.shard_assignments.runner_to_shard))
+    
+    # Assign the runner
+    assign_op = AssignRunnerOp(
+        runner_id=runner_id,
+        shard_metadata=instance_obj.instance_params.shard_assignments.runner_to_shard[runner_id],
+        hosts=instance_obj.instance_params.hosts,
+        instance_id=instance_obj.instance_id,
+    )
+    
+    async for _ in worker._execute_op(assign_op):  # type: ignore[misc]
+        pass
+    
+    return worker, runner_id, instance_obj
+
+@pytest.fixture
+async def worker_with_running_runner(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance]):
+    """Fixture that provides a worker with an already assigned runner."""
+    worker, runner_id, instance_obj = worker_with_assigned_runner
+
+    runner_up_op = RunnerUpOp(runner_id=runner_id)
+    async for _ in worker._execute_op(runner_up_op):  # type: ignore[misc]
+        pass
+
+    # Is the runner actually running?
+    supervisor = next(iter(worker.assigned_runners.values())).runner
+    assert supervisor is not None
+    assert supervisor.healthy
+
+    return worker, runner_id, instance_obj

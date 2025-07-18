@@ -1,13 +1,19 @@
 import asyncio
-from typing import Callable
+from typing import Callable, Literal
 
 import pytest
 
 from shared.openai import FinishReason
 from shared.types.events.chunks import TokenChunk
-from shared.types.tasks.common import Task, TaskStatusType, TaskType
+from shared.types.tasks.common import (
+    ChatCompletionTaskData,
+    Task,
+    TaskStatusOtherType,
+    TaskStatusType,
+    TaskType,
+)
 from shared.types.worker.mlx import Host
-from shared.types.worker.shards import PipelineShardMeta
+from shared.types.worker.shards import PipelineShardMetadata
 from worker.runner.runner_supervisor import RunnerSupervisor
 
 
@@ -19,12 +25,14 @@ def user_message():
 
 @pytest.mark.asyncio
 async def test_supervisor_single_node_response(
-    pipeline_shard_meta: Callable[..., PipelineShardMeta],
+    pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    streaming_task: Task[TaskType, TaskStatusType],
+    chat_task: Task[TaskType, TaskStatusType],
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
+
+    print(f'{model_shard_meta=}')
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
@@ -35,7 +43,7 @@ async def test_supervisor_single_node_response(
         full_response = ""
         stop_reason: FinishReason | None = None
 
-        async for chunk in supervisor.stream_response(task=streaming_task):
+        async for chunk in supervisor.stream_response(task=chat_task):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.chunk_data.text
                 if chunk.chunk_data.finish_reason:
@@ -53,9 +61,9 @@ async def test_supervisor_single_node_response(
 
 @pytest.mark.asyncio
 async def test_supervisor_two_node_response(
-    pipeline_shard_meta: Callable[..., PipelineShardMeta],
+    pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    streaming_task: Task[TaskType, TaskStatusType],
+    chat_task: Task[TaskType, TaskStatusType],
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     supervisor_0 = await RunnerSupervisor.create(
@@ -76,13 +84,13 @@ async def test_supervisor_two_node_response(
 
         async def collect_response_0():
             nonlocal full_response_0
-            async for chunk in supervisor_0.stream_response(task=streaming_task):
+            async for chunk in supervisor_0.stream_response(task=chat_task):
                 if isinstance(chunk, TokenChunk):
                     full_response_0 += chunk.chunk_data.text
 
         async def collect_response_1():
             nonlocal full_response_1
-            async for chunk in supervisor_1.stream_response(task=streaming_task):
+            async for chunk in supervisor_1.stream_response(task=chat_task):
                 if isinstance(chunk, TokenChunk):
                     full_response_1 += chunk.chunk_data.text
 
@@ -107,9 +115,9 @@ async def test_supervisor_two_node_response(
 
 @pytest.mark.asyncio
 async def test_supervisor_early_stopping(
-    pipeline_shard_meta: Callable[..., PipelineShardMeta],
+    pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    streaming_task: Task[TaskType, TaskStatusType],
+    chat_task: Task[Literal[TaskType.ChatCompletion], TaskStatusOtherType],
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -120,18 +128,23 @@ async def test_supervisor_early_stopping(
     )
 
     max_tokens = 50
+    assert chat_task.task_type == TaskType.ChatCompletion
+    print(f'chat_task.task_data: {type(chat_task.task_data)}')
+    assert isinstance(chat_task.task_data, ChatCompletionTaskData)
+    task_data: ChatCompletionTaskData = chat_task.task_data
 
     try:
-        streaming_task.task_data.task_data.max_tokens = max_tokens
-        streaming_task.task_data.task_data.messages[
-            0
-        ].content = "Please count from 1 to 100"
+        task_data.task_params.max_tokens = max_tokens
+        # Convert messages to a list to allow indexing, then update the first message's content
+        messages = list(task_data.task_params.messages)
+        messages[0].content = "Please count from 1 to 100"
+        task_data.task_params.messages = messages
 
         full_response = ""
         count = 0
         stop_reason: FinishReason | None = None
 
-        async for chunk in supervisor.stream_response(task=streaming_task):
+        async for chunk in supervisor.stream_response(task=chat_task):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.chunk_data.text
                 count += 1
@@ -152,9 +165,9 @@ async def test_supervisor_early_stopping(
 
 @pytest.mark.asyncio
 async def test_supervisor_handles_terminated_runner(
-    pipeline_shard_meta: Callable[..., PipelineShardMeta],
+    pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    streaming_task: Task[TaskType, TaskStatusType],
+    chat_task: Task[TaskType, TaskStatusType],
 ):
     """Test that the supervisor handles a terminated runner"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -176,9 +189,9 @@ async def test_supervisor_handles_terminated_runner(
 
 @pytest.mark.asyncio
 async def test_supervisor_handles_killed_runner(
-    pipeline_shard_meta: Callable[..., PipelineShardMeta],
+    pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    streaming_task: Task[TaskType, TaskStatusType],
+    chat_task: Task[TaskType, TaskStatusType],
 ):
     """Test that the supervisor handles a killed runner"""
     model_shard_meta = pipeline_shard_meta(1, 0)

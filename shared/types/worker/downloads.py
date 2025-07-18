@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, PositiveInt
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
 from shared.types.models.sources import ModelSource
-from shared.types.worker.shards import PartitionStrategy, ShardMetadata
+from shared.types.worker.shards import ShardMetadata
 
 
 class DownloadProgressData(BaseModel):
@@ -34,21 +34,21 @@ class BaseDownloadProgress[DownloadStatusT: DownloadStatus](BaseModel):
 
 
 class DownloadPending(BaseDownloadProgress[DownloadStatus.Pending]):
-    download_status: Literal[DownloadStatus.Pending] = Field(DownloadStatus.Pending)
+    download_status: Literal[DownloadStatus.Pending] = Field(default=DownloadStatus.Pending)
 
 
 class DownloadCompleted(BaseDownloadProgress[DownloadStatus.Completed]):
-    download_status: Literal[DownloadStatus.Completed] = Field(DownloadStatus.Completed)
+    download_status: Literal[DownloadStatus.Completed] = Field(default=DownloadStatus.Completed)
 
 
 class DownloadFailed(BaseDownloadProgress[DownloadStatus.Failed]):
-    download_status: Literal[DownloadStatus.Failed] = Field(DownloadStatus.Failed)
+    download_status: Literal[DownloadStatus.Failed] = Field(default=DownloadStatus.Failed)
     error_message: str
 
 
 class DownloadOngoing(BaseDownloadProgress[DownloadStatus.Downloading]):
     download_status: Literal[DownloadStatus.Downloading] = Field(
-        DownloadStatus.Downloading
+        default=DownloadStatus.Downloading
     )
     download_progress: DownloadProgressData
 
@@ -75,6 +75,6 @@ DownloadEffectHandler = Callable[
 def download_shard(
     model_id: ModelId,
     model_source: ModelSource,
-    shard_metadata: ShardMetadata[PartitionStrategy],
+    shard_metadata: ShardMetadata,
     effect_handlers: Sequence[DownloadEffectHandler],
 ) -> None: ...

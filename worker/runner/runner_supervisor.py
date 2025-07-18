@@ -2,10 +2,16 @@ import asyncio
 import contextlib
 import sys
 from collections.abc import AsyncGenerator
+from types import CoroutineType
 from typing import Any, Callable
 
 from shared.types.events.chunks import GenerationChunk, TokenChunk, TokenChunkData
-from shared.types.tasks.common import Task, TaskStatusType, TaskType
+from shared.types.tasks.common import (
+    ChatCompletionTaskData,
+    Task,
+    TaskStatusTypeT,
+    TaskTypeT,
+)
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     ErrorResponse,
@@ -31,14 +37,15 @@ class RunnerSupervisor:
     Use the class method `create` to properly initialize an instance.
     """
 
+    # TODO: Logger.
     def __init__(
         self,
-        model_shard_meta: ShardMetadata[Any],
+        model_shard_meta: ShardMetadata,
         hosts: list[Host],
         runner_process: asyncio.subprocess.Process,
     ):
         """Private constructor. Use RunnerSupervisor.create() instead."""
-        self.model_shard_meta: ShardMetadata[Any] = model_shard_meta
+        self.model_shard_meta: ShardMetadata = model_shard_meta
         self.hosts: list[Host] = hosts
         self.runner_process: asyncio.subprocess.Process = runner_process
         self.running: bool = True
@@ -50,7 +57,7 @@ class RunnerSupervisor:
     @classmethod
     async def create(
         cls,
-        model_shard_meta: ShardMetadata[Any],
+        model_shard_meta: ShardMetadata,
         hosts: list[Host],
     ) -> "RunnerSupervisor":
         """
@@ -68,6 +75,7 @@ class RunnerSupervisor:
             )
         )
 
+        print(f'{model_shard_meta=}')
         await supervisor_write_message(
             runner_process,
             SetupMessage(
@@ -140,8 +148,8 @@ class RunnerSupervisor:
 
     async def stream_response(
         self,
-        task: Task[TaskType, TaskStatusType],
-        request_started_callback: Callable[[], None] | None = None,
+        task: Task[TaskTypeT, TaskStatusTypeT],
+        request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None, # fyi this is async now
     ) -> AsyncGenerator[GenerationChunk]:
         """
         Streams a chat request from the model.
@@ -151,12 +159,19 @@ class RunnerSupervisor:
         if not self.healthy:
             raise RuntimeError("Runner process was found to be dead")
 
+        task_data = task.task_data
+        assert isinstance(task_data, ChatCompletionTaskData) # this is messy for now.
         await supervisor_write_message(
             proc=self.runner_process,
             message=ChatTaskMessage(
-                task=task.task_data,
+                task_data=task_data,
             ),
         )
+
+        # This is easy for now. If we need more reliability, the runner can have a new 'ready' message type.
+        if request_started_callback is not None:
+            await request_started_callback()
+
 
         while True:
             line: RunnerResponse | None = await supervisor_read_response(

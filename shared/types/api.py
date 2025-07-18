@@ -1,9 +1,8 @@
 from typing import Literal
 
-from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
-from shared.types.tasks.common import TaskId
+from shared.types.tasks.common import CompletionCreateParams, TaskId
 
 
 class ChatTask(BaseModel):

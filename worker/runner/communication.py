@@ -23,6 +23,8 @@ async def supervisor_write_message(
     )
 
     encoded: bytes = message.model_dump_json().encode("utf-8") + b"\n"
+    print(f"message: {message}")
+    # print(f"encoded: {encoded}")
     proc.stdin.write(encoded)
     await proc.stdin.drain()
 
@@ -31,7 +33,7 @@ async def runner_read_message() -> RunnerMessage:
     loop = asyncio.get_running_loop()
 
     line: bytes = await loop.run_in_executor(None, sys.stdin.buffer.readline)
-    if not line:
+    if not line: # This seems to be what triggers when we don't clean up the runner neatly and leave the process dangling.
         raise EOFError("No more data to read")
     line = line.strip()
 

@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from enum import Enum
 from typing import Annotated, Generic, Literal, TypeVar
 
@@ -7,71 +7,83 @@ from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
 from shared.types.worker.common import RunnerId
-from shared.types.worker.downloads import BaseDownloadProgress, DownloadStatus
-from shared.types.worker.shards import PartitionStrategy, ShardMetadata
+from shared.types.worker.downloads import DownloadProgress
+from shared.types.worker.shards import ShardMetadata
 
 
 class RunnerStatusType(str, Enum):
-    Rejected = "Rejected"
-    Starting = "Starting"
+    Assigned = "Assigned"
     Downloading = "Downloading"
+    Ready = "Ready"
+    Starting = "Starting"
+    Loaded = "Loaded"
     Running = "Running"
     Failed = "Failed"
 
 
-RunnerStatusTypeT = TypeVar("RunnerStatusTypeT", bound=RunnerStatusType)
+RunnerStatusTypeT = TypeVar("RunnerStatusTypeT", bound=RunnerStatusType, covariant=True)
 
 
-class RunnerStatus(BaseModel, Generic[RunnerStatusTypeT]):
+class BaseRunnerStatus(BaseModel, Generic[RunnerStatusTypeT]):
     runner_status: RunnerStatusTypeT
 
 
-class RejectedRunnerStatus(RunnerStatus[RunnerStatusType.Rejected]):
-    runner_status: Literal[RunnerStatusType.Rejected]
+# Emitted by the Master
+class AssignedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Assigned]):
+    runner_status: Literal[RunnerStatusType.Assigned] = Field(default=RunnerStatusType.Assigned)
 
+# Emitted by the Worker
+class DownloadingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Downloading]):
+    runner_status: Literal[RunnerStatusType.Downloading] = Field(default=RunnerStatusType.Downloading)
+    download_progress: DownloadProgress
 
-class StartingRunnerStatus(RunnerStatus[RunnerStatusType.Starting]):
-    runner_status: Literal[RunnerStatusType.Starting]
+# Emitted by the Worker
+class ReadyRunnerStatus(BaseRunnerStatus[RunnerStatusType.Ready]):
+    runner_status: Literal[RunnerStatusType.Ready] = Field(default=RunnerStatusType.Ready)
 
+# Emitted by the Master
+class StartingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Starting]):
+    runner_status: Literal[RunnerStatusType.Starting] = Field(default=RunnerStatusType.Starting)
 
-class DownloadingRunnerStatus(RunnerStatus[RunnerStatusType.Downloading]):
-    runner_status: Literal[RunnerStatusType.Downloading]
-    download_progress: BaseDownloadProgress[DownloadStatus]
+# Emitted by the Worker
+class LoadedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Loaded]):
+    runner_status: Literal[RunnerStatusType.Loaded] = Field(default=RunnerStatusType.Loaded)
 
+# Emitted by the Worker
+class RunningRunnerStatus(BaseRunnerStatus[RunnerStatusType.Running]):
+    runner_status: Literal[RunnerStatusType.Running] = Field(default=RunnerStatusType.Running)
 
-class RunningRunnerStatus(RunnerStatus[RunnerStatusType.Running]):
-    runner_status: Literal[RunnerStatusType.Running]
-
-
-class FailedRunnerStatus(RunnerStatus[RunnerStatusType.Failed]):
-    runner_status: Literal[RunnerStatusType.Failed]
+# Emitted by the Worker
+class FailedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Failed]):
+    runner_status: Literal[RunnerStatusType.Failed] = Field(default=RunnerStatusType.Failed)
     error_message: str | None = None
 
 
-_RunnerStatus = Annotated[
-    RejectedRunnerStatus
-    | StartingRunnerStatus
+RunnerStatus = Annotated[
+    AssignedRunnerStatus
     | DownloadingRunnerStatus
+    | ReadyRunnerStatus
+    | StartingRunnerStatus
+    | LoadedRunnerStatus
     | RunningRunnerStatus
     | FailedRunnerStatus,
     Field,
 ]
-RunnerStatusParser: TypeAdapter[RunnerStatus[RunnerStatusType]] = TypeAdapter(
-    _RunnerStatus
+RunnerStatusParser: TypeAdapter[RunnerStatus] = TypeAdapter(
+    RunnerStatus
 )
 
 
 class ShardAssignments(BaseModel):
     model_id: ModelId
-    runner_to_shard: Mapping[RunnerId, ShardMetadata[PartitionStrategy]]
-    node_to_runner: Mapping[NodeId, Sequence[RunnerId]]
+    runner_to_shard: Mapping[RunnerId, ShardMetadata]
+    node_to_runner: Mapping[NodeId, RunnerId]
 
     @model_validator(mode="after")
     def validate_runners_exist(self) -> "ShardAssignments":
-        for runners in self.node_to_runner.values():
-            for runner_id in runners:
-                if runner_id not in self.runner_to_shard:
-                    raise ValueError(
-                        f"Runner {runner_id} in node_to_runner does not exist in runner_to_shard"
-                    )
+        for runner_id in self.node_to_runner.values():
+            if runner_id not in self.runner_to_shard:
+                raise ValueError(
+                    f"Runner {runner_id} in node_to_runner does not exist in runner_to_shard"
+                )
         return self

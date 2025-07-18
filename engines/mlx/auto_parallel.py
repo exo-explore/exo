@@ -79,7 +79,6 @@ def auto_parallel(
     Returns:
       The parallelized model
     """
-
     inner_model_instance: nn.Module = inner_model(model)
 
     # Handle both model.layers and model.h cases

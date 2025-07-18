@@ -1,8 +1,8 @@
-from typing import Callable, Literal, TypeVar
+from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
-from shared.types.tasks.common import Task, TaskStatusOtherType, TaskType
+from shared.types.tasks.common import ChatCompletionTaskData
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     RunnerMessageTypeAdapter,
@@ -35,9 +35,9 @@ def test_supervisor_setup_message_serdes(
 
 
 def test_supervisor_task_message_serdes(
-    streaming_task: Task[TaskType, Literal[TaskStatusOtherType.Pending]],
+    chat_completion_task: ChatCompletionTaskData,
 ):
     task_message = ChatTaskMessage(
-        task=streaming_task.task_data,
+        task_data=chat_completion_task,
     )
     assert_equal_serdes(task_message, RunnerMessageTypeAdapter)

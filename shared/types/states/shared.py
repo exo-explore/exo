@@ -14,7 +14,7 @@ from shared.types.tasks.common import (
 )
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import BaseInstance
-from shared.types.worker.runners import RunnerId, RunnerStatus, RunnerStatusType
+from shared.types.worker.runners import RunnerId, RunnerStatus
 
 
 class Instances(State[EventCategoryEnum.MutatesInstanceState]):
@@ -42,7 +42,7 @@ class Runners(State[EventCategoryEnum.MutatesRunnerStatus]):
     event_category: Literal[EventCategoryEnum.MutatesRunnerStatus] = (
         EventCategoryEnum.MutatesRunnerStatus
     )
-    runner_statuses: Mapping[RunnerId, RunnerStatus[RunnerStatusType]] = {}
+    runner_statuses: Mapping[RunnerId, RunnerStatus] = {}
 
 
 class SharedState(BaseModel):

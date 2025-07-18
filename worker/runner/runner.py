@@ -1,8 +1,6 @@
 import asyncio
 import concurrent.futures
-from asyncio.events import AbstractEventLoop
 from collections.abc import AsyncGenerator
-from concurrent.futures.thread import ThreadPoolExecutor
 from functools import partial
 from typing import Callable, cast
 
@@ -13,9 +11,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx
 from shared.openai import FinishReason
-from shared.types.tasks.common import (
-    TaskData,
-)
+from shared.types.tasks.common import ChatCompletionTaskData, CompletionCreateParams
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     ExitMessage,
@@ -24,8 +20,6 @@ from shared.types.worker.commands_runner import (
     RunnerMessage,
     SetupMessage,
 )
-from shared.types.worker.mlx import Host
-from shared.types.worker.shards import ShardMeta
 from shared.utils import ensure_type
 from worker.runner.communication import (
     runner_print,
@@ -40,7 +34,7 @@ async def _mlx_generate(
     model: nn.Module,
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
-    task: TaskData,
+    task: ChatCompletionTaskData,
 ) -> AsyncGenerator[GenerationResponse]:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[GenerationResponse | Exception | object] = asyncio.Queue()
@@ -69,17 +63,17 @@ async def _mlx_generate(
             _ = loop.call_soon_threadsafe(queue.put_nowait, sentinel)
 
     # Currently we support chat-completion tasks only.
-    task_data = task.task_data
+    task_data: CompletionCreateParams = task.task_params
 
     runner_print(f"task_data: {task_data}")
 
     prompt = await apply_chat_template(
         mlx_executor=mlx_executor,
         tokenizer=tokenizer,
-        chat_task=task_data,
+        chat_task_data=task_data,
     )
 
-    max_tokens = task_data.max_tokens or 100
+    max_tokens = task.task_params.max_tokens or 100
     generation_fn = partial(_generate_tokens, prompt, max_tokens)
 
     future = loop.run_in_executor(mlx_executor, generation_fn)
@@ -94,9 +88,12 @@ async def _mlx_generate(
         if isinstance(item, Exception):
             raise item
 
+
         assert isinstance(item, GenerationResponse)  # constrain datatype
+        runner_print(item.text)
         yield item
 
+    # TODO: There is a big bug on this line!
     assert future.done()
 
 
@@ -105,17 +102,15 @@ async def main():
         runner_print("hello from the runner")
 
         # Get setup info from worker
-        init_message: RunnerMessage = await runner_read_message()
-        setup_message: SetupMessage = ensure_type(init_message, SetupMessage)
-        model_shard_meta: ShardMeta = setup_message.model_shard_meta
-        hosts: list[Host] = setup_message.hosts
+        init_message = await runner_read_message()
+        setup_message = ensure_type(init_message, SetupMessage)
+        model_shard_meta = setup_message.model_shard_meta
+        hosts = setup_message.hosts
 
-        mlx_executor: ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1
-        )
-        loop: AbstractEventLoop = asyncio.get_running_loop()
+        mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_running_loop()
 
-        runner_print(f"got here; {model_shard_meta.model_path}")
+        runner_print(f"got here; {hosts}")
 
         model, tokenizer, sampler = await loop.run_in_executor(
             mlx_executor,
@@ -125,13 +120,12 @@ async def main():
         while True:
             message: RunnerMessage = await runner_read_message()
             match message:
-                case ChatTaskMessage(task=task_data):
+                case ChatTaskMessage(task_data=task_data):
                     runner_print(f"received chat request: {task_data}")
-
                     # Ensure we have a chat-completion task subtype
-                    messages = task_data.task_data.messages
-                    messages_dicts = [msg.model_dump() for msg in messages]
-                    runner_print(f"messages_dicts RUNNER: {messages_dicts}")
+                    prompt = task_data.task_params.messages[0]
+                    if prompt.content is not None and 'EXO RUNNER MUST FAIL' in prompt.content:
+                        raise Exception('Artificial runner exception - for testing purposes only.')
 
                     # Generate responses using the actual MLX generation
                     async for generation_response in _mlx_generate(
