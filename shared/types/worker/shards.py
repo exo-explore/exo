@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Annotated, Generic, Literal, TypeAlias, TypeVar
 
-from pydantic import BaseModel, DirectoryPath, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.common import NodeId
 from shared.types.models import ModelId
@@ -24,7 +24,6 @@ class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
     device_rank: int
     world_size: int
     model_id: ModelId
-    model_path: DirectoryPath
 
 
 class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):
@@ -37,6 +36,18 @@ class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline
     )
     start_layer: Annotated[int, Field(ge=0)]
     end_layer: Annotated[int, Field(ge=0)]
+    n_layers: Annotated[int, Field(ge=0)]
+
+    @property
+    def is_first_layer(self) -> bool:
+        return self.start_layer == 0
+    
+    @property
+    def is_last_layer(self) -> bool:
+        return self.end_layer == self.n_layers - 1
+
+    def __hash__(self) -> int:
+        return hash((self.model_id, self.start_layer, self.end_layer, self.n_layers))
 
 
 ShardMetadata = Annotated[

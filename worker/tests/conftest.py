@@ -30,7 +30,7 @@ from worker.main import Worker
 
 
 @pytest.fixture
-def pipeline_shard_meta():
+def pipeline_shard_meta(tmp_path: Path):
     def _pipeline_shard_meta(
         num_nodes: int = 1, device_rank: int = 0
     ) -> PipelineShardMetadata:
@@ -46,9 +46,7 @@ def pipeline_shard_meta():
         return PipelineShardMetadata(
             device_rank=device_rank,
             model_id=ModelId(uuid.uuid4()),
-            model_path=Path(
-                "~/.exo/models/mlx-community--Llama-3.2-1B-Instruct-4bit/"
-            ).expanduser(),
+            n_layers=total_layers,
             start_layer=start_layer,
             end_layer=end_layer,
             world_size=num_nodes,

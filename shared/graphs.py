@@ -1,8 +1,9 @@
 from dataclasses import dataclass
-from typing import Mapping, Set
+from typing import Any, Callable, Mapping, Set
 
 import rustworkx as rx
 from pydantic import TypeAdapter
+from pydantic_core import core_schema
 
 from shared.types.graphs.common import (
     Edge,
@@ -15,6 +16,7 @@ from shared.types.graphs.common import (
     VertexIdT,
     VertexTypeT,
 )
+from shared.types.graphs.pydantic import PydanticGraph
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,44 @@ class Graph(MutableGraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]):
         self._graph = rx.PyDiGraph()
         self._vertex_id_to_index = {}
         self._edge_id_to_endpoints = {}
+
+    # TODO: I'm not sure if this is the right thing, but we'll simplify the graph stuff anyway so fine for now.
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source: type[Any],
+        handler: Callable[[Any], core_schema.CoreSchema],
+    ) -> core_schema.CoreSchema:
+        pydantic_graph_schema = handler(PydanticGraph)
+
+        def serializer(
+            instance: "Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]",
+        ) -> dict[str, Any]:
+            return {
+                "vertices": list(instance.get_vertex_data(instance.list_vertices())),
+                "edges": list(instance.get_edge_data(instance.list_edges())),
+            }
+
+        return core_schema.json_or_python_schema(
+            json_schema=pydantic_graph_schema,
+            python_schema=core_schema.no_info_plain_validator_function(cls.validate),
+            serialization=core_schema.plain_serializer_function_ser_schema(serializer),
+        )
+
+    @classmethod
+    def validate(
+        cls, value: Any # type: ignore
+    ) -> "Graph[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]":
+        if isinstance(value, cls):
+            return value
+
+        if isinstance(value, dict):
+            raise NotImplementedError(
+                "Deserializing a Graph from a dictionary is not yet supported. "
+                "Please initialize the Graph object directly."
+            )
+
+        raise TypeError("Unsupported type for Graph validation")
 
     ###
     # GraphProtocol methods

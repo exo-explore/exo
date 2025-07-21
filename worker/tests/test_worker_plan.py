@@ -23,6 +23,7 @@ from shared.types.worker.runners import (
     ShardAssignments,
 )
 from shared.types.worker.shards import PipelineShardMetadata
+from worker.download.download_utils import build_model_path
 from worker.main import AssignedRunner, Worker
 
 
@@ -148,9 +149,9 @@ def _build_worker_state(
             device_rank=0,
             world_size=1,
             model_id=model_id,
-            model_path=model_subdir,
             start_layer=0,
             end_layer=0,
+            n_layers=1,
         )
 
         shard_assignments = ShardAssignments(
@@ -233,7 +234,7 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
         )
         worker.assigned_runners[ctx.runner_id] = assigned_runner
 
-        path_downloaded_map[str(ctx.shard_metadata.model_path)] = runner_case.downloaded
+        path_downloaded_map[str(build_model_path(ctx.shard_metadata.model_id))] = runner_case.downloaded
 
     # Stub filesystem existence check ------------------------------------------------------
     from worker import main as worker_main  # local import for module-scoped os

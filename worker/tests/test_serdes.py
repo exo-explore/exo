@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
@@ -26,6 +27,7 @@ def assert_equal_serdes(obj: T, typeadapter: TypeAdapter[T]):
 def test_supervisor_setup_message_serdes(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
+    tmp_path: Path,
 ):
     setup_message = SetupMessage(
         model_shard_meta=pipeline_shard_meta(1, 0),

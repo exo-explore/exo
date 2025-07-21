@@ -1,6 +1,6 @@
 import asyncio
 import os
-from asyncio.queues import Queue
+from asyncio import Queue
 from functools import partial
 from logging import Logger
 from typing import AsyncGenerator, Optional
@@ -39,6 +39,7 @@ from shared.types.worker.runners import (
     RunningRunnerStatus,
 )
 from shared.types.worker.shards import ShardMetadata
+from worker.download.download_utils import build_model_path
 from worker.runner.runner_supervisor import RunnerSupervisor
 
 
@@ -56,7 +57,7 @@ class AssignedRunner(BaseModel):
     @property
     def is_downloaded(self) -> bool:
         # TODO: Do this properly with huggingface validating each of the files.
-        return os.path.exists(self.shard_metadata.model_path)
+        return os.path.exists(build_model_path(self.shard_metadata.model_id))
 
     def status_update_event(self) -> RunnerStatusUpdated:
         return RunnerStatusUpdated(
@@ -334,7 +335,9 @@ class Worker:
     # Handle state updates
     async def _loop(self):
         while True:
-            state_copy = self.state.model_copy(deep=True)
+            state_copy = self.state.model_copy(deep=False)
+            state_copy.task_inbox = []
+            state_copy.task_outbox = []
 
             op: RunnerOp | None = self.plan(state_copy)            
 

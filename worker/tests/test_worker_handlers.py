@@ -1,6 +1,7 @@
 ## Tests for worker state handlers
 
 import asyncio
+from pathlib import Path
 from typing import Callable
 
 import pytest
@@ -35,7 +36,7 @@ def user_message():
     return "What, according to Douglas Adams, is the meaning of life, the universe and everything?"
 
 @pytest.mark.asyncio
-async def test_assign_op(worker: Worker, instance: Callable[[NodeId], Instance]):
+async def test_assign_op(worker: Worker, instance: Callable[[NodeId], Instance], tmp_path: Path):
     await worker.start()
     await asyncio.sleep(0.01)
 
@@ -67,7 +68,7 @@ async def test_assign_op(worker: Worker, instance: Callable[[NodeId], Instance])
     assert isinstance(worker.assigned_runners[runner_id].status, ReadyRunnerStatus)
 
 @pytest.mark.asyncio
-async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance]):
+async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], tmp_path: Path):
     worker, runner_id, _ = worker_with_assigned_runner
 
     unassign_op = UnassignRunnerOp(
@@ -84,7 +85,7 @@ async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
     assert len(events) == 0
 
 @pytest.mark.asyncio
-async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], chat_task: Task):
+async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], chat_task: Task, tmp_path: Path):
     worker, runner_id, _ = worker_with_assigned_runner
 
     runner_up_op = RunnerUpOp(runner_id=runner_id)
@@ -117,7 +118,7 @@ async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId,
     await runner.astop() # Neat cleanup.
 
 @pytest.mark.asyncio
-async def test_runner_down_op(worker_with_running_runner: tuple[Worker, RunnerId, Instance]):
+async def test_runner_down_op(worker_with_running_runner: tuple[Worker, RunnerId, Instance], tmp_path: Path):
     worker, runner_id, _ = worker_with_running_runner
 
     runner_down_op = RunnerDownOp(runner_id=runner_id)
@@ -130,7 +131,7 @@ async def test_runner_down_op(worker_with_running_runner: tuple[Worker, RunnerId
     assert isinstance(events[0].runner_status, ReadyRunnerStatus)
 
 @pytest.mark.asyncio
-async def test_download_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance]):
+async def test_download_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], tmp_path: Path):
     worker, runner_id, instance_obj = worker_with_assigned_runner
 
     print(f'{worker.assigned_runners=}')
@@ -153,7 +154,7 @@ async def test_download_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
 @pytest.mark.asyncio
 async def test_execute_task_op(
     worker_with_running_runner: tuple[Worker, RunnerId, Instance], 
-    chat_task: Task):
+    chat_task: Task, tmp_path: Path):
     worker, runner_id, _ = worker_with_running_runner
 
     execute_task_op = ExecuteTaskOp(
@@ -187,7 +188,7 @@ async def test_execute_task_op(
 @pytest.mark.asyncio
 async def test_execute_task_fails(
     worker_with_running_runner: tuple[Worker, RunnerId, Instance], 
-    chat_task: Task):
+    chat_task: Task, tmp_path: Path):
     worker, runner_id, _ = worker_with_running_runner
 
     messages = chat_task.task_params.messages

@@ -1,8 +1,8 @@
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from queue import Queue
+from typing import List
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.common import NodeId
 from shared.types.graphs.topology import (
@@ -36,6 +36,6 @@ class State(BaseModel):
         edge_base=TypeAdapter(TopologyEdge), vertex_base=TypeAdapter(TopologyNode)
     )
     history: Sequence[OrphanedPartOfTopology] = []
-    task_inbox: Queue[Task] = Queue()
-    task_outbox: Queue[Task] = Queue()
+    task_inbox: List[Task] = Field(default_factory=list)
+    task_outbox: List[Task] = Field(default_factory=list)
     cache_policy: CachePolicy = CachePolicy.KeepAll
