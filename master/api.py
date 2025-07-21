@@ -1,18 +1,16 @@
 from typing import Protocol
 
+from shared.types.graphs.topology import Topology
 from shared.types.models.common import ModelId
 from shared.types.models.model import ModelInfo
 from shared.types.models.sources import ModelSource
-from shared.types.networking.topology import ControlPlaneTopology, DataPlaneTopology
 from shared.types.worker.common import InstanceId
 from shared.types.worker.downloads import DownloadProgress
 from shared.types.worker.instances import Instance
 
 
-class ControlPlaneAPI(Protocol):
-    def get_control_plane_topology(self) -> ControlPlaneTopology: ...
-
-    def get_data_plane_topology(self) -> DataPlaneTopology: ...
+class ClusterAPI(Protocol):
+    def get_topology(self) -> Topology: ...
 
     def list_instances(self) -> list[Instance]: ...
 

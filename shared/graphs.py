@@ -33,7 +33,7 @@ class _EdgeWrapper[EdgeTypeT, EdgeIdT]:
     edge_data: EdgeData[EdgeTypeT]
 
 
-class NetworkXGraph(MutableGraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]):
+class Graph(MutableGraphProtocol[EdgeTypeT, VertexTypeT, EdgeIdT, VertexIdT]):
     edge_base: TypeAdapter[EdgeTypeT]
     vertex_base: TypeAdapter[VertexTypeT]
 

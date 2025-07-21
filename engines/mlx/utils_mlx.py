@@ -15,7 +15,7 @@ from mlx_lm.utils import load_model
 from pydantic import RootModel
 
 from engines.mlx.auto_parallel import auto_parallel
-from shared.types.tasks.common import CompletionCreateParams
+from shared.types.tasks.common import ChatCompletionTaskParams
 from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMeta
 from worker.runner.communication import runner_print
@@ -96,7 +96,7 @@ def shard_and_load(model_shard_meta: ShardMeta) -> tuple[nn.Module, TokenizerWra
 async def apply_chat_template(
     mlx_executor: concurrent.futures.ThreadPoolExecutor,
     tokenizer: TokenizerWrapper,
-    chat_task_data: CompletionCreateParams,
+    chat_task_data: ChatCompletionTaskParams,
 ) -> str:
     loop: AbstractEventLoop = asyncio.get_running_loop()
 

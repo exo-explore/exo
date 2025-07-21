@@ -7,8 +7,7 @@ from shared.types.events.common import EventCategoryEnum, State
 class SyncStateManagerMapping(TypedDict):
     MutatesTaskState: State[Literal[EventCategoryEnum.MutatesTaskState]]
     MutatesTaskSagaState: State[Literal[EventCategoryEnum.MutatesTaskSagaState]]
-    MutatesControlPlaneState: State[Literal[EventCategoryEnum.MutatesControlPlaneState]]
-    MutatesDataPlaneState: State[Literal[EventCategoryEnum.MutatesDataPlaneState]]
+    MutatesTopologyState: State[Literal[EventCategoryEnum.MutatesTopologyState]]
     MutatesRunnerStatus: State[Literal[EventCategoryEnum.MutatesRunnerStatus]]
     MutatesInstanceState: State[Literal[EventCategoryEnum.MutatesInstanceState]]
     MutatesNodePerformanceState: State[

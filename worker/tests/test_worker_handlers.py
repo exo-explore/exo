@@ -9,7 +9,7 @@ from shared.types.common import NodeId
 from shared.types.events.chunks import TokenChunk, TokenChunkData
 from shared.types.events.events import ChunkGenerated, RunnerStatusUpdated
 from shared.types.events.registry import Event
-from shared.types.tasks.common import Task, TaskStatusType, TaskType
+from shared.types.tasks.common import Task
 from shared.types.worker.common import RunnerId
 from shared.types.worker.instances import Instance
 from shared.types.worker.ops import (
@@ -84,7 +84,7 @@ async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
     assert len(events) == 0
 
 @pytest.mark.asyncio
-async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], chat_task: Task[TaskType, TaskStatusType]):
+async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], chat_task: Task):
     worker, runner_id, _ = worker_with_assigned_runner
 
     runner_up_op = RunnerUpOp(runner_id=runner_id)
@@ -153,7 +153,7 @@ async def test_download_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
 @pytest.mark.asyncio
 async def test_execute_task_op(
     worker_with_running_runner: tuple[Worker, RunnerId, Instance], 
-    chat_task: Task[TaskType, TaskStatusType]):
+    chat_task: Task):
     worker, runner_id, _ = worker_with_running_runner
 
     execute_task_op = ExecuteTaskOp(
@@ -187,10 +187,10 @@ async def test_execute_task_op(
 @pytest.mark.asyncio
 async def test_execute_task_fails(
     worker_with_running_runner: tuple[Worker, RunnerId, Instance], 
-    chat_task: Task[TaskType, TaskStatusType]):
+    chat_task: Task):
     worker, runner_id, _ = worker_with_running_runner
 
-    messages = chat_task.task_data.task_params.messages
+    messages = chat_task.task_params.messages
     messages[0].content = 'Artificial prompt: EXO RUNNER MUST FAIL'
 
     execute_task_op = ExecuteTaskOp(

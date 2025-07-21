@@ -54,13 +54,12 @@ def get_master_state_dependency(data: object, logger: Logger) -> MasterState:
 
 # What The Master Cares About
 MasterEventCategories = (
-    Literal[EventCategoryEnum.MutatesControlPlaneState]
+    Literal[EventCategoryEnum.MutatesTopologyState]
     | Literal[EventCategoryEnum.MutatesTaskState]
     | Literal[EventCategoryEnum.MutatesTaskSagaState]
     | Literal[EventCategoryEnum.MutatesRunnerStatus]
     | Literal[EventCategoryEnum.MutatesInstanceState]
     | Literal[EventCategoryEnum.MutatesNodePerformanceState]
-    | Literal[EventCategoryEnum.MutatesDataPlaneState]
 )
 
 
@@ -119,13 +118,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-@app.get("/topology/control_plane")
-def get_control_plane_topology():
-    return {"message": "Hello, World!"}
-
-
-@app.get("/topology/data_plane")
-def get_data_plane_topology():
+@app.get("/topology")
+def get_topology():
     return {"message": "Hello, World!"}
 
 

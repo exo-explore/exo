@@ -4,7 +4,7 @@ from typing import Annotated, Generic, Literal, TypeVar, Union
 from pydantic import BaseModel, Field
 
 from shared.types.events.events import InstanceId
-from shared.types.tasks.common import Task, TaskStatusType, TaskType
+from shared.types.tasks.common import Task
 from shared.types.worker.common import RunnerId
 from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMetadata
@@ -52,7 +52,7 @@ class DownloadOp(BaseRunnerOp[Literal[RunnerOpType.DOWNLOAD]]):
 class ExecuteTaskOp(BaseRunnerOp[Literal[RunnerOpType.CHAT_COMPLETION]]):
     op_type: Literal[RunnerOpType.CHAT_COMPLETION] = Field(default=RunnerOpType.CHAT_COMPLETION, frozen=True)
     runner_id: RunnerId
-    task: Task[TaskType, TaskStatusType]
+    task: Task
 
 
 # Aggregate all runner operations into a single, strictly-typed union for dispatching.

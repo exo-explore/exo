@@ -7,10 +7,8 @@ from typing import Any, Callable
 
 from shared.types.events.chunks import GenerationChunk, TokenChunk, TokenChunkData
 from shared.types.tasks.common import (
-    ChatCompletionTaskData,
+    ChatCompletionTaskParams,
     Task,
-    TaskStatusTypeT,
-    TaskTypeT,
 )
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
@@ -148,7 +146,7 @@ class RunnerSupervisor:
 
     async def stream_response(
         self,
-        task: Task[TaskTypeT, TaskStatusTypeT],
+        task: Task,
         request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None, # fyi this is async now
     ) -> AsyncGenerator[GenerationChunk]:
         """
@@ -159,12 +157,12 @@ class RunnerSupervisor:
         if not self.healthy:
             raise RuntimeError("Runner process was found to be dead")
 
-        task_data = task.task_data
-        assert isinstance(task_data, ChatCompletionTaskData) # this is messy for now.
+        task_params = task.task_params
+        assert isinstance(task_params, ChatCompletionTaskParams) # this is messy for now.
         await supervisor_write_message(
             proc=self.runner_process,
             message=ChatTaskMessage(
-                task_data=task_data,
+                task_data=task_params,
             ),
         )
 

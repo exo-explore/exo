@@ -10,9 +10,9 @@ from shared.types.states.shared import SharedState
 from shared.types.worker.common import NodeStatus
 
 
-class NodeStatusState(State[EventCategoryEnum.MutatesControlPlaneState]):
-    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = (
-        EventCategoryEnum.MutatesControlPlaneState
+class NodeStatusState(State[EventCategoryEnum.MutatesRunnerStatus]):
+    event_category: Literal[EventCategoryEnum.MutatesRunnerStatus] = (
+        EventCategoryEnum.MutatesRunnerStatus
     )
     node_status: Mapping[NodeId, NodeStatus]
 

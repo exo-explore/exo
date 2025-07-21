@@ -2,7 +2,7 @@ from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
-from shared.types.tasks.common import ChatCompletionTaskData
+from shared.types.tasks.common import Task
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     RunnerMessageTypeAdapter,
@@ -35,9 +35,9 @@ def test_supervisor_setup_message_serdes(
 
 
 def test_supervisor_task_message_serdes(
-    chat_completion_task: ChatCompletionTaskData,
+    chat_completion_task: Task,
 ):
     task_message = ChatTaskMessage(
-        task_data=chat_completion_task,
+        task_data=chat_completion_task.task_params,
     )
     assert_equal_serdes(task_message, RunnerMessageTypeAdapter)

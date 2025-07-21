@@ -1,15 +1,13 @@
 import asyncio
-from typing import Callable, Literal
+from typing import Callable
 
 import pytest
 
 from shared.openai_compat import FinishReason
 from shared.types.events.chunks import TokenChunk
 from shared.types.tasks.common import (
-    ChatCompletionTaskData,
+    ChatCompletionTaskParams,
     Task,
-    TaskStatusOtherType,
-    TaskStatusType,
     TaskType,
 )
 from shared.types.worker.mlx import Host
@@ -27,7 +25,7 @@ def user_message():
 async def test_supervisor_single_node_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task[TaskType, TaskStatusType],
+    chat_task: Task,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -63,7 +61,7 @@ async def test_supervisor_single_node_response(
 async def test_supervisor_two_node_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task[TaskType, TaskStatusType],
+    chat_task: Task,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     supervisor_0 = await RunnerSupervisor.create(
@@ -117,7 +115,7 @@ async def test_supervisor_two_node_response(
 async def test_supervisor_early_stopping(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task[Literal[TaskType.ChatCompletion], TaskStatusOtherType],
+    chat_task: Task,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -129,16 +127,16 @@ async def test_supervisor_early_stopping(
 
     max_tokens = 50
     assert chat_task.task_type == TaskType.ChatCompletion
-    print(f'chat_task.task_data: {type(chat_task.task_data)}')
-    assert isinstance(chat_task.task_data, ChatCompletionTaskData)
-    task_data: ChatCompletionTaskData = chat_task.task_data
+    print(f'chat_task.task_params: {chat_task.task_params}')
+    assert isinstance(chat_task.task_params, ChatCompletionTaskParams)
+    task_params: ChatCompletionTaskParams = chat_task.task_params
 
     try:
-        task_data.task_params.max_tokens = max_tokens
+        task_params.max_tokens = max_tokens
         # Convert messages to a list to allow indexing, then update the first message's content
-        messages = list(task_data.task_params.messages)
+        messages = list(task_params.messages)
         messages[0].content = "Please count from 1 to 100"
-        task_data.task_params.messages = messages
+        task_params.messages = messages
 
         full_response = ""
         count = 0
@@ -167,7 +165,7 @@ async def test_supervisor_early_stopping(
 async def test_supervisor_handles_terminated_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task[TaskType, TaskStatusType],
+    chat_task: Task,
 ):
     """Test that the supervisor handles a terminated runner"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -191,7 +189,7 @@ async def test_supervisor_handles_terminated_runner(
 async def test_supervisor_handles_killed_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task[TaskType, TaskStatusType],
+    chat_task: Task,
 ):
     """Test that the supervisor handles a killed runner"""
     model_shard_meta = pipeline_shard_meta(1, 0)

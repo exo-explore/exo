@@ -60,13 +60,10 @@ class NodePerformanceEventTypes(str, Enum):
     NodePerformanceMeasured = "NodePerformanceMeasured"
 
 
-class DataPlaneEventTypes(str, Enum):
-    DataPlaneEdgeCreated = "DataPlaneEdgeCreated"
-    DataPlaneEdgeReplacedAtomically = "DataPlaneEdgeReplacedAtomically"
-    DataPlaneEdgeDeleted = "DataPlaneEdgeDeleted"
-
-
-class ControlPlaneEventTypes(str, Enum):
+class TopologyEventTypes(str, Enum):
+    TopologyEdgeCreated = "TopologyEdgeCreated"
+    TopologyEdgeReplacedAtomically = "TopologyEdgeReplacedAtomically"
+    TopologyEdgeDeleted = "TopologyEdgeDeleted"
     WorkerConnected = "WorkerConnected"
     WorkerStatusUpdated = "WorkerStatusUpdated"
     WorkerDisconnected = "WorkerDisconnected"
@@ -84,8 +81,7 @@ EVENT_TYPE_ENUMS = [
     InstanceEventTypes,
     RunnerStatusEventTypes,
     NodePerformanceEventTypes,
-    DataPlaneEventTypes,
-    ControlPlaneEventTypes,
+    TopologyEventTypes,
     TimerEventTypes,
     TaskSagaEventTypes,
 ]
@@ -98,8 +94,7 @@ EventTypes = (
     | InstanceEventTypes
     | RunnerStatusEventTypes
     | NodePerformanceEventTypes
-    | ControlPlaneEventTypes
-    | DataPlaneEventTypes
+    | TopologyEventTypes
     | TimerEventTypes
     | TaskSagaEventTypes
 )
@@ -114,18 +109,17 @@ class EventCategoryEnum(StrEnum):
     MutatesRunnerStatus = "MutatesRunnerStatus"
     MutatesInstanceState = "MutatesInstanceState"
     MutatesNodePerformanceState = "MutatesNodePerformanceState"
-    MutatesControlPlaneState = "MutatesControlPlaneState"
-    MutatesDataPlaneState = "MutatesDataPlaneState"
+    MutatesTopologyState = "MutatesTopologyState"
 
 
 EventCategory = (
-    Literal[EventCategoryEnum.MutatesControlPlaneState]
+    Literal[EventCategoryEnum.MutatesTopologyState]
     | Literal[EventCategoryEnum.MutatesTaskState]
     | Literal[EventCategoryEnum.MutatesTaskSagaState]
     | Literal[EventCategoryEnum.MutatesRunnerStatus]
     | Literal[EventCategoryEnum.MutatesInstanceState]
     | Literal[EventCategoryEnum.MutatesNodePerformanceState]
-    | Literal[EventCategoryEnum.MutatesDataPlaneState]
+    | Literal[EventCategoryEnum.MutatesTopologyState]
 )
 
 EventCategories = FrozenSet[EventCategory]

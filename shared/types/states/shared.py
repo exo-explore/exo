@@ -5,13 +5,7 @@ from pydantic import BaseModel
 
 from shared.types.common import NodeId
 from shared.types.events.common import EventCategoryEnum, State
-from shared.types.tasks.common import (
-    Task,
-    TaskId,
-    TaskSagaEntry,
-    TaskStatusType,
-    TaskType,
-)
+from shared.types.tasks.common import Task, TaskId, TaskSagaEntry
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import BaseInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus
@@ -28,7 +22,7 @@ class Tasks(State[EventCategoryEnum.MutatesTaskState]):
     event_category: Literal[EventCategoryEnum.MutatesTaskState] = (
         EventCategoryEnum.MutatesTaskState
     )
-    tasks: Mapping[TaskId, Task[TaskType, TaskStatusType]] = {}
+    tasks: Mapping[TaskId, Task] = {}
 
 
 class TaskSagas(State[EventCategoryEnum.MutatesTaskSagaState]):
@@ -55,4 +49,4 @@ class SharedState(BaseModel):
 
     def get_tasks_by_instance(
         self, instance_id: InstanceId
-    ) -> Sequence[Task[TaskType, TaskStatusType]]: ...
+    ) -> Sequence[Task]: ...

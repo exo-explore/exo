@@ -6,8 +6,6 @@ from shared.types.common import NodeId
 from shared.types.events.chunks import GenerationChunk
 from shared.types.events.common import (
     BaseEvent,
-    ControlPlaneEventTypes,
-    DataPlaneEventTypes,
     EventCategoryEnum,
     InstanceEventTypes,
     NodePerformanceEventTypes,
@@ -15,33 +13,23 @@ from shared.types.events.common import (
     StreamingEventTypes,
     TaskEventTypes,
     TaskSagaEventTypes,
+    TopologyEventTypes,
 )
-from shared.types.networking.control_plane import (
-    ControlPlaneEdgeId,
-    ControlPlaneEdgeType,
-)
-from shared.types.networking.data_plane import (
-    DataPlaneEdge,
-    DataPlaneEdgeId,
-    DataPlaneEdgeProfile,
+from shared.types.graphs.topology import (
+    TopologyEdge,
+    TopologyEdgeId,
+    TopologyEdgeProfile,
+    TopologyNode,
 )
 from shared.types.profiling.common import NodePerformanceProfile
-from shared.types.tasks.common import (
-    BaseTaskData,
-    TaskId,
-    TaskState,
-    TaskStatusOtherType,
-    TaskStatusType,
-    TaskType,
-)
+from shared.types.tasks.common import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus
 
 TaskEvent = BaseEvent[EventCategoryEnum.MutatesTaskState]
 InstanceEvent = BaseEvent[EventCategoryEnum.MutatesInstanceState]
-ControlPlaneEvent = BaseEvent[EventCategoryEnum.MutatesControlPlaneState]
-DataPlaneEvent = BaseEvent[EventCategoryEnum.MutatesDataPlaneState]
+TopologyEvent = BaseEvent[EventCategoryEnum.MutatesTopologyState]
 NodePerformanceEvent = BaseEvent[EventCategoryEnum.MutatesNodePerformanceState]
 
 
@@ -49,9 +37,7 @@ class TaskCreated(BaseEvent[EventCategoryEnum.MutatesTaskState, Literal[TaskEven
     event_type: Literal[TaskEventTypes.TaskCreated] = TaskEventTypes.TaskCreated
     event_category: Literal[EventCategoryEnum.MutatesTaskState] = EventCategoryEnum.MutatesTaskState
     task_id: TaskId
-    task_data: BaseTaskData[TaskType]
-    task_state: TaskState[Literal[TaskStatusOtherType.Pending], TaskType]
-    on_instance: InstanceId
+    task: Task
 
 
 # Covers Cancellation Of Task, Non-Cancelled Tasks Perist
@@ -64,7 +50,8 @@ class TaskDeleted(BaseEvent[EventCategoryEnum.MutatesTaskState, Literal[TaskEven
 class TaskStateUpdated(BaseEvent[EventCategoryEnum.MutatesTaskState, Literal[TaskEventTypes.TaskStateUpdated]]):
     event_type: Literal[TaskEventTypes.TaskStateUpdated] = TaskEventTypes.TaskStateUpdated
     event_category: Literal[EventCategoryEnum.MutatesTaskState] = EventCategoryEnum.MutatesTaskState
-    task_state: TaskState[TaskStatusType, TaskType]
+    task_id: TaskId
+    task_status: TaskStatus
 
 
 class InstanceCreated(BaseEvent[EventCategoryEnum.MutatesInstanceState, Literal[InstanceEventTypes.InstanceCreated]]):
@@ -130,23 +117,23 @@ class NodePerformanceMeasured(BaseEvent[EventCategoryEnum.MutatesNodePerformance
     node_profile: NodePerformanceProfile
 
 
-class WorkerConnected(BaseEvent[EventCategoryEnum.MutatesControlPlaneState, Literal[ControlPlaneEventTypes.WorkerConnected]]):
-    event_type: Literal[ControlPlaneEventTypes.WorkerConnected] = ControlPlaneEventTypes.WorkerConnected
-    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = EventCategoryEnum.MutatesControlPlaneState
-    edge: DataPlaneEdge
+class WorkerConnected(BaseEvent[EventCategoryEnum.MutatesTopologyState, Literal[TopologyEventTypes.WorkerConnected]]):
+    event_type: Literal[TopologyEventTypes.WorkerConnected] = TopologyEventTypes.WorkerConnected
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = EventCategoryEnum.MutatesTopologyState
+    edge: TopologyEdge
 
 
-class WorkerStatusUpdated(BaseEvent[EventCategoryEnum.MutatesControlPlaneState, Literal[ControlPlaneEventTypes.WorkerStatusUpdated]]):
-    event_type: Literal[ControlPlaneEventTypes.WorkerStatusUpdated] = ControlPlaneEventTypes.WorkerStatusUpdated
-    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = EventCategoryEnum.MutatesControlPlaneState
+class WorkerStatusUpdated(BaseEvent[EventCategoryEnum.MutatesTopologyState, Literal[TopologyEventTypes.WorkerStatusUpdated]]):
+    event_type: Literal[TopologyEventTypes.WorkerStatusUpdated] = TopologyEventTypes.WorkerStatusUpdated
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = EventCategoryEnum.MutatesTopologyState
     node_id: NodeId
     node_state: NodeStatus
 
 
-class WorkerDisconnected(BaseEvent[EventCategoryEnum.MutatesControlPlaneState, Literal[ControlPlaneEventTypes.WorkerDisconnected]]):
-    event_type: Literal[ControlPlaneEventTypes.WorkerDisconnected] = ControlPlaneEventTypes.WorkerDisconnected
-    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = EventCategoryEnum.MutatesControlPlaneState
-    vertex_id: ControlPlaneEdgeId
+class WorkerDisconnected(BaseEvent[EventCategoryEnum.MutatesTopologyState, Literal[TopologyEventTypes.WorkerDisconnected]]):
+    event_type: Literal[TopologyEventTypes.WorkerDisconnected] = TopologyEventTypes.WorkerDisconnected
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = EventCategoryEnum.MutatesTopologyState
+    vertex_id: NodeId
 
 
 class ChunkGenerated(BaseEvent[EventCategoryEnum.MutatesTaskState, Literal[StreamingEventTypes.ChunkGenerated]]):
@@ -156,23 +143,23 @@ class ChunkGenerated(BaseEvent[EventCategoryEnum.MutatesTaskState, Literal[Strea
     chunk: GenerationChunk
 
 
-class DataPlaneEdgeCreated(BaseEvent[EventCategoryEnum.MutatesDataPlaneState, Literal[DataPlaneEventTypes.DataPlaneEdgeCreated]]):
-    event_type: Literal[DataPlaneEventTypes.DataPlaneEdgeCreated] = DataPlaneEventTypes.DataPlaneEdgeCreated
-    event_category: Literal[EventCategoryEnum.MutatesDataPlaneState] = EventCategoryEnum.MutatesDataPlaneState
-    vertex: ControlPlaneEdgeType
+class TopologyEdgeCreated(BaseEvent[EventCategoryEnum.MutatesTopologyState, Literal[TopologyEventTypes.TopologyEdgeCreated]]):
+    event_type: Literal[TopologyEventTypes.TopologyEdgeCreated] = TopologyEventTypes.TopologyEdgeCreated
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = EventCategoryEnum.MutatesTopologyState
+    vertex: TopologyNode
 
 
-class DataPlaneEdgeReplacedAtomically(BaseEvent[EventCategoryEnum.MutatesDataPlaneState, Literal[DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically]]):
-    event_type: Literal[DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically] = DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically
-    event_category: Literal[EventCategoryEnum.MutatesDataPlaneState] = EventCategoryEnum.MutatesDataPlaneState
-    edge_id: DataPlaneEdgeId
-    edge_profile: DataPlaneEdgeProfile
+class TopologyEdgeReplacedAtomically(BaseEvent[EventCategoryEnum.MutatesTopologyState, Literal[TopologyEventTypes.TopologyEdgeReplacedAtomically]]):
+    event_type: Literal[TopologyEventTypes.TopologyEdgeReplacedAtomically] = TopologyEventTypes.TopologyEdgeReplacedAtomically
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = EventCategoryEnum.MutatesTopologyState
+    edge_id: TopologyEdgeId
+    edge_profile: TopologyEdgeProfile
 
 
-class DataPlaneEdgeDeleted(BaseEvent[EventCategoryEnum.MutatesDataPlaneState, Literal[DataPlaneEventTypes.DataPlaneEdgeDeleted]]):
-    event_type: Literal[DataPlaneEventTypes.DataPlaneEdgeDeleted] = DataPlaneEventTypes.DataPlaneEdgeDeleted
-    event_category: Literal[EventCategoryEnum.MutatesDataPlaneState] = EventCategoryEnum.MutatesDataPlaneState
-    edge_id: DataPlaneEdgeId
+class TopologyEdgeDeleted(BaseEvent[EventCategoryEnum.MutatesTopologyState, Literal[TopologyEventTypes.TopologyEdgeDeleted]]):
+    event_type: Literal[TopologyEventTypes.TopologyEdgeDeleted] = TopologyEventTypes.TopologyEdgeDeleted
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = EventCategoryEnum.MutatesTopologyState
+    edge_id: TopologyEdgeId
 
 """
 TEST_EVENT_CATEGORIES_TYPE = FrozenSet[

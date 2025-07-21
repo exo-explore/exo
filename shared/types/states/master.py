@@ -6,29 +6,17 @@ from typing import Generic, Literal, TypeVar
 from pydantic import BaseModel, TypeAdapter
 
 from shared.types.common import NodeId
-from shared.types.events.common import (
-    BaseEvent,
-    EventCategory,
-    EventCategoryEnum,
-    State,
-)
-from shared.types.graphs.resource_graph import ResourceGraph
-from shared.types.networking.data_plane import (
-    DataPlaneEdge,
-    DataPlaneEdgeAdapter,
-    DataPlaneEdgeId,
-)
-from shared.types.networking.topology import (
-    ControlPlaneTopology,
-    DataPlaneTopology,
-    OrphanedPartOfControlPlaneTopology,
-    OrphanedPartOfDataPlaneTopology,
+from shared.types.events.common import EventCategoryEnum, State
+from shared.types.graphs.topology import (
+    OrphanedPartOfTopology,
+    Topology,
+    TopologyEdge,
+    TopologyEdgeId,
+    TopologyNode,
 )
 from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.states.shared import SharedState
-from shared.types.tasks.common import BaseTaskData, TaskType
-from shared.types.worker.common import NodeStatus
-from shared.types.worker.instances import InstanceId, InstanceParams
+from shared.types.tasks.common import Task
 
 
 class ExternalCommand(BaseModel): ...
@@ -49,52 +37,23 @@ class NodePerformanceProfileState(State[EventCategoryEnum.MutatesNodePerformance
     node_profiles: Mapping[NodeId, NodePerformanceProfile]
 
 
-class DataPlaneNetworkState(State[EventCategoryEnum.MutatesDataPlaneState]):
-    event_category: Literal[EventCategoryEnum.MutatesDataPlaneState] = (
-        EventCategoryEnum.MutatesDataPlaneState
+class TopologyState(State[EventCategoryEnum.MutatesTopologyState]):
+    event_category: Literal[EventCategoryEnum.MutatesTopologyState] = (
+        EventCategoryEnum.MutatesTopologyState
     )
-    topology: DataPlaneTopology = DataPlaneTopology(
-        edge_base=DataPlaneEdgeAdapter, vertex_base=TypeAdapter(None)
+    topology: Topology = Topology(
+        edge_base=TypeAdapter(TopologyEdge), vertex_base=TypeAdapter(TopologyNode)
     )
-    history: Sequence[OrphanedPartOfDataPlaneTopology] = []
+    history: Sequence[OrphanedPartOfTopology] = []
 
-    def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
-    def add_edge(self, edge: DataPlaneEdge) -> None: ...
-
-
-class ControlPlaneNetworkState(State[EventCategoryEnum.MutatesControlPlaneState]):
-    event_category: Literal[EventCategoryEnum.MutatesControlPlaneState] = (
-        EventCategoryEnum.MutatesControlPlaneState
-    )
-    topology: ControlPlaneTopology = ControlPlaneTopology(
-        edge_base=TypeAdapter(None), vertex_base=TypeAdapter(NodeStatus)
-    )
-    history: Sequence[OrphanedPartOfControlPlaneTopology] = []
-
-    def delete_edge(self, edge_id: DataPlaneEdgeId) -> None: ...
-    def add_edge(self, edge: DataPlaneEdge) -> None: ...
+    def delete_edge(self, edge_id: TopologyEdgeId) -> None: ...
+    def add_edge(self, edge: TopologyEdge) -> None: ...
 
 
 class MasterState(SharedState):
-    data_plane_network_state: DataPlaneNetworkState = DataPlaneNetworkState()
-    control_plane_network_state: ControlPlaneNetworkState = ControlPlaneNetworkState()
-    job_inbox: Queue[BaseTaskData[TaskType]] = Queue()
-    job_outbox: Queue[BaseTaskData[TaskType]] = Queue()
+    topology_state: TopologyState = TopologyState()
+    task_inbox: Queue[Task] = Queue()
+    task_outbox: Queue[Task] = Queue()
     cache_policy: CachePolicy[CachePolicyType] = CachePolicy[CachePolicyType](
         policy_type=CachePolicyType.KeepAll
     )
-
-
-def get_shard_assignments(
-    inbox: Queue[ExternalCommand],
-    outbox: Queue[ExternalCommand],
-    resource_graph: ResourceGraph,
-    current_instances: Mapping[InstanceId, InstanceParams],
-    cache_policy: CachePolicy[CachePolicyType],
-) -> Mapping[InstanceId, InstanceParams]: ...
-
-
-def get_transition_events(
-    current_instances: Mapping[InstanceId, InstanceParams],
-    target_instances: Mapping[InstanceId, InstanceParams],
-) -> Sequence[BaseEvent[EventCategory]]: ...

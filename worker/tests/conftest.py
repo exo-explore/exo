@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from logging import Logger, getLogger
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Callable
 
 import pytest
 
@@ -11,13 +11,10 @@ from shared.types.models.common import ModelId
 from shared.types.states.worker import NodeStatusState, WorkerState
 from shared.types.tasks.common import (
     ChatCompletionMessage,
-    ChatCompletionTaskData,
-    CompletionCreateParams,
+    ChatCompletionTaskParams,
     Task,
-    TaskArtifact,
     TaskId,
-    TaskState,
-    TaskStatusOtherType,
+    TaskStatus,
     TaskType,
 )
 from shared.types.worker.common import InstanceId, NodeStatus
@@ -30,12 +27,6 @@ from shared.types.worker.ops import (
 from shared.types.worker.runners import RunnerId, ShardAssignments
 from shared.types.worker.shards import PipelineShardMetadata
 from worker.main import Worker
-
-
-class PendingStreamingTaskArtifact(
-    TaskArtifact[Literal[TaskType.ChatCompletion], Literal[TaskStatusOtherType.Pending]]
-):
-    pass
 
 
 @pytest.fixture
@@ -97,35 +88,30 @@ def user_message():
 
 
 @pytest.fixture
-def completion_create_params(user_message: str) -> CompletionCreateParams:
+def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
     """Creates ChatCompletionParams with the given message"""
-    return CompletionCreateParams(
+    return ChatCompletionTaskParams(
         model="gpt-4",
         messages=[ChatCompletionMessage(role="user", content=user_message)],
         stream=True,
     )
 
 @pytest.fixture
-def chat_completion_task(completion_create_params: CompletionCreateParams) -> ChatCompletionTaskData:
+def chat_completion_task(completion_create_params: ChatCompletionTaskParams) -> Task:
     """Creates a ChatCompletionTask directly for serdes testing"""
-    return ChatCompletionTaskData(task_params=completion_create_params)
+    return Task(task_id=TaskId(), instance_id=InstanceId(), task_type=TaskType.ChatCompletion, task_status=TaskStatus.Pending, task_params=completion_create_params)
 
 @pytest.fixture
 def chat_task(
-    completion_create_params: CompletionCreateParams,
-) -> Task[Literal[TaskType.ChatCompletion], TaskStatusOtherType]:
+    completion_create_params: ChatCompletionTaskParams,
+) -> Task:
     """Creates the final Task object"""
-    return Task[Literal[TaskType.ChatCompletion], TaskStatusOtherType](
+    return Task(
         task_id=TaskId(),
+        instance_id=InstanceId(),
         task_type=TaskType.ChatCompletion,
-        task_data=ChatCompletionTaskData(
-            task_params=completion_create_params
-        ),
-        task_state=TaskState[TaskStatusOtherType, Literal[TaskType.ChatCompletion]](
-            task_status=TaskStatusOtherType.Pending,
-            task_artifact=PendingStreamingTaskArtifact(),
-        ),
-        on_instance=InstanceId(),
+        task_status=TaskStatus.Pending,
+        task_params=completion_create_params,
     )
 
 @pytest.fixture

@@ -1,16 +1,7 @@
 from enum import Enum
-from typing import (  # noqa: E402
-    Annotated,
-    Any,
-    Generic,
-    Literal,
-    TypeAlias,
-    TypeVar,
-    Union,
-    final,
-)
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel
 
 from shared.types.common import NewUUID
 from shared.types.worker.common import InstanceId
@@ -20,35 +11,17 @@ class TaskId(NewUUID):
     pass
 
 
-## TASK TYPES
-@final
 class TaskType(str, Enum):
     ChatCompletion = "ChatCompletion"
 
-TaskTypeT = TypeVar("TaskTypeT", bound=TaskType, covariant=True)
 
-## TASK STATUSES
-@final
-class TaskStatusFailedType(str, Enum):
+class TaskStatus(str, Enum):
+    Pending = "Pending"
+    Running = "Running"
+    Complete = "Complete"
     Failed = "Failed"
 
 
-@final
-class TaskStatusCompleteType(str, Enum):
-    Complete = "Complete"
-
-
-@final
-class TaskStatusOtherType(str, Enum):
-    Pending = "Pending"
-    Running = "Running"
-
-
-TaskStatusType = TaskStatusCompleteType | TaskStatusFailedType | TaskStatusOtherType
-TaskStatusTypeT = TypeVar("TaskStatusTypeT", bound=TaskStatusType)#, covariant=True)
-
-
-## Peripherals
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: str | None = None
@@ -57,10 +30,12 @@ class ChatCompletionMessage(BaseModel):
     tool_call_id: str | None = None
     function_call: dict[str, Any] | None = None
 
-class CompletionCreateParams(BaseModel):
+
+class ChatCompletionTaskParams(BaseModel):
+    task_type: Literal[TaskType.ChatCompletion] = TaskType.ChatCompletion
     model: str
-    messages: list[ChatCompletionMessage]
     frequency_penalty: float | None = None
+    messages: list[ChatCompletionMessage]
     logit_bias: dict[str, int] | None = None
     logprobs: bool | None = None
     top_logprobs: int | None = None
@@ -79,69 +54,14 @@ class CompletionCreateParams(BaseModel):
     user: str | None = None
 
 
-## Task Data is stored in task, one-to-one with task type
-
-class BaseTaskData(BaseModel, Generic[TaskTypeT]): ...
-
-@final
-class ChatCompletionTaskData(BaseTaskData[TaskType.ChatCompletion]):
-    task_type: Literal[TaskType.ChatCompletion] = (
-        TaskType.ChatCompletion
-    )
-    task_params: CompletionCreateParams
-
-TaskData: TypeAlias = ChatCompletionTaskData
-
-
-## TASKS
-
-class TaskArtifact[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel): ...
-
-
-@final
-class NoTaskArtifact[TaskTypeT: TaskType](TaskArtifact[TaskTypeT, TaskStatusOtherType]):
-    pass
-
-
-@final
-class FailedTaskArtifact[TaskTypeT: TaskType](
-    TaskArtifact[TaskTypeT, TaskStatusFailedType]
-):
-    error_message: str
-
-
-@final
-class TaskState[TaskStatusTypeT: TaskStatusType, TaskTypeT: TaskType](BaseModel):
-    task_status: TaskStatusTypeT
-    task_artifact: TaskArtifact[TaskTypeT, TaskStatusTypeT]
-
-
-class BaseTask[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](BaseModel):
-    task_type: TaskTypeT
-    task_data: TaskData # Really this should be BaseTaskData[TaskTypeT], but this causes a bunch of errors that I don't know how to fix yet.
-    task_state: TaskState[TaskStatusTypeT, TaskTypeT]
-    on_instance: InstanceId
-
-
-BaseTaskAnnotated = Annotated[
-    Union[
-        BaseTask[Literal[TaskType.ChatCompletion], TaskStatusType],
-    ],
-    Field(discriminator="task_type"),
-]
-
-BaseTaskParser: TypeAdapter[BaseTask[TaskType, TaskStatusType]] = TypeAdapter(
-    BaseTaskAnnotated
-)
+class Task(BaseModel):
+    task_id: TaskId
+    instance_id: InstanceId
+    task_type: TaskType
+    task_status: TaskStatus
+    task_params: ChatCompletionTaskParams
 
 
 class TaskSagaEntry(BaseModel):
     task_id: TaskId
     instance_id: InstanceId
-
-
-@final
-class Task[TaskTypeT: TaskType, TaskStatusTypeT: TaskStatusType](
-    BaseTask[TaskTypeT, TaskStatusTypeT]
-):
-    task_id: TaskId

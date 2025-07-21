@@ -6,8 +6,6 @@ from pydantic import Field, TypeAdapter
 from shared.constants import get_error_reporting_message
 from shared.types.events.common import (
     BaseEvent,
-    ControlPlaneEventTypes,
-    DataPlaneEventTypes,
     EventCategories,
     EventTypes,
     InstanceEventTypes,
@@ -16,12 +14,10 @@ from shared.types.events.common import (
     StreamingEventTypes,
     TaskEventTypes,
     TaskSagaEventTypes,
+    TopologyEventTypes,
 )
 from shared.types.events.events import (
     ChunkGenerated,
-    DataPlaneEdgeCreated,
-    DataPlaneEdgeDeleted,
-    DataPlaneEdgeReplacedAtomically,
     InstanceCreated,
     InstanceDeleted,
     InstanceReplacedAtomically,
@@ -32,6 +28,9 @@ from shared.types.events.events import (
     TaskCreated,
     TaskDeleted,
     TaskStateUpdated,
+    TopologyEdgeCreated,
+    TopologyEdgeDeleted,
+    TopologyEdgeReplacedAtomically,
     WorkerConnected,
     WorkerDisconnected,
     WorkerStatusUpdated,
@@ -59,13 +58,13 @@ EventRegistry: Mapping[EventTypes, Type[Any]] = {
     InstanceEventTypes.InstanceReplacedAtomically: InstanceReplacedAtomically,
     RunnerStatusEventTypes.RunnerStatusUpdated: RunnerStatusUpdated,
     NodePerformanceEventTypes.NodePerformanceMeasured: NodePerformanceMeasured,
-    ControlPlaneEventTypes.WorkerConnected: WorkerConnected,
-    ControlPlaneEventTypes.WorkerStatusUpdated: WorkerStatusUpdated,
-    ControlPlaneEventTypes.WorkerDisconnected: WorkerDisconnected,
+    TopologyEventTypes.WorkerConnected: WorkerConnected,
+    TopologyEventTypes.WorkerStatusUpdated: WorkerStatusUpdated,
+    TopologyEventTypes.WorkerDisconnected: WorkerDisconnected,
     StreamingEventTypes.ChunkGenerated: ChunkGenerated,
-    DataPlaneEventTypes.DataPlaneEdgeCreated: DataPlaneEdgeCreated,
-    DataPlaneEventTypes.DataPlaneEdgeReplacedAtomically: DataPlaneEdgeReplacedAtomically,
-    DataPlaneEventTypes.DataPlaneEdgeDeleted: DataPlaneEdgeDeleted,
+    TopologyEventTypes.TopologyEdgeCreated: TopologyEdgeCreated,
+    TopologyEventTypes.TopologyEdgeReplacedAtomically: TopologyEdgeReplacedAtomically,
+    TopologyEventTypes.TopologyEdgeDeleted: TopologyEdgeDeleted,
     TaskSagaEventTypes.MLXInferenceSagaPrepare: MLXInferenceSagaPrepare,
     TaskSagaEventTypes.MLXInferenceSagaStartPrepare: MLXInferenceSagaStartPrepare,
 }
@@ -115,9 +114,9 @@ Event = (
     | WorkerStatusUpdated
     | WorkerDisconnected
     | ChunkGenerated
-    | DataPlaneEdgeCreated
-    | DataPlaneEdgeReplacedAtomically
-    | DataPlaneEdgeDeleted
+    | TopologyEdgeCreated
+    | TopologyEdgeReplacedAtomically
+    | TopologyEdgeDeleted
     | MLXInferenceSagaPrepare
     | MLXInferenceSagaStartPrepare
 )

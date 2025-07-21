@@ -4,7 +4,7 @@ from typing import Annotated, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
-from shared.types.tasks.common import ChatCompletionTaskData
+from shared.types.tasks.common import ChatCompletionTaskParams
 from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMetadata
 
@@ -35,7 +35,7 @@ class ChatTaskMessage(BaseRunnerMessage[MessageType.ChatTask]):
     type: Literal[MessageType.ChatTask] = Field(
         default=MessageType.ChatTask, frozen=True
     )
-    task_data: ChatCompletionTaskData
+    task_data: ChatCompletionTaskParams
 
 
 class ExitMessage(BaseRunnerMessage[MessageType.Exit]):

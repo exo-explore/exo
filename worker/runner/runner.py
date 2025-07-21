@@ -11,7 +11,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx
 from shared.openai_compat import FinishReason
-from shared.types.tasks.common import ChatCompletionTaskData, CompletionCreateParams
+from shared.types.tasks.common import ChatCompletionTaskParams
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     ExitMessage,
@@ -34,7 +34,7 @@ async def _mlx_generate(
     model: nn.Module,
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
-    task: ChatCompletionTaskData,
+    task: ChatCompletionTaskParams,
 ) -> AsyncGenerator[GenerationResponse]:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[GenerationResponse | Exception | object] = asyncio.Queue()
@@ -63,17 +63,15 @@ async def _mlx_generate(
             _ = loop.call_soon_threadsafe(queue.put_nowait, sentinel)
 
     # Currently we support chat-completion tasks only.
-    task_data: CompletionCreateParams = task.task_params
-
-    runner_print(f"task_data: {task_data}")
+    runner_print(f"task_params: {task}")
 
     prompt = await apply_chat_template(
         mlx_executor=mlx_executor,
         tokenizer=tokenizer,
-        chat_task_data=task_data,
+        chat_task_data=task,
     )
 
-    max_tokens = task.task_params.max_tokens or 100
+    max_tokens = task.max_tokens or 100
     generation_fn = partial(_generate_tokens, prompt, max_tokens)
 
     future = loop.run_in_executor(mlx_executor, generation_fn)
@@ -120,10 +118,10 @@ async def main():
         while True:
             message: RunnerMessage = await runner_read_message()
             match message:
-                case ChatTaskMessage(task_data=task_data):
-                    runner_print(f"received chat request: {task_data}")
+                case ChatTaskMessage(task_data=task):
+                    runner_print(f"received chat request: {task}")
                     # Ensure we have a chat-completion task subtype
-                    prompt = task_data.task_params.messages[0]
+                    prompt = task.messages[0]
                     if prompt.content is not None and 'EXO RUNNER MUST FAIL' in prompt.content:
                         raise Exception('Artificial runner exception - for testing purposes only.')
 
@@ -133,7 +131,7 @@ async def main():
                         model=model,
                         tokenizer=tokenizer,
                         sampler=sampler,
-                        task=task_data,
+                        task=task,
                     ):
                         runner_write_response(generation_response)
 

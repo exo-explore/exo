@@ -108,11 +108,8 @@ class AsyncStateManagerMapping(TypedDict):
     MutatesTaskSagaState: AsyncStateManager[
         Literal[EventCategoryEnum.MutatesTaskSagaState]
     ]
-    MutatesControlPlaneState: AsyncStateManager[
-        Literal[EventCategoryEnum.MutatesControlPlaneState]
-    ]
-    MutatesDataPlaneState: AsyncStateManager[
-        Literal[EventCategoryEnum.MutatesDataPlaneState]
+    MutatesTopologyState: AsyncStateManager[
+        Literal[EventCategoryEnum.MutatesTopologyState]
     ]
     MutatesRunnerStatus: AsyncStateManager[
         Literal[EventCategoryEnum.MutatesRunnerStatus]
