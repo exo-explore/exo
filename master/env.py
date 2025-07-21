@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from shared.env import BaseEnv
 
 
 class MasterEnvironmentSchema(BaseEnv):
-    pass
+    # Master-specific: forwarder configuration
+    FORWARDER_BINARY_PATH: Path | None = None

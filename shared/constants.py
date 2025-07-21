@@ -12,6 +12,10 @@ EXO_WORKER_LOG = EXO_HOME / "worker.log"
 EXO_WORKER_KEYRING_FILE = EXO_HOME / "worker_keyring"
 EXO_MASTER_KEYRING_FILE = EXO_HOME / "master_keyring"
 
+# libp2p topics for event forwarding
+LIBP2P_WORKER_EVENTS_TOPIC = "worker_events"
+LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
+
 
 # little helper function to get the name of the module that raised the error
 def get_caller_module_name() -> str:

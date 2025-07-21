@@ -106,6 +106,45 @@ async def lifespan(app: FastAPI):
     metrics_listener.start()
     cluster_listener.start()
 
+    # # Get validated environment
+    # env = get_validated_env(MasterEnvironmentSchema, logger)
+    
+    # # Initialize event log manager (creates both worker and global event DBs)
+    # event_log_config = EventLogConfig()  # Uses default config
+    # event_log_manager = EventLogManager(
+    #     config=event_log_config,
+    #     logger=logger
+    # )
+    # await event_log_manager.initialize()
+    
+    # # Store for use in API handlers
+    # app.state.event_log_manager = event_log_manager
+    
+    # # Initialize forwarder if configured
+    # if env.FORWARDER_BINARY_PATH:
+    #     forwarder_supervisor = ForwarderSupervisor(
+    #         forwarder_binary_path=env.FORWARDER_BINARY_PATH,
+    #         logger=logger
+    #     )
+    #     # Start as replica by default (until elected)
+    #     await forwarder_supervisor.start_as_replica()
+        
+    #     # Create election callbacks for Rust election system
+    #     election_callbacks = ElectionCallbacks(
+    #         forwarder_supervisor=forwarder_supervisor,
+    #         logger=logger
+    #     )
+        
+    #     # Make callbacks available for Rust code to invoke
+    #     app.state.election_callbacks = election_callbacks
+        
+    #     # Log status
+    #     logger.info(
+    #         f"Forwarder supervisor initialized. Running: {forwarder_supervisor.is_running}"
+    #     )
+    # else:
+    #     logger.warning("No forwarder binary path configured")
+    #     forwarder_supervisor = None
     # initial_state = get_master_state(logger)
     # app.state.master_event_loop = MasterEventLoop()
     # await app.state.master_event_loop.start()
