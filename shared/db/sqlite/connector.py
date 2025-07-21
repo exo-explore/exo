@@ -15,10 +15,9 @@ from sqlmodel import SQLModel
 from shared.types.events.common import (
     BaseEvent,
     EventCategories,
-    EventFromEventLog,
     NodeId,
 )
-from shared.types.events.registry import EventParser
+from shared.types.events.registry import Event, EventFromEventLogTyped, EventParser
 
 from .types import StoredEvent
 
@@ -87,7 +86,7 @@ class AsyncSQLiteEventStorage:
     async def get_events_since(
         self, 
         last_idx: int
-    ) -> Sequence[EventFromEventLog[EventCategories]]:
+    ) -> Sequence[EventFromEventLogTyped]:
         """Retrieve events after a specific index."""
         if self._closed:
             raise RuntimeError("Storage is closed")
@@ -102,7 +101,7 @@ class AsyncSQLiteEventStorage:
             )
             rows = result.fetchall()
         
-        events: list[EventFromEventLog[EventCategories]] = []
+        events: list[EventFromEventLogTyped] = []
         for row in rows:
             rowid: int = cast(int, row[0])
             origin: str = cast(str, row[1])
@@ -113,7 +112,7 @@ class AsyncSQLiteEventStorage:
             else:
                 event_data = cast(dict[str, Any], raw_event_data)
             event = await self._deserialize_event(event_data)
-            events.append(EventFromEventLog(
+            events.append(EventFromEventLogTyped(
                 event=event,
                 origin=NodeId(uuid=UUID(origin)),
                 idx_in_log=rowid  # rowid becomes idx_in_log
@@ -215,13 +214,13 @@ class AsyncSQLiteEventStorage:
         
         try:
             async with AsyncSession(self._engine) as session:
-                for event, origin in batch:
+                for event, origin in batch:                    
                     stored_event = StoredEvent(
                         origin=str(origin.uuid),
-                        event_type=event.event_type.value,
-                        event_category=next(iter(event.event_category)).value,
+                        event_type=str(event.event_type),
+                        event_category=str(next(iter(event.event_category))),
                         event_id=str(event.event_id),
-                        event_data=event.model_dump()  # SQLModel handles JSON serialization automatically
+                        event_data=event.model_dump(mode='json')  # mode='json' ensures UUID conversion
                     )
                     session.add(stored_event)
                 
@@ -233,9 +232,13 @@ class AsyncSQLiteEventStorage:
             self._logger.error(f"Failed to commit batch: {e}")
             raise
     
-    async def _deserialize_event(self, event_data: dict[str, Any]) -> BaseEvent[EventCategories]:
+    # TODO: This is a hack to get the event deserialization working. We need to find a better way to do this.
+    async def _deserialize_event(self, event_data: dict[str, Any]) -> Event:
         """Deserialize event data back to typed Event."""
-        return EventParser.validate_python(event_data)
+        # EventParser expects the discriminator field for proper deserialization
+        result = EventParser.validate_python(event_data)
+        # EventParser returns BaseEvent but we know it's actually a specific Event type
+        return result  # type: ignore[reportReturnType]
     
     async def _deserialize_event_raw(self, event_data: dict[str, Any]) -> dict[str, Any]:
         """Return raw event data for testing purposes."""

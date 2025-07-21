@@ -11,6 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.sqlite import AsyncSQLiteEventStorage, EventLogConfig
 from shared.types.common import NodeId
+from shared.types.events.chunks import ChunkType, TokenChunk, TokenChunkData
+from shared.types.events.events import (
+    ChunkGenerated,
+    EventCategoryEnum,
+    StreamingEventTypes,
+)
+from shared.types.tasks.common import TaskId
 
 # Type ignore comment for all protected member access in this test file
 # pyright: reportPrivateUsage=false
@@ -392,5 +399,70 @@ class TestAsyncSQLiteEventStorage:
         # Verify rowid sequence is maintained
         for i, row in enumerate(rows):
             assert row[0] == i + 1  # rowid should be sequential
+        
+        await storage.close()
+
+    @pytest.mark.asyncio
+    async def test_chunk_generated_event_serialization(self, temp_db_path: Path, sample_node_id: NodeId) -> None:
+        """Test that ChunkGenerated event with nested types can be serialized and deserialized correctly."""
+        default_config = EventLogConfig()
+        storage = AsyncSQLiteEventStorage(db_path=temp_db_path, batch_size=default_config.batch_size, batch_timeout_ms=default_config.batch_timeout_ms, debounce_ms=default_config.debounce_ms, max_age_ms=default_config.max_age_ms)
+        await storage.start()
+        
+        # Create a ChunkGenerated event with nested TokenChunk
+        task_id = TaskId(uuid=uuid4())
+        chunk_data = TokenChunkData(
+            text="Hello, world!",
+            token_id=42,
+            finish_reason="stop"
+        )
+        token_chunk = TokenChunk(
+            chunk_data=chunk_data,
+            chunk_type=ChunkType.token,
+            task_id=task_id,
+            idx=0,
+            model="test-model"
+        )
+        
+        chunk_generated_event = ChunkGenerated(
+            event_type=StreamingEventTypes.ChunkGenerated,
+            event_category=EventCategoryEnum.MutatesTaskState,
+            task_id=task_id,
+            chunk=token_chunk
+        )
+        
+        # Store the event using the storage API
+        await storage.append_events([chunk_generated_event], sample_node_id)  # type: ignore[reportArgumentType]
+        
+        # Wait for batch to be written
+        await asyncio.sleep(0.5)
+        
+        # Retrieve the event
+        events = await storage.get_events_since(0)
+        
+        # Verify we got the event back
+        assert len(events) == 1
+        retrieved_event_wrapper = events[0]
+        assert retrieved_event_wrapper.origin == sample_node_id
+        
+        # Verify the event was deserialized correctly
+        retrieved_event = retrieved_event_wrapper.event
+        assert isinstance(retrieved_event, ChunkGenerated)
+        assert retrieved_event.event_type == StreamingEventTypes.ChunkGenerated
+        assert retrieved_event.event_category == EventCategoryEnum.MutatesTaskState
+        assert retrieved_event.task_id == task_id
+        
+        # Verify the nested chunk was deserialized correctly
+        retrieved_chunk = retrieved_event.chunk
+        assert isinstance(retrieved_chunk, TokenChunk)
+        assert retrieved_chunk.chunk_type == ChunkType.token
+        assert retrieved_chunk.task_id == task_id
+        assert retrieved_chunk.idx == 0
+        assert retrieved_chunk.model == "test-model"
+        
+        # Verify the chunk data
+        assert retrieved_chunk.chunk_data.text == "Hello, world!"
+        assert retrieved_chunk.chunk_data.token_id == 42
+        assert retrieved_chunk.chunk_data.finish_reason == "stop"
         
         await storage.close()

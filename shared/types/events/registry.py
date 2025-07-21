@@ -1,7 +1,7 @@
 from types import UnionType
 from typing import Annotated, Any, Mapping, Type, get_args
 
-from pydantic import Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.constants import get_error_reporting_message
 from shared.types.events.common import (
@@ -9,6 +9,7 @@ from shared.types.events.common import (
     EventCategories,
     EventTypes,
     InstanceEventTypes,
+    NodeId,
     NodePerformanceEventTypes,
     RunnerStatusEventTypes,
     StreamingEventTypes,
@@ -127,3 +128,16 @@ check_union_of_all_events_is_consistent_with_registry(EventRegistry, Event)
 
 _EventType = Annotated[Event, Field(discriminator="event_type")]
 EventParser: TypeAdapter[BaseEvent[EventCategories]] = TypeAdapter(_EventType)
+
+
+# Define a properly typed EventFromEventLog that preserves specific event types
+
+class EventFromEventLogTyped(BaseModel):
+    """Properly typed EventFromEventLog that preserves specific event types."""
+    event: _EventType
+    origin: NodeId
+    idx_in_log: int = Field(gt=0)
+
+    def check_event_was_sent_by_correct_node(self) -> bool:
+        """Check if the event was sent by the correct node."""
+        return self.event.check_event_was_sent_by_correct_node(self.origin)

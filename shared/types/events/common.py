@@ -1,5 +1,6 @@
 from enum import Enum, StrEnum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     FrozenSet,
@@ -9,6 +10,9 @@ from typing import (
     Sequence,
     cast,
 )
+
+if TYPE_CHECKING:
+    pass
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -138,7 +142,13 @@ class BaseEvent[
     event_category: SetMembersT
     event_id: EventId = EventId()
 
-    def check_event_was_sent_by_correct_node(self, origin_id: NodeId) -> bool: ...
+    def check_event_was_sent_by_correct_node(self, origin_id: NodeId) -> bool:
+        """Check if the event was sent by the correct node.
+        
+        This is a placeholder implementation that always returns True.
+        Subclasses can override this method to implement specific validation logic.
+        """
+        return True
 
 
 class EventFromEventLog[SetMembersT: EventCategories | EventCategory](BaseModel):
