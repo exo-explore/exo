@@ -8,7 +8,6 @@ from shared.types.models.sources import ModelSource
 
 
 @final
-# Concerned by the naming here; model could also be an instance of a model.
 class ModelInfo(BaseModel):
     model_id: ModelId
     model_sources: Sequence[ModelSource]

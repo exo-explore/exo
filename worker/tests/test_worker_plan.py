@@ -9,10 +9,9 @@ import pytest
 
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
-from shared.types.states.shared import Instances
+from shared.types.state import State
 
 # WorkerState import below after RunnerCase definition to avoid forward reference issues
-from shared.types.states.worker import NodeStatusState, WorkerState
 from shared.types.worker.common import InstanceId, NodeStatus, RunnerId
 from shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
 from shared.types.worker.instances import Instance, InstanceParams, TypeOfInstance
@@ -46,7 +45,7 @@ class PlanTestCase:
     expected_op_runner_idx: Optional[int] = None
     # Allow overriding the WorkerState passed to Worker.plan.  When None, a default state
     # is constructed from `runners` via helper `_build_worker_state`.
-    worker_state_override: Optional[WorkerState] = None
+    worker_state_override: Optional[State] = None
 
     def id(self) -> str:  # noqa: D401
         return self.description.replace(" ", "_")
@@ -104,9 +103,9 @@ TEST_CASES: Final[List[PlanTestCase]] = [
         ],
         expected_op_type=None,
         expected_op_runner_idx=None,
-        worker_state_override=WorkerState(
-            node_status=NodeStatusState(node_status={NodeId(): NodeStatus.Idle}),
-            instances=Instances(instances={}),
+        worker_state_override=State(
+            node_status={NodeId(): NodeStatus.Idle},
+            instances={},
         ),
     ),
 ]
@@ -130,7 +129,7 @@ def _build_worker_state(
     tmp_path: Path,
     node_id: NodeId,
     runner_cases: List[RunnerCase],
-) -> tuple[WorkerState, List[RunnerContext]]:
+) -> tuple[State, List[RunnerContext]]:
     """Construct a WorkerState plus per-runner context objects."""
 
     instances: dict[InstanceId, Instance] = {}
@@ -182,9 +181,9 @@ def _build_worker_state(
             )
         )
 
-    worker_state = WorkerState(
-        node_status=NodeStatusState(node_status={node_id: NodeStatus.Idle}),
-        instances=Instances(instances=instances),
+    worker_state = State(
+        node_status={node_id: NodeStatus.Idle},
+        instances=instances,
     )
 
     return worker_state, runner_contexts
@@ -260,4 +259,3 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
         assert op.runner_id == target_ctx.runner_id
         assert op.instance_id == target_ctx.instance_id
         assert op.shard_metadata == target_ctx.shard_metadata
-

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from shared.types.common import NodeId
 from shared.types.events.events import ChunkGenerated, InstanceId, RunnerStatusUpdated
 from shared.types.events.registry import Event
-from shared.types.states.worker import WorkerState
+from shared.types.state import State
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import (
     DownloadCompleted,
@@ -68,7 +68,7 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
-        initial_state: WorkerState,
+        initial_state: State,
         logger: Logger,
     ):
         self.node_id = node_id
@@ -295,7 +295,7 @@ class Worker:
             yield event
 
     ## Planning logic
-    def plan(self, state: WorkerState) -> RunnerOp | None:
+    def plan(self, state: State) -> RunnerOp | None:
         # Compare state to worker 'mood'
         
         # First spin things down
@@ -303,7 +303,7 @@ class Worker:
         # Then spin things up
 
         # Then make sure things are downloading.
-        for instance_id, instance in state.instances.instances.items():
+        for instance_id, instance in state.instances.items():
             # We should already have asserted that this runner exists
             # If it didn't exist then we return a assign_runner op.
             for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():

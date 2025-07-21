@@ -8,7 +8,7 @@ import pytest
 
 from shared.types.common import NodeId
 from shared.types.models.common import ModelId
-from shared.types.states.worker import NodeStatusState, WorkerState
+from shared.types.state import State
 from shared.types.tasks.common import (
     ChatCompletionMessage,
     ChatCompletionTaskParams,
@@ -115,14 +115,12 @@ def chat_task(
     )
 
 @pytest.fixture
-def worker_state():
-    node_status=NodeStatusState(
-            node_status={
-                NodeId(uuid.uuid4()): NodeStatus.Idle
-            }
-        )
+def state():
+    node_status={
+        NodeId(uuid.uuid4()): NodeStatus.Idle
+    }
 
-    return WorkerState(
+    return State(
         node_status=node_status,
     )
 
@@ -157,8 +155,8 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
     return _instance
 
 @pytest.fixture
-def worker(worker_state: WorkerState, logger: Logger):
-    return Worker(NodeId(uuid.uuid4()), worker_state, logger)
+def worker(state: State, logger: Logger):
+    return Worker(NodeId(uuid.uuid4()), state, logger)
 
 @pytest.fixture
 async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId], Instance]):

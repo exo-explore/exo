@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from shared.types.common import NodeId
-from shared.types.states.worker import NodeStatusState, WorkerState
+from shared.types.state import State
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import Instance
 from worker.main import Worker
@@ -31,18 +31,17 @@ async def test_worker_instance_added(worker: Worker, instance: Callable[[NodeId]
     await worker.start()
     await asyncio.sleep(0.01)
 
-    worker.state.instances.instances = {InstanceId(uuid4()): instance(worker.node_id)}
+    worker.state.instances = {InstanceId(uuid4()): instance(worker.node_id)}
     
-    print(worker.state.instances.instances)
+    print(worker.state.instances)
 
 def test_plan_noop(worker: Worker):
-    s = WorkerState(
-        node_status=NodeStatusState(
-            node_status={
+    s = State(
+        node_status={
                 NodeId(uuid4()): NodeStatus.Idle
             }
-        ),
-    )
+        )
+
     next_op = worker.plan(s)
 
     assert next_op is None

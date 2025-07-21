@@ -24,19 +24,19 @@ from shared.types.events.common import (
 )
 from shared.types.models.common import ModelId
 from shared.types.models.model import ModelInfo
-from shared.types.states.master import MasterState
+from shared.types.state import State
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import Instance
 
 
 # Restore State
-def get_master_state(logger: Logger) -> MasterState:
+def get_state(logger: Logger) -> State:
     if EXO_MASTER_STATE.exists():
         with open(EXO_MASTER_STATE, "r") as f:
-            return MasterState.model_validate_json(f.read())
+            return State.model_validate_json(f.read())
     else:
         log(logger, MasterUninitializedLogEntry())
-        return MasterState()
+        return State()
 
 
 # FastAPI Dependencies
@@ -46,8 +46,8 @@ def check_env_vars_defined(data: object, logger: Logger) -> MasterEnvironmentSch
     return data
 
 
-def get_master_state_dependency(data: object, logger: Logger) -> MasterState:
-    if not isinstance(data, MasterState):
+def get_state_dependency(data: object, logger: Logger) -> State:
+    if not isinstance(data, State):
         raise RuntimeError("Master State Not Found")
     return data
 

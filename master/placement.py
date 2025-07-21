@@ -3,7 +3,7 @@ from typing import Mapping, Sequence
 
 from shared.types.events.common import BaseEvent, EventCategory
 from shared.types.graphs.topology import Topology
-from shared.types.states.master import CachePolicy, CachePolicyType
+from shared.types.state import CachePolicy
 from shared.types.tasks.common import Task
 from shared.types.worker.instances import InstanceId, InstanceParams
 
@@ -13,7 +13,7 @@ def get_instance_placement(
     outbox: Queue[Task],
     topology: Topology,
     current_instances: Mapping[InstanceId, InstanceParams],
-    cache_policy: CachePolicy[CachePolicyType],
+    cache_policy: CachePolicy,
 ) -> Mapping[InstanceId, InstanceParams]: ...
 
 
