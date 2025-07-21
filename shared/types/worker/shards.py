@@ -4,7 +4,7 @@ from typing import Annotated, Generic, Literal, TypeAlias, TypeVar
 from pydantic import BaseModel, DirectoryPath, Field, TypeAdapter
 
 from shared.types.common import NodeId
-from shared.types.models.common import ModelId
+from shared.types.models import ModelId
 
 
 class PartitionStrategy(str, Enum):

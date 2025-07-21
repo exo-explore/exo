@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
-from shared.types.models.common import ModelId
+from shared.types.models import ModelId
 from shared.types.tasks.common import TaskId
 
 

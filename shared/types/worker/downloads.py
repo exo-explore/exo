@@ -11,8 +11,7 @@ from typing import (
 from pydantic import BaseModel, Field, PositiveInt
 
 from shared.types.common import NodeId
-from shared.types.models.common import ModelId
-from shared.types.models.sources import ModelSource
+from shared.types.models import ModelId
 from shared.types.worker.shards import ShardMetadata
 
 
@@ -74,7 +73,6 @@ DownloadEffectHandler = Callable[
 
 def download_shard(
     model_id: ModelId,
-    model_source: ModelSource,
     shard_metadata: ShardMetadata,
     effect_handlers: Sequence[DownloadEffectHandler],
 ) -> None: ...

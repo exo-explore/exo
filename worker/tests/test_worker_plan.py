@@ -8,7 +8,7 @@ from typing import Final, List, Optional, Type
 import pytest
 
 from shared.types.common import NodeId
-from shared.types.models.common import ModelId
+from shared.types.models import ModelId
 from shared.types.state import State
 
 # WorkerState import below after RunnerCase definition to avoid forward reference issues

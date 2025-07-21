@@ -5,7 +5,7 @@ from typing import Annotated, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from shared.types.common import NodeId
-from shared.types.models.common import ModelId
+from shared.types.models import ModelId
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import DownloadProgress
 from shared.types.worker.shards import ShardMetadata

@@ -7,7 +7,7 @@ from typing import Callable
 import pytest
 
 from shared.types.common import NodeId
-from shared.types.models.common import ModelId
+from shared.types.models import ModelId
 from shared.types.state import State
 from shared.types.tasks.common import (
     ChatCompletionMessage,
@@ -45,7 +45,7 @@ def pipeline_shard_meta():
 
         return PipelineShardMetadata(
             device_rank=device_rank,
-            model_id=ModelId(uuid=uuid.uuid4()),
+            model_id=ModelId(uuid.uuid4()),
             model_path=Path(
                 "~/.exo/models/mlx-community--Llama-3.2-1B-Instruct-4bit/"
             ).expanduser(),

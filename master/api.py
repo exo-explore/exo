@@ -1,9 +1,7 @@
 from typing import Protocol
 
 from shared.types.graphs.topology import Topology
-from shared.types.models.common import ModelId
-from shared.types.models.model import ModelInfo
-from shared.types.models.sources import ModelSource
+from shared.types.models import ModelId, ModelMetadata
 from shared.types.worker.common import InstanceId
 from shared.types.worker.downloads import DownloadProgress
 from shared.types.worker.instances import Instance
@@ -20,8 +18,8 @@ class ClusterAPI(Protocol):
 
     def remove_instance(self, instance_id: InstanceId) -> None: ...
 
-    def get_model_data(self, model_id: ModelId) -> ModelInfo: ...
+    def get_model_metadata(self, model_id: ModelId) -> ModelMetadata: ...
 
-    def download_model(self, model_id: ModelId, model_source: ModelSource) -> None: ...
+    def download_model(self, model_id: ModelId) -> None: ...
 
     def get_download_progress(self, model_id: ModelId) -> DownloadProgress: ...

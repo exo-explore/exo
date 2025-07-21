@@ -22,8 +22,7 @@ from shared.logger import (
 from shared.types.events.common import (
     EventCategoryEnum,
 )
-from shared.types.models.common import ModelId
-from shared.types.models.model import ModelInfo
+from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import Instance
@@ -180,7 +179,7 @@ def remove_instance(instance_id: InstanceId) -> None: ...
 
 
 @app.get("/model/{model_id}/metadata")
-def get_model_data(model_id: ModelId) -> ModelInfo: ...
+def get_model_metadata(model_id: ModelId) -> ModelMetadata: ...
 
 
 @app.post("/model/{model_id}/instances")
