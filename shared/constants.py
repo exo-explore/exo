@@ -2,7 +2,8 @@ import inspect
 from pathlib import Path
 
 EXO_HOME = Path.home() / ".exo"
-EXO_EVENT_DB = EXO_HOME / "event_db.sqlite3"
+EXO_GLOBAL_EVENT_DB = EXO_HOME / "global_events.db"
+EXO_WORKER_EVENT_DB = EXO_HOME / "worker_events.db"
 EXO_MASTER_STATE = EXO_HOME / "master_state.json"
 EXO_WORKER_STATE = EXO_HOME / "worker_state.json"
 EXO_MASTER_LOG = EXO_HOME / "master.log"

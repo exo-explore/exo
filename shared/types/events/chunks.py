@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 # from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from pydantic import BaseModel, Field, TypeAdapter
 
-from shared.openai import FinishReason
+from shared.openai_compat import FinishReason
 from shared.types.models.common import ModelId
 from shared.types.tasks.common import TaskId
 

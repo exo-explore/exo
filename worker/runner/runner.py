@@ -10,7 +10,7 @@ from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx
-from shared.openai import FinishReason
+from shared.openai_compat import FinishReason
 from shared.types.tasks.common import ChatCompletionTaskData, CompletionCreateParams
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,

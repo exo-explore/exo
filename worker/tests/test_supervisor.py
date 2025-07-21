@@ -3,7 +3,7 @@ from typing import Callable, Literal
 
 import pytest
 
-from shared.openai import FinishReason
+from shared.openai_compat import FinishReason
 from shared.types.events.chunks import TokenChunk
 from shared.types.tasks.common import (
     ChatCompletionTaskData,

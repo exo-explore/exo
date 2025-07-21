@@ -5,6 +5,7 @@ description = "Shared utilities for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "aiosqlite>=0.20.0",
     "networkx>=3.5",
     "openai>=1.93.0",
     "pathlib>=1.0.1",
@@ -12,6 +13,8 @@ dependencies = [
     "pydantic>=2.11.7",
     "rich>=14.0.0",
     "rustworkx>=0.16.0",
+    "sqlmodel>=0.0.22",
+    "sqlalchemy[asyncio]>=2.0.0",
 ]
 
 [build-system]
