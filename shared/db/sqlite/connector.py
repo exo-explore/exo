@@ -108,9 +108,8 @@ class AsyncSQLiteEventStorage:
                 event_data: dict[str, Any] = cast(dict[str, Any], json.loads(raw_event_data))
             else:
                 event_data = cast(dict[str, Any], raw_event_data)
-            event = await self._deserialize_event(event_data)
             events.append(EventFromEventLog(
-                event=event,
+                event=EventParser.validate_python(event_data),
                 origin=NodeId(uuid=UUID(origin)),
                 idx_in_log=rowid  # rowid becomes idx_in_log
             ))
@@ -248,14 +247,6 @@ class AsyncSQLiteEventStorage:
         except Exception as e:
             self._logger.error(f"Failed to commit batch: {e}")
             raise
-    
-    # TODO: This is a hack to get the event deserialization working. We need to find a better way to do this.
-    async def _deserialize_event(self, event_data: dict[str, Any]) -> Event:
-        """Deserialize event data back to typed Event."""
-        # EventParser expects the discriminator field for proper deserialization
-        result = EventParser.validate_python(event_data)
-        # EventParser returns Event type which is our union of all event types
-        return result
     
     async def _deserialize_event_raw(self, event_data: dict[str, Any]) -> dict[str, Any]:
         """Return raw event data for testing purposes."""
