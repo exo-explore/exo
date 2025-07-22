@@ -57,7 +57,7 @@ class AssignedRunner(BaseModel):
     @property
     def is_downloaded(self) -> bool:
         # TODO: Do this properly with huggingface validating each of the files.
-        return os.path.exists(build_model_path(self.shard_metadata.model_id))
+        return os.path.exists(build_model_path(self.shard_metadata.model_meta.model_id))
 
     def status_update_event(self) -> RunnerStatusUpdated:
         return RunnerStatusUpdated(

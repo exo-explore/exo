@@ -1,10 +1,10 @@
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeAlias, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.common import NodeId
-from shared.types.models import ModelId
+from shared.types.models import ModelId, ModelMetadata
 
 
 class PartitionStrategy(str, Enum):
@@ -20,10 +20,10 @@ class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
     Replaces previous `Shard` object.
     """
 
+    model_meta: ModelMetadata
     partition_strategy: PartitionStrategyT
     device_rank: int
     world_size: int
-    model_id: ModelId
 
 
 class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):
@@ -47,7 +47,7 @@ class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline
         return self.end_layer == self.n_layers - 1
 
     def __hash__(self) -> int:
-        return hash((self.model_id, self.start_layer, self.end_layer, self.n_layers))
+        return hash((self.model_meta.model_id, self.start_layer, self.end_layer, self.n_layers))
 
 
 ShardMetadata = Annotated[
@@ -56,17 +56,6 @@ ShardMetadata = Annotated[
 ShardMetadataParser: TypeAdapter[ShardMetadata] = TypeAdapter(
     ShardMetadata
 )
-
-# ---------------------------------------------------------------------------
-# Convenience aliases
-# ---------------------------------------------------------------------------
-
-# "ShardMeta" is a widely-used alias for the concrete, fully-parameterised
-# `ShardMetadata` type.  Defining it here avoids repetitive generic
-# parameters at call-sites and resolves unknown-import diagnostics in
-# downstream modules.
-
-ShardMeta: TypeAlias = ShardMetadata
 
 
 class ShardPlacement(BaseModel, Generic[PartitionStrategyT]):

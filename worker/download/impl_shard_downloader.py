@@ -20,7 +20,7 @@ async def build_base_shard(model_id: str) -> Optional[ShardMetadata]:
   model_meta = await get_model_meta(model_id)
   # print(f"build_base_shard {model_id=} {model_meta=}")
   return PipelineShardMetadata(
-    model_id=model_id,
+    model_meta=model_meta,
     partition_strategy=PartitionStrategy.pipeline,
     device_rank=0,
     world_size=1,
@@ -34,7 +34,7 @@ async def build_full_shard(model_id: str) -> Optional[PipelineShardMetadata]:
   if base_shard is None:
     return None
   return PipelineShardMetadata(
-    model_id=base_shard.model_id,
+    model_meta=base_shard.model_meta,
     partition_strategy=base_shard.partition_strategy,
     device_rank=base_shard.device_rank,
     world_size=base_shard.world_size,
@@ -73,13 +73,13 @@ class CachedShardDownloader(ShardDownloader):
     self.shard_downloader.on_progress(callback)
 
   async def ensure_shard(self, shard: ShardMetadata, config_only: bool = False) -> Path:
-    if (shard.model_id, shard) in self.cache:
+    if (shard.model_meta.model_id, shard) in self.cache:
       # print(f"ensure_shard cache hit {shard=}")
-      return self.cache[(shard.model_id, shard)]
+      return self.cache[(shard.model_meta.model_id, shard)]
 
     # print(f"ensure_shard cache miss {shard=}")
     target_dir = await self.shard_downloader.ensure_shard(shard, config_only)
-    self.cache[(shard.model_id, shard)] = target_dir
+    self.cache[(shard.model_meta.model_id, shard)] = target_dir
     return target_dir
 
   async def get_shard_download_status(self) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:

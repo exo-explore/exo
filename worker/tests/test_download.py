@@ -1,29 +1,21 @@
 import time
+from typing import Callable
 
 import pytest
 
-from shared.types.models import ModelId
-from shared.types.worker.shards import PartitionStrategy, PipelineShardMetadata
+from shared.types.worker.shards import PipelineShardMetadata
 from worker.download.impl_shard_downloader import exo_shard_downloader
 from worker.download.shard_downloader import ShardDownloader
 
 
 @pytest.mark.asyncio
-async def test_shard_downloader():
+async def test_shard_downloader(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata]):
     shard_downloader: ShardDownloader = exo_shard_downloader()
     shard_downloader.on_progress(
         lambda shard, progress: print(f"Download progress: {progress}")
     )
 
-    shard_metadata = PipelineShardMetadata(
-        model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
-        partition_strategy=PartitionStrategy.pipeline,
-        device_rank=0,
-        world_size=1,
-        start_layer=0,
-        end_layer=100,
-        n_layers=100,
-    )
+    shard_metadata = pipeline_shard_meta(1, 0)
     path = await shard_downloader.ensure_shard(shard_metadata)
     assert path.exists()
 

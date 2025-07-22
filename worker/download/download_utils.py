@@ -293,10 +293,10 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]
 
 async def resolve_allow_patterns(shard: ShardMetadata) -> List[str]:
   try:
-    weight_map = await get_weight_map(str(shard.model_id))
+    weight_map = await get_weight_map(str(shard.model_meta.model_id))
     return get_allow_patterns(weight_map, shard)
   except Exception:
-    print(f"Error getting weight map for {shard.model_id=}")
+    print(f"Error getting weight map for {shard.model_meta.model_id=}")
     traceback.print_exc()
     return ["*"]
 
@@ -360,27 +360,27 @@ async def download_shard(shard: ShardMetadata,
                          skip_download: bool = False,
                          allow_patterns: List[str] | None = None) -> tuple[Path, RepoDownloadProgress]:
   if not skip_download:
-    print(f"Downloading {shard.model_id=}")
+    print(f"Downloading {shard.model_meta.model_id=}")
 
   # Handle local paths
-  if await aios.path.exists(str(shard.model_id)):
-    print(f"Using local model path {shard.model_id}")
-    local_path = Path(str(shard.model_id))
-    return local_path, await download_progress_for_local_path(str(shard.model_id), shard, local_path)
+  if await aios.path.exists(str(shard.model_meta.model_id)):
+    print(f"Using local model path {shard.model_meta.model_id}")
+    local_path = Path(str(shard.model_meta.model_id))
+    return local_path, await download_progress_for_local_path(str(shard.model_meta.model_id), shard, local_path)
 
   revision = "main"
-  target_dir = await ensure_models_dir()/str(shard.model_id).replace("/", "--")
+  target_dir = await ensure_models_dir()/str(shard.model_meta.model_id).replace("/", "--")
   if not skip_download:
     await aios.makedirs(target_dir, exist_ok=True)
 
   if not allow_patterns:
     allow_patterns = await resolve_allow_patterns(shard)
 
-  print(f"Downloading {shard.model_id=} with {allow_patterns=}")
+  print(f"Downloading {shard.model_meta.model_id=} with {allow_patterns=}")
 
   all_start_time = time.time()
   # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.
-  file_list = await fetch_file_list_with_cache(str(shard.model_id), revision, recursive=False)
+  file_list = await fetch_file_list_with_cache(str(shard.model_meta.model_id), revision, recursive=False)
   filtered_file_list = list(filter_repo_objects(file_list, allow_patterns=allow_patterns, key=lambda x: x.path))
   file_progress: Dict[str, RepoFileDownloadProgress] = {}
   def on_progress_wrapper(file: FileListEntry, curr_bytes: int, total_bytes: int):
@@ -389,7 +389,7 @@ async def download_shard(shard: ShardMetadata,
     speed = downloaded_this_session / (time.time() - start_time) if time.time() - start_time > 0 else 0
     eta = timedelta(seconds=(total_bytes - curr_bytes) / speed) if speed > 0 else timedelta(seconds=0)
     file_progress[file.path] = RepoFileDownloadProgress(
-        repo_id=str(shard.model_id),
+        repo_id=str(shard.model_meta.model_id),
         repo_revision=revision,
         file_path=file.path,
         downloaded=curr_bytes,
@@ -400,11 +400,11 @@ async def download_shard(shard: ShardMetadata,
         status="complete" if curr_bytes == total_bytes else "in_progress",
         start_time=start_time,
     )
-    on_progress(shard, calculate_repo_progress(shard, str(shard.model_id), revision, file_progress, all_start_time))
+    on_progress(shard, calculate_repo_progress(shard, str(shard.model_meta.model_id), revision, file_progress, all_start_time))
   for file in filtered_file_list:
     downloaded_bytes = await get_downloaded_size(target_dir/file.path)
     file_progress[file.path] = RepoFileDownloadProgress(
-        repo_id=str(shard.model_id),
+        repo_id=str(shard.model_meta.model_id),
         repo_revision=revision,
         file_path=file.path,
         downloaded=downloaded_bytes,
@@ -419,10 +419,10 @@ async def download_shard(shard: ShardMetadata,
   semaphore = asyncio.Semaphore(max_parallel_downloads)
   async def download_with_semaphore(file: FileListEntry):
     async with semaphore:
-      await download_file_with_retry(str(shard.model_id), revision, file.path, target_dir, lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes))
+      await download_file_with_retry(str(shard.model_meta.model_id), revision, file.path, target_dir, lambda curr_bytes, total_bytes: on_progress_wrapper(file, curr_bytes, total_bytes))
   if not skip_download:
     await asyncio.gather(*[download_with_semaphore(file) for file in filtered_file_list])
-  final_repo_progress = calculate_repo_progress(shard, str(shard.model_id), revision, file_progress, all_start_time)
+  final_repo_progress = calculate_repo_progress(shard, str(shard.model_meta.model_id), revision, file_progress, all_start_time)
   on_progress(shard, final_repo_progress)
   if gguf := next((f for f in filtered_file_list if f.path.endswith(".gguf")), None):
     return target_dir/gguf.path, final_repo_progress

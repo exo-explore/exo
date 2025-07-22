@@ -7,10 +7,9 @@ from typing import Any, Hashable, Mapping, Protocol, Sequence
 from fastapi.responses import Response, StreamingResponse
 
 from shared.event_loops.commands import ExternalCommand
+from shared.types.events.components import Apply, EventFromEventLog
 from shared.types.events.registry import Event
-from shared.types.events.components import EventFromEventLog
 from shared.types.state import State
-from shared.types.events.components import Apply
 
 
 class ExhaustiveMapping[K: Hashable, V](MutableMapping[K, V]):

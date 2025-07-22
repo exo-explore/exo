@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, List, Optional, Type
+from typing import Callable, Final, List, Optional, Type
 
 import pytest
 
@@ -125,10 +125,12 @@ class RunnerContext:
     instance_params: InstanceParams
 
 
+# TODO: generalize this it's in conftest.
 def _build_worker_state(
     *,
     tmp_path: Path,
     node_id: NodeId,
+    pipeline_shard_metadata: PipelineShardMetadata,
     runner_cases: List[RunnerCase],
 ) -> tuple[State, List[RunnerContext]]:
     """Construct a WorkerState plus per-runner context objects."""
@@ -145,18 +147,9 @@ def _build_worker_state(
         model_subdir = tmp_path / f"runner_{idx}"
         model_subdir.mkdir(exist_ok=True)
 
-        shard_metadata = PipelineShardMetadata(
-            device_rank=0,
-            world_size=1,
-            model_id=model_id,
-            start_layer=0,
-            end_layer=0,
-            n_layers=1,
-        )
-
         shard_assignments = ShardAssignments(
             model_id=model_id,
-            runner_to_shard={runner_id: shard_metadata},
+            runner_to_shard={runner_id: pipeline_shard_metadata},
             node_to_runner={node_id: runner_id},
         )
 
@@ -177,7 +170,7 @@ def _build_worker_state(
             RunnerContext(
                 runner_id=runner_id,
                 instance_id=instance_id,
-                shard_metadata=shard_metadata,
+                shard_metadata=pipeline_shard_metadata,
                 instance_params=instance_params,
             )
         )
@@ -197,7 +190,7 @@ def _build_worker_state(
 
 # Pre-compute readable identifiers for each case to avoid lambda typing issues.
 @pytest.mark.parametrize("case", TEST_CASES, ids=[case.id() for case in TEST_CASES])
-def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pipeline_shard_meta: Callable[..., PipelineShardMetadata]) -> None:
     """Exercise Worker.plan across declarative scenarios."""
 
     # Fresh identifier for isolation of node
@@ -207,6 +200,7 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
     worker_state, runner_contexts = _build_worker_state(
         tmp_path=tmp_path,
         node_id=node_id,
+        pipeline_shard_metadata=pipeline_shard_meta(1, 0),
         runner_cases=case.runners,
     )
 
@@ -234,7 +228,7 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
         )
         worker.assigned_runners[ctx.runner_id] = assigned_runner
 
-        path_downloaded_map[str(build_model_path(ctx.shard_metadata.model_id))] = runner_case.downloaded
+        path_downloaded_map[str(build_model_path(ctx.shard_metadata.model_meta.model_id))] = runner_case.downloaded
 
     # Stub filesystem existence check ------------------------------------------------------
     from worker import main as worker_main  # local import for module-scoped os

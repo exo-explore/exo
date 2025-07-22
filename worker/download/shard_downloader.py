@@ -3,6 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
+from shared.types.models import ModelMetadata
 from shared.types.worker.shards import (
   PartitionStrategy,
   PipelineShardMetadata,
@@ -11,6 +12,7 @@ from shared.types.worker.shards import (
 from worker.download.download_utils import RepoDownloadProgress
 
 
+# TODO: the PipelineShardMetadata getting reinstantiated is a bit messy. Shoudl this be a classmethod?
 class ShardDownloader(ABC):
   @abstractmethod
   async def ensure_shard(self, shard: ShardMetadata, config_only: bool = False) -> Path:
@@ -42,7 +44,12 @@ class ShardDownloader(ABC):
             repo_id="noop",
             repo_revision="noop",
             shard=PipelineShardMetadata(
-                model_id="noop",
+                model_meta=ModelMetadata(
+                  model_id='noop',
+                  pretty_name='noope',
+                  storage_size_kilobytes=0,
+                  n_layers=1
+                ),
                 partition_strategy=PartitionStrategy.pipeline,
                 device_rank=0,
                 world_size=1,
@@ -76,7 +83,12 @@ class NoopShardDownloader(ShardDownloader):
             repo_id="noop",
             repo_revision="noop",
             shard=PipelineShardMetadata(
-                model_id="noop",
+                model_meta=ModelMetadata(
+                  model_id='noop',
+                  pretty_name='noope',
+                  storage_size_kilobytes=0,
+                  n_layers=1
+                ),
                 partition_strategy=PartitionStrategy.pipeline,
                 device_rank=0,
                 world_size=1,

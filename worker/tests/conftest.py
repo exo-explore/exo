@@ -7,7 +7,7 @@ from typing import Callable
 import pytest
 
 from shared.types.common import NodeId
-from shared.types.models import ModelId
+from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
 from shared.types.tasks.common import (
     ChatCompletionMessage,
@@ -30,7 +30,18 @@ from worker.main import Worker
 
 
 @pytest.fixture
-def pipeline_shard_meta(tmp_path: Path):
+def model_meta() -> ModelMetadata:
+    # return _get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit') # we can't do this! as it's an async function :(
+    return ModelMetadata(
+        model_id='mlx-community/Llama-3.2-1B-Instruct-4bit',
+        pretty_name='llama3.2',
+        storage_size_kilobytes=10**6,
+        n_layers=16
+    )
+
+
+@pytest.fixture
+def pipeline_shard_meta(model_meta: ModelMetadata, tmp_path: Path) -> Callable[[int, int], PipelineShardMetadata]:
     def _pipeline_shard_meta(
         num_nodes: int = 1, device_rank: int = 0
     ) -> PipelineShardMetadata:
@@ -44,8 +55,8 @@ def pipeline_shard_meta(tmp_path: Path):
         )
 
         return PipelineShardMetadata(
+            model_meta=model_meta,
             device_rank=device_rank,
-            model_id=ModelId(uuid.uuid4()),
             n_layers=total_layers,
             start_layer=start_layer,
             end_layer=end_layer,
