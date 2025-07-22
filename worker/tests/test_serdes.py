@@ -3,7 +3,7 @@ from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
-from shared.types.tasks.common import Task
+from shared.types.tasks import Task
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     RunnerMessageTypeAdapter,

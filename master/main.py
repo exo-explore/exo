@@ -10,7 +10,7 @@ from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.common import NodeId
 from shared.types.events.chunks import TokenChunk
 from shared.types.events.events import ChunkGenerated
-from shared.types.tasks.request import APIRequest, RequestId
+from shared.types.request import APIRequest, RequestId
 
 
 ## TODO: Hook this up properly

@@ -6,11 +6,8 @@ from types import CoroutineType
 from typing import Any, Callable
 
 from shared.types.events.chunks import GenerationChunk, TokenChunk
-from shared.types.tasks.common import (
-    ChatCompletionTaskParams,
-    Task,
-)
-from shared.types.tasks.request import RequestId
+from shared.types.request import RequestId
+from shared.types.tasks import ChatCompletionTaskParams, Task
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     ErrorResponse,

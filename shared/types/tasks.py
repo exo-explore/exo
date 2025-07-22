@@ -11,7 +11,7 @@ class TaskId(NewUUID):
     pass
 
 class TaskType(str, Enum):
-    ChatCompletion = "ChatCompletion"
+    CHAT_COMPLETION = "CHAT_COMPLETION"
 
 class TaskStatus(str, Enum):
     Pending = "Pending"
@@ -22,10 +22,11 @@ class TaskStatus(str, Enum):
 
 class Task(BaseModel):
     task_id: TaskId
-    task_type: TaskType # redundant atm as we only have 1 task type.
+    task_type: TaskType
     instance_id: InstanceId
     task_status: TaskStatus
     task_params: ChatCompletionTaskParams
+
 
 
 class TaskSagaEntry(BaseModel):

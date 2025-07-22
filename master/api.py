@@ -14,8 +14,8 @@ from shared.types.events.chunks import TokenChunk
 from shared.types.events.components import EventFromEventLog
 from shared.types.events.events import ChunkGenerated
 from shared.types.events.registry import Event
-from shared.types.tasks.common import ChatCompletionTaskParams
-from shared.types.tasks.request import APIRequest, RequestId
+from shared.types.request import APIRequest, RequestId
+from shared.types.tasks import ChatCompletionTaskParams
 
 
 class Message(BaseModel):

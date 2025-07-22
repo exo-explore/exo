@@ -10,7 +10,7 @@ from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from shared.types.common import NodeId
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
-from shared.types.tasks.common import (
+from shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
@@ -107,7 +107,7 @@ def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
 @pytest.fixture
 def chat_completion_task(completion_create_params: ChatCompletionTaskParams) -> Task:
     """Creates a ChatCompletionTask directly for serdes testing"""
-    return Task(task_id=TaskId(), instance_id=InstanceId(), task_type=TaskType.ChatCompletion, task_status=TaskStatus.Pending, task_params=completion_create_params)
+    return Task(task_id=TaskId(), instance_id=InstanceId(), task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.Pending, task_params=completion_create_params)
 
 @pytest.fixture
 def chat_task(
@@ -117,7 +117,7 @@ def chat_task(
     return Task(
         task_id=TaskId(),
         instance_id=InstanceId(),
-        task_type=TaskType.ChatCompletion,
+        task_type=TaskType.CHAT_COMPLETION,
         task_status=TaskStatus.Pending,
         task_params=completion_create_params,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Tuple
 
+from shared.topology import Connection, ConnectionProfile, Node, NodePerformanceProfile
 from shared.types.common import NodeId
 from shared.types.events.chunks import GenerationChunk
 from shared.types.events.common import (
@@ -9,15 +10,8 @@ from shared.types.events.common import (
     EventType,
     TimerId,
 )
-from shared.types.graphs.topology import (
-    TopologyEdge,
-    TopologyEdgeId,
-    TopologyEdgeProfile,
-    TopologyNode,
-)
-from shared.types.profiling.common import NodePerformanceProfile
-from shared.types.tasks.common import Task, TaskId, TaskStatus
-from shared.types.tasks.request import RequestId
+from shared.types.request import RequestId
+from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus
@@ -96,7 +90,7 @@ class NodePerformanceMeasured(BaseEvent[EventType.NodePerformanceMeasured]):
 
 class WorkerConnected(BaseEvent[EventType.WorkerConnected]):
     event_type: Literal[EventType.WorkerConnected] = EventType.WorkerConnected
-    edge: TopologyEdge
+    edge: Connection
 
 
 class WorkerStatusUpdated(BaseEvent[EventType.WorkerStatusUpdated]):
@@ -118,18 +112,18 @@ class ChunkGenerated(BaseEvent[EventType.ChunkGenerated]):
 
 class TopologyEdgeCreated(BaseEvent[EventType.TopologyEdgeCreated]):
     event_type: Literal[EventType.TopologyEdgeCreated] = EventType.TopologyEdgeCreated
-    vertex: TopologyNode
+    vertex: Node
 
 
 class TopologyEdgeReplacedAtomically(BaseEvent[EventType.TopologyEdgeReplacedAtomically]):
     event_type: Literal[EventType.TopologyEdgeReplacedAtomically] = EventType.TopologyEdgeReplacedAtomically
-    edge_id: TopologyEdgeId
-    edge_profile: TopologyEdgeProfile
+    edge: Connection
+    edge_profile: ConnectionProfile
 
 
 class TopologyEdgeDeleted(BaseEvent[EventType.TopologyEdgeDeleted]):
     event_type: Literal[EventType.TopologyEdgeDeleted] = EventType.TopologyEdgeDeleted
-    edge_id: TopologyEdgeId
+    edge: Connection
 
 
 class TimerCreated(BaseEvent[EventType.TimerCreated]):

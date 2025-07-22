@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
 from shared.types.models import ModelId
-from shared.types.tasks.request import RequestId
+from shared.types.request import RequestId
 
 
 class ChunkType(str, Enum):

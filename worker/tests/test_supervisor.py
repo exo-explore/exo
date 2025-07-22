@@ -6,7 +6,7 @@ import pytest
 
 from shared.openai_compat import FinishReason
 from shared.types.events.chunks import TokenChunk
-from shared.types.tasks.common import (
+from shared.types.tasks import (
     ChatCompletionTaskParams,
     Task,
     TaskType,
@@ -130,7 +130,7 @@ async def test_supervisor_early_stopping(
     )
 
     max_tokens = 50
-    assert chat_task.task_type == TaskType.ChatCompletion
+    assert chat_task.task_type == TaskType.CHAT_COMPLETION
     print(f'chat_task.task_params: {chat_task.task_params}')
     assert isinstance(chat_task.task_params, ChatCompletionTaskParams)
     task_params: ChatCompletionTaskParams = chat_task.task_params

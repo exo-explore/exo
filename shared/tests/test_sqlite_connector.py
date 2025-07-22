@@ -16,7 +16,7 @@ from shared.types.events.events import (
     ChunkGenerated,
     EventType,
 )
-from shared.types.tasks.request import RequestId
+from shared.types.request import RequestId
 
 # Type ignore comment for all protected member access in this test file
 # pyright: reportPrivateUsage=false
