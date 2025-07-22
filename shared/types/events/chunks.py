@@ -1,13 +1,11 @@
 from enum import Enum
 from typing import Annotated, Literal
 
-# from openai.types.chat.chat_completion import ChatCompletion
-# from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
 from shared.types.models import ModelId
-from shared.types.tasks.common import TaskId
+from shared.types.tasks.request import RequestId
 
 
 class ChunkType(str, Enum):
@@ -17,38 +15,21 @@ class ChunkType(str, Enum):
 
 class BaseChunk[ChunkTypeT: ChunkType](BaseModel):
     chunk_type: ChunkTypeT
-    task_id: TaskId
+    request_id: RequestId
     idx: int
     model: ModelId
 
 
-###
-
-
-class TokenChunkData(BaseModel):
+class TokenChunk(BaseChunk[ChunkType.token]):
+    chunk_type: Literal[ChunkType.token] = Field(default=ChunkType.token, frozen=True)
     text: str
     token_id: int
     finish_reason: FinishReason | None = None
 
 
-class ImageChunkData(BaseModel):
-    data: bytes
-
-
-###
-
-
-class TokenChunk(BaseChunk[ChunkType.token]):
-    chunk_data: TokenChunkData
-    chunk_type: Literal[ChunkType.token] = Field(default=ChunkType.token, frozen=True)
-
-
 class ImageChunk(BaseChunk[ChunkType.image]):
-    chunk_data: ImageChunkData
     chunk_type: Literal[ChunkType.image] = Field(default=ChunkType.image, frozen=True)
-
-
-###
+    data: bytes
 
 GenerationChunk = Annotated[TokenChunk | ImageChunk, Field(discriminator="chunk_type")]
 GenerationChunkTypeAdapter: TypeAdapter[GenerationChunk] = TypeAdapter(GenerationChunk)
@@ -60,10 +41,8 @@ GenerationChunkTypeAdapter: TypeAdapter[GenerationChunk] = TypeAdapter(Generatio
 # my_chunk: dict[str, Any] = TokenChunk(
 #     task_id=TaskId('nicerid'),
 #     idx=0,
-#     chunk_data=TokenChunkData(
-#         text='hello',
-#         token_id=12,
-#     ),
+    # text='hello',
+    # token_id=12,
 #     chunk_type=ChunkType.token,
 #     model='llama-3.1',
 # ).model_dump()

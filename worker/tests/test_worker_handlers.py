@@ -7,7 +7,7 @@ from typing import Callable
 import pytest
 
 from shared.types.common import NodeId
-from shared.types.events.chunks import TokenChunk, TokenChunkData
+from shared.types.events.chunks import TokenChunk
 from shared.types.events.events import ChunkGenerated, RunnerStatusUpdated
 from shared.types.events.registry import Event
 from shared.types.tasks.common import Task
@@ -107,7 +107,7 @@ async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId,
 
     async for chunk in supervisor.stream_response(task=chat_task):
         if isinstance(chunk, TokenChunk):
-            full_response += chunk.chunk_data.text
+            full_response += chunk.text
 
     assert "42" in full_response.lower(), (
         f"Expected '42' in response, but got: {full_response}"
@@ -175,7 +175,7 @@ async def test_execute_task_op(
     assert isinstance(events[-1].runner_status, LoadedRunnerStatus) # It should not have failed.
 
     gen_events: list[ChunkGenerated] = [x for x in events if isinstance(x, ChunkGenerated)]
-    text_chunks: list[TokenChunkData] = [x.chunk.chunk_data for x in gen_events if isinstance(x.chunk.chunk_data, TokenChunkData)]
+    text_chunks: list[TokenChunk] = [x.chunk for x in gen_events if isinstance(x.chunk, TokenChunk)]
     assert len(text_chunks) == len(events) - 2
     
     output_text = ''.join([x.text for x in text_chunks])

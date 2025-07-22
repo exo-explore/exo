@@ -236,12 +236,15 @@ class Worker:
                 assigned_runner.status = RunningRunnerStatus()
                 await queue.put(assigned_runner.status_update_event())
             
+            
             try:
                 async for chunk in assigned_runner.runner.stream_response(
                         task=op.task, 
                         request_started_callback=partial(running_callback, queue)):
                     await queue.put(ChunkGenerated(
-                        task_id=op.task.task_id,
+                        # todo: at some point we will no longer have a bijection between task_id and row_id. 
+                        # So we probably want to store a mapping between these two in our Worker object.
+                        request_id=chunk.request_id, 
                         chunk=chunk
                     ))
         

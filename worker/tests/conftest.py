@@ -6,12 +6,11 @@ from typing import Callable
 
 import pytest
 
+from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from shared.types.common import NodeId
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
 from shared.types.tasks.common import (
-    ChatCompletionMessage,
-    ChatCompletionTaskParams,
     Task,
     TaskId,
     TaskStatus,

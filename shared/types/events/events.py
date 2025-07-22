@@ -17,6 +17,7 @@ from shared.types.graphs.topology import (
 )
 from shared.types.profiling.common import NodePerformanceProfile
 from shared.types.tasks.common import Task, TaskId, TaskStatus
+from shared.types.tasks.request import RequestId
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus
@@ -111,7 +112,7 @@ class WorkerDisconnected(BaseEvent[EventType.WorkerDisconnected]):
 
 class ChunkGenerated(BaseEvent[EventType.ChunkGenerated]):
     event_type: Literal[EventType.ChunkGenerated] = EventType.ChunkGenerated
-    task_id: TaskId
+    request_id: RequestId
     chunk: GenerationChunk
 
 

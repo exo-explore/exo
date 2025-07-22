@@ -45,9 +45,9 @@ async def test_supervisor_single_node_response(
 
         async for chunk in supervisor.stream_response(task=chat_task):
             if isinstance(chunk, TokenChunk):
-                full_response += chunk.chunk_data.text
-                if chunk.chunk_data.finish_reason:
-                    stop_reason = chunk.chunk_data.finish_reason
+                full_response += chunk.text
+                if chunk.finish_reason:
+                    stop_reason = chunk.finish_reason
 
         # Case-insensitive check for Paris in the response
         assert "paris" in full_response.lower(), (
@@ -87,13 +87,13 @@ async def test_supervisor_two_node_response(
             nonlocal full_response_0
             async for chunk in supervisor_0.stream_response(task=chat_task):
                 if isinstance(chunk, TokenChunk):
-                    full_response_0 += chunk.chunk_data.text
+                    full_response_0 += chunk.text
 
         async def collect_response_1():
             nonlocal full_response_1
             async for chunk in supervisor_1.stream_response(task=chat_task):
                 if isinstance(chunk, TokenChunk):
-                    full_response_1 += chunk.chunk_data.text
+                    full_response_1 += chunk.text
 
         # Run both stream responses simultaneously
         _ = await asyncio.gather(collect_response_0(), collect_response_1())
@@ -148,10 +148,10 @@ async def test_supervisor_early_stopping(
 
         async for chunk in supervisor.stream_response(task=chat_task):
             if isinstance(chunk, TokenChunk):
-                full_response += chunk.chunk_data.text
+                full_response += chunk.text
                 count += 1
-                if chunk.chunk_data.finish_reason:
-                    stop_reason = chunk.chunk_data.finish_reason
+                if chunk.finish_reason:
+                    stop_reason = chunk.finish_reason
 
         print(f"full_response: {full_response}")
 

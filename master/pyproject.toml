@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "exo-shared",
     "fastapi>=0.116.0",
+    "uvicorn>=0.35.0",
 ]
 
 [build-system]

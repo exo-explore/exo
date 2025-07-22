@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.sqlite import AsyncSQLiteEventStorage, EventLogConfig
 from shared.types.common import NodeId
-from shared.types.events.chunks import ChunkType, TokenChunk, TokenChunkData
+from shared.types.events.chunks import ChunkType, TokenChunk
 from shared.types.events.events import (
     ChunkGenerated,
     EventType,
 )
-from shared.types.tasks.common import TaskId
+from shared.types.tasks.request import RequestId
 
 # Type ignore comment for all protected member access in this test file
 # pyright: reportPrivateUsage=false
@@ -159,6 +159,41 @@ class TestAsyncSQLiteEventStorage:
             raw_json = cast(str, row[1])
             retrieved_data = _load_json_data(raw_json)
             assert retrieved_data == test_records[i]
+        
+        await storage.close()
+
+
+
+    @pytest.mark.asyncio
+    async def test_get_last_idx(self, temp_db_path: Path, sample_node_id: NodeId) -> None:
+        """Test that rowid returns correctly from db."""
+        default_config = EventLogConfig()
+        storage = AsyncSQLiteEventStorage(db_path=temp_db_path, batch_size=default_config.batch_size, batch_timeout_ms=default_config.batch_timeout_ms, debounce_ms=default_config.debounce_ms, max_age_ms=default_config.max_age_ms)
+        await storage.start()
+        
+        # Insert multiple records
+        test_records = [
+            {"event_type": "test_event_1", "data": "first"},
+            {"event_type": "test_event_2", "data": "second"},
+            {"event_type": "test_event_3", "data": "third"}
+        ]
+        
+        assert storage._engine is not None
+        async with AsyncSession(storage._engine) as session:
+            for record in test_records:
+                await session.execute(
+                    text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
+                    {
+                        "origin": str(sample_node_id.uuid),
+                        "event_type": record["event_type"],
+                        "event_id": str(uuid4()),
+                        "event_data": json.dumps(record)
+                    }
+                )
+            await session.commit()
+        
+        last_idx = await storage.get_last_idx()
+        assert last_idx == 3
         
         await storage.close()
 
@@ -404,22 +439,19 @@ class TestAsyncSQLiteEventStorage:
         await storage.start()
         
         # Create a ChunkGenerated event with nested TokenChunk
-        task_id = TaskId(uuid=uuid4())
-        chunk_data = TokenChunkData(
+        request_id = RequestId(uuid=uuid4())
+        token_chunk = TokenChunk(
             text="Hello, world!",
             token_id=42,
-            finish_reason="stop"
-        )
-        token_chunk = TokenChunk(
-            chunk_data=chunk_data,
+            finish_reason="stop",
             chunk_type=ChunkType.token,
-            task_id=task_id,
+            request_id=request_id,
             idx=0,
             model="test-model"
         )
         
         chunk_generated_event = ChunkGenerated(
-            task_id=task_id,
+            request_id=request_id,
             chunk=token_chunk
         )
         
@@ -441,19 +473,19 @@ class TestAsyncSQLiteEventStorage:
         retrieved_event = retrieved_event_wrapper.event
         assert isinstance(retrieved_event, ChunkGenerated)
         assert retrieved_event.event_type == EventType.ChunkGenerated
-        assert retrieved_event.task_id == task_id
+        assert retrieved_event.request_id == request_id
         
         # Verify the nested chunk was deserialized correctly
         retrieved_chunk = retrieved_event.chunk
         assert isinstance(retrieved_chunk, TokenChunk)
         assert retrieved_chunk.chunk_type == ChunkType.token
-        assert retrieved_chunk.task_id == task_id
+        assert retrieved_chunk.request_id == request_id
         assert retrieved_chunk.idx == 0
         assert retrieved_chunk.model == "test-model"
         
         # Verify the chunk data
-        assert retrieved_chunk.chunk_data.text == "Hello, world!"
-        assert retrieved_chunk.chunk_data.token_id == 42
-        assert retrieved_chunk.chunk_data.finish_reason == "stop"
+        assert retrieved_chunk.text == "Hello, world!"
+        assert retrieved_chunk.token_id == 42
+        assert retrieved_chunk.finish_reason == "stop"
         
         await storage.close()

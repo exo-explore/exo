@@ -116,6 +116,27 @@ class AsyncSQLiteEventStorage:
             ))
         
         return events
+
+    async def get_last_idx(self) -> int:
+        if self._closed:
+            raise RuntimeError("Storaged is closed")
+    
+        assert self._engine is not None
+
+        async with AsyncSession(self._engine) as session:
+            result = await session.execute(
+                text("SELECT rowid, origin, event_data FROM events ORDER BY rowid DESC LIMIT 1"),
+                {}
+            )
+            rows = result.fetchall()
+
+        if len(rows) == 0:
+            return 0
+        if len(rows) == 1:
+            row = rows[0]
+            return cast(int, row[0])
+        else:
+            raise AssertionError("There should have been at most 1 row returned from this SQL query.")
     
     async def close(self) -> None:
         """Close the storage connection and cleanup resources."""
@@ -211,12 +232,12 @@ class AsyncSQLiteEventStorage:
         
         try:
             async with AsyncSession(self._engine) as session:
-                for event, origin in batch:                    
+                for event, origin in batch:
                     stored_event = StoredEvent(
                         origin=str(origin.uuid),
-                        event_type=str(event.event_type),
+                        event_type=event.event_type,
                         event_id=str(event.event_id),
-                        event_data=event.model_dump(mode='json')  # mode='json' ensures UUID conversion
+                        event_data=event.model_dump(mode='json')  # Serialize UUIDs and other objects to JSON-compatible strings
                     )
                     session.add(stored_event)
                 
