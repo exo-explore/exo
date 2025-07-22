@@ -12,12 +12,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlmodel import SQLModel
 
-from shared.types.events.common import (
-    BaseEvent,
-    EventCategories,
-    NodeId,
-)
-from shared.types.events.registry import Event, EventFromEventLogTyped, EventParser
+from shared.types.events.common import NodeId
+from shared.types.events.components import EventFromEventLog
+from shared.types.events.registry import Event, EventParser
 
 from .types import StoredEvent
 
@@ -53,7 +50,7 @@ class AsyncSQLiteEventStorage:
         self._max_age_s = max_age_ms / 1000.0
         self._logger = logger or getLogger(__name__)
         
-        self._write_queue: Queue[tuple[BaseEvent[EventCategories], NodeId]] = Queue()
+        self._write_queue: Queue[tuple[Event, NodeId]] = Queue()
         self._batch_writer_task: Task[None] | None = None
         self._engine = None
         self._closed = False
@@ -72,7 +69,7 @@ class AsyncSQLiteEventStorage:
     
     async def append_events(
         self, 
-        events: Sequence[BaseEvent[EventCategories]], 
+        events: Sequence[Event], 
         origin: NodeId
     ) -> None:
         """Append events to the log (fire-and-forget). The writes are batched and committed 
@@ -86,7 +83,7 @@ class AsyncSQLiteEventStorage:
     async def get_events_since(
         self, 
         last_idx: int
-    ) -> Sequence[EventFromEventLogTyped]:
+    ) -> Sequence[EventFromEventLog[Event]]:
         """Retrieve events after a specific index."""
         if self._closed:
             raise RuntimeError("Storage is closed")
@@ -101,7 +98,7 @@ class AsyncSQLiteEventStorage:
             )
             rows = result.fetchall()
         
-        events: list[EventFromEventLogTyped] = []
+        events: list[EventFromEventLog[Event]] = []
         for row in rows:
             rowid: int = cast(int, row[0])
             origin: str = cast(str, row[1])
@@ -112,7 +109,7 @@ class AsyncSQLiteEventStorage:
             else:
                 event_data = cast(dict[str, Any], raw_event_data)
             event = await self._deserialize_event(event_data)
-            events.append(EventFromEventLogTyped(
+            events.append(EventFromEventLog(
                 event=event,
                 origin=NodeId(uuid=UUID(origin)),
                 idx_in_log=rowid  # rowid becomes idx_in_log
@@ -170,7 +167,7 @@ class AsyncSQLiteEventStorage:
         loop = asyncio.get_event_loop()
         
         while not self._closed:
-            batch: list[tuple[BaseEvent[EventCategories], NodeId]] = []
+            batch: list[tuple[Event, NodeId]] = []
             
             try:
                 # Block waiting for first item
@@ -208,7 +205,7 @@ class AsyncSQLiteEventStorage:
             if batch:
                 await self._commit_batch(batch)
     
-    async def _commit_batch(self, batch: list[tuple[BaseEvent[EventCategories], NodeId]]) -> None:
+    async def _commit_batch(self, batch: list[tuple[Event, NodeId]]) -> None:
         """Commit a batch of events to SQLite."""
         assert self._engine is not None
         
@@ -218,7 +215,6 @@ class AsyncSQLiteEventStorage:
                     stored_event = StoredEvent(
                         origin=str(origin.uuid),
                         event_type=str(event.event_type),
-                        event_category=str(next(iter(event.event_category))),
                         event_id=str(event.event_id),
                         event_data=event.model_dump(mode='json')  # mode='json' ensures UUID conversion
                     )
@@ -237,8 +233,8 @@ class AsyncSQLiteEventStorage:
         """Deserialize event data back to typed Event."""
         # EventParser expects the discriminator field for proper deserialization
         result = EventParser.validate_python(event_data)
-        # EventParser returns BaseEvent but we know it's actually a specific Event type
-        return result  # type: ignore[reportReturnType]
+        # EventParser returns Event type which is our union of all event types
+        return result
     
     async def _deserialize_event_raw(self, event_data: dict[str, Any]) -> dict[str, Any]:
         """Return raw event data for testing purposes."""

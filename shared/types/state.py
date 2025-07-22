@@ -39,3 +39,6 @@ class State(BaseModel):
     task_inbox: List[Task] = Field(default_factory=list)
     task_outbox: List[Task] = Field(default_factory=list)
     cache_policy: CachePolicy = CachePolicy.KeepAll
+
+    # TODO: implement / use this? 
+    last_event_applied_idx: int = Field(default=0, ge=0)

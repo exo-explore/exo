@@ -1,25 +1,15 @@
-from types import UnionType
-from typing import Annotated, Any, Mapping, Type, get_args
+from typing import Annotated, Any, Mapping, Type, TypeAlias
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import Field, TypeAdapter
 
-from shared.constants import get_error_reporting_message
 from shared.types.events.common import (
-    BaseEvent,
-    EventCategories,
-    EventTypes,
-    InstanceEventTypes,
-    NodeId,
-    NodePerformanceEventTypes,
-    RunnerStatusEventTypes,
-    StreamingEventTypes,
-    TaskEventTypes,
-    TaskSagaEventTypes,
-    TopologyEventTypes,
+    EventType,
 )
 from shared.types.events.events import (
     ChunkGenerated,
+    InstanceActivated,
     InstanceCreated,
+    InstanceDeactivated,
     InstanceDeleted,
     InstanceReplacedAtomically,
     MLXInferenceSagaPrepare,
@@ -29,12 +19,19 @@ from shared.types.events.events import (
     TaskCreated,
     TaskDeleted,
     TaskStateUpdated,
+    TimerCreated,
+    TimerFired,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
     TopologyEdgeReplacedAtomically,
     WorkerConnected,
     WorkerDisconnected,
     WorkerStatusUpdated,
+)
+from shared.types.events.sanity_checking import (
+    assert_event_union_covers_registry,
+    check_registry_has_all_event_types,
+    check_union_of_all_events_is_consistent_with_registry,
 )
 
 """
@@ -50,63 +47,38 @@ class EventTypeNames(StrEnum):
 
 check_event_categories_are_defined_for_all_event_types(EVENT_TYPE_ENUMS, EventTypeNames)
 """
-EventRegistry: Mapping[EventTypes, Type[Any]] = {
-    TaskEventTypes.TaskCreated: TaskCreated,
-    TaskEventTypes.TaskStateUpdated: TaskStateUpdated,
-    TaskEventTypes.TaskDeleted: TaskDeleted,
-    InstanceEventTypes.InstanceCreated: InstanceCreated,
-    InstanceEventTypes.InstanceDeleted: InstanceDeleted,
-    InstanceEventTypes.InstanceReplacedAtomically: InstanceReplacedAtomically,
-    RunnerStatusEventTypes.RunnerStatusUpdated: RunnerStatusUpdated,
-    NodePerformanceEventTypes.NodePerformanceMeasured: NodePerformanceMeasured,
-    TopologyEventTypes.WorkerConnected: WorkerConnected,
-    TopologyEventTypes.WorkerStatusUpdated: WorkerStatusUpdated,
-    TopologyEventTypes.WorkerDisconnected: WorkerDisconnected,
-    StreamingEventTypes.ChunkGenerated: ChunkGenerated,
-    TopologyEventTypes.TopologyEdgeCreated: TopologyEdgeCreated,
-    TopologyEventTypes.TopologyEdgeReplacedAtomically: TopologyEdgeReplacedAtomically,
-    TopologyEventTypes.TopologyEdgeDeleted: TopologyEdgeDeleted,
-    TaskSagaEventTypes.MLXInferenceSagaPrepare: MLXInferenceSagaPrepare,
-    TaskSagaEventTypes.MLXInferenceSagaStartPrepare: MLXInferenceSagaStartPrepare,
+EventRegistry: Mapping[EventType, Type[Any]] = {
+    EventType.TaskCreated: TaskCreated,
+    EventType.TaskStateUpdated: TaskStateUpdated,
+    EventType.TaskDeleted: TaskDeleted,
+    EventType.InstanceCreated: InstanceCreated,
+    EventType.InstanceActivated: InstanceActivated,
+    EventType.InstanceDeactivated: InstanceDeactivated,
+    EventType.InstanceDeleted: InstanceDeleted,
+    EventType.InstanceReplacedAtomically: InstanceReplacedAtomically,
+    EventType.RunnerStatusUpdated: RunnerStatusUpdated,
+    EventType.NodePerformanceMeasured: NodePerformanceMeasured,
+    EventType.WorkerConnected: WorkerConnected,
+    EventType.WorkerStatusUpdated: WorkerStatusUpdated,
+    EventType.WorkerDisconnected: WorkerDisconnected,
+    EventType.ChunkGenerated: ChunkGenerated,
+    EventType.TopologyEdgeCreated: TopologyEdgeCreated,
+    EventType.TopologyEdgeReplacedAtomically: TopologyEdgeReplacedAtomically,
+    EventType.TopologyEdgeDeleted: TopologyEdgeDeleted,
+    EventType.MLXInferenceSagaPrepare: MLXInferenceSagaPrepare,
+    EventType.MLXInferenceSagaStartPrepare: MLXInferenceSagaStartPrepare,
+    EventType.TimerCreated: TimerCreated,
+    EventType.TimerFired: TimerFired,
 }
 
 
-# Sanity Check.
-def check_registry_has_all_event_types() -> None:
-    event_types: tuple[EventTypes, ...] = get_args(EventTypes)
-    missing_event_types = set(event_types) - set(EventRegistry.keys())
-
-    assert not missing_event_types, (
-        f"{get_error_reporting_message()}"
-        f"There's an event missing from the registry: {missing_event_types}"
-    )
-
-
-def check_union_of_all_events_is_consistent_with_registry(
-    registry: Mapping[EventTypes, Type[Any]], union_type: UnionType
-) -> None:
-    type_of_each_registry_entry = set(registry.values())
-    type_of_each_entry_in_union = set(get_args(union_type))
-    missing_from_union = type_of_each_registry_entry - type_of_each_entry_in_union
-
-    assert not missing_from_union, (
-        f"{get_error_reporting_message()}"
-        f"Event classes in registry are missing from all_events union: {missing_from_union}"
-    )
-
-    extra_in_union = type_of_each_entry_in_union - type_of_each_registry_entry
-
-    assert not extra_in_union, (
-        f"{get_error_reporting_message()}"
-        f"Event classes in all_events union are missing from registry: {extra_in_union}"
-    )
-
-
-Event = (
+AllEventsUnion = (
     TaskCreated
     | TaskStateUpdated
     | TaskDeleted
     | InstanceCreated
+    | InstanceActivated
+    | InstanceDeactivated
     | InstanceDeleted
     | InstanceReplacedAtomically
     | RunnerStatusUpdated
@@ -120,24 +92,16 @@ Event = (
     | TopologyEdgeDeleted
     | MLXInferenceSagaPrepare
     | MLXInferenceSagaStartPrepare
+    | TimerCreated
+    | TimerFired
 )
 
-# Run the sanity check
-check_union_of_all_events_is_consistent_with_registry(EventRegistry, Event)
+Event: TypeAlias = Annotated[AllEventsUnion, Field(discriminator="event_type")]
+EventParser: TypeAdapter[Event] = TypeAdapter(Event)
 
 
-_EventType = Annotated[Event, Field(discriminator="event_type")]
-EventParser: TypeAdapter[BaseEvent[EventCategories]] = TypeAdapter(_EventType)
 
 
-# Define a properly typed EventFromEventLog that preserves specific event types
-
-class EventFromEventLogTyped(BaseModel):
-    """Properly typed EventFromEventLog that preserves specific event types."""
-    event: _EventType
-    origin: NodeId
-    idx_in_log: int = Field(gt=0)
-
-    def check_event_was_sent_by_correct_node(self) -> bool:
-        """Check if the event was sent by the correct node."""
-        return self.event.check_event_was_sent_by_correct_node(self.origin)
+assert_event_union_covers_registry(AllEventsUnion)
+check_union_of_all_events_is_consistent_with_registry(EventRegistry, AllEventsUnion)
+check_registry_has_all_event_types(EventRegistry)

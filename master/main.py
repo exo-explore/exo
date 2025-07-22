@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 from logging import Logger, LogRecord
 from queue import Queue as PQueue
-from typing import Literal
 
 from fastapi import FastAPI
 
@@ -18,9 +17,6 @@ from shared.logger import (
     configure_logger,
     create_queue_listener,
     log,
-)
-from shared.types.events.common import (
-    EventCategoryEnum,
 )
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
@@ -51,19 +47,8 @@ def get_state_dependency(data: object, logger: Logger) -> State:
     return data
 
 
-# What The Master Cares About
-MasterEventCategories = (
-    Literal[EventCategoryEnum.MutatesTopologyState]
-    | Literal[EventCategoryEnum.MutatesTaskState]
-    | Literal[EventCategoryEnum.MutatesTaskSagaState]
-    | Literal[EventCategoryEnum.MutatesRunnerStatus]
-    | Literal[EventCategoryEnum.MutatesInstanceState]
-    | Literal[EventCategoryEnum.MutatesNodePerformanceState]
-)
-
-
 # Takes Care Of All States And Events Related To The Master
-class MasterEventLoopProtocol(NodeEventLoopProtocol[MasterEventCategories]): ...
+class MasterEventLoopProtocol(NodeEventLoopProtocol): ...
 
 
 @asynccontextmanager

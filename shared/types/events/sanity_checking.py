@@ -1,68 +1,75 @@
-from enum import Enum, StrEnum
+from enum import StrEnum
 from types import UnionType
-from typing import Any, LiteralString, Sequence, Set, Type, get_args
+from typing import Any, Mapping, Set, Type, cast, get_args
+
+from pydantic.fields import FieldInfo
 
 from shared.constants import get_error_reporting_message
+from shared.types.events.common import EventType
 
 
-def check_event_type_union_is_consistent_with_registry(
-    event_type_enums: Sequence[Type[Enum]], event_types: UnionType
-) -> None:
-    """Assert that every enum value from _EVENT_TYPE_ENUMS satisfies EventTypes."""
-
-    event_types_inferred_from_union = set(get_args(event_types))
-
-    event_types_inferred_from_registry = [
-        member for enum_class in event_type_enums for member in enum_class
-    ]
-
-    # Check that each registry value belongs to one of the types in the union
-    for tag_of_event_type in event_types_inferred_from_registry:
-        event_type = type(tag_of_event_type)
-        assert event_type in event_types_inferred_from_union, (
-            f"{get_error_reporting_message()}"
-            f"There's a mismatch between the registry of event types and the union of possible event types."
-            f"The enum value {tag_of_event_type} for type {event_type} is not covered by {event_types_inferred_from_union}."
-        )
-
-
-def check_event_categories_are_defined_for_all_event_types(
-    event_definitions: Sequence[Type[Enum]], event_categories: Type[StrEnum]
-) -> None:
-    """Assert that the event category names are consistent with the event type enums."""
-
-    expected_category_tags: list[str] = [
-        enum_class.__name__ for enum_class in event_definitions
-    ]
-    tag_of_event_categories: list[str] = list(event_categories.__members__.values())
-    assert tag_of_event_categories == expected_category_tags, (
-        f"{get_error_reporting_message()}"
-        f"The values of the enum EventCategories are not named after the event type enums."
-        f"These are the missing categories: {set(expected_category_tags) - set(tag_of_event_categories)}"
-        f"These are the extra categories: {set(tag_of_event_categories) - set(expected_category_tags)}"
-    )
-
-
-def assert_literal_union_covers_enum[TEnum: StrEnum](
+def assert_event_union_covers_registry[TEnum: StrEnum](
     literal_union: UnionType,
-    enum_type: Type[TEnum],
 ) -> None:
-    enum_values: Set[Any] = {member.value for member in enum_type}
+    """
+    Ensure that our union of events (AllEventsUnion) has one member per element of Enum
+    """
+    enum_values: Set[str] = {member.value for member in EventType}
 
-    def _flatten(tp: UnionType) -> Set[Any]:
-        values: Set[Any] = set()
-        args: tuple[LiteralString, ...] = get_args(tp)
-        for arg in args:
-            payloads: tuple[TEnum, ...] = get_args(arg)
-            for payload in payloads:
-                values.add(payload.value)
+    def _flatten(tp: UnionType) -> Set[str]:
+        values: Set[str] = set()
+        args = get_args(tp)  # Get event classes from the union
+        for arg in args:  # type: ignore[reportAny]
+            # Cast to type since we know these are class types
+            event_class = cast(type[Any], arg)
+            # Each event class is a Pydantic model with model_fields
+            if hasattr(event_class, 'model_fields'):
+                model_fields = cast(dict[str, FieldInfo], event_class.model_fields)
+                if 'event_type' in model_fields:
+                    # Get the default value of the event_type field
+                    event_type_field: FieldInfo = model_fields['event_type']
+                    if hasattr(event_type_field, 'default'):
+                        default_value = cast(EventType, event_type_field.default)
+                        # The default is an EventType enum member, get its value
+                        values.add(default_value.value)
         return values
 
-    literal_values: Set[Any] = _flatten(literal_union)
+    literal_values: Set[str] = _flatten(literal_union)
 
     assert enum_values == literal_values, (
         f"{get_error_reporting_message()}"
-        f"The values of the enum {enum_type} are not covered by the literal union {literal_union}.\n"
+        f"The values of the enum {EventType} are not covered by the literal union {literal_union}.\n"
         f"These are the missing values: {enum_values - literal_values}\n"
         f"These are the extra values: {literal_values - enum_values}\n"
     )
+
+def check_union_of_all_events_is_consistent_with_registry(
+    registry: Mapping[EventType, Type[Any]], union_type: UnionType
+) -> None:
+    type_of_each_registry_entry = set(registry.values())
+    type_of_each_entry_in_union = set(get_args(union_type))
+    missing_from_union = type_of_each_registry_entry - type_of_each_entry_in_union
+
+    assert not missing_from_union, (
+        f"{get_error_reporting_message()}"
+        f"Event classes in registry are missing from all_events union: {missing_from_union}"
+    )
+
+    extra_in_union = type_of_each_entry_in_union - type_of_each_registry_entry
+
+    assert not extra_in_union, (
+        f"{get_error_reporting_message()}"
+        f"Event classes in all_events union are missing from registry: {extra_in_union}"
+    )
+
+def check_registry_has_all_event_types(event_registry: Mapping[EventType, Type[Any]]) -> None:
+    event_types: tuple[EventType, ...] = get_args(EventType)
+    missing_event_types = set(event_types) - set(event_registry.keys())
+
+    assert not missing_event_types, (
+        f"{get_error_reporting_message()}"
+        f"There's an event missing from the registry: {missing_event_types}"
+    )
+
+# TODO: Check all events have an apply function.
+# probably in a different place though.

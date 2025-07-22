@@ -7,7 +7,10 @@ from typing import Any, Hashable, Mapping, Protocol, Sequence
 from fastapi.responses import Response, StreamingResponse
 
 from shared.event_loops.commands import ExternalCommand
-from shared.types.events.common import Apply, EventCategory, EventFromEventLog, State
+from shared.types.events.registry import Event
+from shared.types.events.components import EventFromEventLog
+from shared.types.state import State
+from shared.types.events.components import Apply
 
 
 class ExhaustiveMapping[K: Hashable, V](MutableMapping[K, V]):
@@ -38,17 +41,16 @@ class ExhaustiveMapping[K: Hashable, V](MutableMapping[K, V]):
         return len(self._store)
 
 
-# Safety on Apply.
-def safely_apply[T: EventCategory](
-    state: State[T], apply_fn: Apply[T], events: Sequence[EventFromEventLog[T]]
-) -> State[T]:
+def apply_events(
+    state: State, apply_fn: Apply, events: Sequence[EventFromEventLog[Event]]
+) -> State:
     sorted_events = sorted(events, key=lambda event: event.idx_in_log)
     state = state.model_copy()
-    for event in sorted_events:
-        if event.idx_in_log <= state.last_event_applied_idx:
+    for wrapped_event in sorted_events:
+        if wrapped_event.idx_in_log <= state.last_event_applied_idx:
             continue
-        state.last_event_applied_idx = event.idx_in_log
-        state = apply_fn(state, event)
+        state.last_event_applied_idx = wrapped_event.idx_in_log
+        state = apply_fn(state, wrapped_event.event)
     return state
 
 
@@ -69,11 +71,9 @@ class NodeCommandLoopProtocol(Protocol):
     async def _handle_command(self, command: ExternalCommand) -> None: ...
 
 
-class NodeEventGetterProtocol[EventCategoryT: EventCategory](Protocol):
+class NodeEventGetterProtocol(Protocol):
     _event_fetcher: Task[Any] | None = None
-    _event_queues: ExhaustiveMapping[
-        EventCategoryT, AsyncQueue[EventFromEventLog[EventCategory]]
-    ]
+    _event_queue: AsyncQueue[EventFromEventLog[Event]]
     _logger: Logger
 
     @property
@@ -84,18 +84,18 @@ class NodeEventGetterProtocol[EventCategoryT: EventCategory](Protocol):
     async def stop_event_fetcher(self) -> None: ...
 
 
-class NodeStateStorageProtocol[EventCategoryT: EventCategory](Protocol):
-    _state_managers: ExhaustiveMapping[EventCategoryT, State[EventCategoryT]]
+class NodeStateStorageProtocol(Protocol):
+    _state: State
     _state_lock: Lock
     _logger: Logger
 
     async def _read_state(
-        self, event_category: EventCategoryT
-    ) -> State[EventCategoryT]: ...
+        self,
+    ) -> State: ...
 
 
-class NodeStateManagerProtocol[EventCategoryT: EventCategory](
-    NodeEventGetterProtocol[EventCategoryT], NodeStateStorageProtocol[EventCategoryT]
+class NodeStateManagerProtocol(
+    NodeEventGetterProtocol, NodeStateStorageProtocol
 ):
     _state_manager: Task[Any] | None = None
     _logger: Logger
@@ -116,6 +116,6 @@ class NodeStateManagerProtocol[EventCategoryT: EventCategory](
     async def _apply_queued_events(self) -> None: ...
 
 
-class NodeEventLoopProtocol[EventCategoryT: EventCategory](
-    NodeCommandLoopProtocol, NodeStateManagerProtocol[EventCategoryT]
+class NodeEventLoopProtocol(
+    NodeCommandLoopProtocol, NodeStateManagerProtocol
 ): ...

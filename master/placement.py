@@ -1,7 +1,7 @@
 from queue import Queue
 from typing import Mapping, Sequence
 
-from shared.types.events.common import BaseEvent, EventCategory
+from shared.types.events.registry import Event
 from shared.types.graphs.topology import Topology
 from shared.types.state import CachePolicy
 from shared.types.tasks.common import Task
@@ -20,4 +20,4 @@ def get_instance_placement(
 def get_transition_events(
     current_instances: Mapping[InstanceId, InstanceParams],
     target_instances: Mapping[InstanceId, InstanceParams],
-) -> Sequence[BaseEvent[EventCategory]]: ...
+) -> Sequence[Event]: ...

@@ -4,12 +4,9 @@ from typing import Any, Protocol, Sequence
 from sqlalchemy import DateTime, Index
 from sqlmodel import JSON, Column, Field, SQLModel
 
-from shared.types.events.common import (
-    BaseEvent,
-    EventCategories,
-    EventFromEventLog,
-    NodeId,
-)
+from shared.types.common import NodeId
+from shared.types.events.components import EventFromEventLog
+from shared.types.events.registry import Event
 
 
 class StoredEvent(SQLModel, table=True):
@@ -23,7 +20,6 @@ class StoredEvent(SQLModel, table=True):
     rowid: int | None = Field(default=None, primary_key=True, alias="rowid")
     origin: str = Field(index=True)
     event_type: str = Field(index=True)
-    event_category: str = Field(index=True)
     event_id: str = Field(index=True)
     event_data: dict[str, Any] = Field(sa_column=Column(JSON))
     created_at: datetime = Field(
@@ -33,7 +29,6 @@ class StoredEvent(SQLModel, table=True):
     
     __table_args__ = (
         Index("idx_events_origin_created", "origin", "created_at"),
-        Index("idx_events_category_created", "event_category", "created_at"),
     )
 
 class EventStorageProtocol(Protocol):
@@ -41,7 +36,7 @@ class EventStorageProtocol(Protocol):
     
     async def append_events(
         self, 
-        events: Sequence[BaseEvent[EventCategories]], 
+        events: Sequence[Event],
         origin: NodeId
     ) -> None:
         """Append events to the log (fire-and-forget).
@@ -54,7 +49,7 @@ class EventStorageProtocol(Protocol):
     async def get_events_since(
         self, 
         last_idx: int
-    ) -> Sequence[EventFromEventLog[EventCategories]]:
+    ) -> Sequence[EventFromEventLog[Event]]:
         """Retrieve events after a specific index.
         
         Returns events in idx_in_log order.

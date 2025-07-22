@@ -14,8 +14,7 @@ from shared.types.common import NodeId
 from shared.types.events.chunks import ChunkType, TokenChunk, TokenChunkData
 from shared.types.events.events import (
     ChunkGenerated,
-    EventCategoryEnum,
-    StreamingEventTypes,
+    EventType,
 )
 from shared.types.tasks.common import TaskId
 
@@ -91,11 +90,10 @@ class TestAsyncSQLiteEventStorage:
         
         async with AsyncSession(storage._engine) as session:
             await session.execute(
-                text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
+                text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
                 {
                     "origin": str(sample_node_id.uuid),
                     "event_type": "test_event",
-                    "event_category": "test_category",
                     "event_id": str(uuid4()),
                     "event_data": json.dumps(test_data)
                 }
@@ -137,11 +135,10 @@ class TestAsyncSQLiteEventStorage:
         async with AsyncSession(storage._engine) as session:
             for record in test_records:
                 await session.execute(
-                    text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
+                    text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
                     {
                         "origin": str(sample_node_id.uuid),
                         "event_type": record["event_type"],
-                        "event_category": "test_category",
                         "event_id": str(uuid4()),
                         "event_data": json.dumps(record)
                     }
@@ -180,18 +177,18 @@ class TestAsyncSQLiteEventStorage:
         async with AsyncSession(storage._engine) as session:
             # Origin 1 - record 1
             await session.execute(
-                text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
-                {"origin": str(origin1.uuid), "event_type": "event_1", "event_category": "test", "event_id": str(uuid4()), "event_data": json.dumps({"from": "origin1", "seq": 1})}
+                text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
+                {"origin": str(origin1.uuid), "event_type": "event_1", "event_id": str(uuid4()), "event_data": json.dumps({"from": "origin1", "seq": 1})}
             )
             # Origin 2 - record 2
             await session.execute(
-                text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
-                {"origin": str(origin2.uuid), "event_type": "event_2", "event_category": "test", "event_id": str(uuid4()), "event_data": json.dumps({"from": "origin2", "seq": 2})}
+                text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
+                {"origin": str(origin2.uuid), "event_type": "event_2", "event_id": str(uuid4()), "event_data": json.dumps({"from": "origin2", "seq": 2})}
             )
             # Origin 1 - record 3
             await session.execute(
-                text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
-                {"origin": str(origin1.uuid), "event_type": "event_3", "event_category": "test", "event_id": str(uuid4()), "event_data": json.dumps({"from": "origin1", "seq": 3})}
+                text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
+                {"origin": str(origin1.uuid), "event_type": "event_3", "event_id": str(uuid4()), "event_data": json.dumps({"from": "origin1", "seq": 3})}
             )
             await session.commit()
         
@@ -234,11 +231,10 @@ class TestAsyncSQLiteEventStorage:
         async with AsyncSession(storage._engine) as session:
             for i in range(10):
                 await session.execute(
-                    text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
+                    text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
                     {
                         "origin": str(sample_node_id.uuid),
                         "event_type": f"event_{i}",
-                        "event_category": "test",
                         "event_id": str(uuid4()),
                         "event_data": json.dumps({"index": i})
                     }
@@ -325,11 +321,10 @@ class TestAsyncSQLiteEventStorage:
         assert storage._engine is not None
         async with AsyncSession(storage._engine) as session:
             await session.execute(
-                text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
+                text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
                 {
                     "origin": str(sample_node_id.uuid),
                     "event_type": "complex_event",
-                    "event_category": "test",
                     "event_id": str(uuid4()),
                     "event_data": json.dumps(test_data)
                 }
@@ -364,11 +359,10 @@ class TestAsyncSQLiteEventStorage:
             async with AsyncSession(storage._engine) as session:
                 for i in range(count):
                     await session.execute(
-                        text("INSERT INTO events (origin, event_type, event_category, event_id, event_data) VALUES (:origin, :event_type, :event_category, :event_id, :event_data)"),
+                        text("INSERT INTO events (origin, event_type, event_id, event_data) VALUES (:origin, :event_type, :event_id, :event_data)"),
                         {
                             "origin": origin_id,
                             "event_type": f"batch_{batch_id}_event_{i}",
-                            "event_category": "test",
                             "event_id": str(uuid4()),
                             "event_data": json.dumps({"batch": batch_id, "item": i})
                         }
@@ -425,14 +419,12 @@ class TestAsyncSQLiteEventStorage:
         )
         
         chunk_generated_event = ChunkGenerated(
-            event_type=StreamingEventTypes.ChunkGenerated,
-            event_category=EventCategoryEnum.MutatesTaskState,
             task_id=task_id,
             chunk=token_chunk
         )
         
         # Store the event using the storage API
-        await storage.append_events([chunk_generated_event], sample_node_id)  # type: ignore[reportArgumentType]
+        await storage.append_events([chunk_generated_event], sample_node_id)
         
         # Wait for batch to be written
         await asyncio.sleep(0.5)
@@ -448,8 +440,7 @@ class TestAsyncSQLiteEventStorage:
         # Verify the event was deserialized correctly
         retrieved_event = retrieved_event_wrapper.event
         assert isinstance(retrieved_event, ChunkGenerated)
-        assert retrieved_event.event_type == StreamingEventTypes.ChunkGenerated
-        assert retrieved_event.event_category == EventCategoryEnum.MutatesTaskState
+        assert retrieved_event.event_type == EventType.ChunkGenerated
         assert retrieved_event.task_id == task_id
         
         # Verify the nested chunk was deserialized correctly
