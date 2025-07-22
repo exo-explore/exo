@@ -1,4 +1,6 @@
 */__pycache__
 __pycache__
+networking/target/*
+*.so
 
 hosts_*.json

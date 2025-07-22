@@ -37,7 +37,7 @@ members = [
     "worker",
     "shared",
     "engines/*",
-    "networking",
+    "networking/topology",
 ]
 
 [tool.uv.sources]

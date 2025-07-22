@@ -2,7 +2,6 @@
 name = "exo-networking"
 version = "0.1.0"
 description = "Add your description here"
-readme = "README.md"
 authors = [
     { name = "Arbion Halili", email = "99731180+ToxicPine@users.noreply.github.com" }
 ]
