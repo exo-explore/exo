@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,7 @@ class TaskStatus(str, Enum):
 
 
 class ChatCompletionTask(BaseModel):
-    task_type: TaskType
+    task_type: Literal[TaskType.CHAT_COMPLETION] = TaskType.CHAT_COMPLETION
     task_id: TaskId
     instance_id: InstanceId
     task_status: TaskStatus

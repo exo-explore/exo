@@ -13,10 +13,10 @@ from shared.db.sqlite import AsyncSQLiteEventStorage, EventLogConfig
 from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
+    CommandId,
     _EventType,
 )
 from shared.types.events.chunks import ChunkType, TokenChunk
-from shared.types.events.commands import CommandId
 
 # Type ignore comment for all protected member access in this test file
 # pyright: reportPrivateUsage=false

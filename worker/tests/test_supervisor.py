@@ -26,7 +26,7 @@ def user_message():
 async def test_supervisor_single_node_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task,
+    chat_completion_task: Task,
     tmp_path: Path,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
@@ -43,7 +43,7 @@ async def test_supervisor_single_node_response(
         full_response = ""
         stop_reason: FinishReason | None = None
 
-        async for chunk in supervisor.stream_response(task=chat_task):
+        async for chunk in supervisor.stream_response(task=chat_completion_task):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.text
                 if chunk.finish_reason:
@@ -63,7 +63,7 @@ async def test_supervisor_single_node_response(
 async def test_supervisor_two_node_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task,
+    chat_completion_task: Task,
     tmp_path: Path,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
@@ -85,13 +85,13 @@ async def test_supervisor_two_node_response(
 
         async def collect_response_0():
             nonlocal full_response_0
-            async for chunk in supervisor_0.stream_response(task=chat_task):
+            async for chunk in supervisor_0.stream_response(task=chat_completion_task):
                 if isinstance(chunk, TokenChunk):
                     full_response_0 += chunk.text
 
         async def collect_response_1():
             nonlocal full_response_1
-            async for chunk in supervisor_1.stream_response(task=chat_task):
+            async for chunk in supervisor_1.stream_response(task=chat_completion_task):
                 if isinstance(chunk, TokenChunk):
                     full_response_1 += chunk.text
 
@@ -118,7 +118,7 @@ async def test_supervisor_two_node_response(
 async def test_supervisor_early_stopping(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task,
+    chat_completion_task: Task,
     tmp_path: Path,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
@@ -130,10 +130,10 @@ async def test_supervisor_early_stopping(
     )
 
     max_tokens = 50
-    assert chat_task.task_type == TaskType.CHAT_COMPLETION
-    print(f'chat_task.task_params: {chat_task.task_params}')
-    assert isinstance(chat_task.task_params, ChatCompletionTaskParams)
-    task_params: ChatCompletionTaskParams = chat_task.task_params
+    assert chat_completion_task.task_type == TaskType.CHAT_COMPLETION
+    print(f'chat_completion_task.task_params: {chat_completion_task.task_params}')
+    assert isinstance(chat_completion_task.task_params, ChatCompletionTaskParams)
+    task_params: ChatCompletionTaskParams = chat_completion_task.task_params
 
     try:
         task_params.max_tokens = max_tokens
@@ -146,7 +146,7 @@ async def test_supervisor_early_stopping(
         count = 0
         stop_reason: FinishReason | None = None
 
-        async for chunk in supervisor.stream_response(task=chat_task):
+        async for chunk in supervisor.stream_response(task=chat_completion_task):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.text
                 count += 1
@@ -169,7 +169,7 @@ async def test_supervisor_early_stopping(
 async def test_supervisor_handles_terminated_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task,
+    chat_completion_task: Task,
     tmp_path: Path,
 ):
     """Test that the supervisor handles a terminated runner"""
@@ -194,7 +194,7 @@ async def test_supervisor_handles_terminated_runner(
 async def test_supervisor_handles_killed_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    chat_task: Task,
+    chat_completion_task: Task,
     tmp_path: Path,
 ):
     """Test that the supervisor handles a killed runner"""
