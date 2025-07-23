@@ -3,3 +3,6 @@ __pycache__
 *.so
 
 hosts_*.json
+
+# hide direnv stuff
+/.direnv

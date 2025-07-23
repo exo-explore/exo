@@ -86,11 +86,7 @@
             ] ++ buildInputs ++ nativeBuildInputs;
 
             # fixes libstdc++.so issues and libgl.so issues
-#            LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH";
             LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
-
-            # exports basedpyright path so tools can discover it
-            BASEDPYRIGHT_BIN_PATH = "${pkgs.basedpyright}/bin/";
           };
         }
     );

@@ -3,6 +3,7 @@
   <component name="com.insyncwithfoo.pyright.configurations.Override">
     <option name="names">
       <map>
+        <entry key="configurationFile" value="true" />
         <entry key="diagnosticMode" value="true" />
         <entry key="inlayHintsGenericTypes" value="true" />
         <entry key="prefixTooltipMessages" value="true" />
