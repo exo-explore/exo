@@ -2,37 +2,29 @@ import asyncio
 import time
 from asyncio.queues import Queue
 from collections.abc import AsyncGenerator
-from typing import List, Optional, Sequence, final
+from typing import Sequence, final
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
+from shared.types.api import (
+    ChatCompletionMessage,
+    ChatCompletionResponse,
+    StreamingChoiceResponse,
+)
 from shared.types.events import ChunkGenerated, Event
 from shared.types.events.chunks import TokenChunk
+from shared.types.events.commands import (
+    ChatCompletionCommand,
+    Command,
+    CommandId,
+    CommandTypes,
+)
 from shared.types.events.components import EventFromEventLog
-from shared.types.request import APIRequest, RequestId
 from shared.types.tasks import ChatCompletionTaskParams
 
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-class StreamingChoiceResponse(BaseModel):
-    index: int
-    delta: Message
-    finish_reason: Optional[str] = None
-
-
-class ChatCompletionResponse(BaseModel):
-    id: str
-    object: str = "chat.completion"
-    created: int
-    model: str
-    choices: List[StreamingChoiceResponse]
 
 def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
     return ChatCompletionResponse(
@@ -42,7 +34,7 @@ def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=Message(
+                delta=ChatCompletionMessage(
                     role='assistant',
                     content=chunk.text
                 ),
@@ -54,7 +46,7 @@ def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
 
 @final
 class API:
-    def __init__(self, command_queue: Queue[APIRequest], global_events: AsyncSQLiteEventStorage) -> None:
+    def __init__(self, command_queue: Queue[Command], global_events: AsyncSQLiteEventStorage) -> None:
         self._app = FastAPI()
         self._setup_routes()
 
@@ -106,10 +98,11 @@ class API:
 
         # At the moment, we just create the task in the API.
         # In the future, a `Request` will be created here and they will be bundled into `Task` objects by the master.
-        request_id=RequestId()
+        command_id=CommandId()
 
-        request = APIRequest(
-            request_id=request_id,
+        request = ChatCompletionCommand(
+            command_id=command_id,
+            command_type=CommandTypes.CHAT_COMPLETION,
             request_params=payload,
         )
         await self.command_queue.put(request)
@@ -124,7 +117,7 @@ class API:
 
             for wrapped_event in events:
                 event = wrapped_event.event
-                if isinstance(event, ChunkGenerated) and event.request_id == request_id:
+                if isinstance(event, ChunkGenerated) and event.command_id == command_id:
                     assert isinstance(event.chunk, TokenChunk)
                     chunk_response: ChatCompletionResponse = chunk_to_response(event.chunk)
                     print(chunk_response)
@@ -146,7 +139,7 @@ class API:
 
 
 def start_fastapi_server(
-    command_queue: Queue[APIRequest],
+    command_queue: Queue[Command],
     global_events: AsyncSQLiteEventStorage,
     host: str = "0.0.0.0",
     port: int = 8000,

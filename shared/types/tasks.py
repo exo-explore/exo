@@ -1,6 +1,7 @@
 from enum import Enum
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from shared.types.api import ChatCompletionTaskParams
 from shared.types.common import NewUUID
@@ -10,25 +11,23 @@ from shared.types.worker.common import InstanceId
 class TaskId(NewUUID):
     pass
 
+
 class TaskType(str, Enum):
     CHAT_COMPLETION = "CHAT_COMPLETION"
 
+
 class TaskStatus(str, Enum):
-    Pending = "Pending"
-    Running = "Running"
-    Complete = "Complete"
-    Failed = "Failed"
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
 
 
-class Task(BaseModel):
-    task_id: TaskId
+class ChatCompletionTask(BaseModel):
     task_type: TaskType
+    task_id: TaskId
     instance_id: InstanceId
     task_status: TaskStatus
     task_params: ChatCompletionTaskParams
 
-
-
-class TaskSagaEntry(BaseModel):
-    task_id: TaskId
-    instance_id: InstanceId
+Task = Annotated[ChatCompletionTask, Field(discriminator="task_type")]

@@ -10,11 +10,11 @@ from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.common import NodeId
 from shared.types.events import ChunkGenerated
 from shared.types.events.chunks import TokenChunk
-from shared.types.request import APIRequest, RequestId
+from shared.types.events.commands import Command, CommandId
 
 
 ## TODO: Hook this up properly
-async def fake_tokens_task(events_log: AsyncSQLiteEventStorage, request_id: RequestId):
+async def fake_tokens_task(events_log: AsyncSQLiteEventStorage, command_id: CommandId):
     model_id = "testmodelabc"
     
     for i in range(10):
@@ -22,9 +22,9 @@ async def fake_tokens_task(events_log: AsyncSQLiteEventStorage, request_id: Requ
         
         # Create the event with proper types and consistent IDs
         chunk_event = ChunkGenerated(
-            request_id=request_id,
+            command_id=command_id,
             chunk=TokenChunk(
-                request_id=request_id,  # Use the same task_id
+                command_id=command_id,  # Use the same task_id
                 idx=i,
                 model=model_id,   # Use the same model_id
                 text=f'text{i}',
@@ -42,9 +42,9 @@ async def fake_tokens_task(events_log: AsyncSQLiteEventStorage, request_id: Requ
 
     # Create the event with proper types and consistent IDs
     chunk_event = ChunkGenerated(
-        request_id=request_id,
+        command_id=command_id,
         chunk=TokenChunk(
-            request_id=request_id,  # Use the same task_id
+            command_id=command_id,  # Use the same task_id
             idx=11,
             model=model_id,   # Use the same model_id
             text=f'text{11}',
@@ -68,7 +68,7 @@ async def main():
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
 
-    command_queue: Queue[APIRequest] = asyncio.Queue()
+    command_queue: Queue[Command] = asyncio.Queue()
 
     api_thread = threading.Thread(
         target=start_fastapi_server,
@@ -88,7 +88,7 @@ async def main():
 
             print(command)
 
-            await fake_tokens_task(global_events, request_id=command.request_id)
+            await fake_tokens_task(global_events, command_id=command.command_id)
 
         await asyncio.sleep(0.01)
 

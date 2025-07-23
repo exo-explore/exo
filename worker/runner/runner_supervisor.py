@@ -6,7 +6,7 @@ from types import CoroutineType
 from typing import Any, Callable
 
 from shared.types.events.chunks import GenerationChunk, TokenChunk
-from shared.types.request import RequestId
+from shared.types.events.commands import CommandId
 from shared.types.tasks import ChatCompletionTaskParams, Task
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
@@ -181,7 +181,7 @@ class RunnerSupervisor:
                         text=text, token=token, finish_reason=finish_reason
                     ):
                         yield TokenChunk(
-                            request_id=RequestId(uuid=task.task_id.uuid),
+                            command_id=CommandId(uuid=task.task_id.uuid),
                             idx=token,
                             model=self.model_shard_meta.model_meta.model_id,
                             text=text,

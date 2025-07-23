@@ -4,8 +4,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
+from shared.types.events.commands import CommandId
 from shared.types.models import ModelId
-from shared.types.request import RequestId
 
 
 class ChunkType(str, Enum):
@@ -15,7 +15,7 @@ class ChunkType(str, Enum):
 
 class BaseChunk[ChunkTypeT: ChunkType](BaseModel):
     chunk_type: ChunkTypeT
-    request_id: RequestId
+    command_id: CommandId
     idx: int
     model: ModelId
 

@@ -3,7 +3,7 @@ from typing import Literal
 from shared.topology import Connection, ConnectionProfile, Node, NodePerformanceProfile
 from shared.types.common import NodeId
 from shared.types.events.chunks import GenerationChunk
-from shared.types.request import RequestId
+from shared.types.events.commands import CommandId
 from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
@@ -101,7 +101,7 @@ class WorkerDisconnected(_BaseEvent[_EventType.WorkerDisconnected]):
 
 class ChunkGenerated(_BaseEvent[_EventType.ChunkGenerated]):
     event_type: Literal[_EventType.ChunkGenerated] = _EventType.ChunkGenerated
-    request_id: RequestId
+    command_id: CommandId
     chunk: GenerationChunk
 
 

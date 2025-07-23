@@ -243,7 +243,7 @@ class Worker:
                     await queue.put(ChunkGenerated(
                         # todo: at some point we will no longer have a bijection between task_id and row_id. 
                         # So we probably want to store a mapping between these two in our Worker object.
-                        request_id=chunk.request_id, 
+                        command_id=chunk.command_id, 
                         chunk=chunk
                     ))
         
@@ -338,12 +338,9 @@ class Worker:
     async def _loop(self):
         while True:
             state_copy = self.state.model_copy(deep=False)
-            state_copy.task_inbox = []
-            state_copy.task_outbox = []
-
             op: RunnerOp | None = self.plan(state_copy)            
 
-            # Run the op, synchronously blocking for now.
+            # run the op, synchronously blocking for now
             if op is not None:
                 async for event in self._execute_op(op):
                     print(event)

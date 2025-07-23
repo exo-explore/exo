@@ -16,7 +16,7 @@ from shared.types.events import (
     _EventType,
 )
 from shared.types.events.chunks import ChunkType, TokenChunk
-from shared.types.request import RequestId
+from shared.types.events.commands import CommandId
 
 # Type ignore comment for all protected member access in this test file
 # pyright: reportPrivateUsage=false
@@ -439,19 +439,19 @@ class TestAsyncSQLiteEventStorage:
         await storage.start()
         
         # Create a ChunkGenerated event with nested TokenChunk
-        request_id = RequestId(uuid=uuid4())
+        command_id = CommandId(uuid=uuid4())
         token_chunk = TokenChunk(
             text="Hello, world!",
             token_id=42,
             finish_reason="stop",
             chunk_type=ChunkType.token,
-            request_id=request_id,
+            command_id=command_id,
             idx=0,
             model="test-model"
         )
         
         chunk_generated_event = ChunkGenerated(
-            request_id=request_id,
+            command_id=command_id,
             chunk=token_chunk
         )
         
@@ -473,13 +473,13 @@ class TestAsyncSQLiteEventStorage:
         retrieved_event = retrieved_event_wrapper.event
         assert isinstance(retrieved_event, ChunkGenerated)
         assert retrieved_event.event_type == _EventType.ChunkGenerated
-        assert retrieved_event.request_id == request_id
+        assert retrieved_event.command_id == command_id
         
         # Verify the nested chunk was deserialized correctly
         retrieved_chunk = retrieved_event.chunk
         assert isinstance(retrieved_chunk, TokenChunk)
         assert retrieved_chunk.chunk_type == ChunkType.token
-        assert retrieved_chunk.request_id == request_id
+        assert retrieved_chunk.command_id == command_id
         assert retrieved_chunk.idx == 0
         assert retrieved_chunk.model == "test-model"
         

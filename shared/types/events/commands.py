@@ -1,19 +1,12 @@
 from enum import Enum
-from typing import (
-    TYPE_CHECKING,
-    Callable,
-    Sequence,
-)
+from typing import Annotated, Callable, Sequence
 
-if TYPE_CHECKING:
-    pass
+from pydantic import BaseModel, Field, TypeAdapter
 
-from pydantic import BaseModel
-
+from shared.types.api import ChatCompletionTaskParams
 from shared.types.common import NewUUID
-from shared.types.state import State
-
-from . import Event
+from shared.types.events import Event
+from shared.types.state import InstanceId, State
 
 
 class CommandId(NewUUID):
@@ -21,19 +14,36 @@ class CommandId(NewUUID):
 
 
 class CommandTypes(str, Enum):
-    Create = "Create"
-    Update = "Update"
-    Delete = "Delete"
+    CHAT_COMPLETION = "CHAT_COMPLETION"
+    CREATE_INSTANCE = "CREATE_INSTANCE"
+    DELETE_INSTANCE = "DELETE_INSTANCE"
 
 
-class Command[
-    CommandType: CommandTypes,
-](BaseModel):
-    command_type: CommandType
+class _BaseCommand[T: CommandTypes](BaseModel):
     command_id: CommandId
+    command_type: T
 
 
-type Decide[CommandTypeT: CommandTypes] = Callable[
-    [State, Command[CommandTypeT]],
+class ChatCompletionCommand(_BaseCommand[CommandTypes.CHAT_COMPLETION]):
+    request_params: ChatCompletionTaskParams
+
+
+class CreateInstanceCommand(_BaseCommand[CommandTypes.CREATE_INSTANCE]):
+    model_id: str
+
+
+class DeleteInstanceCommand(_BaseCommand[CommandTypes.DELETE_INSTANCE]):
+    instance_id: InstanceId
+
+
+Command = Annotated[
+    ChatCompletionCommand, Field(discriminator="command_type")
+]
+
+CommandParser: TypeAdapter[Command] = TypeAdapter(Command)
+
+
+type Decide = Callable[
+    [State, Command],
     Sequence[Event],
 ]
