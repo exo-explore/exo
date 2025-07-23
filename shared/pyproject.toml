@@ -15,6 +15,7 @@ dependencies = [
     "rustworkx>=0.16.0",
     "sqlmodel>=0.0.22",
     "sqlalchemy[asyncio]>=2.0.0",
+    "greenlet>=3.2.3"
 ]
 
 [build-system]
@@ -37,4 +38,6 @@ exclude = ["protobufs/schemas", "*.md", "pyproject.toml"]
 [dependency-groups]
 dev = [
     "types-protobuf>=6.30.2.20250516",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
 ]

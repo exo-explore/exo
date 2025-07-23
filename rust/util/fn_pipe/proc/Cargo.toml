@@ -1,0 +1,20 @@
+[package]
+name = "fn_pipe_proc"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+name = "fn_pipe_proc"
+path = "src/lib.rs"
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+extend = { workspace = true }
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+darling = { workspace = true }

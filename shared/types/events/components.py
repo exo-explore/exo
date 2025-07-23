@@ -13,7 +13,7 @@ from typing import Callable
 from pydantic import BaseModel, Field, model_validator
 
 from shared.types.common import NodeId
-from shared.types.events.registry import Event
+from shared.types.events import Event
 from shared.types.state import State
 
 

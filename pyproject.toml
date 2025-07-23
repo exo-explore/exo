@@ -10,6 +10,8 @@ dependencies = [
     "exo-master",
     "exo-worker",
     "types-aiofiles>=24.1.0.20250708",
+    "typeguard>=4.4.4",
+    "pydantic>=2.11.7"
 ]
 
 # dependencies only required for development
@@ -37,7 +39,7 @@ members = [
     "worker",
     "shared",
     "engines/*",
-    "networking/topology",
+    "rust/exo_pyo3_bindings",
 ]
 
 [tool.uv.sources]
@@ -45,7 +47,7 @@ exo-shared = { workspace = true }
 exo-master = { workspace = true }
 exo-worker = { workspace = true }
 exo-engine-mlx = { workspace = true }
-exo-networking = { workspace = true }
+exo-pyo3-bindings = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -66,9 +68,9 @@ only-include = ["pyproject.toml", "README.md"]
 # type-checker configuration
 ###
 
-[tool.basedpyright] 
+[tool.basedpyright]
 typeCheckingMode = "strict"
-failOnWarnings = true 
+failOnWarnings = true
 
 reportAny = "error"
 reportUnknownVariableType = "error"
@@ -80,11 +82,11 @@ reportUnnecessaryCast = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
 include = ["master", "worker", "shared", "engines/*"]
-pythonVersion  = "3.13"
+pythonVersion = "3.13"
 pythonPlatform = "Darwin"
 
 stubPath = "shared/protobufs/types"
-ignore   = [
+ignore = [
     "shared/protobufs/types/**/*",
 ]
 

@@ -1,19 +1,28 @@
 {
-  description = "Exo development flake";
+  description = "The development environment for Exo";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    flake-utils = {
+        url = "github:numtide/flake-utils";
+        inputs.nixpkgs.follows = "nixpkgs";
+    };
+    rust-overlay = {
+        url = "github:oxalica/rust-overlay";
+        inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        overlays = [ (import rust-overlay) ];
+        pkgs = (import nixpkgs) {
+          inherit system overlays;
+        };
 
         # Go 1.23 compiler – align with go.mod
         go = pkgs.go_1_23;
-
         # Build the networking/forwarder Go utility.
         forwarder = pkgs.buildGoModule {
           pname = "exo-forwarder";
@@ -25,40 +34,64 @@
           # Only the main package at the repository root needs building.
           subPackages = [ "." ];
         };
+
+        buildInputs = with pkgs; [
+        ];
+        nativeBuildInputs = with pkgs; [
+          # This sets up the rust suite, automatically selecting the latest nightly version
+          (rust-bin.selectLatestNightlyWith
+            (toolchain: toolchain.default.override {
+              extensions = [ "rust-src" "clippy" ];
+            }))
+        ];
       in
-      {
-        packages = {
-          inherit forwarder;
-          default = forwarder;
-        };
+        {
+          packages = {
+            inherit forwarder;
+            default = forwarder;
+          };
 
-        apps.forwarder = {
-          type = "app";
-          program = "${forwarder}/bin/forwarder";
-        };
-        apps.python-lsp = {
-          type = "app";
-          program = "${pkgs.basedpyright}/bin/basedpyright-langserver";
-        };
-        apps.default = self.apps.${system}.forwarder;
+          apps = {
+            forwarder = {
+              type = "app";
+              program = "${forwarder}/bin/forwarder";
+            };
+            python-lsp = {
+              type = "app";
+              program = "${pkgs.basedpyright}/bin/basedpyright-langserver";
+            };
+            default = self.apps.${system}.forwarder;
+          };
 
-        devShells.default = pkgs.mkShell {
-          packages = [
-            pkgs.python313
-            pkgs.uv
-            pkgs.just
-            pkgs.protobuf
-            pkgs.rustc
-            pkgs.cargo
-            pkgs.basedpyright
-            pkgs.ruff
-            go
-          ];
+          devShells.default = pkgs.mkShell {
+            packages = [
+              pkgs.python313
+              pkgs.uv
+              pkgs.just
+              pkgs.protobuf
+              pkgs.basedpyright
+              pkgs.ruff
+              go
+            ];
 
-          shellHook = ''
-            export GOPATH=$(mktemp -d)
-          '';
-        };
-      }
+            # TODO: change this into exported env via nix directly???
+            shellHook = ''
+              export GOPATH=$(mktemp -d)
+            '';
+
+            nativeBuildInputs = with pkgs; [
+              cargo-expand
+              nixpkgs-fmt
+              cmake
+            ] ++ buildInputs ++ nativeBuildInputs;
+
+            # fixes libstdc++.so issues and libgl.so issues
+#            LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH";
+            LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
+
+            # exports basedpyright path so tools can discover it
+            BASEDPYRIGHT_BIN_PATH = "${pkgs.basedpyright}/bin/";
+          };
+        }
     );
 }

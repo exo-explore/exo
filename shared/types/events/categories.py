@@ -1,10 +1,9 @@
-
-from shared.types.events.events import (
+from . import (
     MLXInferenceSagaPrepare,
     MLXInferenceSagaStartPrepare,
 )
 
 TaskSagaEvent = (
-    MLXInferenceSagaPrepare
-    | MLXInferenceSagaStartPrepare
+        MLXInferenceSagaPrepare
+        | MLXInferenceSagaStartPrepare
 )

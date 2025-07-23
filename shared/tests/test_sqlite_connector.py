@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.sqlite import AsyncSQLiteEventStorage, EventLogConfig
 from shared.types.common import NodeId
-from shared.types.events.chunks import ChunkType, TokenChunk
-from shared.types.events.events import (
+from shared.types.events import (
     ChunkGenerated,
-    EventType,
+    _EventType,
 )
+from shared.types.events.chunks import ChunkType, TokenChunk
 from shared.types.request import RequestId
 
 # Type ignore comment for all protected member access in this test file
@@ -472,7 +472,7 @@ class TestAsyncSQLiteEventStorage:
         # Verify the event was deserialized correctly
         retrieved_event = retrieved_event_wrapper.event
         assert isinstance(retrieved_event, ChunkGenerated)
-        assert retrieved_event.event_type == EventType.ChunkGenerated
+        assert retrieved_event.event_type == _EventType.ChunkGenerated
         assert retrieved_event.request_id == request_id
         
         # Verify the nested chunk was deserialized correctly

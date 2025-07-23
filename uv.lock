@@ -15,7 +15,7 @@ members = [
     "exo",
     "exo-engine-mlx",
     "exo-master",
-    "exo-networking",
+    "exo-pyo3-bindings",
     "exo-shared",
     "exo-worker",
 ]
@@ -181,6 +181,8 @@ dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "exo-master", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "exo-worker", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "typeguard", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "types-aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
@@ -204,6 +206,8 @@ requires-dist = [
     { name = "exo-master", editable = "master" },
     { name = "exo-worker", editable = "worker" },
     { name = "mlx", marker = "extra == 'darwin'" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "typeguard", specifier = ">=4.4.4" },
     { name = "types-aiofiles", specifier = ">=24.1.0.20250708" },
 ]
 provides-extras = ["darwin"]
@@ -239,9 +243,25 @@ requires-dist = [
 ]
 
 [[package]]
-name = "exo-networking"
+name = "exo-pyo3-bindings"
 version = "0.1.0"
-source = { editable = "networking/topology" }
+source = { editable = "rust/exo_pyo3_bindings" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "exo-pyo3-bindings", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "exo-pyo3-bindings", editable = "rust/exo_pyo3_bindings" },
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
 
 [[package]]
 name = "exo-shared"
@@ -249,6 +269,7 @@ version = "0.1.0"
 source = { editable = "shared" }
 dependencies = [
     { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "greenlet", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "networkx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pathlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -262,12 +283,15 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "types-protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "greenlet", specifier = ">=3.2.3" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "openai", specifier = ">=1.93.0" },
     { name = "pathlib", specifier = ">=1.0.1" },
@@ -280,7 +304,11 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "types-protobuf", specifier = ">=6.30.2.20250516" }]
+dev = [
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "types-protobuf", specifier = ">=6.30.2.20250516" },
+]
 
 [[package]]
 name = "exo-worker"
@@ -288,6 +316,7 @@ version = "0.1.0"
 source = { editable = "worker" }
 dependencies = [
     { name = "exo-shared", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
@@ -295,6 +324,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "exo-shared", editable = "shared" },
+    { name = "huggingface-hub", specifier = ">=0.33.4" },
     { name = "mlx", specifier = "==0.26.3" },
     { name = "mlx-lm", specifier = ">=0.25.3" },
 ]
@@ -688,7 +718,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.97.0"
+version = "1.97.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -700,9 +730,9 @@ dependencies = [
     { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e0/c6/b8d66e4f3b95493a8957065b24533333c927dc23817abe397f13fe589c6e/openai-1.97.0.tar.gz", hash = "sha256:0be349569ccaa4fb54f97bb808423fd29ccaeb1246ee1be762e0c81a47bae0aa", size = 493850, upload-time = "2025-07-16T16:37:35.196Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/57/1c471f6b3efb879d26686d31582997615e969f3bb4458111c9705e56332e/openai-1.97.1.tar.gz", hash = "sha256:a744b27ae624e3d4135225da9b1c89c107a2a7e5bc4c93e5b7b5214772ce7a4e", size = 494267, upload-time = "2025-07-22T13:10:12.607Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/91/1f1cf577f745e956b276a8b1d3d76fa7a6ee0c2b05db3b001b900f2c71db/openai-1.97.0-py3-none-any.whl", hash = "sha256:a1c24d96f4609f3f7f51c9e1c2606d97cc6e334833438659cfd687e9c972c610", size = 764953, upload-time = "2025-07-16T16:37:33.135Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/35/412a0e9c3f0d37c94ed764b8ac7adae2d834dbd20e69f6aca582118e0f55/openai-1.97.1-py3-none-any.whl", hash = "sha256:4e96bbdf672ec3d44968c9ea39d2c375891db1acc1794668d8149d5fa6000606", size = 764380, upload-time = "2025-07-22T13:10:10.689Z" },
 ]
 
 [[package]]
@@ -1090,6 +1120,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f1/5c/49182918b58eaa0b4c954fd0e37c79fc299e5643e69d70089d0b0eb0cd9b/transformers-4.53.3.tar.gz", hash = "sha256:b2eda1a261de79b78b97f7888fe2005fc0c3fabf5dad33d52cc02983f9f675d8", size = 9197478, upload-time = "2025-07-22T07:30:51.51Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/b1/d7520cc5cb69c825599042eb3a7c986fa9baa8a8d2dea9acd78e152c81e2/transformers-4.53.3-py3-none-any.whl", hash = "sha256:5aba81c92095806b6baf12df35d756cf23b66c356975fb2a7fa9e536138d7c75", size = 10826382, upload-time = "2025-07-22T07:30:48.458Z" },
+]
+
+[[package]]
+name = "typeguard"
+version = "4.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/68/71c1a15b5f65f40e91b65da23b8224dad41349894535a97f63a52e462196/typeguard-4.4.4.tar.gz", hash = "sha256:3a7fd2dffb705d4d0efaed4306a704c89b9dee850b688f060a8b1615a79e5f74", size = 75203, upload-time = "2025-06-18T09:56:07.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/a9/e3aee762739c1d7528da1c3e06d518503f8b6c439c35549b53735ba52ead/typeguard-4.4.4-py3-none-any.whl", hash = "sha256:b5f562281b6bfa1f5492470464730ef001646128b180769880468bd84b68b09e", size = 34874, upload-time = "2025-06-18T09:56:05.999Z" },
 ]
 
 [[package]]

@@ -8,8 +8,7 @@ from typing import AsyncGenerator, Optional
 from pydantic import BaseModel, ConfigDict
 
 from shared.types.common import NodeId
-from shared.types.events.events import ChunkGenerated, InstanceId, RunnerStatusUpdated
-from shared.types.events.registry import Event
+from shared.types.events import ChunkGenerated, Event, InstanceId, RunnerStatusUpdated
 from shared.types.state import State
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import (

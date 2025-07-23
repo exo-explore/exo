@@ -5,8 +5,8 @@ from sqlalchemy import DateTime, Index
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from shared.types.common import NodeId
+from shared.types.events import Event
 from shared.types.events.components import EventFromEventLog
-from shared.types.events.registry import Event
 
 
 class StoredEvent(SQLModel, table=True):

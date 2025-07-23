@@ -3,7 +3,7 @@ from typing import Annotated, Generic, Literal, TypeVar, Union
 
 from pydantic import BaseModel, Field
 
-from shared.types.events.events import InstanceId
+from shared.types.events import InstanceId
 from shared.types.tasks import Task
 from shared.types.worker.common import RunnerId
 from shared.types.worker.mlx import Host

@@ -7,9 +7,8 @@ from typing import Callable
 import pytest
 
 from shared.types.common import NodeId
+from shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
 from shared.types.events.chunks import TokenChunk
-from shared.types.events.events import ChunkGenerated, RunnerStatusUpdated
-from shared.types.events.registry import Event
 from shared.types.tasks import Task
 from shared.types.worker.common import RunnerId
 from shared.types.worker.instances import Instance

@@ -11,8 +11,9 @@ if TYPE_CHECKING:
 from pydantic import BaseModel
 
 from shared.types.common import NewUUID
-from shared.types.events.registry import Event
 from shared.types.state import State
+
+from . import Event
 
 
 class CommandId(NewUUID):

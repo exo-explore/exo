@@ -17,13 +17,16 @@ lint-check:
     uv run ruff check master worker shared engines/*
 
 test:
-    uv run pytest master worker shared engines/*
+    uv run pytest master worker shared engines/* rust/exo_pyo3_bindings/tests
 
 check:
-    basedpyright --project pyproject.toml
+    uv run basedpyright --project pyproject.toml
 
 sync:
-    uv sync --all-packages --reinstall
+    uv sync --all-packages
+
+sync-clean:
+    uv sync --all-packages --force-reinstall
 
 protobufs:
     just regenerate-protobufs

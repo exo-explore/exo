@@ -8,8 +8,8 @@ from shared.db.sqlite.config import EventLogConfig
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.common import NodeId
+from shared.types.events import ChunkGenerated
 from shared.types.events.chunks import TokenChunk
-from shared.types.events.events import ChunkGenerated
 from shared.types.request import APIRequest, RequestId
 
 

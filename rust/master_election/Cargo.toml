@@ -1,0 +1,41 @@
+[package]
+name = "master_election"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+doctest = false
+name = "master_election"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# macro dependencies
+extend = { workspace = true }
+delegate = { workspace = true }
+impl-trait-for-tuples = { workspace = true }
+derive_more = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["full"] }
+futures = { workspace = true }
+
+# utility dependencies
+#util = { workspace = true }
+#fn_pipe = { workspace = true }
+thiserror = { workspace = true }
+#internment = { workspace = true }
+#recursion = { workspace = true }
+#generativity = { workspace = true }
+#itertools = { workspace = true }
+tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
+keccak-const = { workspace = true }
+
+# Data types
+ordered-float = { workspace = true }
+
+# Networking
+libp2p = { workspace = true, features = ["full"] }

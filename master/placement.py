@@ -2,7 +2,7 @@ from queue import Queue
 from typing import Mapping, Sequence
 
 from shared.topology import Topology
-from shared.types.events.registry import Event
+from shared.types.events import Event
 from shared.types.state import CachePolicy
 from shared.types.tasks import Task
 from shared.types.worker.instances import InstanceId, InstanceParams

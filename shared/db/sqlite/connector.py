@@ -12,9 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlmodel import SQLModel
 
-from shared.types.events.common import NodeId
+from shared.types.events import Event, EventParser, NodeId
 from shared.types.events.components import EventFromEventLog
-from shared.types.events.registry import Event, EventParser
 
 from .types import StoredEvent
 
