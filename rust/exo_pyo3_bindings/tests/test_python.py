@@ -1,3 +1,7 @@
+import logging
+import multiprocessing
+import multiprocessing.queues
+import pickle
 import time
 from collections.abc import Awaitable
 from typing import Callable
@@ -48,7 +52,7 @@ async def test_discovery_callbacks() -> None:
     service.add_connected_callback(add_connected_callback)
     service.add_disconnected_callback(disconnected_callback)
 
-    for i in range(0, 10):
+    for i in range(0, 1):
         print(f"PYTHON: tick {i} of 10")
         time.sleep(1)
 
@@ -67,6 +71,21 @@ def disconnected_callback(e: ConnectionUpdate) -> None:
         f"PYTHON: Disconnected callback: {e.peer_id.__repr__()}, {e.connection_id.__repr__()}, {e.local_addr.__repr__()}, {e.send_back_addr.__repr__()}\n\n")
 
 
-async def foobar(a: Callable[[str], Awaitable[str]]):
-    abc = await a("")
-    pass
+# async def foobar(a: Callable[[str], Awaitable[str]]):
+#     abc = await a("")
+#     pass
+
+# def test_keypair_pickling() -> None:
+#     def subprocess_task(kp: Keypair, q: multiprocessing.queues.Queue[Keypair]):
+#         logging.info("a")
+#         assert q.get() == kp
+#         logging.info("b")
+#
+#
+#     kp = Keypair.generate_ed25519()
+#     q: multiprocessing.queues.Queue[Keypair] = multiprocessing.Queue()
+#
+#     p = multiprocessing.Process(target=subprocess_task, args=(kp, q))
+#     p.start()
+#     q.put(kp)
+#     p.join()

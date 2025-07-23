@@ -91,6 +91,10 @@ class Keypair:
         r"""
         TODO: documentation
         """
+    def to_peer_id(self) -> PeerId:
+        r"""
+        TODO: documentation
+        """
 
 class Multiaddr:
     r"""
@@ -143,6 +147,12 @@ class PeerId:
         r"""
         TODO: documentation
         """
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
+    def __repr__(self) -> builtins.str:
+        r"""
+        TODO: documentation
+        """
+    def __str__(self) -> builtins.str:
+        r"""
+        TODO: documentation
+        """
 

@@ -3,7 +3,7 @@ use libp2p::identity::{ecdsa, Keypair};
 use libp2p::PeerId;
 use pyo3::prelude::{PyBytesMethods, PyModule, PyModuleMethods};
 use pyo3::types::PyBytes;
-use pyo3::{pyclass, pymethods, Bound, PyResult, Python};
+use pyo3::{pyclass, pymethods, Bound, PyObject, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 /// TODO: documentation...
@@ -76,6 +76,34 @@ impl PyKeypair {
         let bytes = self.0.to_protobuf_encoding().pyerr()?;
         Ok(PyBytes::new(py, &bytes))
     }
+
+    /// TODO: documentation
+    fn to_peer_id(&self) -> PyPeerId {
+        PyPeerId(self.0.public().to_peer_id())
+    }
+
+    // /// Hidden constructor for pickling support. TODO: figure out how to do pickling...
+    // #[gen_stub(skip)]
+    // #[new]
+    // fn py_new(bytes: Bound<'_, PyBytes>) -> PyResult<Self> {
+    //     Self::from_protobuf_encoding(bytes)
+    // }
+    //
+    // #[gen_stub(skip)]
+    // fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+    //     *self = Self::from_protobuf_encoding(state)?;
+    //     Ok(())
+    // }
+    //
+    // #[gen_stub(skip)]
+    // fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    //     self.to_protobuf_encoding(py)
+    // }
+    //
+    // #[gen_stub(skip)]
+    // pub fn __getnewargs__<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyBytes>,)> {
+    //     Ok((self.to_protobuf_encoding(py)?,))
+    // }
 }
 
 /// TODO: documentation...
@@ -113,10 +141,12 @@ impl PyPeerId {
         self.0.to_base58()
     }
 
+    /// TODO: documentation
     fn __repr__(&self) -> String {
         format!("PeerId({})", self.to_base58())
     }
 
+    /// TODO: documentation
     fn __str__(&self) -> String {
         self.to_base58()
     }

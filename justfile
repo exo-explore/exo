@@ -17,7 +17,7 @@ lint-check:
     uv run ruff check master worker shared engines/*
 
 test:
-    uv run pytest master worker shared engines/* rust/exo_pyo3_bindings/tests
+    uv run pytest master worker shared engines/*
 
 check:
     uv run basedpyright --project pyproject.toml

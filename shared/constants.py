@@ -9,6 +9,8 @@ EXO_WORKER_STATE = EXO_HOME / "worker_state.json"
 EXO_MASTER_LOG = EXO_HOME / "master.log"
 EXO_WORKER_LOG = EXO_HOME / "worker.log"
 
+EXO_NODE_ID_KEYPAIR = EXO_HOME / "node_id.keypair"
+
 EXO_WORKER_KEYRING_FILE = EXO_HOME / "worker_keyring"
 EXO_MASTER_KEYRING_FILE = EXO_HOME / "master_keyring"
 
