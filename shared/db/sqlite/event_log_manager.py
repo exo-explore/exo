@@ -24,6 +24,7 @@ class EventLogManager:
         # Ensure base directory exists
         EXO_HOME.mkdir(parents=True, exist_ok=True)
     
+    # TODO: This seems like it's a pattern to avoid an async __init__ function. But as we know, there's a better pattern for this - using a create() function, like in runner_supervisor.
     async def initialize(self) -> None:
         """Initialize both connectors - call this during startup"""
         # Both master and worker need both connectors

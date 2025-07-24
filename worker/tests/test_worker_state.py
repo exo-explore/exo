@@ -1,6 +1,7 @@
 ## Tests for worker state differentials
 ## When the worker state changes, this should be reflected by a worker intention.
 
+
 import asyncio
 from typing import Callable
 from uuid import uuid4
@@ -19,7 +20,7 @@ async def test_worker_runs_and_stops(worker: Worker):
     await worker.start()
     await asyncio.sleep(0.01)
 
-    assert worker._is_running # type: ignore
+    assert worker._is_running, worker._task.exception() # type: ignore
 
     await worker.stop()
     await asyncio.sleep(0.01)

@@ -1,0 +1,2 @@
+- Where should we check where the model is downloaded?
+- Error handling. How do we handle the scenario where an operation keeps failing to execute

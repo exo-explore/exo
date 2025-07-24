@@ -5,7 +5,7 @@ __pycache__
 hosts_*.json
 
 # hide direnv stuff
-/.direnv
+.direnv/
 # TODO figure out how to properly solve the issue with these target directories showing up
 networking/target/
 networking/topology/target/

@@ -121,6 +121,7 @@ async def main():
                 case ChatTaskMessage(task_data=task):
                     runner_print(f"received chat request: {task}")
                     # Ensure we have a chat-completion task subtype
+                    # TODO: this is a hack, why are we only looking at the first message? should have a tokenizer
                     prompt = task.messages[0]
                     if prompt.content is not None and 'EXO RUNNER MUST FAIL' in prompt.content:
                         raise Exception('Artificial runner exception - for testing purposes only.')

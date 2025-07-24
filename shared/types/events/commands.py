@@ -4,8 +4,7 @@ from typing import Annotated, Callable, Literal, Sequence
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.api import ChatCompletionTaskParams
-from shared.types.events import Event
-from shared.types.events._common import CommandId
+from shared.types.events import CommandId, Event
 from shared.types.state import InstanceId, State
 
 
@@ -34,6 +33,7 @@ class CreateInstanceCommand(_BaseCommand[CommandTypes.CREATE_INSTANCE]):
 class DeleteInstanceCommand(_BaseCommand[CommandTypes.DELETE_INSTANCE]):
     command_type: Literal[CommandTypes.DELETE_INSTANCE] = CommandTypes.DELETE_INSTANCE
     instance_id: InstanceId
+
 
 Command = Annotated[
     ChatCompletionCommand | CreateInstanceCommand | DeleteInstanceCommand, 

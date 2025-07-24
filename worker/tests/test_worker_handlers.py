@@ -1,15 +1,19 @@
 ## Tests for worker state handlers
 
-import asyncio
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
 from shared.types.common import NodeId
-from shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
+from shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TaskStateUpdated,
+)
 from shared.types.events.chunks import TokenChunk
-from shared.types.tasks import Task
+from shared.types.tasks import Task, TaskStatus
 from shared.types.worker.common import RunnerId
 from shared.types.worker.instances import Instance
 from shared.types.worker.ops import (
@@ -36,9 +40,6 @@ def user_message():
 
 @pytest.mark.asyncio
 async def test_assign_op(worker: Worker, instance: Callable[[NodeId], Instance], tmp_path: Path):
-    await worker.start()
-    await asyncio.sleep(0.01)
-
     instance_obj: Instance = instance(worker.node_id)
     runner_id: RunnerId | None = None
     for x in instance_obj.instance_params.shard_assignments.runner_to_shard:
@@ -167,15 +168,24 @@ async def test_execute_task_op(
 
     assert len(events) > 20
 
+    print(f'{events=}')    
+
+
     assert isinstance(events[0], RunnerStatusUpdated)
     assert isinstance(events[0].runner_status, RunningRunnerStatus)
+
+    assert isinstance(events[1], TaskStateUpdated)
+    assert events[1].task_status == TaskStatus.RUNNING # It tried to start.
+
+    assert isinstance(events[-2], TaskStateUpdated)
+    assert events[-2].task_status == TaskStatus.COMPLETE # It tried to start.
 
     assert isinstance(events[-1], RunnerStatusUpdated)
     assert isinstance(events[-1].runner_status, LoadedRunnerStatus) # It should not have failed.
 
     gen_events: list[ChunkGenerated] = [x for x in events if isinstance(x, ChunkGenerated)]
     text_chunks: list[TokenChunk] = [x.chunk for x in gen_events if isinstance(x.chunk, TokenChunk)]
-    assert len(text_chunks) == len(events) - 2
+    assert len(text_chunks) == len(events) - 4
     
     output_text = ''.join([x.text for x in text_chunks])
     assert '42' in output_text
@@ -202,10 +212,18 @@ async def test_execute_task_fails(
     async for event in worker._execute_op(execute_task_op): # type: ignore[misc]
         events.append(event)
 
-    assert len(events) == 2
+    assert len(events) == 4
+
+    print(events)    
 
     assert isinstance(events[0], RunnerStatusUpdated)
     assert isinstance(events[0].runner_status, RunningRunnerStatus) # It tried to start.
 
-    assert isinstance(events[-1], RunnerStatusUpdated)
-    assert isinstance(events[-1].runner_status, FailedRunnerStatus) # It should have failed. 
+    assert isinstance(events[1], TaskStateUpdated)
+    assert events[1].task_status == TaskStatus.RUNNING # It tried to start.
+
+    assert isinstance(events[2], TaskStateUpdated)
+    assert events[2].task_status == TaskStatus.FAILED # Task marked as failed. 
+
+    assert isinstance(events[3], RunnerStatusUpdated)
+    assert isinstance(events[3].runner_status, FailedRunnerStatus) # It should have failed.

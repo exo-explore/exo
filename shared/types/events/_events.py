@@ -4,17 +4,14 @@ from pydantic import Field
 
 from shared.topology import Connection, ConnectionProfile, Node, NodePerformanceProfile
 from shared.types.common import NodeId
+from shared.types.events import CommandId
 from shared.types.events.chunks import GenerationChunk
 from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import InstanceParams, TypeOfInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus
 
-from ._common import (
-    CommandId,
-    _BaseEvent,  # pyright: ignore[reportPrivateUsage]
-    _EventType,  # pyright: ignore[reportPrivateUsage]
-)
+from ._common import _BaseEvent, _EventType  # pyright: ignore[reportPrivateUsage]
 
 
 class TaskCreated(_BaseEvent[_EventType.TaskCreated]):

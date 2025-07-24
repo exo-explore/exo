@@ -3,13 +3,23 @@ import os
 from asyncio import Queue
 from functools import partial
 from logging import Logger
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Callable, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from shared.db.sqlite import AsyncSQLiteEventStorage
 from shared.types.common import NodeId
-from shared.types.events import ChunkGenerated, Event, InstanceId, RunnerStatusUpdated
+from shared.types.events import (
+    ChunkGenerated,
+    Event,
+    InstanceCreated,
+    InstanceId,
+    RunnerStatusUpdated,
+    TaskStateUpdated,
+)
+from shared.types.events.components import EventFromEventLog
 from shared.types.state import State
+from shared.types.tasks import TaskStatus
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import (
     DownloadCompleted,
@@ -17,6 +27,7 @@ from shared.types.worker.downloads import (
     DownloadOngoing,
     DownloadProgressData,
 )
+from shared.types.worker.instances import TypeOfInstance
 from shared.types.worker.mlx import Host
 from shared.types.worker.ops import (
     AssignRunnerOp,
@@ -64,16 +75,35 @@ class AssignedRunner(BaseModel):
             runner_status=self.status,
         )
 
+# TODO: This should all be shared with the master.
+type ApplyFromEventLog = Callable[[State, EventFromEventLog[Event]], State]
+def get_apply_fn() -> ApplyFromEventLog:
+    # TODO: this needs to be done in a nice type-safe way
+    def _apply_instance_created(state: State, event_from_log: InstanceCreated) -> State:
+        return state
+
+    def apply_fn(state: State, event_from_log: EventFromEventLog[Event]) -> State:
+        if isinstance(event_from_log.event, InstanceCreated):
+            next_state = _apply_instance_created(state, event_from_log.event)
+        else:
+            raise ValueError(f"Unknown event type: {event_from_log.event}")
+        next_state.last_event_applied_idx = event_from_log.idx_in_log
+        return next_state
+
+    return apply_fn
+
 class Worker:
     def __init__(
         self,
         node_id: NodeId,
         initial_state: State,
         logger: Logger,
+        worker_events: AsyncSQLiteEventStorage | None,
     ):
-        self.node_id = node_id
-        self.state = initial_state
-        self.logger = logger
+        self.node_id: NodeId = node_id
+        self.state: State = initial_state
+        self.worker_events: AsyncSQLiteEventStorage | None = worker_events
+        self.logger: Logger = logger
 
         self.assigned_runners: dict[RunnerId, AssignedRunner] = {}
         self._task: asyncio.Task[None] | None = None
@@ -82,15 +112,21 @@ class Worker:
     @property
     def _is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+    
+    @property
+    def exception(self) -> Exception | None:
+        if self._task is not None:
+            self._task.exception()
 
+    # We don't start immediately on init - for testing purposes it is useful to have an 'inactive' worker.
     async def start(self):
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self):
         if not self._is_running:
             raise RuntimeError("Worker is not running")
-            
-        assert self._task is not None        
+
+        assert self._task is not None
 
         self._task.cancel()
 
@@ -118,13 +154,13 @@ class Worker:
         self, op: UnassignRunnerOp
     ) -> AsyncGenerator[Event, None]:
         if op.runner_id not in self.assigned_runners:
-            return        
+            return
 
         # We can try to do a graceful shutdown of the runner.
-        runner: RunnerSupervisor | None = self.assigned_runners[op.runner_id].runner 
+        runner: RunnerSupervisor | None = self.assigned_runners[op.runner_id].runner
         if runner is not None:
             await runner.astop()
-        
+
         # This is all we really need:
         del self.assigned_runners[op.runner_id]
 
@@ -174,7 +210,7 @@ class Worker:
                     downloaded_bytes=0
                 )
             )
-        )       
+        )
 
         self.assigned_runners[op.runner_id] = AssignedRunner(
             runner_id=op.runner_id,
@@ -188,7 +224,7 @@ class Worker:
         yield assigned_runner.status_update_event()
 
         # Download it!
-        # TODO: we probably want download progress as part of a callback that gets passed to the downloader.        
+        # TODO: we probably want download progress as part of a callback that gets passed to the downloader.
 
         try:
             assert assigned_runner.is_downloaded
@@ -209,22 +245,19 @@ class Worker:
         assigned_runner.status = ReadyRunnerStatus()
         yield assigned_runner.status_update_event()
 
-# Plan:
-# First get a single inference running
-# Then build boilerplate for passing callback when mlx is in the 'ready' state
-# Then figure out if we can do what's needed with events. But this is a little challenging because it depends on Alex's code.
-    async def _execute_chat_completion_op(
+
+    async def _execute_task_op(
         self, op: ExecuteTaskOp
     ) -> AsyncGenerator[Event, None]:
         '''
-        This is the entry point for a chat completion starting. 
+        This is the entry point for a chat completion starting.
         While there is only one execute function, it will get called in different ways for runner 0 and runner [1, 2, 3, ...].
         Runners [1, 2, 3, ...] will run this method when a task is in 'pending' state.
         Runner 0 will run this method when a task is in 'running' state.
         TODO: How do we handle the logic of ensuring that n-1 nodes have started their execution before allowing the 0'th runner to start?
         This is still a little unclear to me.
         '''
-        assigned_runner = self.assigned_runners[op.runner_id]        
+        assigned_runner = self.assigned_runners[op.runner_id]
 
         async def inner_execute(queue: asyncio.Queue[Event]) -> None:
             assert assigned_runner.runner is not None
@@ -234,26 +267,45 @@ class Worker:
                 # Called when the MLX process has been kicked off
                 assigned_runner.status = RunningRunnerStatus()
                 await queue.put(assigned_runner.status_update_event())
-            
-            
+
+                if assigned_runner.shard_metadata.device_rank == 0:
+                    await queue.put(TaskStateUpdated(
+                        task_id=op.task.task_id,
+                        task_status=TaskStatus.RUNNING,
+                    ))
+
             try:
                 async for chunk in assigned_runner.runner.stream_response(
-                        task=op.task, 
+                        task=op.task,
                         request_started_callback=partial(running_callback, queue)):
-                    await queue.put(ChunkGenerated(
-                        # todo: at some point we will no longer have a bijection between task_id and row_id. 
-                        # So we probably want to store a mapping between these two in our Worker object.
-                        command_id=chunk.command_id, 
-                        chunk=chunk
+                    if assigned_runner.shard_metadata.device_rank == 0:
+                        await queue.put(ChunkGenerated(
+                            # todo: at some point we will no longer have a bijection between task_id and row_id. 
+                            # So we probably want to store a mapping between these two in our Worker object.
+                            command_id=chunk.command_id, 
+                            chunk=chunk
+                        ))
+
+                if assigned_runner.shard_metadata.device_rank == 0:
+                    await queue.put(TaskStateUpdated(
+                        task_id=op.task.task_id,
+                        task_status=TaskStatus.COMPLETE,
                     ))
-        
+
                 # After a successful inference:
                 assigned_runner.status = LoadedRunnerStatus()
                 await queue.put(assigned_runner.status_update_event())
 
+
             except Exception as e:
                 # TODO: What log level?
                 self.logger.log(2, f'Runner failed whilst running inference task. Task: {op.task}. Error: {e}')
+
+                if assigned_runner.shard_metadata.device_rank == 0:
+                    await queue.put(TaskStateUpdated(
+                        task_id=op.task.task_id,
+                        task_status=TaskStatus.FAILED,
+                    ))
 
                 assigned_runner.runner = None
                 assigned_runner.status = FailedRunnerStatus(error_message=str(e))
@@ -292,7 +344,7 @@ class Worker:
             case RunnerOpType.DOWNLOAD:
                 event_generator = self._execute_download_op(op)
             case RunnerOpType.CHAT_COMPLETION:
-                event_generator = self._execute_chat_completion_op(op)
+                event_generator = self._execute_task_op(op)
 
         async for event in event_generator:
             yield event
@@ -300,10 +352,67 @@ class Worker:
     ## Planning logic
     def plan(self, state: State) -> RunnerOp | None:
         # Compare state to worker 'mood'
-        
-        # First spin things down
-        
-        # Then spin things up
+
+        # First, unassign assigned runners that are no longer in the state.
+        for runner_id, _ in self.assigned_runners.items():
+            if runner_id not in state.runners:
+                return UnassignRunnerOp(runner_id=runner_id)
+
+        # Then spin down active runners
+        for _instance_id, instance in state.instances.items():
+            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+                if node_id != self.node_id:
+                    continue
+
+                # We spin down a runner if it's meant to be inactive and it's Loaded.
+                if runner_id in self.assigned_runners and \
+                    isinstance(self.assigned_runners[runner_id].status, LoadedRunnerStatus) and \
+                    instance.instance_type == TypeOfInstance.INACTIVE:
+                    return RunnerDownOp(runner_id=runner_id)
+
+        # If we are part of an instance that has a dead node - and we aren't the dead node - we should spin down
+        # TODO: We need to limit number of retries if we keep failing.
+        for _instance_id, instance in state.instances.items():
+            if self.node_id in instance.instance_params.shard_assignments.node_to_runner:
+                other_node_in_instance_has_failed = False
+                for runner_id in instance.instance_params.shard_assignments.runner_to_shard:
+                    if isinstance(state.runners[runner_id], FailedRunnerStatus) and \
+                        runner_id not in self.assigned_runners:
+                        other_node_in_instance_has_failed= True
+
+                if other_node_in_instance_has_failed:
+                    # Spin down *our* runner
+                    return RunnerDownOp(runner_id=instance.instance_params.shard_assignments.node_to_runner[self.node_id])
+
+        # If we are failed - and *all of the other nodes have spun down* - then we can spin down too.
+        for _instance_id, instance in state.instances.items():
+            if self.node_id in instance.instance_params.shard_assignments.node_to_runner and \
+                isinstance(state.runners[instance.instance_params.shard_assignments.node_to_runner[self.node_id]], FailedRunnerStatus):
+                
+                num_spundown_nodes = 0
+                for runner_id in instance.instance_params.shard_assignments.runner_to_shard:
+                    if isinstance(state.runners[runner_id], ReadyRunnerStatus) and \
+                        runner_id not in self.assigned_runners:
+                        num_spundown_nodes += 1
+
+                if num_spundown_nodes == next(iter(instance.instance_params.shard_assignments.runner_to_shard.values())).world_size - 1:
+                    # All the other nodes are spun down - so now we can spin down too.
+                    # This also catches the case of 1-node. If there's one node in the instance then we should spin down straight away
+                    return RunnerDownOp(runner_id=instance.instance_params.shard_assignments.node_to_runner[self.node_id])
+
+        # Then assign runners we do want
+        for instance_id, instance in state.instances.items():
+            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+                if node_id != self.node_id:
+                    continue
+
+                if runner_id not in self.assigned_runners:
+                    return AssignRunnerOp(
+                        runner_id=runner_id,
+                        instance_id=instance_id,
+                        shard_metadata=instance.instance_params.shard_assignments.runner_to_shard[runner_id],
+                        hosts=instance.instance_params.hosts
+                    )
 
         # Then make sure things are downloading.
         for instance_id, instance in state.instances.items():
@@ -327,24 +436,80 @@ class Worker:
                             hosts=instance.instance_params.hosts
                         )
 
+        # Then spin up 'ready' runners that should be active
+        for _instance_id, instance in state.instances.items():
+            if self.node_id in instance.instance_params.shard_assignments.node_to_runner and \
+                self.assigned_runners[instance.instance_params.shard_assignments.node_to_runner[self.node_id]].runner is None and \
+                instance.instance_type == TypeOfInstance.ACTIVE:
 
+                # We are part of this instance, we want it up but it hasn't been spun up yet.
+                # Need to assert all other runners are ready before we can spin up.
+                ready_to_spin = True
+                for runner_id in instance.instance_params.shard_assignments.node_to_runner.values():
+                    if state.runners[runner_id].runner_status != RunnerStatusType.Ready:
+                        ready_to_spin = False
 
+                if ready_to_spin:
+                    return RunnerUpOp(runner_id=instance.instance_params.shard_assignments.node_to_runner[self.node_id])
 
-        # Finally, chat completion.
+        # Then make sure things are running based on tasks.
+        for instance_id, instance in state.instances.items():
+            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+                if node_id != self.node_id:
+                    continue
+                assert runner_id in self.assigned_runners
+                runner = self.assigned_runners[runner_id]
+                if runner.status.runner_status != RunnerStatusType.Loaded:
+                    continue # The only previous state to get to Running is from Loaded
+
+                for _, task in state.tasks.items():
+                    if task.instance_id == instance_id:
+                        if (runner.shard_metadata.device_rank >= 1 or runner.shard_metadata.world_size == 1):
+                            return ExecuteTaskOp(runner_id=runner_id, task=task)
+                        else:
+                            # We already know our own status is Loaded. We are rank 0,
+                            # so let's check that all the other runners are running - ready for us to fire the prompt.
+                            running_runner_count = 0
+                            for other_runner_id, other_runner_status in state.runners.items():
+                                if other_runner_id in instance.instance_params.shard_assignments.node_to_runner.values() and \
+                                    isinstance(other_runner_status, RunningRunnerStatus):
+                                    running_runner_count += 1
+
+                            if running_runner_count == runner.shard_metadata.world_size - 1:
+                                return ExecuteTaskOp(runner_id=runner_id, task=task)
+
         return None
 
 
+    async def event_publisher(self, event: Event) -> None:
+        assert self.worker_events is not None
+        await self.worker_events.append_events([event], self.node_id)
+
     # Handle state updates
     async def _loop(self):
+        assert self.worker_events is not None
+        self.apply_fn = get_apply_fn()
+
         while True:
-            state_copy = self.state.model_copy(deep=False)
-            op: RunnerOp | None = self.plan(state_copy)            
+            # ToDo: Where do we update state? Do we initialize it from scratch & read all events in, or do we preload the state?
+
+            # 1. get latest events
+            events = await self.worker_events.get_events_since(self.state.last_event_applied_idx)
+            if len(events) == 0:
+                await asyncio.sleep(0.01)
+                continue
+
+            # 2. for each event, apply it to the state and run sagas
+            for event_from_log in events:
+                self.state = self.apply_fn(self.state, event_from_log)
+
+            # 3. based on the updated state, we plan & execute an operation.
+            op: RunnerOp | None = self.plan(self.state)
 
             # run the op, synchronously blocking for now
             if op is not None:
                 async for event in self._execute_op(op):
-                    print(event)
-                    # self.event_publisher(event)
+                    await self.event_publisher(event)
 
             await asyncio.sleep(0.01)
 
@@ -352,7 +517,7 @@ class Worker:
     # TODO: Handle resource monitoring (write-only)
 
 async def main():
-    
+
 
     print("Hello from worker!")
 

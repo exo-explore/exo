@@ -21,14 +21,13 @@ class EventId(NewUUID):
     """
 
 
+# Event base-class boilerplate (you should basically never touch these)
+# Only very specialised registry or serialisation/deserialization logic might need know about these
 class CommandId(NewUUID):
     """
     Newtype around `NewUUID` for command IDs
     """
 
-
-# Event base-class boilerplate (you should basically never touch these)
-# Only very specialised registry or serialisation/deserialization logic might need know about these
 
 class _EventType(str, Enum):
     """

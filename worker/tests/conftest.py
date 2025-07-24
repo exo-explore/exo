@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from logging import Logger, getLogger
 from pathlib import Path
@@ -6,6 +5,7 @@ from typing import Callable
 
 import pytest
 
+from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from shared.types.common import NodeId
 from shared.types.models import ModelId, ModelMetadata
@@ -115,9 +115,14 @@ def chat_completion_task(completion_create_params: ChatCompletionTaskParams) -> 
     )
 
 @pytest.fixture
-def state():
+def node_id() -> NodeId:
+    """Shared node ID for tests"""
+    return NodeId(uuid.uuid4())
+
+@pytest.fixture
+def state(node_id: NodeId):
     node_status={
-        NodeId(uuid.uuid4()): NodeStatus.Idle
+        node_id: NodeStatus.Idle
     }
 
     return State(
@@ -155,14 +160,15 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
     return _instance
 
 @pytest.fixture
-def worker(state: State, logger: Logger):
-    return Worker(NodeId(uuid.uuid4()), state, logger)
+async def worker(node_id: NodeId, state: State, logger: Logger):
+    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    await event_log_manager.initialize()
+
+    return Worker(node_id, state, logger, worker_events=event_log_manager.global_events)
 
 @pytest.fixture
 async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId], Instance]):
     """Fixture that provides a worker with an already assigned runner."""
-    await worker.start()
-    await asyncio.sleep(0.01)
     
     instance_obj: Instance = instance(worker.node_id)
     
