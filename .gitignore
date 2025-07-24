@@ -9,3 +9,5 @@ hosts_*.json
 # TODO figure out how to properly solve the issue with these target directories showing up
 networking/target/
 networking/topology/target/
+
+build/

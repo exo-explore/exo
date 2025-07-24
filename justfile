@@ -33,3 +33,14 @@ protobufs:
 
 build: regenerate-protobufs
     uv build --all-packages
+
+# Build the Go forwarder binary
+build-forwarder:
+    cd networking/forwarder && go build -buildvcs=false -o ../../build/forwarder .
+
+# Run forwarder tests
+test-forwarder:
+    cd networking/forwarder && go test ./src/...
+
+# Build all components (Python packages and Go forwarder)
+build-all: build build-forwarder

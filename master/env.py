@@ -5,4 +5,5 @@ from shared.env import BaseEnv
 
 class MasterEnvironmentSchema(BaseEnv):
     # Master-specific: forwarder configuration
-    FORWARDER_BINARY_PATH: Path | None = None
+    # Default to build/forwarder if not explicitly set
+    FORWARDER_BINARY_PATH: Path = Path("build/forwarder")
