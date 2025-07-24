@@ -10,11 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.db.sqlite import AsyncSQLiteEventStorage, EventLogConfig
-from shared.types.common import NodeId
-from shared.types.events import (
-    ChunkGenerated,
-    CommandId,
-)
+from shared.types.common import CommandId, NodeId
+from shared.types.events import ChunkGenerated
 from shared.types.events.chunks import ChunkType, TokenChunk
 
 # Type ignore comment for all protected member access in this test file

@@ -4,35 +4,36 @@ from typing import Annotated, Callable, Literal, Sequence
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.api import ChatCompletionTaskParams
+from shared.types.common import CommandId
 from shared.types.events import Event
-from shared.types.events.chunks import CommandId
+from shared.types.models import ModelMetadata
 from shared.types.state import InstanceId, State
 
 
 # TODO: We need to have a distinction between create instance and spin up instance.
-class CommandTypes(str, Enum):
+class CommandType(str, Enum):
     CHAT_COMPLETION = "CHAT_COMPLETION"
     CREATE_INSTANCE = "CREATE_INSTANCE"
     DELETE_INSTANCE = "DELETE_INSTANCE"
 
 
-class _BaseCommand[T: CommandTypes](BaseModel):
+class _BaseCommand[T: CommandType](BaseModel):
     command_id: CommandId
     command_type: T
 
 
-class ChatCompletionCommand(_BaseCommand[CommandTypes.CHAT_COMPLETION]):
-    command_type: Literal[CommandTypes.CHAT_COMPLETION] = CommandTypes.CHAT_COMPLETION
+class ChatCompletionCommand(_BaseCommand[CommandType.CHAT_COMPLETION]):
+    command_type: Literal[CommandType.CHAT_COMPLETION] = CommandType.CHAT_COMPLETION
     request_params: ChatCompletionTaskParams
 
 
-class CreateInstanceCommand(_BaseCommand[CommandTypes.CREATE_INSTANCE]):
-    command_type: Literal[CommandTypes.CREATE_INSTANCE] = CommandTypes.CREATE_INSTANCE
-    model_id: str
+class CreateInstanceCommand(_BaseCommand[CommandType.CREATE_INSTANCE]):
+    command_type: Literal[CommandType.CREATE_INSTANCE] = CommandType.CREATE_INSTANCE
+    model_meta: ModelMetadata
 
 
-class DeleteInstanceCommand(_BaseCommand[CommandTypes.DELETE_INSTANCE]):
-    command_type: Literal[CommandTypes.DELETE_INSTANCE] = CommandTypes.DELETE_INSTANCE
+class DeleteInstanceCommand(_BaseCommand[CommandType.DELETE_INSTANCE]):
+    command_type: Literal[CommandType.DELETE_INSTANCE] = CommandType.DELETE_INSTANCE
     instance_id: InstanceId
 
 

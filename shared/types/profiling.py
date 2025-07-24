@@ -3,9 +3,9 @@ from pydantic import BaseModel, Field
 
 class MemoryPerformanceProfile(BaseModel):
     ram_total: int
-    ram_used: int
+    ram_available: int
     swap_total: int
-    swap_used: int
+    swap_available: int
 
 
 class SystemPerformanceProfile(BaseModel):

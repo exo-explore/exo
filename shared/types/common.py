@@ -20,3 +20,6 @@ class ID(str):
 
 class NodeId(ID):
     pass
+
+class CommandId(ID):
+    pass

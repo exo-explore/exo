@@ -25,7 +25,7 @@ async def build_base_shard(model_id: str) -> Optional[ShardMetadata]:
     device_rank=0,
     world_size=1,
     start_layer=0,
-    end_layer=model_meta.n_layers - 1,
+    end_layer=model_meta.n_layers,
     n_layers=model_meta.n_layers,
   )
 
@@ -39,7 +39,7 @@ async def build_full_shard(model_id: str) -> Optional[PipelineShardMetadata]:
     device_rank=base_shard.device_rank,
     world_size=base_shard.world_size,
     start_layer=base_shard.start_layer,
-    end_layer=base_shard.n_layers - 1,
+    end_layer=base_shard.n_layers,
     n_layers=base_shard.n_layers,
   )
 

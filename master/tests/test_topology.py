@@ -19,7 +19,7 @@ def connection() -> Connection:
 
 @pytest.fixture
 def node_profile() -> NodePerformanceProfile:
-    memory_profile = MemoryPerformanceProfile(ram_total=1000, ram_used=0, swap_total=1000, swap_used=0)
+    memory_profile = MemoryPerformanceProfile(ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000)
     system_profile = SystemPerformanceProfile(flops_fp16=1000)
     return NodePerformanceProfile(model_id="test", chip_id="test", memory=memory_profile, network_interfaces=[], system=system_profile)
 
@@ -57,7 +57,7 @@ def test_update_node_profile(topology: Topology, node_profile: NodePerformancePr
     topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
     topology.add_connection(connection)
 
-    new_node_profile = NodePerformanceProfile(model_id="test", chip_id="test", memory=MemoryPerformanceProfile(ram_total=1000, ram_used=0, swap_total=1000, swap_used=0), network_interfaces=[], system=SystemPerformanceProfile(flops_fp16=1000))
+    new_node_profile = NodePerformanceProfile(model_id="test", chip_id="test", memory=MemoryPerformanceProfile(ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000), network_interfaces=[], system=SystemPerformanceProfile(flops_fp16=1000))
 
     # act
     topology.update_node_profile(connection.source_node_id, node_profile=new_node_profile)

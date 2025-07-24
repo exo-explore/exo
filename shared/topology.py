@@ -84,6 +84,15 @@ class Topology(TopologyProto):
             del self._edge_id_to_rx_id_map[connection]
             del self._rx_id_to_node_id_map[rx_idx]
     
+    def get_cycles(self) -> list[list[Node]]:
+        cycle_idxs = rx.simple_cycles(self._graph)
+        cycles: list[list[Node]] = []
+        for cycle_idx in cycle_idxs:
+            cycle = [self._graph[idx] for idx in cycle_idx]
+            cycles.append(cycle)
+        
+        return cycles
+    
     def _is_bridge(self, connection: Connection) -> bool:
         edge_idx = self._edge_id_to_rx_id_map[connection]
         graph_copy = self._graph.copy().to_undirected()

@@ -14,10 +14,9 @@ from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.models.model_cards import MODEL_CARDS
 from shared.models.model_meta import get_model_meta
-from shared.types.common import NodeId
+from shared.types.common import CommandId, NodeId
 from shared.types.events import (
     ChunkGenerated,
-    CommandId,
     InstanceCreated,
     TaskCreated,
 )
@@ -143,23 +142,23 @@ class Master:
                         # TODO
                         pass
                     case CreateInstanceCommand():
-                        if next_command.model_id not in MODEL_CARDS:
-                            raise ValueError(f"Model {next_command.model_id} not supported.")
+                        if next_command.model_meta.model_id not in MODEL_CARDS:
+                            raise ValueError(f"Model {next_command.model_meta.model_id} not supported.")
 
                         # TODO: we should also support models that aren't in MODEL_CARDS
                         # if it's in MODEL_CARDS, use ModelMetadata from there, otherwise interpret as a repo_id and get from huggingface
-                        if next_command.model_id in MODEL_CARDS:
-                            model_card = MODEL_CARDS[next_command.model_id]
+                        if next_command.model_meta.model_id in MODEL_CARDS:
+                            model_card = MODEL_CARDS[next_command.model_meta.model_id]
                             model_meta = model_card.metadata
                         else:
-                            model_meta = await get_model_meta(next_command.model_id)
+                            model_meta = await get_model_meta(next_command.model_meta.model_id)
 
                         # TODO: how do we actually schedule an instance? TODO: @@@@@@𝕾𝖊𝖙𝖍@@@@@@
                         next_event = InstanceCreated(
                             instance_id=InstanceId(),
                             instance_params=InstanceParams(
                                 shard_assignments=ShardAssignments(
-                                    model_id=next_command.model_id,
+                                    model_id=next_command.model_meta.model_id,
                                     runner_to_shard={
                                         RunnerId(): PipelineShardMetadata(
                                             model_meta=model_meta,

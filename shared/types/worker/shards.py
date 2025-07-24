@@ -29,6 +29,9 @@ class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
 class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):
     """
     Pipeline parallelism shard meta.
+    
+    Layers are represented as a half-open interval [start_layer, end_layer),
+    where start_layer is inclusive and end_layer is exclusive.
     """
 
     partition_strategy: Literal[PartitionStrategy.pipeline] = Field(
@@ -44,7 +47,7 @@ class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline
     
     @property
     def is_last_layer(self) -> bool:
-        return self.end_layer == self.n_layers - 1
+        return self.end_layer == self.n_layers
 
     def __hash__(self) -> int:
         return hash((self.model_meta.model_id, self.start_layer, self.end_layer, self.n_layers))

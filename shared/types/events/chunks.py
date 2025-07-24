@@ -4,14 +4,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
-from shared.types.common import ID
+from shared.types.common import CommandId
 from shared.types.models import ModelId
 
-
-class CommandId(ID):
-    """
-    Newtype around `ID` for command IDs
-    """
 
 class ChunkType(str, Enum):
     token = "token"

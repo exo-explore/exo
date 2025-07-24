@@ -1,5 +1,4 @@
 from collections.abc import Mapping, Sequence
-from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,10 +11,6 @@ from shared.types.worker.instances import BaseInstance
 from shared.types.worker.runners import RunnerId, RunnerStatus
 
 
-class CachePolicy(str, Enum):
-    KEEP_ALL = "KEEP_ALL"
-
-
 class State(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     node_status: Mapping[NodeId, NodeStatus] = {}
@@ -25,5 +20,4 @@ class State(BaseModel):
     node_profiles: Mapping[NodeId, NodePerformanceProfile] = {}
     topology: Topology = Topology()
     history: Sequence[Topology] = []
-    cache_policy: CachePolicy = CachePolicy.KEEP_ALL
     last_event_applied_idx: int = Field(default=0, ge=0)

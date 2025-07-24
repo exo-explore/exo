@@ -13,13 +13,13 @@ from shared.types.api import (
     ChatCompletionResponse,
     StreamingChoiceResponse,
 )
+from shared.types.common import CommandId
 from shared.types.events import ChunkGenerated, Event
 from shared.types.events.chunks import TokenChunk
 from shared.types.events.commands import (
     ChatCompletionCommand,
     Command,
-    CommandId,
-    CommandTypes,
+    CommandType,
 )
 from shared.types.events.components import EventFromEventLog
 from shared.types.tasks import ChatCompletionTaskParams
@@ -101,7 +101,7 @@ class API:
 
         request = ChatCompletionCommand(
             command_id=command_id,
-            command_type=CommandTypes.CHAT_COMPLETION,
+            command_type=CommandType.CHAT_COMPLETION,
             request_params=payload,
         )
         self.command_buffer.append(request)
