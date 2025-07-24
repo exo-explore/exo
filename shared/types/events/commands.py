@@ -4,7 +4,8 @@ from typing import Annotated, Callable, Literal, Sequence
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.types.api import ChatCompletionTaskParams
-from shared.types.events import CommandId, Event
+from shared.types.events import Event
+from shared.types.events.chunks import CommandId
 from shared.types.state import InstanceId, State
 
 

@@ -13,8 +13,9 @@ from typing import Callable
 from pydantic import BaseModel, Field, model_validator
 
 from shared.types.common import NodeId
-from shared.types.events._events import Event
 from shared.types.state import State
+
+from ._events import Event
 
 
 class EventFromEventLog[T: Event](BaseModel):

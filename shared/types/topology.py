@@ -2,12 +2,9 @@ from typing import Iterable, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from shared.types.common import NewUUID, NodeId
+from shared.types.common import NodeId
 from shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 
-
-class ConnectionId(NewUUID):
-    pass
 
 class Connection(BaseModel):
     source_node_id: NodeId
