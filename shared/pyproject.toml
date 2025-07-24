@@ -5,6 +5,7 @@ description = "Shared utilities for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "filelock>=3.18.0",
     "aiosqlite>=0.20.0",
     "networkx>=3.5",
     "openai>=1.93.0",

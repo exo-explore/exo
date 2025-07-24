@@ -269,6 +269,7 @@ version = "0.1.0"
 source = { editable = "shared" }
 dependencies = [
     { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "filelock", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "greenlet", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "networkx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -291,6 +292,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "filelock", specifier = ">=3.18.0" },
     { name = "greenlet", specifier = ">=3.2.3" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "openai", specifier = ">=1.93.0" },
