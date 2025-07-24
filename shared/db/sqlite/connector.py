@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from logging import Logger, getLogger
 from pathlib import Path
 from typing import Any, cast
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -109,7 +108,7 @@ class AsyncSQLiteEventStorage:
                 event_data = cast(dict[str, Any], raw_event_data)
             events.append(EventFromEventLog(
                 event=EventParser.validate_python(event_data),
-                origin=NodeId(uuid=UUID(origin)),
+                origin=NodeId(origin),
                 idx_in_log=rowid  # rowid becomes idx_in_log
             ))
         
@@ -239,7 +238,7 @@ class AsyncSQLiteEventStorage:
             async with AsyncSession(self._engine) as session:
                 for event, origin in batch:
                     stored_event = StoredEvent(
-                        origin=str(origin.uuid),
+                        origin=origin,
                         event_type=event.event_type,
                         event_id=str(event.event_id),
                         event_data=event.model_dump(mode='json')  # Serialize UUIDs and other objects to JSON-compatible strings

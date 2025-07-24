@@ -88,7 +88,22 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
             ],
             state=State(
                 node_status={NODE_A: NodeStatus.Idle},
-                instances={},
+                instances={
+                    INSTANCE_1_ID: Instance(
+                        instance_type=TypeOfInstance.INACTIVE,
+                        instance_id=INSTANCE_1_ID,
+                        instance_params=InstanceParams(
+                            shard_assignments=ShardAssignments(
+                                model_id=MODEL_A_ID,
+                                runner_to_shard={
+                                    RUNNER_1_ID: make_shard_metadata(device_rank=0, world_size=1)
+                                },
+                                node_to_runner={NODE_A: RUNNER_1_ID}
+                            ),
+                            hosts=[]
+                        ),
+                    )
+                },
                 runners={RUNNER_1_ID: make_downloading_status(NODE_A)},
             ),
             expected_op=None,
@@ -854,15 +869,9 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
     case = test_cases[case.description]
 
     node_id = NODE_A
-    initial_state = State(
-        node_status={node_id: NodeStatus.Idle},
-        instances={},
-        runners={},
-        tasks={},
-    )
 
     logger = logging.getLogger("test_worker_plan")
-    worker = Worker(node_id=node_id, initial_state=initial_state, worker_events=None, logger=logger)
+    worker = Worker(node_id=node_id, worker_events=None, logger=logger)
 
     path_downloaded_map: dict[str, bool] = {}
 

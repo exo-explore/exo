@@ -1,11 +1,13 @@
-import uuid
+import asyncio
 from logging import Logger, getLogger
 from pathlib import Path
-from typing import Callable
+from typing import Awaitable, Callable
 
 import pytest
 
+from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from shared.models.model_meta import get_model_meta
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from shared.types.common import NodeId
 from shared.types.models import ModelId, ModelMetadata
@@ -26,43 +28,6 @@ from shared.types.worker.ops import (
 from shared.types.worker.runners import RunnerId, ShardAssignments
 from shared.types.worker.shards import PipelineShardMetadata
 from worker.main import Worker
-
-
-@pytest.fixture
-def model_meta() -> ModelMetadata:
-    # return _get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit') # we can't do this! as it's an async function :(
-    return ModelMetadata(
-        model_id='mlx-community/Llama-3.2-1B-Instruct-4bit',
-        pretty_name='llama3.2',
-        storage_size_kilobytes=10**6,
-        n_layers=16
-    )
-
-
-@pytest.fixture
-def pipeline_shard_meta(model_meta: ModelMetadata, tmp_path: Path) -> Callable[[int, int], PipelineShardMetadata]:
-    def _pipeline_shard_meta(
-        num_nodes: int = 1, device_rank: int = 0
-    ) -> PipelineShardMetadata:
-        total_layers = 16
-        layers_per_node = total_layers // num_nodes
-        start_layer = device_rank * layers_per_node
-        end_layer = (
-            start_layer + layers_per_node
-            if device_rank < num_nodes - 1
-            else total_layers
-        )
-
-        return PipelineShardMetadata(
-            model_meta=model_meta,
-            device_rank=device_rank,
-            n_layers=total_layers,
-            start_layer=start_layer,
-            end_layer=end_layer,
-            world_size=num_nodes,
-        )
-
-    return _pipeline_shard_meta
 
 
 @pytest.fixture
@@ -94,6 +59,35 @@ def user_message():
     """Override this fixture in tests to customize the message"""
     return "Hello, how are you?"
 
+@pytest.fixture
+async def model_meta() -> ModelMetadata:
+    return await get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit')
+
+
+@pytest.fixture
+def pipeline_shard_meta(model_meta: ModelMetadata, tmp_path: Path) -> Callable[[int, int], PipelineShardMetadata]:
+    def _pipeline_shard_meta(
+        num_nodes: int = 1, device_rank: int = 0
+    ) -> PipelineShardMetadata:
+        total_layers = model_meta.n_layers
+        layers_per_node = total_layers // num_nodes
+        start_layer = device_rank * layers_per_node
+        end_layer = (
+            start_layer + layers_per_node
+            if device_rank < num_nodes - 1
+            else total_layers
+        )
+
+        return PipelineShardMetadata(
+            model_meta=model_meta,
+            device_rank=device_rank,
+            n_layers=total_layers,
+            start_layer=start_layer,
+            end_layer=end_layer,
+            world_size=num_nodes,
+        )
+
+    return _pipeline_shard_meta
 
 @pytest.fixture
 def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
@@ -117,7 +111,7 @@ def chat_completion_task(completion_create_params: ChatCompletionTaskParams) -> 
 @pytest.fixture
 def node_id() -> NodeId:
     """Shared node ID for tests"""
-    return NodeId(uuid.uuid4())
+    return NodeId()
 
 @pytest.fixture
 def state(node_id: NodeId):
@@ -135,9 +129,8 @@ def logger() -> Logger:
 
 @pytest.fixture
 def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], hosts_one: list[Host]):
-    def _instance(node_id: NodeId) -> Instance:
-        model_id = ModelId(uuid.uuid4())
-        runner_id = RunnerId(uuid.uuid4())        
+    def _instance(node_id: NodeId, runner_id: RunnerId) -> Instance:
+        model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
 
         shard_assignments = ShardAssignments(
             model_id=model_id,
@@ -153,24 +146,24 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
         )
         
         return Instance(
-            instance_id=InstanceId(uuid.uuid4()),
+            instance_id=InstanceId(),
             instance_params=instance_params,
             instance_type=TypeOfInstance.ACTIVE
         )
     return _instance
 
 @pytest.fixture
-async def worker(node_id: NodeId, state: State, logger: Logger):
+async def worker(node_id: NodeId, logger: Logger):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
 
-    return Worker(node_id, state, logger, worker_events=event_log_manager.global_events)
+    return Worker(node_id, logger, worker_events=event_log_manager.global_events)
 
 @pytest.fixture
-async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId], Instance]):
+async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId, RunnerId], Instance]):
     """Fixture that provides a worker with an already assigned runner."""
     
-    instance_obj: Instance = instance(worker.node_id)
+    instance_obj: Instance = instance(worker.node_id, RunnerId())
     
     # Extract runner_id from shard assignments
     runner_id = next(iter(instance_obj.instance_params.shard_assignments.runner_to_shard))
@@ -203,3 +196,19 @@ async def worker_with_running_runner(worker_with_assigned_runner: tuple[Worker, 
     assert supervisor.healthy
 
     return worker, runner_id, instance_obj
+
+@pytest.fixture
+def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]]:
+    async def _worker_running(node_id: NodeId) -> tuple[Worker, AsyncSQLiteEventStorage]:
+        event_log_manager = EventLogManager(EventLogConfig(), logger)
+        await event_log_manager.initialize()
+
+        global_events = event_log_manager.global_events
+        await global_events.delete_all_events()
+
+        worker = Worker(node_id, logger=logger, worker_events=global_events)
+        asyncio.create_task(worker.run())
+
+        return worker, global_events
+
+    return _worker_running

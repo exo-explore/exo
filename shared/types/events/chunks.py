@@ -4,13 +4,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
-from shared.types.common import NewUUID
+from shared.types.common import ID
 from shared.types.models import ModelId
 
 
-class CommandId(NewUUID):
+class CommandId(ID):
     """
-    Newtype around `NewUUID` for command IDs
+    Newtype around `ID` for command IDs
     """
 
 class ChunkType(str, Enum):

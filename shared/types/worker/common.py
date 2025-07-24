@@ -1,13 +1,13 @@
 from enum import Enum
 
-from shared.types.common import NewUUID
+from shared.types.common import ID
 
 
-class InstanceId(NewUUID):
+class InstanceId(ID):
     pass
 
 
-class RunnerId(NewUUID):
+class RunnerId(ID):
     pass
 
 

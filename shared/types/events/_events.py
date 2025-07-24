@@ -26,12 +26,12 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel
 
-from shared.types.common import NewUUID
+from shared.types.common import ID
 
 
-class EventId(NewUUID):
+class EventId(ID):
     """
-    Newtype around `NewUUID`
+    Newtype around `ID`
     """
 
 
@@ -42,10 +42,6 @@ class _EventType(str, Enum):
     """
     Here are all the unique kinds of events that can be sent over the network.
     """
-
-    # Task Saga Events
-    MLXInferenceSagaPrepare = "MLXInferenceSagaPrepare"
-    MLXInferenceSagaStartPrepare = "MLXInferenceSagaStartPrepare"
 
     # Task Events
     TaskCreated = "TaskCreated"
@@ -64,6 +60,7 @@ class _EventType(str, Enum):
 
     # Runner Status Events
     RunnerStatusUpdated = "RunnerStatusUpdated"
+    RunnerDeleted = "RunnerDeleted"
 
     # Node Performance Events
     NodePerformanceMeasured = "NodePerformanceMeasured"
@@ -136,8 +133,6 @@ class InstanceDeleted(_BaseEvent[_EventType.InstanceDeleted]):
     event_type: Literal[_EventType.InstanceDeleted] = _EventType.InstanceDeleted
     instance_id: InstanceId
 
-    transition: tuple[InstanceId, InstanceId]
-
 
 class InstanceReplacedAtomically(_BaseEvent[_EventType.InstanceReplacedAtomically]):
     event_type: Literal[_EventType.InstanceReplacedAtomically] = _EventType.InstanceReplacedAtomically
@@ -151,16 +146,9 @@ class RunnerStatusUpdated(_BaseEvent[_EventType.RunnerStatusUpdated]):
     runner_status: RunnerStatus
 
 
-class MLXInferenceSagaPrepare(_BaseEvent[_EventType.MLXInferenceSagaPrepare]):
-    event_type: Literal[_EventType.MLXInferenceSagaPrepare] = _EventType.MLXInferenceSagaPrepare
-    task_id: TaskId
-    instance_id: InstanceId
-
-
-class MLXInferenceSagaStartPrepare(_BaseEvent[_EventType.MLXInferenceSagaStartPrepare]):
-    event_type: Literal[_EventType.MLXInferenceSagaStartPrepare] = _EventType.MLXInferenceSagaStartPrepare
-    task_id: TaskId
-    instance_id: InstanceId
+class RunnerDeleted(_BaseEvent[_EventType.RunnerDeleted]):
+    event_type: Literal[_EventType.RunnerDeleted] = _EventType.RunnerDeleted
+    runner_id: RunnerId
 
 
 class NodePerformanceMeasured(_BaseEvent[_EventType.NodePerformanceMeasured]):
@@ -206,14 +194,13 @@ _Event = Union[
     InstanceDeleted,
     InstanceReplacedAtomically,
     RunnerStatusUpdated,
+    RunnerDeleted,
     NodePerformanceMeasured,
     WorkerStatusUpdated,
     ChunkGenerated,
     TopologyEdgeCreated,
     TopologyEdgeReplacedAtomically,
     TopologyEdgeDeleted,
-    MLXInferenceSagaPrepare,
-    MLXInferenceSagaStartPrepare,
 ]
 """
 Un-annotated union of all events. Only used internally to create the registry.

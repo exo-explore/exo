@@ -115,7 +115,7 @@ class ResumableShardDownloader(ShardDownloader):
       return await download_shard(shard, self.on_progress_wrapper, skip_download=True)
 
     # Kick off download status coroutines concurrently
-    tasks = [asyncio.create_task(_status_for_model(model_id)) for model_id in MODEL_CARDS]
+    tasks = [asyncio.create_task(_status_for_model(model_card.model_id)) for model_card in MODEL_CARDS.values()]
 
     for task in asyncio.as_completed(tasks):
       try:

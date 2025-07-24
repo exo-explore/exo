@@ -9,11 +9,13 @@ from pydantic import BaseModel, ConfigDict
 
 from shared.apply import apply
 from shared.db.sqlite import AsyncSQLiteEventStorage
+from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
     Event,
     InstanceId,
+    RunnerDeleted,
     RunnerStatusUpdated,
     TaskStateUpdated,
 )
@@ -52,6 +54,9 @@ from worker.download.download_utils import build_model_path
 from worker.runner.runner_supervisor import RunnerSupervisor
 
 
+def get_node_id() -> NodeId:
+    return NodeId() # TODO
+
 class AssignedRunner(BaseModel):
     runner_id: RunnerId
     instance_id: InstanceId
@@ -78,39 +83,16 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
-        initial_state: State,
         logger: Logger,
         worker_events: AsyncSQLiteEventStorage | None,
     ):
         self.node_id: NodeId = node_id
-        self.state: State = initial_state
-        self.worker_events: AsyncSQLiteEventStorage | None = worker_events
+        self.state: State = State()
+        self.worker_events: AsyncSQLiteEventStorage | None = worker_events # worker_events is None in some tests.
         self.logger: Logger = logger
 
         self.assigned_runners: dict[RunnerId, AssignedRunner] = {}
         self._task: asyncio.Task[None] | None = None
-
-    ## Worker lifecycle management
-    @property
-    def _is_running(self) -> bool:
-        return self._task is not None and not self._task.done()
-    
-    @property
-    def exception(self) -> Exception | None:
-        if self._task is not None:
-            self._task.exception()
-
-    # We don't start immediately on init - for testing purposes it is useful to have an 'inactive' worker.
-    async def start(self):
-        self._task = asyncio.create_task(self._loop())
-
-    async def stop(self):
-        if not self._is_running:
-            raise RuntimeError("Worker is not running")
-
-        assert self._task is not None
-
-        self._task.cancel()
 
     ## Op Executors
 
@@ -145,6 +127,7 @@ class Worker:
 
         # This is all we really need:
         del self.assigned_runners[op.runner_id]
+        yield RunnerDeleted(runner_id=op.runner_id)
 
         return
         yield
@@ -337,7 +320,12 @@ class Worker:
 
         # First, unassign assigned runners that are no longer in the state.
         for runner_id, _ in self.assigned_runners.items():
-            if runner_id not in state.runners:
+            runner_ids: list[RunnerId] = [
+                runner_id
+                for instance in state.instances.values()
+                for runner_id in instance.instance_params.shard_assignments.runner_to_shard
+            ]
+            if runner_id not in runner_ids:
                 return UnassignRunnerOp(runner_id=runner_id)
 
         # Then spin down active runners
@@ -358,7 +346,8 @@ class Worker:
             if self.node_id in instance.instance_params.shard_assignments.node_to_runner:
                 other_node_in_instance_has_failed = False
                 for runner_id in instance.instance_params.shard_assignments.runner_to_shard:
-                    if isinstance(state.runners[runner_id], FailedRunnerStatus) and \
+                    if runner_id in state.runners and \
+                        isinstance(state.runners[runner_id], FailedRunnerStatus) and \
                         runner_id not in self.assigned_runners:
                         other_node_in_instance_has_failed= True
 
@@ -369,6 +358,7 @@ class Worker:
         # If we are failed - and *all of the other nodes have spun down* - then we can spin down too.
         for _instance_id, instance in state.instances.items():
             if self.node_id in instance.instance_params.shard_assignments.node_to_runner and \
+                instance.instance_params.shard_assignments.node_to_runner[self.node_id] in state.runners and \
                 isinstance(state.runners[instance.instance_params.shard_assignments.node_to_runner[self.node_id]], FailedRunnerStatus):
                 
                 num_spundown_nodes = 0
@@ -468,11 +458,10 @@ class Worker:
         await self.worker_events.append_events([event], self.node_id)
 
     # Handle state updates
-    async def _loop(self):
+    async def run(self):
         assert self.worker_events is not None
-        while True:
-            # ToDo: Where do we update state? Do we initialize it from scratch & read all events in, or do we preload the state?
 
+        while True:
             # 1. get latest events
             events = await self.worker_events.get_events_since(self.state.last_event_applied_idx)
             if len(events) == 0:
@@ -493,13 +482,18 @@ class Worker:
 
             await asyncio.sleep(0.01)
 
-    # TODO: Handle tail event log
     # TODO: Handle resource monitoring (write-only)
 
 async def main():
+    node_id: NodeId = get_node_id()
+    logger: Logger = Logger('worker_log')
 
+    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    await event_log_manager.initialize()
 
-    print("Hello from worker!")
+    worker = Worker(node_id, logger, event_log_manager.worker_events)
+
+    await worker.run()
 
 if __name__ == "__main__":
     asyncio.run(main())

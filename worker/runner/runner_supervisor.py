@@ -181,7 +181,7 @@ class RunnerSupervisor:
                         text=text, token=token, finish_reason=finish_reason
                     ):
                         yield TokenChunk(
-                            command_id=CommandId(uuid=task.task_id.uuid),
+                            command_id=CommandId(task.task_id),
                             idx=token,
                             model=self.model_shard_meta.model_meta.model_id,
                             text=text,

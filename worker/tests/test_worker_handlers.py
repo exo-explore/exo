@@ -9,6 +9,7 @@ from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
     Event,
+    RunnerDeleted,
     RunnerStatusUpdated,
     TaskStateUpdated,
 )
@@ -39,12 +40,9 @@ def user_message():
     return "What, according to Douglas Adams, is the meaning of life, the universe and everything?"
 
 @pytest.mark.asyncio
-async def test_assign_op(worker: Worker, instance: Callable[[NodeId], Instance], tmp_path: Path):
-    instance_obj: Instance = instance(worker.node_id)
-    runner_id: RunnerId | None = None
-    for x in instance_obj.instance_params.shard_assignments.runner_to_shard:
-        runner_id = x
-    assert runner_id is not None
+async def test_assign_op(worker: Worker, instance: Callable[[NodeId, RunnerId], Instance], tmp_path: Path):
+    runner_id = RunnerId()
+    instance_obj: Instance = instance(worker.node_id, runner_id)
 
     assign_op = AssignRunnerOp(
         runner_id=runner_id,
@@ -82,7 +80,8 @@ async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
 
     # We should have no assigned runners and no events were emitted
     assert len(worker.assigned_runners) == 0
-    assert len(events) == 0
+    assert len(events) == 1
+    assert isinstance(events[0], RunnerDeleted)
 
 @pytest.mark.asyncio
 async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], chat_completion_task: Task, tmp_path: Path):

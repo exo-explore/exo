@@ -4,11 +4,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from shared.types.api import ChatCompletionTaskParams
-from shared.types.common import NewUUID
+from shared.types.common import ID
 from shared.types.worker.common import InstanceId
 
 
-class TaskId(NewUUID):
+class TaskId(ID):
     pass
 
 

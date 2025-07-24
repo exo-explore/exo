@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, List, Optional, override
-from uuid import UUID
 
 from shared.models.model_cards import MODEL_CARDS, ModelCard
 from shared.types.common import NodeId
@@ -23,13 +22,13 @@ from shared.types.worker.runners import (
 from shared.types.worker.shards import PipelineShardMetadata
 from worker.main import AssignedRunner
 
-NODE_A: Final[NodeId] = NodeId(uuid=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
-NODE_B: Final[NodeId] = NodeId(uuid=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
+NODE_A: Final[NodeId] = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+NODE_B: Final[NodeId] = NodeId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 # Define constant IDs for deterministic test cases
-RUNNER_1_ID: Final[RunnerId] = RunnerId(uuid=UUID("cccccccc-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+RUNNER_1_ID: Final[RunnerId] = RunnerId("cccccccc-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 INSTANCE_1_ID: Final[InstanceId] = InstanceId()
-RUNNER_2_ID: Final[RunnerId] = RunnerId(uuid=UUID("dddddddd-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+RUNNER_2_ID: Final[RunnerId] = RunnerId("dddddddd-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 INSTANCE_2_ID: Final[InstanceId] = InstanceId()
 MODEL_A_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
 MODEL_B_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
@@ -108,12 +107,12 @@ def make_model_meta(
 ) -> ModelMetadata:
     model_card: ModelCard
     for card in MODEL_CARDS.values():
-        if card.repo_id == model_id:
+        if card.model_id == model_id:
             model_card = card
 
             return ModelMetadata(
                 model_id=model_id,
-                pretty_name=model_card.id,
+                pretty_name=model_card.model_id,
                 storage_size_kilobytes=10**6,
                 n_layers=16,
             )
