@@ -1,8 +1,7 @@
 import asyncio
 import time
-from asyncio.queues import Queue
 from collections.abc import AsyncGenerator
-from typing import Sequence, final
+from typing import List, Sequence, final
 
 import uvicorn
 from fastapi import FastAPI
@@ -46,11 +45,11 @@ def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
 
 @final
 class API:
-    def __init__(self, command_queue: Queue[Command], global_events: AsyncSQLiteEventStorage) -> None:
+    def __init__(self, command_buffer: List[Command], global_events: AsyncSQLiteEventStorage) -> None:
         self._app = FastAPI()
         self._setup_routes()
 
-        self.command_queue = command_queue
+        self.command_buffer = command_buffer
         self.global_events = global_events
 
     def _setup_routes(self) -> None:
@@ -105,7 +104,7 @@ class API:
             command_type=CommandTypes.CHAT_COMPLETION,
             request_params=payload,
         )
-        await self.command_queue.put(request)
+        self.command_buffer.append(request)
 
         finished = False
         while not finished:
@@ -139,11 +138,11 @@ class API:
 
 
 def start_fastapi_server(
-    command_queue: Queue[Command],
+    command_buffer: List[Command],
     global_events: AsyncSQLiteEventStorage,
     host: str = "0.0.0.0",
     port: int = 8000,
 ):
-    api = API(command_queue, global_events)
+    api = API(command_buffer, global_events)
 
     uvicorn.run(api.app, host=host, port=port)

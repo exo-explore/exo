@@ -3,10 +3,11 @@ import os
 from asyncio import Queue
 from functools import partial
 from logging import Logger
-from typing import AsyncGenerator, Callable, Optional
+from typing import AsyncGenerator, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from shared.apply import apply
 from shared.db.sqlite import AsyncSQLiteEventStorage
 from shared.types.common import NodeId
 from shared.types.events import (
@@ -16,7 +17,6 @@ from shared.types.events import (
     RunnerStatusUpdated,
     TaskStateUpdated,
 )
-from shared.types.events.components import EventFromEventLog
 from shared.types.state import State
 from shared.types.tasks import TaskStatus
 from shared.types.worker.common import RunnerId
@@ -73,15 +73,6 @@ class AssignedRunner(BaseModel):
             runner_id=self.runner_id,
             runner_status=self.status,
         )
-
-# TODO: This should all be shared with the master.
-type ApplyFromEventLog = Callable[[State, EventFromEventLog[Event]], State]
-def get_apply_fn() -> ApplyFromEventLog:
-    # TODO: this will get fixed in the worker-integration pr.
-    def apply_fn(state: State, event_from_log: EventFromEventLog[Event]) -> State:
-        return state
-
-    return apply_fn
 
 class Worker:
     def __init__(
@@ -479,8 +470,6 @@ class Worker:
     # Handle state updates
     async def _loop(self):
         assert self.worker_events is not None
-        self.apply_fn = get_apply_fn()
-
         while True:
             # ToDo: Where do we update state? Do we initialize it from scratch & read all events in, or do we preload the state?
 
@@ -492,7 +481,7 @@ class Worker:
 
             # 2. for each event, apply it to the state and run sagas
             for event_from_log in events:
-                self.state = self.apply_fn(self.state, event_from_log)
+                self.state = apply(self.state, event_from_log)
 
             # 3. based on the updated state, we plan & execute an operation.
             op: RunnerOp | None = self.plan(self.state)

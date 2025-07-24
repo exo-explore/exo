@@ -155,6 +155,13 @@ class AsyncSQLiteEventStorage:
         
         self._logger.info("Closed SQLite event storage")
     
+    async def delete_all_events(self) -> None:
+        """Delete all events from the database."""
+        assert self._engine is not None
+        async with AsyncSession(self._engine) as session:
+            await session.execute(text("DELETE FROM events"))
+            await session.commit()
+    
     async def _initialize_database(self) -> None:
         """Initialize database connection and create tables."""
         self._engine = create_async_engine(

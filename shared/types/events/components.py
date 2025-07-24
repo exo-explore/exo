@@ -33,7 +33,5 @@ class EventFromEventLog[T: Event](BaseModel):
 
 
 
-type Apply = Callable[
-    [State, Event],
-    State
-]
+type Apply = Callable[[State, Event], State]
+type ApplyFromEventLog = Callable[[State, EventFromEventLog[Event]], State]

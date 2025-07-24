@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
+from shared.models.model_meta import get_model_meta
 from shared.types.models import ModelMetadata
 from shared.types.worker.shards import PipelineShardMetadata
-from worker.download.model_meta import _get_model_meta  # type: ignore
 
 
 @pytest.fixture
-def model_meta() -> ModelMetadata:
-    return _get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit') # type: ignore
+async def model_meta() -> ModelMetadata:
+    return await get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit')
 
 
 @pytest.fixture

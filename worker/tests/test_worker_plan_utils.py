@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Final, List, Optional, override
 from uuid import UUID
 
+from shared.models.model_cards import MODEL_CARDS, ModelCard
 from shared.types.common import NodeId
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
@@ -20,7 +21,6 @@ from shared.types.worker.runners import (
     ShardAssignments,
 )
 from shared.types.worker.shards import PipelineShardMetadata
-from worker.download.model_cards import MODEL_CARDS, ModelCard
 from worker.main import AssignedRunner
 
 NODE_A: Final[NodeId] = NodeId(uuid=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))

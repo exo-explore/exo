@@ -96,3 +96,9 @@ class ChatCompletionTaskParams(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
     user: str | None = None
+
+class RequestInstanceTaskParams(BaseModel):
+    model_id: str
+
+class DeleteInstanceTaskParams(BaseModel):
+    instance_id: str

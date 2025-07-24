@@ -2,14 +2,14 @@ import asyncio
 from pathlib import Path
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
+from shared.models.model_cards import MODEL_CARDS
+from shared.models.model_meta import get_model_meta
 from shared.types.worker.shards import (
   PartitionStrategy,
   PipelineShardMetadata,
   ShardMetadata,
 )
 from worker.download.download_utils import RepoDownloadProgress, download_shard
-from worker.download.model_cards import MODEL_CARDS
-from worker.download.model_meta import get_model_meta
 from worker.download.shard_downloader import ShardDownloader
 
 
