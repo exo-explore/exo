@@ -14,7 +14,6 @@ from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
     CommandId,
-    _EventType,
 )
 from shared.types.events.chunks import ChunkType, TokenChunk
 
@@ -472,7 +471,6 @@ class TestAsyncSQLiteEventStorage:
         # Verify the event was deserialized correctly
         retrieved_event = retrieved_event_wrapper.event
         assert isinstance(retrieved_event, ChunkGenerated)
-        assert retrieved_event.event_type == _EventType.ChunkGenerated
         assert retrieved_event.command_id == command_id
         
         # Verify the nested chunk was deserialized correctly

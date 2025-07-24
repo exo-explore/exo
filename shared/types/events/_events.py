@@ -1,4 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal, Union
+
+from pydantic import Field
 
 from shared.topology import Connection, ConnectionProfile, Node, NodePerformanceProfile
 from shared.types.common import NodeId
@@ -123,6 +125,34 @@ class TopologyEdgeDeleted(_BaseEvent[_EventType.TopologyEdgeDeleted]):
     event_type: Literal[_EventType.TopologyEdgeDeleted] = _EventType.TopologyEdgeDeleted
     edge: Connection
 
+_Event = Union[
+    TaskCreated,
+    TaskStateUpdated,
+    TaskDeleted,
+    InstanceCreated,
+    InstanceActivated,
+    InstanceDeactivated,
+    InstanceDeleted,
+    InstanceReplacedAtomically,
+    RunnerStatusUpdated,
+    NodePerformanceMeasured,
+    WorkerConnected,
+    WorkerStatusUpdated,
+    WorkerDisconnected,
+    ChunkGenerated,
+    TopologyEdgeCreated,
+    TopologyEdgeReplacedAtomically,
+    TopologyEdgeDeleted,
+    MLXInferenceSagaPrepare,
+    MLXInferenceSagaStartPrepare,
+]
+"""
+Un-annotated union of all events. Only used internally to create the registry.
+For all other usecases, use the annotated union of events :class:`Event` :)
+"""
+
+Event = Annotated[_Event, Field(discriminator="event_type")]
+"""Type of events, a discriminated union."""
 
 # class TimerCreated(_BaseEvent[_EventType.TimerCreated]):
 #     event_type: Literal[_EventType.TimerCreated] = _EventType.TimerCreated

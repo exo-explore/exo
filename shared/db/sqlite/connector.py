@@ -246,7 +246,3 @@ class AsyncSQLiteEventStorage:
         except Exception as e:
             self._logger.error(f"Failed to commit batch: {e}")
             raise
-    
-    async def _deserialize_event_raw(self, event_data: dict[str, Any]) -> dict[str, Any]:
-        """Return raw event data for testing purposes."""
-        return event_data
