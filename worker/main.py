@@ -12,7 +12,6 @@ from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
     Event,
-    InstanceCreated,
     InstanceId,
     RunnerStatusUpdated,
     TaskStateUpdated,
@@ -78,17 +77,9 @@ class AssignedRunner(BaseModel):
 # TODO: This should all be shared with the master.
 type ApplyFromEventLog = Callable[[State, EventFromEventLog[Event]], State]
 def get_apply_fn() -> ApplyFromEventLog:
-    # TODO: this needs to be done in a nice type-safe way
-    def _apply_instance_created(state: State, event_from_log: InstanceCreated) -> State:
-        return state
-
+    # TODO: this will get fixed in the worker-integration pr.
     def apply_fn(state: State, event_from_log: EventFromEventLog[Event]) -> State:
-        if isinstance(event_from_log.event, InstanceCreated):
-            next_state = _apply_instance_created(state, event_from_log.event)
-        else:
-            raise ValueError(f"Unknown event type: {event_from_log.event}")
-        next_state.last_event_applied_idx = event_from_log.idx_in_log
-        return next_state
+        return state
 
     return apply_fn
 
