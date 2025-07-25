@@ -1,10 +1,22 @@
+import contextlib
 from typing import Iterable
 
 import rustworkx as rx
+from pydantic import BaseModel, ConfigDict
 
 from shared.types.common import NodeId
 from shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 from shared.types.topology import Connection, Node, TopologyProto
+
+
+class TopologySnapshot(BaseModel):
+    """Immutable serialisable representation of a :class:`Topology`."""
+
+    nodes: list[Node]
+    connections: list[Connection]
+    master_node_id: NodeId | None = None
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
 
 class Topology(TopologyProto):
@@ -14,8 +26,35 @@ class Topology(TopologyProto):
         self._rx_id_to_node_id_map: dict[int, NodeId] = dict()
         self._edge_id_to_rx_id_map: dict[Connection, int] = dict()
         self.master_node_id: NodeId | None = None
-    
-    # TODO: implement serialization + deserialization method
+
+    def to_snapshot(self) -> TopologySnapshot:
+        """Return an immutable snapshot suitable for JSON serialisation."""
+
+        return TopologySnapshot(
+            nodes=list(self.list_nodes()),
+            connections=list(self.list_connections()),
+            master_node_id=self.master_node_id,
+        )
+
+    @classmethod
+    def from_snapshot(cls, snapshot: TopologySnapshot) -> "Topology":
+        """Reconstruct a :class:`Topology` from *snapshot*.
+
+        The reconstructed topology is equivalent (w.r.t. nodes, connections
+        and ``master_node_id``) to the original one that produced *snapshot*.
+        """
+
+        topology = cls()
+        topology.master_node_id = snapshot.master_node_id
+
+        for node in snapshot.nodes:
+            with contextlib.suppress(ValueError):
+                topology.add_node(node, node.node_id)
+
+        for connection in snapshot.connections:
+            topology.add_connection(connection)
+
+        return topology
 
     def add_node(self, node: Node, node_id: NodeId) -> None:
         if node_id in self._node_id_to_rx_id_map:
