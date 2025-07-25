@@ -1,8 +1,8 @@
 import asyncio
+import logging
 import os
 from asyncio import Queue
 from functools import partial
-from logging import Logger
 from typing import AsyncGenerator, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from shared.apply import apply
 from shared.db.sqlite import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from shared.node_id import get_node_id_keypair
 from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
@@ -57,9 +58,6 @@ from worker.runner.runner_supervisor import RunnerSupervisor
 from worker.utils.profile import start_polling_node_metrics
 
 
-def get_node_id() -> NodeId:
-    return NodeId() # TODO
-
 class AssignedRunner(BaseModel):
     runner_id: RunnerId
     instance_id: InstanceId
@@ -86,13 +84,15 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
-        logger: Logger,
+        logger: logging.Logger,
         worker_events: AsyncSQLiteEventStorage | None,
+        global_events: AsyncSQLiteEventStorage | None,
     ):
         self.node_id: NodeId = node_id
         self.state: State = State()
         self.worker_events: AsyncSQLiteEventStorage | None = worker_events # worker_events is None in some tests.
-        self.logger: Logger = logger
+        self.global_events: AsyncSQLiteEventStorage | None = global_events
+        self.logger: logging.Logger = logger
 
         self.assigned_runners: dict[RunnerId, AssignedRunner] = {}
         self._task: asyncio.Task[None] | None = None
@@ -462,11 +462,11 @@ class Worker:
 
     # Handle state updates
     async def run(self):
-        assert self.worker_events is not None
+        assert self.global_events is not None
 
         while True:
             # 1. get latest events
-            events = await self.worker_events.get_events_since(self.state.last_event_applied_idx)
+            events = await self.global_events.get_events_since(self.state.last_event_applied_idx)
             if len(events) == 0:
                 await asyncio.sleep(0.01)
                 continue
@@ -484,11 +484,18 @@ class Worker:
                     await self.event_publisher(event)
 
             await asyncio.sleep(0.01)
+            self.logger.info(f"state: {self.state}")
 
 
 async def main():
-    node_id: NodeId = get_node_id()
-    logger: Logger = Logger('worker_log')
+    node_id_keypair = get_node_id_keypair()
+    node_id = NodeId(node_id_keypair.to_peer_id().to_base58())
+    logger: logging.Logger = logging.getLogger('worker_logger')
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
 
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
@@ -500,7 +507,7 @@ async def main():
         )
     asyncio.create_task(start_polling_node_metrics(callback=resource_monitor_callback))
 
-    worker = Worker(node_id, logger, event_log_manager.worker_events)
+    worker = Worker(node_id, logger, event_log_manager.worker_events, event_log_manager.global_events)
 
     await worker.run()
 

@@ -1,7 +1,8 @@
 import asyncio
+import logging
 import os
 import threading
-from logging import Logger
+import traceback
 from pathlib import Path
 from typing import List
 
@@ -17,7 +18,6 @@ from shared.node_id import get_node_id_keypair
 from shared.types.common import NodeId
 from shared.types.events import (
     Event,
-    NodePerformanceMeasured,
     TaskCreated,
 )
 from shared.types.events.commands import (
@@ -26,18 +26,13 @@ from shared.types.events.commands import (
     CreateInstanceCommand,
     DeleteInstanceCommand,
 )
-from shared.types.profiling import (
-    MemoryPerformanceProfile,
-    NodePerformanceProfile,
-    SystemPerformanceProfile,
-)
 from shared.types.state import State
 from shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
 from shared.types.worker.instances import Instance
 
 
 class Master:
-    def __init__(self, node_id: NodeId, command_buffer: list[Command], global_events: AsyncSQLiteEventStorage, forwarder_binary_path: Path, logger: Logger):
+    def __init__(self, node_id: NodeId, command_buffer: list[Command], global_events: AsyncSQLiteEventStorage, forwarder_binary_path: Path, logger: logging.Logger):
         self.node_id = node_id
         self.command_buffer = command_buffer
         self.global_events = global_events
@@ -53,13 +48,9 @@ class Master:
         return State()
 
     async def _run_event_loop_body(self) -> None:
-        if self.forwarder_supervisor.current_role == ForwarderRole.REPLICA:
-            await asyncio.sleep(0.1)
-            return
-
         next_events: list[Event] = []
         # 1. process commands
-        if len(self.command_buffer) > 0:
+        if self.forwarder_supervisor.current_role == ForwarderRole.MASTER and len(self.command_buffer) > 0:
             # for now we do one command at a time
             next_command = self.command_buffer.pop(0)
             self.logger.info(f"got command: {next_command}")
@@ -106,7 +97,7 @@ class Master:
         for event_from_log in events:
             self.state = apply(self.state, event_from_log)
 
-        self.logger.info(f"state: {self.state.model_dump_json()}")
+        self.logger.info(f"state: {self.state}")
 
     async def run(self):
         self.state = await self._get_state_snapshot()
@@ -123,12 +114,19 @@ class Master:
                 await self._run_event_loop_body()
             except Exception as e:
                 self.logger.error(f"Error in _run_event_loop_body: {e}")
+                traceback.print_exc()
                 await asyncio.sleep(0.1)
 
 
 
 async def main():
-    logger = Logger(name='master_logger')
+    logger = logging.getLogger('master_logger')
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+
     node_id_keypair = get_node_id_keypair()
     node_id = NodeId(node_id_keypair.to_peer_id().to_base58())
 
@@ -136,25 +134,9 @@ async def main():
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
 
-    # TODO: this should be the resource monitor that does this
-    await global_events.append_events([NodePerformanceMeasured(
-        node_id=node_id,
-        node_profile=NodePerformanceProfile(
-            model_id="testmodelabc",
-            chip_id="testchipabc",
-            memory=MemoryPerformanceProfile(
-                ram_total=1000,
-                ram_available=1000,
-                swap_total=1000,
-                swap_available=1000
-            ),
-            system=SystemPerformanceProfile(
-                flops_fp16=1000
-            )
-        )
-    )], origin=node_id)
-
     command_buffer: List[Command] = []
+
+    logger.info(f"Starting Master with node_id: {node_id}")
 
     api_thread = threading.Thread(
         target=start_fastapi_server,
@@ -162,6 +144,8 @@ async def main():
             command_buffer,
             global_events,
             lambda: master.state,
+            "0.0.0.0",
+            int(os.environ.get("API_PORT", 8000))
         ),
         daemon=True
     )

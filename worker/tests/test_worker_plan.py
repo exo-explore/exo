@@ -835,7 +835,7 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
     node_id = NODE_A
 
     logger = logging.getLogger("test_worker_plan")
-    worker = Worker(node_id=node_id, worker_events=None, logger=logger)
+    worker = Worker(node_id=node_id, worker_events=None, global_events=None, logger=logger)
 
     path_downloaded_map: dict[str, bool] = {}
 

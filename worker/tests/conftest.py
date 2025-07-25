@@ -153,7 +153,7 @@ async def worker(node_id: NodeId, logger: Logger):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
 
-    return Worker(node_id, logger, worker_events=event_log_manager.global_events)
+    return Worker(node_id, logger, worker_events=event_log_manager.global_events, global_events=event_log_manager.global_events)
 
 @pytest.fixture
 async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId, RunnerId], Instance]):
@@ -202,7 +202,7 @@ def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker,
         global_events = event_log_manager.global_events
         await global_events.delete_all_events()
 
-        worker = Worker(node_id, logger=logger, worker_events=global_events)
+        worker = Worker(node_id, logger=logger, worker_events=global_events, global_events=global_events)
         asyncio.create_task(worker.run())
 
         return worker, global_events
