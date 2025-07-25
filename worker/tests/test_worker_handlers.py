@@ -46,8 +46,8 @@ async def test_assign_op(worker: Worker, instance: Callable[[NodeId, RunnerId], 
 
     assign_op = AssignRunnerOp(
         runner_id=runner_id,
-        shard_metadata=instance_obj.instance_params.shard_assignments.runner_to_shard[runner_id],
-        hosts=instance_obj.instance_params.hosts,
+        shard_metadata=instance_obj.shard_assignments.runner_to_shard[runner_id],
+        hosts=instance_obj.hosts,
         instance_id=instance_obj.instance_id,
     )
 
@@ -138,8 +138,8 @@ async def test_download_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
     download_op = DownloadOp(
         instance_id=instance_obj.instance_id,
         runner_id=runner_id,
-        shard_metadata=instance_obj.instance_params.shard_assignments.runner_to_shard[runner_id],
-        hosts=instance_obj.instance_params.hosts,
+        shard_metadata=instance_obj.shard_assignments.runner_to_shard[runner_id],
+        hosts=instance_obj.hosts,
     )
 
     events: list[Event] = []

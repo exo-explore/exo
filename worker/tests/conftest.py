@@ -19,7 +19,7 @@ from shared.types.tasks import (
     TaskType,
 )
 from shared.types.worker.common import InstanceId, NodeStatus
-from shared.types.worker.instances import Instance, InstanceParams, TypeOfInstance
+from shared.types.worker.instances import Instance, InstanceStatus
 from shared.types.worker.mlx import Host
 from shared.types.worker.ops import (
     AssignRunnerOp,
@@ -140,15 +140,11 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
             node_to_runner={node_id: runner_id}
         )
         
-        instance_params = InstanceParams(
-            shard_assignments=shard_assignments,
-            hosts=hosts_one
-        )
-        
         return Instance(
             instance_id=InstanceId(),
-            instance_params=instance_params,
-            instance_type=TypeOfInstance.ACTIVE
+            instance_type=InstanceStatus.ACTIVE,
+            shard_assignments=shard_assignments,
+            hosts=hosts_one
         )
     return _instance
 
@@ -166,13 +162,13 @@ async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId
     instance_obj: Instance = instance(worker.node_id, RunnerId())
     
     # Extract runner_id from shard assignments
-    runner_id = next(iter(instance_obj.instance_params.shard_assignments.runner_to_shard))
+    runner_id = next(iter(instance_obj.shard_assignments.runner_to_shard))
     
     # Assign the runner
     assign_op = AssignRunnerOp(
         runner_id=runner_id,
-        shard_metadata=instance_obj.instance_params.shard_assignments.runner_to_shard[runner_id],
-        hosts=instance_obj.instance_params.hosts,
+        shard_metadata=instance_obj.shard_assignments.runner_to_shard[runner_id],
+        hosts=instance_obj.hosts,
         instance_id=instance_obj.instance_id,
     )
     

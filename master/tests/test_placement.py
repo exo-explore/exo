@@ -12,7 +12,7 @@ from shared.types.events.commands import CreateInstanceCommand
 from shared.types.models import ModelMetadata
 from shared.types.topology import Connection, Node
 from shared.types.worker.common import InstanceId
-from shared.types.worker.instances import InstanceParams
+from shared.types.worker.instances import Instance, InstanceStatus
 from shared.types.worker.runners import ShardAssignments
 
 
@@ -21,8 +21,10 @@ def topology() -> Topology:
     return Topology()
 
 @pytest.fixture
-def instance_params() -> InstanceParams:
-    return InstanceParams(
+def instance() -> Instance:
+    return Instance(
+        instance_id=InstanceId(),
+        instance_type=InstanceStatus.ACTIVE,
         shard_assignments=ShardAssignments(
             model_id="test-model",
             runner_to_shard={},
@@ -43,7 +45,8 @@ def model_meta() -> ModelMetadata:
 def create_instance_command(model_meta: ModelMetadata) -> CreateInstanceCommand:
     return CreateInstanceCommand(
         command_id=CommandId(),
-        model_meta=model_meta
+        model_meta=model_meta,
+        instance_id=InstanceId(),
     )
 
 
@@ -66,7 +69,8 @@ def test_get_instance_placements_create_instance(
     
     create_instance_command = CreateInstanceCommand(
         command_id=CommandId(),
-        model_meta=model_meta
+        model_meta=model_meta,
+        instance_id=InstanceId(),
     )
     node_id_a = NodeId()
     node_id_b = NodeId()
@@ -84,16 +88,16 @@ def test_get_instance_placements_create_instance(
     # assert
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
-    instance_params = placements[instance_id]
-    assert instance_params.shard_assignments.model_id == model_meta.model_id
+    instance = placements[instance_id]
+    assert instance.shard_assignments.model_id == model_meta.model_id
 
-    runner_id_a = instance_params.shard_assignments.node_to_runner[node_id_a]
-    runner_id_b = instance_params.shard_assignments.node_to_runner[node_id_b]
-    runner_id_c = instance_params.shard_assignments.node_to_runner[node_id_c]
+    runner_id_a = instance.shard_assignments.node_to_runner[node_id_a]
+    runner_id_b = instance.shard_assignments.node_to_runner[node_id_b]
+    runner_id_c = instance.shard_assignments.node_to_runner[node_id_c]
     
-    shard_a = instance_params.shard_assignments.runner_to_shard[runner_id_a]
-    shard_b = instance_params.shard_assignments.runner_to_shard[runner_id_b]
-    shard_c = instance_params.shard_assignments.runner_to_shard[runner_id_c]
+    shard_a = instance.shard_assignments.runner_to_shard[runner_id_a]
+    shard_b = instance.shard_assignments.runner_to_shard[runner_id_b]
+    shard_c = instance.shard_assignments.runner_to_shard[runner_id_c]
     
     assert shard_a.end_layer - shard_a.start_layer == expected_layers[0]
     assert shard_b.end_layer - shard_b.start_layer == expected_layers[1]
@@ -105,14 +109,14 @@ def test_get_instance_placements_create_instance(
     assert shards_sorted[-1].end_layer == total_layers
 
 
-def test_get_transition_events_no_change(topology: Topology, instance_params: InstanceParams):
+def test_get_transition_events_no_change(topology: Topology, instance: Instance):
     # arrange
     instance_id = InstanceId()
     current_instances = {
-        instance_id: instance_params
+        instance_id: instance
     }
     target_instances = {
-        instance_id: instance_params
+        instance_id: instance
     }
 
     # act
@@ -122,12 +126,12 @@ def test_get_transition_events_no_change(topology: Topology, instance_params: In
     assert len(events) == 0
 
 
-def test_get_transition_events_create_instance(topology: Topology, instance_params: InstanceParams):
+def test_get_transition_events_create_instance(topology: Topology, instance: Instance):
     # arrange
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, InstanceParams] = {}
-    target_instances: dict[InstanceId, InstanceParams] = {
-        instance_id: instance_params
+    current_instances: dict[InstanceId, Instance] = {}
+    target_instances: dict[InstanceId, Instance] = {
+        instance_id: instance
     }
 
     # act
@@ -138,13 +142,13 @@ def test_get_transition_events_create_instance(topology: Topology, instance_para
     assert events[0].event_type == _EventType.InstanceCreated
 
 
-def test_get_transition_events_delete_instance(topology: Topology, instance_params: InstanceParams):
+def test_get_transition_events_delete_instance(topology: Topology, instance: Instance):
     # arrange
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, InstanceParams] = {
-        instance_id: instance_params
+    current_instances: dict[InstanceId, Instance] = {
+        instance_id: instance
     }
-    target_instances: dict[InstanceId, InstanceParams] = {}
+    target_instances: dict[InstanceId, Instance] = {}
 
     # act
     events = get_transition_events(current_instances, target_instances)

@@ -3,6 +3,9 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from shared.openai_compat import FinishReason
+from shared.types.common import CommandId
+from shared.types.models import ModelMetadata
+from shared.types.worker.instances import InstanceId
 
 
 class ChatCompletionMessage(BaseModel):
@@ -97,8 +100,20 @@ class ChatCompletionTaskParams(BaseModel):
     parallel_tool_calls: bool | None = None
     user: str | None = None
 
-class RequestInstanceTaskParams(BaseModel):
+class CreateInstanceTaskParams(BaseModel):
+    # TODO: in future the user could specify a specific Instance, not just a model_id
     model_id: str
 
 class DeleteInstanceTaskParams(BaseModel):
     instance_id: str
+
+class CreateInstanceResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    model_meta: ModelMetadata
+    instance_id: InstanceId
+
+class DeleteInstanceResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    instance_id: InstanceId

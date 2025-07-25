@@ -13,15 +13,15 @@ from shared.topology import Topology
 from shared.types.events import Event, InstanceCreated, InstanceDeleted
 from shared.types.events.commands import CreateInstanceCommand, DeleteInstanceCommand
 from shared.types.worker.common import InstanceId
-from shared.types.worker.instances import InstanceParams, TypeOfInstance
+from shared.types.worker.instances import Instance, InstanceStatus
 
 
 @singledispatch
 def get_instance_placements(
     command: CreateInstanceCommand,
     topology: Topology,
-    current_instances: dict[InstanceId, InstanceParams],
-) -> dict[InstanceId, InstanceParams]:
+    current_instances: dict[InstanceId, Instance],
+) -> dict[InstanceId, Instance]:
     available_models = [current_instances[instance].shard_assignments.model_id for instance in current_instances]
     if command.model_meta.model_id in available_models:
         raise ValueError(f"Instance for {command.model_meta.model_id} already exists")
@@ -36,9 +36,11 @@ def get_instance_placements(
     
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)
     
-    instance_id = InstanceId()
+    instance_id = command.instance_id
     target_instances = deepcopy(current_instances)
-    target_instances[instance_id] = InstanceParams(
+    target_instances[instance_id] = Instance(
+        instance_id=instance_id,
+        instance_type=InstanceStatus.ACTIVE,
         shard_assignments=shard_assignments,
         hosts=[]
     )
@@ -46,7 +48,7 @@ def get_instance_placements(
 
 
 @get_instance_placements.register
-def _(command: DeleteInstanceCommand, topology: Topology, current_instances: dict[InstanceId, InstanceParams]) -> dict[InstanceId, InstanceParams]:
+def _(command: DeleteInstanceCommand, topology: Topology, current_instances: dict[InstanceId, Instance]) -> dict[InstanceId, Instance]:
     target_instances = deepcopy(current_instances)
     if command.instance_id in target_instances:
         del target_instances[command.instance_id]
@@ -55,19 +57,17 @@ def _(command: DeleteInstanceCommand, topology: Topology, current_instances: dic
 
 
 def get_transition_events(
-    current_instances: Mapping[InstanceId, InstanceParams],
-    target_instances: Mapping[InstanceId, InstanceParams],
+    current_instances: Mapping[InstanceId, Instance],
+    target_instances: Mapping[InstanceId, Instance],
 ) -> Sequence[Event]:
     events: list[Event] = []
 
     # find instances to create
-    for instance_id, instance_params in target_instances.items():
+    for instance_id, instance in target_instances.items():
         if instance_id not in current_instances:
             events.append(
                 InstanceCreated(
-                    instance_id=instance_id,
-                    instance_params=instance_params,
-                    instance_type=TypeOfInstance.ACTIVE
+                    instance=instance,
                 )
             )
 

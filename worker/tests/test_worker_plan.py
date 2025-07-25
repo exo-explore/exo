@@ -16,7 +16,7 @@ from shared.types.tasks import (
 )
 from shared.types.worker.common import NodeStatus
 from shared.types.worker.downloads import DownloadPending
-from shared.types.worker.instances import Instance, InstanceParams, TypeOfInstance
+from shared.types.worker.instances import Instance, InstanceStatus
 from shared.types.worker.ops import (
     AssignRunnerOp,
     DownloadOp,
@@ -90,9 +90,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.INACTIVE,
+                        instance_type=InstanceStatus.INACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -101,7 +100,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: make_downloading_status(NODE_A)},
@@ -124,9 +122,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.INACTIVE,
+                        instance_type=InstanceStatus.INACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -135,7 +132,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: make_downloading_status(NODE_A)},
@@ -158,9 +154,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.INACTIVE,
+                        instance_type=InstanceStatus.INACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -169,7 +164,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: ReadyRunnerStatus()},
@@ -184,9 +178,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE, # Either active or inactive should yield the same.
+                        instance_type=InstanceStatus.ACTIVE, # Either active or inactive should yield the same.
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -195,7 +188,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: AssignedRunnerStatus()},
@@ -245,9 +237,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -256,7 +247,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: AssignedRunnerStatus()},
@@ -291,9 +281,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -302,7 +291,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: ReadyRunnerStatus()},
@@ -337,9 +325,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -349,7 +336,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: ReadyRunnerStatus(), RUNNER_2_ID: DownloadingRunnerStatus(download_progress=DownloadPending(node_id=NODE_A))},
@@ -382,9 +368,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -394,7 +379,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: ReadyRunnerStatus(), RUNNER_2_ID: ReadyRunnerStatus()},
@@ -418,9 +402,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.INACTIVE,
+                        instance_type=InstanceStatus.INACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -429,7 +412,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus()},
@@ -453,9 +435,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.INACTIVE,
+                        instance_type=InstanceStatus.INACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -464,7 +445,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: FailedRunnerStatus()},
@@ -488,9 +468,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -499,7 +478,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus()},
@@ -542,9 +520,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -554,7 +531,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: LoadedRunnerStatus()},
@@ -587,9 +563,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -599,7 +574,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: LoadedRunnerStatus()},
@@ -644,9 +618,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Running},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -656,7 +629,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: RunningRunnerStatus()},
@@ -701,9 +673,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -713,7 +684,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: FailedRunnerStatus()},
@@ -737,9 +707,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -748,7 +717,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: FailedRunnerStatus()},
@@ -781,9 +749,8 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
                             shard_assignments=ShardAssignments(
                                 model_id=MODEL_A_ID,
                                 runner_to_shard={
@@ -793,7 +760,6 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                                 node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                             ),
                             hosts=[]
-                        ),
                     )
                 },
                 runners={RUNNER_1_ID: FailedRunnerStatus(), RUNNER_2_ID: LoadedRunnerStatus()},
@@ -825,19 +791,17 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 node_status={NODE_A: NodeStatus.Idle, NODE_B: NodeStatus.Idle},
                 instances={
                     INSTANCE_1_ID: Instance(
-                        instance_type=TypeOfInstance.ACTIVE,
+                        instance_type=InstanceStatus.ACTIVE,
                         instance_id=INSTANCE_1_ID,
-                        instance_params=InstanceParams(
-                            shard_assignments=ShardAssignments(
-                                model_id=MODEL_A_ID,
-                                runner_to_shard={
-                                    RUNNER_1_ID: make_shard_metadata(device_rank=0, world_size=2),
-                                    RUNNER_2_ID: make_shard_metadata(device_rank=1, world_size=2)
-                                },
-                                node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
-                            ),
-                            hosts=[]
+                        shard_assignments=ShardAssignments(
+                            model_id=MODEL_A_ID,
+                            runner_to_shard={
+                                RUNNER_1_ID: make_shard_metadata(device_rank=0, world_size=2),
+                                RUNNER_2_ID: make_shard_metadata(device_rank=1, world_size=2)
+                            },
+                            node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID}
                         ),
+                        hosts=[]
                     )
                 },
                 runners={RUNNER_1_ID: FailedRunnerStatus(), RUNNER_2_ID: ReadyRunnerStatus()},
@@ -884,7 +848,7 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
         if len(case.state.instances) == 1: 
             instance_id = next(iter(case.state.instances))
 
-            shard_assignments = case.state.instances[instance_id].instance_params.shard_assignments
+            shard_assignments = case.state.instances[instance_id].shard_assignments
             shard_metadata = shard_assignments.runner_to_shard[runner_config.runner_id]
             
             # Only add this runner if it belongs to our node

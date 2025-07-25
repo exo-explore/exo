@@ -15,7 +15,7 @@ from shared.types.events.chunks import TokenChunk
 from shared.types.models import ModelId
 from shared.types.tasks import Task, TaskId
 from shared.types.worker.common import InstanceId, RunnerId
-from shared.types.worker.instances import Instance, TypeOfInstance
+from shared.types.worker.instances import Instance, InstanceStatus
 from shared.types.worker.runners import (
     LoadedRunnerStatus,
     ReadyRunnerStatus,
@@ -50,14 +50,12 @@ async def test_runner_assigned(
     print(worker)
 
     instance_value: Instance = instance(NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = TypeOfInstance.INACTIVE
+    instance_value.instance_type = InstanceStatus.INACTIVE
 
     await global_events.append_events(
         [
             InstanceCreated(
-                instance_id=instance_value.instance_id,
-                instance_params=instance_value.instance_params,
-                instance_type=instance_value.instance_type
+                instance=instance_value
             )
         ], 
         origin=MASTER_NODE_ID
@@ -87,14 +85,12 @@ async def test_runner_assigned_active(
     worker, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = TypeOfInstance.ACTIVE
+    instance_value.instance_type = InstanceStatus.ACTIVE
 
     await global_events.append_events(
         [
             InstanceCreated(
-                instance_id=instance_value.instance_id,
-                instance_params=instance_value.instance_params,
-                instance_type=instance_value.instance_type
+                instance=instance_value
             )
         ], 
         origin=MASTER_NODE_ID
@@ -141,9 +137,7 @@ async def test_runner_assigned_wrong_node(
     await global_events.append_events(
         [
             InstanceCreated(
-                instance_id=instance_value.instance_id,
-                instance_params=instance_value.instance_params,
-                instance_type=instance_value.instance_type
+                instance=instance_value
             )
         ], 
         origin=MASTER_NODE_ID
@@ -168,14 +162,12 @@ async def test_runner_unassigns(
     worker, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = TypeOfInstance.ACTIVE
+    instance_value.instance_type = InstanceStatus.ACTIVE
 
     await global_events.append_events(
         [
             InstanceCreated(
-                instance_id=instance_value.instance_id,
-                instance_params=instance_value.instance_params,
-                instance_type=instance_value.instance_type
+                instance=instance_value
             )
         ], 
         origin=MASTER_NODE_ID

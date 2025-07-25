@@ -106,8 +106,8 @@ class ForwarderSupervisor:
         self._process = await asyncio.create_subprocess_exec(
             str(self._binary_path),
             f'{pairs}',
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stdout=None,
+            stderr=None,
         )
         
         self._logger.info(f"Starting forwarder with forwarding pairs: {pairs}")

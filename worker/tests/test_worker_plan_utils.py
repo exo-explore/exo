@@ -11,7 +11,7 @@ from shared.types.state import State
 from shared.types.tasks import TaskId
 from shared.types.worker.common import InstanceId, NodeStatus, RunnerId
 from shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
-from shared.types.worker.instances import Instance, InstanceParams, TypeOfInstance
+from shared.types.worker.instances import Instance, InstanceStatus
 from shared.types.worker.ops import RunnerOp
 from shared.types.worker.runners import (
     AssignedRunnerStatus,
@@ -148,14 +148,11 @@ def create_worker_state(
             runner_to_shard={runner_id: shard_metadata},
             node_to_runner={node_id: runner_id},
         )
-        instance_params = InstanceParams(
-            shard_assignments=shard_assignments,
-            hosts=[],
-        )
         instance = Instance(
             instance_id=instance_id,
-            instance_params=instance_params,
-            instance_type=TypeOfInstance.ACTIVE,
+            instance_type=InstanceStatus.ACTIVE,
+            shard_assignments=shard_assignments,
+            hosts=[],
         )
         instances[instance_id] = instance
 
@@ -198,14 +195,11 @@ def make_instance(
         runner_to_shard=runner_to_shard,
         node_to_runner=node_to_runner,
     )
-    instance_params = InstanceParams(
-        shard_assignments=shard_assignments,
-        hosts=[],
-    )
     return Instance(
         instance_id=instance_id,
-        instance_params=instance_params,
-        instance_type=TypeOfInstance.ACTIVE,
+        instance_type=InstanceStatus.ACTIVE,
+        shard_assignments=shard_assignments,
+        hosts=[],
     )
 
 ### For worker plan tests

@@ -18,7 +18,7 @@ from shared.types.common import NodeId
 from shared.types.events.chunks import CommandId, GenerationChunk
 from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, NodeStatus
-from shared.types.worker.instances import InstanceParams, TypeOfInstance
+from shared.types.worker.instances import Instance
 from shared.types.worker.runners import RunnerId, RunnerStatus
 
 if TYPE_CHECKING:
@@ -114,9 +114,7 @@ class TaskStateUpdated(_BaseEvent[_EventType.TaskStateUpdated]):
 
 class InstanceCreated(_BaseEvent[_EventType.InstanceCreated]):
     event_type: Literal[_EventType.InstanceCreated] = _EventType.InstanceCreated
-    instance_id: InstanceId
-    instance_params: InstanceParams
-    instance_type: TypeOfInstance
+    instance: Instance
 
 
 class InstanceActivated(_BaseEvent[_EventType.InstanceActivated]):

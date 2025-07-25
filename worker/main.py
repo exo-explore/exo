@@ -28,7 +28,7 @@ from shared.types.worker.downloads import (
     DownloadOngoing,
     DownloadProgressData,
 )
-from shared.types.worker.instances import TypeOfInstance
+from shared.types.worker.instances import InstanceStatus
 from shared.types.worker.mlx import Host
 from shared.types.worker.ops import (
     AssignRunnerOp,
@@ -323,29 +323,29 @@ class Worker:
             runner_ids: list[RunnerId] = [
                 runner_id
                 for instance in state.instances.values()
-                for runner_id in instance.instance_params.shard_assignments.runner_to_shard
+                for runner_id in instance.shard_assignments.runner_to_shard
             ]
             if runner_id not in runner_ids:
                 return UnassignRunnerOp(runner_id=runner_id)
 
         # Then spin down active runners
         for _instance_id, instance in state.instances.items():
-            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+            for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 if node_id != self.node_id:
                     continue
 
                 # We spin down a runner if it's meant to be inactive and it's Loaded.
                 if runner_id in self.assigned_runners and \
                     isinstance(self.assigned_runners[runner_id].status, LoadedRunnerStatus) and \
-                    instance.instance_type == TypeOfInstance.INACTIVE:
+                    instance.instance_type == InstanceStatus.INACTIVE:
                     return RunnerDownOp(runner_id=runner_id)
 
         # If we are part of an instance that has a dead node - and we aren't the dead node - we should spin down
         # TODO: We need to limit number of retries if we keep failing.
         for _instance_id, instance in state.instances.items():
-            if self.node_id in instance.instance_params.shard_assignments.node_to_runner:
+            if self.node_id in instance.shard_assignments.node_to_runner:
                 other_node_in_instance_has_failed = False
-                for runner_id in instance.instance_params.shard_assignments.runner_to_shard:
+                for runner_id in instance.shard_assignments.runner_to_shard:
                     if runner_id in state.runners and \
                         isinstance(state.runners[runner_id], FailedRunnerStatus) and \
                         runner_id not in self.assigned_runners:
@@ -353,28 +353,28 @@ class Worker:
 
                 if other_node_in_instance_has_failed:
                     # Spin down *our* runner
-                    return RunnerDownOp(runner_id=instance.instance_params.shard_assignments.node_to_runner[self.node_id])
+                    return RunnerDownOp(runner_id=instance.shard_assignments.node_to_runner[self.node_id])
 
         # If we are failed - and *all of the other nodes have spun down* - then we can spin down too.
         for _instance_id, instance in state.instances.items():
-            if self.node_id in instance.instance_params.shard_assignments.node_to_runner and \
-                instance.instance_params.shard_assignments.node_to_runner[self.node_id] in state.runners and \
-                isinstance(state.runners[instance.instance_params.shard_assignments.node_to_runner[self.node_id]], FailedRunnerStatus):
+            if self.node_id in instance.shard_assignments.node_to_runner and \
+                instance.shard_assignments.node_to_runner[self.node_id] in state.runners and \
+                isinstance(state.runners[instance.shard_assignments.node_to_runner[self.node_id]], FailedRunnerStatus):
                 
                 num_spundown_nodes = 0
-                for runner_id in instance.instance_params.shard_assignments.runner_to_shard:
+                for runner_id in instance.shard_assignments.runner_to_shard:
                     if isinstance(state.runners[runner_id], ReadyRunnerStatus) and \
                         runner_id not in self.assigned_runners:
                         num_spundown_nodes += 1
 
-                if num_spundown_nodes == next(iter(instance.instance_params.shard_assignments.runner_to_shard.values())).world_size - 1:
+                if num_spundown_nodes == next(iter(instance.shard_assignments.runner_to_shard.values())).world_size - 1:
                     # All the other nodes are spun down - so now we can spin down too.
                     # This also catches the case of 1-node. If there's one node in the instance then we should spin down straight away
-                    return RunnerDownOp(runner_id=instance.instance_params.shard_assignments.node_to_runner[self.node_id])
+                    return RunnerDownOp(runner_id=instance.shard_assignments.node_to_runner[self.node_id])
 
         # Then assign runners we do want
         for instance_id, instance in state.instances.items():
-            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+            for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 if node_id != self.node_id:
                     continue
 
@@ -382,15 +382,15 @@ class Worker:
                     return AssignRunnerOp(
                         runner_id=runner_id,
                         instance_id=instance_id,
-                        shard_metadata=instance.instance_params.shard_assignments.runner_to_shard[runner_id],
-                        hosts=instance.instance_params.hosts
+                        shard_metadata=instance.shard_assignments.runner_to_shard[runner_id],
+                        hosts=instance.hosts
                     )
 
         # Then make sure things are downloading.
         for instance_id, instance in state.instances.items():
             # We should already have asserted that this runner exists
             # If it didn't exist then we return a assign_runner op.
-            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+            for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 if node_id != self.node_id:
                     continue
                 assert runner_id in self.assigned_runners
@@ -404,29 +404,29 @@ class Worker:
                         return DownloadOp(
                             runner_id=runner_id,
                             instance_id=instance_id,
-                            shard_metadata=instance.instance_params.shard_assignments.runner_to_shard[runner_id],
-                            hosts=instance.instance_params.hosts
+                            shard_metadata=instance.shard_assignments.runner_to_shard[runner_id],
+                            hosts=instance.hosts
                         )
 
         # Then spin up 'ready' runners that should be active
         for _instance_id, instance in state.instances.items():
-            if self.node_id in instance.instance_params.shard_assignments.node_to_runner and \
-                self.assigned_runners[instance.instance_params.shard_assignments.node_to_runner[self.node_id]].runner is None and \
-                instance.instance_type == TypeOfInstance.ACTIVE:
+            if self.node_id in instance.shard_assignments.node_to_runner and \
+                self.assigned_runners[instance.shard_assignments.node_to_runner[self.node_id]].runner is None and \
+                instance.instance_type == InstanceStatus.ACTIVE:
 
                 # We are part of this instance, we want it up but it hasn't been spun up yet.
                 # Need to assert all other runners are ready before we can spin up.
                 ready_to_spin = True
-                for runner_id in instance.instance_params.shard_assignments.node_to_runner.values():
+                for runner_id in instance.shard_assignments.node_to_runner.values():
                     if state.runners[runner_id].runner_status != RunnerStatusType.Ready:
                         ready_to_spin = False
 
                 if ready_to_spin:
-                    return RunnerUpOp(runner_id=instance.instance_params.shard_assignments.node_to_runner[self.node_id])
+                    return RunnerUpOp(runner_id=instance.shard_assignments.node_to_runner[self.node_id])
 
         # Then make sure things are running based on tasks.
         for instance_id, instance in state.instances.items():
-            for node_id, runner_id in instance.instance_params.shard_assignments.node_to_runner.items():
+            for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
                 if node_id != self.node_id:
                     continue
                 assert runner_id in self.assigned_runners
@@ -443,7 +443,7 @@ class Worker:
                             # so let's check that all the other runners are running - ready for us to fire the prompt.
                             running_runner_count = 0
                             for other_runner_id, other_runner_status in state.runners.items():
-                                if other_runner_id in instance.instance_params.shard_assignments.node_to_runner.values() and \
+                                if other_runner_id in instance.shard_assignments.node_to_runner.values() and \
                                     isinstance(other_runner_status, RunningRunnerStatus):
                                     running_runner_count += 1
 

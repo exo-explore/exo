@@ -28,7 +28,7 @@ from shared.types.profiling import NodePerformanceProfile
 from shared.types.state import State
 from shared.types.tasks import Task, TaskId
 from shared.types.worker.common import NodeStatus, RunnerId
-from shared.types.worker.instances import BaseInstance, InstanceId, TypeOfInstance
+from shared.types.worker.instances import Instance, InstanceId, InstanceStatus
 from shared.types.worker.runners import RunnerStatus
 
 S = TypeVar("S", bound=State)
@@ -62,8 +62,8 @@ def apply_task_state_updated(event: TaskStateUpdated, state: State) -> State:
 
 @event_apply.register(InstanceCreated)
 def apply_instance_created(event: InstanceCreated, state: State) -> State:
-    instance = BaseInstance(instance_params=event.instance_params, instance_type=event.instance_type)
-    new_instances: Mapping[InstanceId, BaseInstance] = {**state.instances, event.instance_id: instance}
+    instance = event.instance
+    new_instances: Mapping[InstanceId, Instance] = {**state.instances, instance.instance_id: instance}
     return state.model_copy(update={"instances": new_instances})
 
 @event_apply.register(InstanceActivated)
@@ -71,8 +71,8 @@ def apply_instance_activated(event: InstanceActivated, state: State) -> State:
     if event.instance_id not in state.instances:
         return state
     
-    updated_instance = state.instances[event.instance_id].model_copy(update={"type": TypeOfInstance.ACTIVE})
-    new_instances: Mapping[InstanceId, BaseInstance] = {**state.instances, event.instance_id: updated_instance}
+    updated_instance = state.instances[event.instance_id].model_copy(update={"type": InstanceStatus.ACTIVE})
+    new_instances: Mapping[InstanceId, Instance] = {**state.instances, event.instance_id: updated_instance}
     return state.model_copy(update={"instances": new_instances})
 
 @event_apply.register(InstanceDeactivated)
@@ -80,13 +80,13 @@ def apply_instance_deactivated(event: InstanceDeactivated, state: State) -> Stat
     if event.instance_id not in state.instances:
         return state
     
-    updated_instance = state.instances[event.instance_id].model_copy(update={"type": TypeOfInstance.INACTIVE})
-    new_instances: Mapping[InstanceId, BaseInstance] = {**state.instances, event.instance_id: updated_instance}
+    updated_instance = state.instances[event.instance_id].model_copy(update={"type": InstanceStatus.INACTIVE})
+    new_instances: Mapping[InstanceId, Instance] = {**state.instances, event.instance_id: updated_instance}
     return state.model_copy(update={"instances": new_instances})
 
 @event_apply.register(InstanceDeleted)
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
-    new_instances: Mapping[InstanceId, BaseInstance] = {iid: inst for iid, inst in state.instances.items() if iid != event.instance_id}
+    new_instances: Mapping[InstanceId, Instance] = {iid: inst for iid, inst in state.instances.items() if iid != event.instance_id}
     return state.model_copy(update={"instances": new_instances})
 
 @event_apply.register(InstanceReplacedAtomically)

@@ -9,20 +9,12 @@ from shared.types.worker.runners import (
 )
 
 
-class TypeOfInstance(str, Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
+class InstanceStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 
-
-class InstanceParams(BaseModel):
+class Instance(BaseModel):
+    instance_id: InstanceId
+    instance_type: InstanceStatus
     shard_assignments: ShardAssignments
     hosts: list[Host]
-
-
-class BaseInstance(BaseModel):
-    instance_params: InstanceParams
-    instance_type: TypeOfInstance
-
-
-class Instance(BaseInstance):
-    instance_id: InstanceId

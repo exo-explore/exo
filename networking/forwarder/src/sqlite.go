@@ -281,7 +281,7 @@ func (c *sqliteConnector) getLatestRowIds() (map[SourceKey]int64, error) {
 	}
 
 	selectCols := strings.Join(keyCols, ", ")
-	query := fmt.Sprintf(`SELECT %s, MAX(%s) FROM "%s" GROUP BY %s`, selectCols, rowIDCol, c.tableName, selectCols)
+	query := fmt.Sprintf(`SELECT %s, MAX(%s) FROM "%s" WHERE %s IS NOT NULL GROUP BY %s`, selectCols, rowIDCol, c.tableName, rowIDCol, selectCols)
 
 	rows, err := c.db.Query(query)
 	if err != nil {

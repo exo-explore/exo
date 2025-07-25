@@ -1,16 +1,21 @@
 import asyncio
 import time
 from collections.abc import AsyncGenerator
-from typing import List, Sequence, final
+from typing import Callable, List, Sequence, final
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
+from shared.models.model_cards import MODEL_CARDS
+from shared.models.model_meta import get_model_meta
 from shared.types.api import (
     ChatCompletionMessage,
     ChatCompletionResponse,
+    CreateInstanceResponse,
+    CreateInstanceTaskParams,
+    DeleteInstanceResponse,
     StreamingChoiceResponse,
 )
 from shared.types.common import CommandId
@@ -20,9 +25,14 @@ from shared.types.events.commands import (
     ChatCompletionCommand,
     Command,
     CommandType,
+    CreateInstanceCommand,
+    DeleteInstanceCommand,
 )
 from shared.types.events.components import EventFromEventLog
+from shared.types.state import State
 from shared.types.tasks import ChatCompletionTaskParams
+from shared.types.worker.common import InstanceId
+from shared.types.worker.instances import Instance
 
 
 def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
@@ -45,20 +55,21 @@ def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
 
 @final
 class API:
-    def __init__(self, command_buffer: List[Command], global_events: AsyncSQLiteEventStorage) -> None:
+    def __init__(self, command_buffer: List[Command], global_events: AsyncSQLiteEventStorage, get_state: Callable[[], State]) -> None:
         self._app = FastAPI()
         self._setup_routes()
 
         self.command_buffer = command_buffer
         self.global_events = global_events
+        self.get_state = get_state
 
     def _setup_routes(self) -> None:
         # self._app.get("/topology/control_plane")(self.get_control_plane_topology)
         # self._app.get("/topology/data_plane")(self.get_data_plane_topology)
         # self._app.get("/instances/list")(self.list_instances)
-        # self._app.post("/instances/create")(self.create_instance)
-        # self._app.get("/instance/{instance_id}/read")(self.get_instance)
-        # self._app.delete("/instance/{instance_id}/delete")(self.remove_instance)
+        self._app.post("/instances/create")(self.create_instance)
+        self._app.get("/instance/{instance_id}")(self.get_instance)
+        self._app.delete("/instance/{instance_id}")(self.delete_instance)
         # self._app.get("/model/{model_id}/metadata")(self.get_model_data)
         # self._app.post("/model/{model_id}/instances")(self.get_instances_by_model)
         self._app.post("/v1/chat/completions")(self.chat_completions)
@@ -80,11 +91,49 @@ class API:
     # def list_instances(self):
     #     return {"message": "Hello, World!"}
 
-    # def create_instance(self, model_id: ModelId) -> InstanceId: ...
+    async def create_instance(self, payload: CreateInstanceTaskParams) -> CreateInstanceResponse:
+        if payload.model_id in MODEL_CARDS:
+            model_card = MODEL_CARDS[payload.model_id]
+            model_meta = model_card.metadata
+        else:
+            model_meta = await get_model_meta(payload.model_id)
 
-    # def get_instance(self, instance_id: InstanceId) -> Instance: ...
+        command = CreateInstanceCommand(
+            command_id=CommandId(),
+            command_type=CommandType.CREATE_INSTANCE,
+            model_meta=model_meta,
+            instance_id=InstanceId(),
+        )
+        self.command_buffer.append(command)
 
-    # def remove_instance(self, instance_id: InstanceId) -> None: ...
+        return CreateInstanceResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            model_meta=model_meta,
+            instance_id=command.instance_id,
+        )
+
+    def get_instance(self, instance_id: InstanceId) -> Instance:
+        state = self.get_state()
+        if instance_id not in state.instances:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        return state.instances[instance_id]
+
+    def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
+        if instance_id not in self.get_state().instances:
+            raise HTTPException(status_code=404, detail="Instance not found")
+
+        command = DeleteInstanceCommand(
+            command_id=CommandId(),
+            command_type=CommandType.DELETE_INSTANCE,
+            instance_id=instance_id,
+        )
+        self.command_buffer.append(command)
+        return DeleteInstanceResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            instance_id=instance_id,
+        )
 
     # def get_model_data(self, model_id: ModelId) -> ModelInfo: ...
 
@@ -140,9 +189,10 @@ class API:
 def start_fastapi_server(
     command_buffer: List[Command],
     global_events: AsyncSQLiteEventStorage,
+    get_state: Callable[[], State],
     host: str = "0.0.0.0",
     port: int = 8000,
 ):
-    api = API(command_buffer, global_events)
+    api = API(command_buffer, global_events, get_state)
 
     uvicorn.run(api.app, host=host, port=port)

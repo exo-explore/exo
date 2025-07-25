@@ -7,7 +7,8 @@ from shared.types.api import ChatCompletionTaskParams
 from shared.types.common import CommandId
 from shared.types.events import Event
 from shared.types.models import ModelMetadata
-from shared.types.state import InstanceId, State
+from shared.types.state import State
+from shared.types.worker.common import InstanceId
 
 
 # TODO: We need to have a distinction between create instance and spin up instance.
@@ -30,6 +31,7 @@ class ChatCompletionCommand(_BaseCommand[CommandType.CHAT_COMPLETION]):
 class CreateInstanceCommand(_BaseCommand[CommandType.CREATE_INSTANCE]):
     command_type: Literal[CommandType.CREATE_INSTANCE] = CommandType.CREATE_INSTANCE
     model_meta: ModelMetadata
+    instance_id: InstanceId
 
 
 class DeleteInstanceCommand(_BaseCommand[CommandType.DELETE_INSTANCE]):

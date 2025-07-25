@@ -11,6 +11,7 @@ from shared.db.sqlite.config import EventLogConfig
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
+from shared.types.common import NodeId
 from shared.types.events import TaskCreated
 from shared.types.events.commands import ChatCompletionCommand, Command, CommandId
 from shared.types.tasks import ChatCompletionTask, TaskStatus, TaskType
@@ -36,7 +37,8 @@ async def test_master():
 
     forwarder_binary_path = _create_forwarder_dummy_binary()
 
-    master = Master(command_buffer=command_buffer, global_events=global_events, forwarder_binary_path=forwarder_binary_path, logger=logger)
+    node_id = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    master = Master(node_id, command_buffer=command_buffer, global_events=global_events, forwarder_binary_path=forwarder_binary_path, logger=logger)
     asyncio.create_task(master.run())
 
     command_buffer.append(
