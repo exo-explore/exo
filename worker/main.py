@@ -15,10 +15,12 @@ from shared.types.events import (
     ChunkGenerated,
     Event,
     InstanceId,
+    NodePerformanceMeasured,
     RunnerDeleted,
     RunnerStatusUpdated,
     TaskStateUpdated,
 )
+from shared.types.profiling import NodePerformanceProfile
 from shared.types.state import State
 from shared.types.tasks import TaskStatus
 from shared.types.worker.common import RunnerId
@@ -52,6 +54,7 @@ from shared.types.worker.runners import (
 from shared.types.worker.shards import ShardMetadata
 from worker.download.download_utils import build_model_path
 from worker.runner.runner_supervisor import RunnerSupervisor
+from worker.utils.profile import start_polling_node_metrics
 
 
 def get_node_id() -> NodeId:
@@ -482,7 +485,6 @@ class Worker:
 
             await asyncio.sleep(0.01)
 
-    # TODO: Handle resource monitoring (write-only)
 
 async def main():
     node_id: NodeId = get_node_id()
@@ -490,6 +492,13 @@ async def main():
 
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
+    
+    # TODO: add profiling etc to resource monitor
+    async def resource_monitor_callback(node_performance_profile: NodePerformanceProfile) -> None:
+        await event_log_manager.worker_events.append_events(
+            [NodePerformanceMeasured(node_id=node_id, node_profile=node_performance_profile)], origin=node_id
+        )
+    asyncio.create_task(start_polling_node_metrics(callback=resource_monitor_callback))
 
     worker = Worker(node_id, logger, event_log_manager.worker_events)
 
