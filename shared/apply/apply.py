@@ -106,7 +106,7 @@ def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> Sta
     return state.model_copy(update={"runners": new_runners})
 
 @event_apply.register(RunnerDeleted)
-def apply_runner_deleted(event: RunnerStatusUpdated, state: State) -> State:
+def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
     new_runners: Mapping[RunnerId, RunnerStatus] = {rid: rs for rid, rs in state.runners.items() if rid != event.runner_id}
     return state.model_copy(update={"runners": new_runners})
 

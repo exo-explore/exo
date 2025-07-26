@@ -91,8 +91,8 @@ async def _mlx_generate(
         runner_print(item.text)
         yield item
 
-    # TODO: There is a big bug on this line!
-    assert future.done()
+    # Wait for the executor thread to complete
+    await future
 
 
 async def main():

@@ -88,12 +88,23 @@ class RunnerSupervisor:
 
     async def astop(self) -> None:
         async def terminate() -> None:
-            self.runner_process.terminate()
-            _ = await self.runner_process.wait()
+            # Check if process is already dead before trying to terminate
+            if self.runner_process.returncode is None:
+                self.runner_process.terminate()
+            
+            # Wait for the process to exit (or confirm it's already exited)
+            try:
+                _ = await asyncio.wait_for(self.runner_process.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # If terminate didn't work, force kill
+                if self.runner_process.returncode is None:
+                    self.runner_process.kill()
+                    _ = await self.runner_process.wait()
 
         if not self.healthy:
             print("Runner process is not healthy, killing...")
             await terminate()
+            print('terminated')
 
         if self.runner_process.stdout is not None:
             while True:
@@ -107,15 +118,20 @@ class RunnerSupervisor:
                 except asyncio.TimeoutError:
                     break
 
-        try:
-            # Give the process a moment to exit gracefully
-            await supervisor_write_message(
-                proc=self.runner_process, message=ExitMessage()
-            )
-            _ = await asyncio.wait_for(self.runner_process.wait(), timeout=0.1)
-        except asyncio.TimeoutError:
-            print("Runner process did not terminate, killing...")
-            await terminate()
+        # Only try to send ExitMessage if process is still alive
+        if self.runner_process.returncode is None:
+            try:
+                # Give the process a moment to exit gracefully
+                await supervisor_write_message(
+                    proc=self.runner_process, message=ExitMessage()
+                )
+                _ = await asyncio.wait_for(self.runner_process.wait(), timeout=0.1)
+            except asyncio.TimeoutError:
+                print("Runner process did not terminate, killing...")
+                await terminate()
+            except Exception:
+                # If we can't write to the process (e.g., broken pipe), it's probably already dead
+                pass
 
         self.running = False
 
@@ -124,7 +140,7 @@ class RunnerSupervisor:
         self.running = False
 
     def __del__(self) -> None:
-        if not self.running:
+        if self.running:
             print(
                 "Warning: RunnerSupervisor was not stopped cleanly before garbage collection. Force killing process."
             )

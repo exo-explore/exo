@@ -99,14 +99,16 @@ def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
     )
 
 @pytest.fixture
-def chat_completion_task(completion_create_params: ChatCompletionTaskParams) -> ChatCompletionTask:
-    return ChatCompletionTask(
-        task_id=TaskId(),
-        instance_id=InstanceId(),
-        task_type=TaskType.CHAT_COMPLETION,
-        task_status=TaskStatus.PENDING,
-        task_params=completion_create_params
-    )
+def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
+    def _chat_completion_task(instance_id: InstanceId) -> ChatCompletionTask:
+        return ChatCompletionTask(
+            task_id=TaskId(),
+            instance_id=instance_id,
+            task_type=TaskType.CHAT_COMPLETION,
+            task_status=TaskStatus.PENDING,
+            task_params=completion_create_params
+        )
+    return _chat_completion_task
 
 @pytest.fixture
 def node_id() -> NodeId:
@@ -129,7 +131,7 @@ def logger() -> Logger:
 
 @pytest.fixture
 def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], hosts_one: list[Host]):
-    def _instance(node_id: NodeId, runner_id: RunnerId) -> Instance:
+    def _instance(instance_id: InstanceId, node_id: NodeId, runner_id: RunnerId) -> Instance:
         model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
 
         shard_assignments = ShardAssignments(
@@ -156,10 +158,10 @@ async def worker(node_id: NodeId, logger: Logger):
     return Worker(node_id, logger, worker_events=event_log_manager.global_events, global_events=event_log_manager.global_events)
 
 @pytest.fixture
-async def worker_with_assigned_runner(worker: Worker, instance: Callable[[NodeId, RunnerId], Instance]):
+async def worker_with_assigned_runner(worker: Worker, instance: Callable[[InstanceId, NodeId, RunnerId], Instance]):
     """Fixture that provides a worker with an already assigned runner."""
     
-    instance_obj: Instance = instance(worker.node_id, RunnerId())
+    instance_obj: Instance = instance(InstanceId(), worker.node_id, RunnerId())
     
     # Extract runner_id from shard assignments
     runner_id = next(iter(instance_obj.shard_assignments.runner_to_shard))

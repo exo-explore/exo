@@ -38,6 +38,7 @@ from shared.types.worker.ops import (
     DownloadOp,
     ExecuteTaskOp,
     RunnerDownOp,
+    RunnerFailedOp,
     RunnerOp,
     RunnerOpType,
     RunnerUpOp,
@@ -162,6 +163,18 @@ class Worker:
 
         assigned_runner.status = ReadyRunnerStatus()
         yield assigned_runner.status_update_event()
+        return
+
+    async def _execute_runner_failed_op(
+        self, op: RunnerFailedOp
+    ) -> AsyncGenerator[Event, None]:
+        '''
+        We detected that this runner has failed. So we'll put it into 'failed' state now, triggering the rest of the instance to spin down.
+        '''
+        assigned_runner = self.assigned_runners[op.runner_id]
+
+        assigned_runner.status = FailedRunnerStatus()
+        yield self.assigned_runners[op.runner_id].status_update_event()
 
     async def _execute_download_op(
         self, op: DownloadOp
@@ -309,6 +322,8 @@ class Worker:
                 event_generator = self._execute_runner_up_op(op)
             case RunnerOpType.RUNNER_DOWN:
                 event_generator = self._execute_runner_down_op(op)
+            case RunnerOpType.RUNNER_FAILED:
+                event_generator = self._execute_runner_failed_op(op)
             case RunnerOpType.DOWNLOAD:
                 event_generator = self._execute_download_op(op)
             case RunnerOpType.CHAT_COMPLETION:
@@ -331,6 +346,12 @@ class Worker:
             if runner_id not in runner_ids:
                 return UnassignRunnerOp(runner_id=runner_id)
 
+        for runner_id, assigned_runner in self.assigned_runners.items():
+            if assigned_runner.runner is not None and \
+                not assigned_runner.runner.healthy and \
+                not isinstance(assigned_runner.status, FailedRunnerStatus):
+                return RunnerFailedOp(runner_id=runner_id)
+
         # Then spin down active runners
         for _instance_id, instance in state.instances.items():
             for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
@@ -346,7 +367,9 @@ class Worker:
         # If we are part of an instance that has a dead node - and we aren't the dead node - we should spin down
         # TODO: We need to limit number of retries if we keep failing.
         for _instance_id, instance in state.instances.items():
-            if self.node_id in instance.shard_assignments.node_to_runner:
+            if self.node_id in instance.shard_assignments.node_to_runner and \
+                instance.shard_assignments.node_to_runner[self.node_id] in self.assigned_runners and \
+                not isinstance(self.assigned_runners[instance.shard_assignments.node_to_runner[self.node_id]].status, ReadyRunnerStatus): # make sure that our runner has not already been spun down into ready state
                 other_node_in_instance_has_failed = False
                 for runner_id in instance.shard_assignments.runner_to_shard:
                     if runner_id in state.runners and \
@@ -362,13 +385,17 @@ class Worker:
         for _instance_id, instance in state.instances.items():
             if self.node_id in instance.shard_assignments.node_to_runner and \
                 instance.shard_assignments.node_to_runner[self.node_id] in state.runners and \
-                isinstance(state.runners[instance.shard_assignments.node_to_runner[self.node_id]], FailedRunnerStatus):
-                
+                isinstance(self.assigned_runners[instance.shard_assignments.node_to_runner[self.node_id]].status, FailedRunnerStatus):
+
                 num_spundown_nodes = 0
                 for runner_id in instance.shard_assignments.runner_to_shard:
                     if isinstance(state.runners[runner_id], ReadyRunnerStatus) and \
                         runner_id not in self.assigned_runners:
                         num_spundown_nodes += 1
+                    # Suggested:
+                    # if runner_id in state.runners and isinstance(state.runners[runner_id], ReadyRunnerStatus):
+                    #     if runner_id != instance.shard_assignments.node_to_runner[self.node_id]:
+                    #         num_spundown_nodes += 1
 
                 if num_spundown_nodes == next(iter(instance.shard_assignments.runner_to_shard.values())).world_size - 1:
                     # All the other nodes are spun down - so now we can spin down too.
@@ -421,7 +448,7 @@ class Worker:
                 # Need to assert all other runners are ready before we can spin up.
                 ready_to_spin = True
                 for runner_id in instance.shard_assignments.node_to_runner.values():
-                    if state.runners[runner_id].runner_status != RunnerStatusType.Ready:
+                    if runner_id in state.runners and state.runners[runner_id].runner_status != RunnerStatusType.Ready:
                         ready_to_spin = False
 
                 if ready_to_spin:
@@ -438,7 +465,7 @@ class Worker:
                     continue # The only previous state to get to Running is from Loaded
 
                 for _, task in state.tasks.items():
-                    if task.instance_id == instance_id:
+                    if task.instance_id == instance_id and task.task_status == TaskStatus.PENDING:
                         if (runner.shard_metadata.device_rank >= 1 or runner.shard_metadata.world_size == 1):
                             return ExecuteTaskOp(runner_id=runner_id, task=task)
                         else:
@@ -465,11 +492,9 @@ class Worker:
         assert self.global_events is not None
 
         while True:
+            _rank = list(self.assigned_runners.values())[0].shard_metadata.device_rank if self.assigned_runners else None
             # 1. get latest events
             events = await self.global_events.get_events_since(self.state.last_event_applied_idx)
-            if len(events) == 0:
-                await asyncio.sleep(0.01)
-                continue
 
             # 2. for each event, apply it to the state and run sagas
             for event_from_log in events:

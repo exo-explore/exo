@@ -15,6 +15,7 @@ class RunnerOpType(str, Enum):
     UNASSIGN_RUNNER = "unassign_runner"
     RUNNER_UP = "runner_up"
     RUNNER_DOWN = "runner_down"
+    RUNNER_FAILED = "runner_failed"
     DOWNLOAD = "download"
     CHAT_COMPLETION = "chat_completion"
 
@@ -42,6 +43,10 @@ class RunnerDownOp(BaseRunnerOp[Literal[RunnerOpType.RUNNER_DOWN]]):
     op_type: Literal[RunnerOpType.RUNNER_DOWN] = Field(default=RunnerOpType.RUNNER_DOWN, frozen=True)
     runner_id: RunnerId
 
+class RunnerFailedOp(BaseRunnerOp[Literal[RunnerOpType.RUNNER_FAILED]]):
+    op_type: Literal[RunnerOpType.RUNNER_FAILED] = Field(default=RunnerOpType.RUNNER_FAILED, frozen=True)
+    runner_id: RunnerId
+
 class DownloadOp(BaseRunnerOp[Literal[RunnerOpType.DOWNLOAD]]):
     op_type: Literal[RunnerOpType.DOWNLOAD] = Field(default=RunnerOpType.DOWNLOAD, frozen=True)
     instance_id: InstanceId
@@ -62,6 +67,7 @@ RunnerOp = Annotated[
         UnassignRunnerOp,
         RunnerUpOp,
         RunnerDownOp,
+        RunnerFailedOp,
         DownloadOp,
         ExecuteTaskOp,
     ],

@@ -481,7 +481,23 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus()},
-                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
+                tasks={
+                    TASK_1_ID: ChatCompletionTask(
+                        task_id=TASK_1_ID,
+                        task_type=TaskType.CHAT_COMPLETION,
+                        task_status=TaskStatus.PENDING,
+                        task_params=ChatCompletionTaskParams(
+                            model=str(MODEL_A_ID),
+                            messages=[
+                                ChatCompletionMessage(
+                                    role="user",
+                                    content="Hello, world!"
+                                )
+                            ]
+                        ),
+                        instance_id=INSTANCE_1_ID
+                    )
+                },
             ),
             expected_op=ExecuteTaskOp(runner_id=RUNNER_1_ID, task=ChatCompletionTask(
                 task_id=TASK_1_ID,

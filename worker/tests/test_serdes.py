@@ -9,6 +9,7 @@ from shared.types.worker.commands_runner import (
     RunnerMessageTypeAdapter,
     SetupMessage,
 )
+from shared.types.worker.common import InstanceId
 from shared.types.worker.mlx import Host
 from shared.types.worker.shards import PipelineShardMetadata
 
@@ -37,9 +38,10 @@ def test_supervisor_setup_message_serdes(
 
 
 def test_supervisor_task_message_serdes(
-    chat_completion_task: Task,
+    chat_completion_task: Callable[[InstanceId], Task],
 ):
+    task = chat_completion_task(InstanceId())
     task_message = ChatTaskMessage(
-        task_data=chat_completion_task.task_params,
+        task_data=task.task_params,
     )
     assert_equal_serdes(task_message, RunnerMessageTypeAdapter)
