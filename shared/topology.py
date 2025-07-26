@@ -49,19 +49,19 @@ class Topology(TopologyProto):
 
         for node in snapshot.nodes:
             with contextlib.suppress(ValueError):
-                topology.add_node(node, node.node_id)
+                topology.add_node(node)
 
         for connection in snapshot.connections:
             topology.add_connection(connection)
 
         return topology
 
-    def add_node(self, node: Node, node_id: NodeId) -> None:
-        if node_id in self._node_id_to_rx_id_map:
+    def add_node(self, node: Node) -> None:
+        if node.node_id in self._node_id_to_rx_id_map:
             raise ValueError("Node already exists")
         rx_id = self._graph.add_node(node)
-        self._node_id_to_rx_id_map[node_id] = rx_id
-        self._rx_id_to_node_id_map[rx_id] = node_id
+        self._node_id_to_rx_id_map[node.node_id] = rx_id
+        self._rx_id_to_node_id_map[rx_id] = node.node_id
 
 
     def add_connection(
@@ -69,9 +69,9 @@ class Topology(TopologyProto):
         connection: Connection,
     ) -> None:
         if connection.source_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(Node(node_id=connection.source_node_id), node_id=connection.source_node_id)
+            self.add_node(Node(node_id=connection.source_node_id))
         if connection.sink_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(Node(node_id=connection.sink_node_id), node_id=connection.sink_node_id)
+            self.add_node(Node(node_id=connection.sink_node_id))
 
         src_id = self._node_id_to_rx_id_map[connection.source_node_id]
         sink_id = self._node_id_to_rx_id_map[connection.sink_node_id]

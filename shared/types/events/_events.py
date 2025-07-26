@@ -66,6 +66,7 @@ class _EventType(str, Enum):
     NodePerformanceMeasured = "NodePerformanceMeasured"
 
     # Topology Events
+    TopologyNodeCreated = "TopologyNodeCreated"
     TopologyEdgeCreated = "TopologyEdgeCreated"
     TopologyEdgeReplacedAtomically = "TopologyEdgeReplacedAtomically"
     TopologyEdgeDeleted = "TopologyEdgeDeleted"
@@ -166,6 +167,9 @@ class ChunkGenerated(_BaseEvent[_EventType.ChunkGenerated]):
     command_id: CommandId
     chunk: GenerationChunk
 
+class TopologyNodeCreated(_BaseEvent[_EventType.TopologyNodeCreated]):
+    event_type: Literal[_EventType.TopologyNodeCreated] = _EventType.TopologyNodeCreated
+    node_id: NodeId
 
 class TopologyEdgeCreated(_BaseEvent[_EventType.TopologyEdgeCreated]):
     event_type: Literal[_EventType.TopologyEdgeCreated] = _EventType.TopologyEdgeCreated
@@ -196,6 +200,7 @@ _Event = Union[
     NodePerformanceMeasured,
     WorkerStatusUpdated,
     ChunkGenerated,
+    TopologyNodeCreated,
     TopologyEdgeCreated,
     TopologyEdgeReplacedAtomically,
     TopologyEdgeDeleted,

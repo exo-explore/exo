@@ -27,8 +27,8 @@ def test_filter_cycles_by_memory(topology: Topology, create_node: Callable[[int,
     node1 = create_node(1000, node1_id)
     node2 = create_node(1000, node2_id)
     
-    topology.add_node(node1, node1_id)
-    topology.add_node(node2, node2_id)
+    topology.add_node(node1)
+    topology.add_node(node2)
     
     connection1 = create_connection(node1_id, node2_id)
     connection2 = create_connection(node2_id, node1_id)
@@ -55,8 +55,8 @@ def test_filter_cycles_by_insufficient_memory(topology: Topology, create_node: C
     node1 = create_node(1000, node1_id)
     node2 = create_node(1000, node2_id)
 
-    topology.add_node(node1, node1_id)
-    topology.add_node(node2, node2_id)
+    topology.add_node(node1)
+    topology.add_node(node2)
 
     connection1 = create_connection(node1_id, node2_id)
     connection2 = create_connection(node2_id, node1_id)
@@ -81,9 +81,9 @@ def test_filter_multiple_cycles_by_memory(topology: Topology, create_node: Calla
     node_b = create_node(500, node_b_id)
     node_c = create_node(1000, node_c_id)
     
-    topology.add_node(node_a, node_a_id)
-    topology.add_node(node_b, node_b_id)
-    topology.add_node(node_c, node_c_id)
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
     
     topology.add_connection(create_connection(node_a_id, node_b_id))
     topology.add_connection(create_connection(node_b_id, node_a_id))
@@ -111,9 +111,9 @@ def test_get_smallest_cycles(topology: Topology, create_node: Callable[[int, Nod
     node_b = create_node(500, node_b_id)
     node_c = create_node(1000, node_c_id)
 
-    topology.add_node(node_a, node_a_id)
-    topology.add_node(node_b, node_b_id)
-    topology.add_node(node_c, node_c_id)
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
 
     topology.add_connection(create_connection(node_a_id, node_b_id))
     topology.add_connection(create_connection(node_b_id, node_c_id))
@@ -143,9 +143,9 @@ def test_get_shard_assignments(topology: Topology, create_node: Callable[[int, N
     node_b = create_node(available_memory[1], node_b_id)
     node_c = create_node(available_memory[2], node_c_id)
 
-    topology.add_node(node_a, node_a_id)
-    topology.add_node(node_b, node_b_id)
-    topology.add_node(node_c, node_c_id)
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
 
     topology.add_connection(create_connection(node_a_id, node_b_id))
     topology.add_connection(create_connection(node_b_id, node_c_id))

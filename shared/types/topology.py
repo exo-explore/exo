@@ -41,7 +41,7 @@ class Node(BaseModel):
 
 
 class TopologyProto(Protocol):
-    def add_node(self, node: Node, node_id: NodeId) -> None: ...
+    def add_node(self, node: Node) -> None: ...
 
     def add_connection(
         self,

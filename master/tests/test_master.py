@@ -13,6 +13,7 @@ from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from shared.types.common import NodeId
 from shared.types.events import TaskCreated
+from shared.types.events._events import TopologyNodeCreated
 from shared.types.events.commands import ChatCompletionCommand, Command, CommandId
 from shared.types.tasks import ChatCompletionTask, TaskStatus, TaskType
 
@@ -38,7 +39,7 @@ async def test_master():
     forwarder_binary_path = _create_forwarder_dummy_binary()
 
     node_id = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-    master = Master(node_id, command_buffer=command_buffer, global_events=global_events, forwarder_binary_path=forwarder_binary_path, logger=logger)
+    master = Master(node_id, command_buffer=command_buffer, global_events=global_events, worker_events=event_log_manager.worker_events, forwarder_binary_path=forwarder_binary_path, logger=logger)
     asyncio.create_task(master.run())
 
     command_buffer.append(
@@ -54,15 +55,16 @@ async def test_master():
         await asyncio.sleep(0.001)
 
     events = await global_events.get_events_since(0)
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0].idx_in_log == 1
-    assert isinstance(events[0].event, TaskCreated)
-    assert events[0].event == TaskCreated(
-        task_id=events[0].event.task_id,
+    assert isinstance(events[0].event, TopologyNodeCreated)
+    assert isinstance(events[1].event, TaskCreated)
+    assert events[1].event == TaskCreated(
+        task_id=events[1].event.task_id,
         task=ChatCompletionTask(
-            task_id=events[0].event.task_id,
+            task_id=events[1].event.task_id,
             task_type=TaskType.CHAT_COMPLETION,
-            instance_id=events[0].event.task.instance_id,
+            instance_id=events[1].event.task.instance_id,
             task_status=TaskStatus.PENDING,
             task_params=ChatCompletionTaskParams(
                 model="llama-3.2-1b",

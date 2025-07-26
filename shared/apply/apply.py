@@ -22,11 +22,13 @@ from shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
     TopologyEdgeReplacedAtomically,
+    TopologyNodeCreated,
     WorkerStatusUpdated,
 )
 from shared.types.profiling import NodePerformanceProfile
 from shared.types.state import State
 from shared.types.tasks import Task, TaskId
+from shared.types.topology import Node
 from shared.types.worker.common import NodeStatus, RunnerId
 from shared.types.worker.instances import Instance, InstanceId, InstanceStatus
 from shared.types.worker.runners import RunnerStatus
@@ -121,6 +123,12 @@ def apply_worker_status_updated(event: WorkerStatusUpdated, state: State) -> Sta
 @event_apply.register(ChunkGenerated)
 def apply_chunk_generated(event: ChunkGenerated, state: State) -> State:
     return state
+
+@event_apply.register(TopologyNodeCreated)
+def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> State:
+    topology = copy.copy(state.topology)
+    topology.add_node(Node(node_id=event.node_id))
+    return state.model_copy(update={"topology": topology})
 
 @event_apply.register(TopologyEdgeCreated)
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:

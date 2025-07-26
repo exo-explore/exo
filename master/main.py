@@ -19,6 +19,7 @@ from shared.types.common import NodeId
 from shared.types.events import (
     Event,
     TaskCreated,
+    TopologyNodeCreated,
 )
 from shared.types.events.commands import (
     ChatCompletionCommand,
@@ -32,16 +33,24 @@ from shared.types.worker.instances import Instance
 
 
 class Master:
-    def __init__(self, node_id: NodeId, command_buffer: list[Command], global_events: AsyncSQLiteEventStorage, forwarder_binary_path: Path, logger: logging.Logger):
+    def __init__(self, node_id: NodeId, command_buffer: list[Command], global_events: AsyncSQLiteEventStorage, worker_events: AsyncSQLiteEventStorage, forwarder_binary_path: Path, logger: logging.Logger):
         self.node_id = node_id
         self.command_buffer = command_buffer
         self.global_events = global_events
+        self.worker_events = worker_events
         self.forwarder_supervisor = ForwarderSupervisor(
             forwarder_binary_path=forwarder_binary_path,
             logger=logger
         )
         self.election_callbacks = ElectionCallbacks(self.forwarder_supervisor, logger)
         self.logger = logger
+
+    @property
+    def event_log_for_writes(self) -> AsyncSQLiteEventStorage:
+        if self.forwarder_supervisor.current_role == ForwarderRole.MASTER:
+            return self.global_events
+        else:
+            return self.worker_events
 
     async def _get_state_snapshot(self) -> State:
         # TODO: for now start from scratch every time, but we can optimize this by keeping a snapshot on disk so we don't have to re-apply all events
@@ -85,7 +94,7 @@ class Master:
                     transition_events = get_transition_events(self.state.instances, placement)
                     next_events.extend(transition_events)
 
-            await self.global_events.append_events(next_events, origin=self.node_id)
+            await self.event_log_for_writes.append_events(next_events, origin=self.node_id)
 
         # 2. get latest events
         events = await self.global_events.get_events_since(self.state.last_event_applied_idx)
@@ -109,6 +118,7 @@ class Master:
         else:
             await self.election_callbacks.on_became_master()
 
+        await self.event_log_for_writes.append_events([TopologyNodeCreated(node_id=self.node_id)], origin=self.node_id)
         while True:
             try:
                 await self._run_event_loop_body()
@@ -133,6 +143,7 @@ async def main():
     event_log_manager = EventLogManager(EventLogConfig(), logger=logger)
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
+    worker_events: AsyncSQLiteEventStorage = event_log_manager.worker_events
 
     command_buffer: List[Command] = []
 
@@ -152,7 +163,7 @@ async def main():
     api_thread.start()
     logger.info('Running FastAPI server in a separate thread. Listening on port 8000.')
 
-    master = Master(node_id, command_buffer, global_events, forwarder_binary_path=Path("./build/forwarder"), logger=logger)
+    master = Master(node_id, command_buffer, global_events, worker_events, forwarder_binary_path=Path("./build/forwarder"), logger=logger)
     await master.run()
 
 if __name__ == "__main__":

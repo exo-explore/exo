@@ -32,7 +32,7 @@ def test_add_node(topology: Topology, node_profile: NodePerformanceProfile):
     node_id = NodeId()
 
     # act
-    topology.add_node(Node(node_id=node_id, node_profile=node_profile), node_id=node_id)
+    topology.add_node(Node(node_id=node_id, node_profile=node_profile))
 
     # assert
     data = topology.get_node_profile(node_id)
@@ -41,8 +41,8 @@ def test_add_node(topology: Topology, node_profile: NodePerformanceProfile):
 
 def test_add_connection(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
     # arrange
-    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile), node_id=connection.source_node_id)
-    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
+    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
@@ -53,8 +53,8 @@ def test_add_connection(topology: Topology, node_profile: NodePerformanceProfile
 
 def test_update_node_profile(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
     # arrange
-    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile), node_id=connection.source_node_id)
-    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
+    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     new_node_profile = NodePerformanceProfile(model_id="test", chip_id="test", memory=MemoryPerformanceProfile(ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000), network_interfaces=[], system=SystemPerformanceProfile(flops_fp16=1000))
@@ -68,8 +68,8 @@ def test_update_node_profile(topology: Topology, node_profile: NodePerformancePr
 
 def test_update_connection_profile(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
     # arrange
-    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile), node_id=connection.source_node_id)
-    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
+    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     new_connection_profile = ConnectionProfile(throughput=2000, latency=2000, jitter=2000)
@@ -84,8 +84,8 @@ def test_update_connection_profile(topology: Topology, node_profile: NodePerform
 
 def test_remove_connection_still_connected(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
     # arrange
-    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile), node_id=connection.source_node_id)
-    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
+    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
@@ -103,9 +103,9 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
     node_a_id = NodeId()
     node_b_id = NodeId()
     
-    topology.add_node(Node(node_id=master_id, node_profile=node_profile), node_id=master_id)
-    topology.add_node(Node(node_id=node_a_id, node_profile=node_profile), node_id=node_a_id)
-    topology.add_node(Node(node_id=node_b_id, node_profile=node_profile), node_id=node_b_id)
+    topology.add_node(Node(node_id=master_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=node_a_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=node_b_id, node_profile=node_profile))
     
     connection_master_to_a = Connection(
         source_node_id=master_id,
@@ -143,8 +143,8 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
 
 def test_remove_node_still_connected(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
     # arrange
-    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile), node_id=connection.source_node_id)
-    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
+    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
@@ -157,8 +157,8 @@ def test_remove_node_still_connected(topology: Topology, node_profile: NodePerfo
 
 def test_list_nodes(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
     # arrange
-    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile), node_id=connection.source_node_id)
-    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile), node_id=connection.sink_node_id)
+    topology.add_node(Node(node_id=connection.source_node_id, node_profile=node_profile))
+    topology.add_node(Node(node_id=connection.sink_node_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
