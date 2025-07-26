@@ -58,7 +58,7 @@ class Topology(TopologyProto):
 
     def add_node(self, node: Node) -> None:
         if node.node_id in self._node_id_to_rx_id_map:
-            raise ValueError("Node already exists")
+            return
         rx_id = self._graph.add_node(node)
         self._node_id_to_rx_id_map[node.node_id] = rx_id
         self._rx_id_to_node_id_map[rx_id] = node.node_id

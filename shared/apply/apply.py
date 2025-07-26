@@ -113,7 +113,10 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 @event_apply.register(NodePerformanceMeasured)
 def apply_node_performance_measured(event: NodePerformanceMeasured, state: State) -> State:
     new_profiles: Mapping[NodeId, NodePerformanceProfile] = {**state.node_profiles, event.node_id: event.node_profile}
-    return state.model_copy(update={"node_profiles": new_profiles})
+    state = state.model_copy(update={"node_profiles": new_profiles})
+    topology = copy.copy(state.topology)
+    topology.update_node_profile(event.node_id, event.node_profile)
+    return state.model_copy(update={"topology": topology})
 
 @event_apply.register(WorkerStatusUpdated)
 def apply_worker_status_updated(event: WorkerStatusUpdated, state: State) -> State:

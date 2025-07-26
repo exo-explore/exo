@@ -26,12 +26,16 @@ def get_instance_placements(
     if command.model_meta.model_id in available_models:
         raise ValueError(f"Instance for {command.model_meta.model_id} already exists")
     
-    candidate_cycles = topology.get_cycles()
-    cycles = filter_cycles_by_memory(candidate_cycles, command.model_meta.storage_size_kilobytes)
-    if not cycles:
+    all_nodes = list(topology.list_nodes())
+    cycles = topology.get_cycles()
+    nodes_in_cycles = {node.node_id for cycle in cycles for node in cycle}
+    singleton_cycles = [[node] for node in all_nodes if node.node_id not in nodes_in_cycles]
+    candidate_cycles = cycles + singleton_cycles
+    cycles_with_sufficient_memory = filter_cycles_by_memory(candidate_cycles, command.model_meta.storage_size_kilobytes)
+    if not cycles_with_sufficient_memory:
         raise ValueError("No cycles found with sufficient memory")
 
-    smallest_cycles = get_smallest_cycles(cycles)
+    smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
     selected_cycle = max(smallest_cycles, key=lambda cycle: sum(node.node_profile.memory.ram_available for node in cycle if node.node_profile is not None))
     
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)

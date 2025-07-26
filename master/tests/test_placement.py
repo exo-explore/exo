@@ -108,6 +108,77 @@ def test_get_instance_placements_create_instance(
     assert shards_sorted[0].start_layer == 0
     assert shards_sorted[-1].end_layer == total_layers
 
+def test_get_instance_placements_one_node_exact_fit(
+    create_node: Callable[[int, NodeId | None], Node],
+) -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(create_node(1000, node_id))
+    create_instance_command = CreateInstanceCommand(
+        command_id=CommandId(),
+        model_meta=ModelMetadata(
+            model_id="test-model",
+            storage_size_kilobytes=1000,
+            pretty_name="Test Model",
+            n_layers=10
+        ),
+        instance_id=InstanceId(),
+    )
+    placements = get_instance_placements(create_instance_command, topology, {})
+
+    assert len(placements) == 1
+    instance_id = list(placements.keys())[0]
+    instance = placements[instance_id]
+    assert instance.shard_assignments.model_id == "test-model"
+    assert len(instance.shard_assignments.node_to_runner) == 1
+    assert len(instance.shard_assignments.runner_to_shard) == 1
+    assert len(instance.shard_assignments.runner_to_shard) == 1
+
+def test_get_instance_placements_one_node_fits_with_extra_memory(
+    create_node: Callable[[int, NodeId | None], Node],
+) -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(create_node(1001, node_id))
+    create_instance_command = CreateInstanceCommand(
+        command_id=CommandId(),
+        model_meta=ModelMetadata(
+            model_id="test-model",
+            storage_size_kilobytes=1000,
+            pretty_name="Test Model",
+            n_layers=10
+        ),
+        instance_id=InstanceId(),
+    )
+    placements = get_instance_placements(create_instance_command, topology, {})
+
+    assert len(placements) == 1
+    instance_id = list(placements.keys())[0]
+    instance = placements[instance_id]
+    assert instance.shard_assignments.model_id == "test-model"
+    assert len(instance.shard_assignments.node_to_runner) == 1
+    assert len(instance.shard_assignments.runner_to_shard) == 1
+    assert len(instance.shard_assignments.runner_to_shard) == 1
+
+def test_get_instance_placements_one_node_not_fit(
+    create_node: Callable[[int, NodeId | None], Node],
+) -> None:
+    topology = Topology()
+    node_id = NodeId()
+    topology.add_node(create_node(1000, node_id))
+    create_instance_command = CreateInstanceCommand(
+        command_id=CommandId(),
+        model_meta=ModelMetadata(
+            model_id="test-model",
+            storage_size_kilobytes=1001,
+            pretty_name="Test Model",
+            n_layers=10
+        ),
+        instance_id=InstanceId(),
+    )
+
+    with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
+        get_instance_placements(create_instance_command, topology, {})
 
 def test_get_transition_events_no_change(topology: Topology, instance: Instance):
     # arrange
