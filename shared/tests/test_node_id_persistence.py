@@ -14,7 +14,7 @@ from typing import Optional
 from pytest import LogCaptureFixture
 
 from shared.constants import EXO_NODE_ID_KEYPAIR
-from shared.node_id import get_node_id_keypair
+from shared.utils import get_node_id_keypair
 
 NUM_CONCURRENT_PROCS = 10
 

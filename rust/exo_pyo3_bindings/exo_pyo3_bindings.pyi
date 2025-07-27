@@ -110,6 +110,16 @@ class Multiaddr:
         r"""
         TODO: documentation
         """
+    @staticmethod
+    def from_bytes(bytes:bytes) -> Multiaddr:
+        r"""
+        TODO: documentation
+        """
+    @staticmethod
+    def from_string(string:builtins.str) -> Multiaddr:
+        r"""
+        TODO: documentation
+        """
     def len(self) -> builtins.int:
         r"""
         TODO: documentation
@@ -122,8 +132,10 @@ class Multiaddr:
         r"""
         TODO: documentation
         """
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
+    def to_string(self) -> builtins.str:
+        r"""
+        TODO: documentation
+        """
 
 class PeerId:
     r"""

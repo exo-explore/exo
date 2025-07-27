@@ -177,6 +177,10 @@ class TopologyEdgeCreated(_BaseEvent[_EventType.TopologyEdgeCreated]):
 
 
 class TopologyEdgeReplacedAtomically(_BaseEvent[_EventType.TopologyEdgeReplacedAtomically]):
+    """
+    TODO: delete this????
+    """
+
     event_type: Literal[_EventType.TopologyEdgeReplacedAtomically] = _EventType.TopologyEdgeReplacedAtomically
     edge: Connection
     edge_profile: ConnectionProfile
@@ -185,6 +189,7 @@ class TopologyEdgeReplacedAtomically(_BaseEvent[_EventType.TopologyEdgeReplacedA
 class TopologyEdgeDeleted(_BaseEvent[_EventType.TopologyEdgeDeleted]):
     event_type: Literal[_EventType.TopologyEdgeDeleted] = _EventType.TopologyEdgeDeleted
     edge: Connection
+
 
 _Event = Union[
     TaskCreated,
@@ -262,8 +267,6 @@ def _check_event_type_consistency():
 
 
 _check_event_type_consistency()
-
-
 
 Event = Annotated[_Event, Field(discriminator="event_type")]
 """Type of events, a discriminated union."""

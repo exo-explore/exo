@@ -63,18 +63,17 @@ class Topology(TopologyProto):
         self._node_id_to_rx_id_map[node.node_id] = rx_id
         self._rx_id_to_node_id_map[rx_id] = node.node_id
 
-
     def add_connection(
-        self,
-        connection: Connection,
+            self,
+            connection: Connection,
     ) -> None:
-        if connection.source_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(Node(node_id=connection.source_node_id))
-        if connection.sink_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(Node(node_id=connection.sink_node_id))
+        if connection.local_node_id not in self._node_id_to_rx_id_map:
+            self.add_node(Node(node_id=connection.local_node_id))
+        if connection.send_back_node_id not in self._node_id_to_rx_id_map:
+            self.add_node(Node(node_id=connection.send_back_node_id))
 
-        src_id = self._node_id_to_rx_id_map[connection.source_node_id]
-        sink_id = self._node_id_to_rx_id_map[connection.sink_node_id]
+        src_id = self._node_id_to_rx_id_map[connection.local_node_id]
+        sink_id = self._node_id_to_rx_id_map[connection.send_back_node_id]
 
         rx_id = self._graph.add_edge(src_id, sink_id, connection)
         self._edge_id_to_rx_id_map[connection] = rx_id
@@ -89,15 +88,15 @@ class Topology(TopologyProto):
     def get_node_profile(self, node_id: NodeId) -> NodePerformanceProfile | None:
         rx_idx = self._node_id_to_rx_id_map[node_id]
         return self._graph.get_node_data(rx_idx).node_profile
-    
+
     def update_node_profile(self, node_id: NodeId, node_profile: NodePerformanceProfile) -> None:
         rx_idx = self._node_id_to_rx_id_map[node_id]
         self._graph[rx_idx].node_profile = node_profile
-    
+
     def update_connection_profile(self, connection: Connection) -> None:
         rx_idx = self._edge_id_to_rx_id_map[connection]
         self._graph.update_edge_by_index(rx_idx, connection)
-    
+
     def get_connection_profile(self, connection: Connection) -> ConnectionProfile | None:
         rx_idx = self._edge_id_to_rx_id_map[connection]
         return self._graph.get_edge_data_by_index(rx_idx).connection_profile
@@ -112,7 +111,7 @@ class Topology(TopologyProto):
     def remove_connection(self, connection: Connection) -> None:
         rx_idx = self._edge_id_to_rx_id_map[connection]
         if self._is_bridge(connection):
-            orphan_node_ids = self._get_orphan_node_ids(connection.source_node_id, connection)
+            orphan_node_ids = self._get_orphan_node_ids(connection.local_node_id, connection)
             for orphan_node_id in orphan_node_ids:
                 orphan_node_rx_id = self._node_id_to_rx_id_map[orphan_node_id]
                 self._graph.remove_node(orphan_node_rx_id)
@@ -122,16 +121,16 @@ class Topology(TopologyProto):
             self._graph.remove_edge_from_index(rx_idx)
             del self._edge_id_to_rx_id_map[connection]
             del self._rx_id_to_node_id_map[rx_idx]
-    
+
     def get_cycles(self) -> list[list[Node]]:
         cycle_idxs = rx.simple_cycles(self._graph)
         cycles: list[list[Node]] = []
         for cycle_idx in cycle_idxs:
             cycle = [self._graph[idx] for idx in cycle_idx]
             cycles.append(cycle)
-        
+
         return cycles
-    
+
     def _is_bridge(self, connection: Connection) -> bool:
         edge_idx = self._edge_id_to_rx_id_map[connection]
         graph_copy = self._graph.copy().to_undirected()
@@ -141,17 +140,17 @@ class Topology(TopologyProto):
         components_after = rx.number_connected_components(graph_copy)
 
         return components_after > components_before
-    
+
     def _get_orphan_node_ids(self, master_node_id: NodeId, connection: Connection) -> list[NodeId]:
         edge_idx = self._edge_id_to_rx_id_map[connection]
         graph_copy = self._graph.copy().to_undirected()
         graph_copy.remove_edge_from_index(edge_idx)
         components = rx.connected_components(graph_copy)
-        
-        orphan_node_rx_ids:  set[int] = set()
+
+        orphan_node_rx_ids: set[int] = set()
         master_node_rx_id = self._node_id_to_rx_id_map[master_node_id]
         for component in components:
             if master_node_rx_id not in component:
                 orphan_node_rx_ids.update(component)
-        
+
         return [self._rx_id_to_node_id_map[rx_id] for rx_id in orphan_node_rx_ids]

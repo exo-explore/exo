@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict
 from shared.apply import apply
 from shared.db.sqlite import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from shared.node_id import get_node_id_keypair
 from shared.types.common import NodeId
 from shared.types.events import (
     ChunkGenerated,
@@ -54,6 +53,7 @@ from shared.types.worker.runners import (
     RunningRunnerStatus,
 )
 from shared.types.worker.shards import ShardMetadata
+from shared.utils import get_node_id_keypair
 from worker.download.download_utils import build_model_path
 from worker.runner.runner_supervisor import RunnerSupervisor
 from worker.utils.profile import start_polling_node_metrics
@@ -226,7 +226,6 @@ class Worker:
         assigned_runner.status = ReadyRunnerStatus()
         yield assigned_runner.status_update_event()
 
-
     async def _execute_task_op(
         self, op: ExecuteTaskOp
     ) -> AsyncGenerator[Event, None]:
@@ -307,7 +306,6 @@ class Worker:
         finally:
             # Ensure the task is cleaned up
             await task
-
 
     ## Operation Planner
 
@@ -474,7 +472,7 @@ class Worker:
                             running_runner_count = 0
                             for other_runner_id, other_runner_status in state.runners.items():
                                 if other_runner_id in instance.shard_assignments.node_to_runner.values() and \
-                                    isinstance(other_runner_status, RunningRunnerStatus):
+                                        isinstance(other_runner_status, RunningRunnerStatus):
                                     running_runner_count += 1
 
                             if running_runner_count == runner.shard_metadata.world_size - 1:

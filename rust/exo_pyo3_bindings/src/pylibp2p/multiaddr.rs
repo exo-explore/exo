@@ -1,8 +1,10 @@
+use crate::ext::ResultExt;
 use libp2p::Multiaddr;
-use pyo3::prelude::{PyModule, PyModuleMethods};
+use pyo3::prelude::{PyBytesMethods, PyModule, PyModuleMethods};
 use pyo3::types::PyBytes;
-use pyo3::{pyclass, pymethods, Bound, PyResult, Python};
+use pyo3::{Bound, PyResult, Python, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use std::str::FromStr;
 
 /// TODO: documentation...
 #[gen_stub_pyclass]
@@ -28,6 +30,19 @@ impl PyMultiaddr {
     }
 
     /// TODO: documentation
+    #[staticmethod]
+    fn from_bytes(bytes: Bound<'_, PyBytes>) -> PyResult<Self> {
+        let bytes = Vec::from(bytes.as_bytes());
+        Ok(Self(Multiaddr::try_from(bytes).pyerr()?))
+    }
+
+    /// TODO: documentation
+    #[staticmethod]
+    fn from_string(string: String) -> PyResult<Self> {
+        Ok(Self(Multiaddr::from_str(&string).pyerr()?))
+    }
+
+    /// TODO: documentation
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -43,12 +58,19 @@ impl PyMultiaddr {
         PyBytes::new(py, &bytes)
     }
 
+    /// TODO: documentation
+    fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+
+    #[gen_stub(skip)]
     fn __repr__(&self) -> String {
         format!("Multiaddr({})", self.0)
     }
 
+    #[gen_stub(skip)]
     fn __str__(&self) -> String {
-        self.0.to_string()
+        self.to_string()
     }
 }
 

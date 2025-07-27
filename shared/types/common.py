@@ -11,15 +11,17 @@ class ID(str):
 
     @classmethod
     def __get_pydantic_core_schema__(
-        cls, 
-        _source: type[Any], 
-        handler: GetCoreSchemaHandler
+            cls,
+            _source: type[Any],
+            handler: GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
         # Re‑use the already‑defined schema for `str`
         return handler.generate_schema(str)
 
+
 class NodeId(ID):
     pass
+
 
 class CommandId(ID):
     pass

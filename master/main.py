@@ -6,7 +6,10 @@ import traceback
 from pathlib import Path
 from typing import List
 
+from exo_pyo3_bindings import Keypair
+
 from master.api import start_fastapi_server
+from master.discovery_supervisor import DiscoverySupervisor
 from master.election_callback import ElectionCallbacks
 from master.forwarder_supervisor import ForwarderRole, ForwarderSupervisor
 from master.placement import get_instance_placements, get_transition_events
@@ -14,7 +17,6 @@ from shared.apply import apply
 from shared.db.sqlite.config import EventLogConfig
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogManager
-from shared.node_id import get_node_id_keypair
 from shared.types.common import NodeId
 from shared.types.events import (
     Event,
@@ -30,14 +32,23 @@ from shared.types.events.commands import (
 from shared.types.state import State
 from shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
 from shared.types.worker.instances import Instance
+from shared.utils import get_node_id_keypair
 
 
 class Master:
-    def __init__(self, node_id: NodeId, command_buffer: list[Command], global_events: AsyncSQLiteEventStorage, worker_events: AsyncSQLiteEventStorage, forwarder_binary_path: Path, logger: logging.Logger):
+    def __init__(self, node_id_keypair: Keypair, node_id: NodeId, command_buffer: list[Command],
+                 global_events: AsyncSQLiteEventStorage, worker_events: AsyncSQLiteEventStorage,
+                 forwarder_binary_path: Path, logger: logging.Logger):
         self.node_id = node_id
         self.command_buffer = command_buffer
         self.global_events = global_events
         self.worker_events = worker_events
+        self.discovery_supervisor = DiscoverySupervisor(
+            node_id_keypair,
+            node_id,
+            global_events,
+            logger
+        )
         self.forwarder_supervisor = ForwarderSupervisor(
             forwarder_binary_path=forwarder_binary_path,
             logger=logger
@@ -128,7 +139,6 @@ class Master:
                 await asyncio.sleep(0.1)
 
 
-
 async def main():
     logger = logging.getLogger('master_logger')
     logger.setLevel(logging.DEBUG)
@@ -163,8 +173,10 @@ async def main():
     api_thread.start()
     logger.info('Running FastAPI server in a separate thread. Listening on port 8000.')
 
-    master = Master(node_id, command_buffer, global_events, worker_events, forwarder_binary_path=Path("./build/forwarder"), logger=logger)
+    master = Master(node_id_keypair, node_id, command_buffer, global_events, worker_events,
+                    forwarder_binary_path=Path("./build/forwarder"), logger=logger)
     await master.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

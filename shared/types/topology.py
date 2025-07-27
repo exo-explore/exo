@@ -7,31 +7,33 @@ from shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 
 
 class Connection(BaseModel):
-    source_node_id: NodeId
-    sink_node_id: NodeId
-    source_multiaddr: str
-    sink_multiaddr: str
+    local_node_id: NodeId
+    send_back_node_id: NodeId
+    local_multiaddr: str
+    send_back_multiaddr: str
     connection_profile: ConnectionProfile | None = None
 
     # required for Connection to be used as a key
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
     def __hash__(self) -> int:
-            return hash(
-                (
-                    self.source_node_id,
-                    self.sink_node_id,
-                    self.source_multiaddr,
-                    self.sink_multiaddr,
-                )
+        return hash(
+            (
+                self.local_node_id,
+                self.send_back_node_id,
+                self.local_multiaddr,
+                self.send_back_multiaddr,
             )
+        )
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Connection):
             raise ValueError("Cannot compare Connection with non-Connection")
         return (
-            self.source_node_id == other.source_node_id
-            and self.sink_node_id == other.sink_node_id
-            and self.source_multiaddr == other.source_multiaddr
-            and self.sink_multiaddr == other.sink_multiaddr
+                self.local_node_id == other.local_node_id
+                and self.send_back_node_id == other.send_back_node_id
+                and self.local_multiaddr == other.local_multiaddr
+                and self.send_back_multiaddr == other.send_back_multiaddr
         )
 
 
@@ -44,8 +46,8 @@ class TopologyProto(Protocol):
     def add_node(self, node: Node) -> None: ...
 
     def add_connection(
-        self,
-        connection: Connection,
+            self,
+            connection: Connection,
     ) -> None: ...
 
     def list_nodes(self) -> Iterable[Node]: ...

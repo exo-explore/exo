@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List
 
 import pytest
+from exo_pyo3_bindings import Keypair
 
 from master.main import Master
 from shared.db.sqlite.config import EventLogConfig
@@ -38,8 +39,10 @@ async def test_master():
 
     forwarder_binary_path = _create_forwarder_dummy_binary()
 
-    node_id = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-    master = Master(node_id, command_buffer=command_buffer, global_events=global_events, worker_events=event_log_manager.worker_events, forwarder_binary_path=forwarder_binary_path, logger=logger)
+    node_id_keypair = Keypair.generate_ed25519()
+    node_id = NodeId(node_id_keypair.to_peer_id().to_base58())
+    master = Master(node_id_keypair, node_id, command_buffer=command_buffer, global_events=global_events,
+                    forwarder_binary_path=forwarder_binary_path, logger=logger, worker_events=event_log_manager.worker_events)
     asyncio.create_task(master.run())
 
     command_buffer.append(

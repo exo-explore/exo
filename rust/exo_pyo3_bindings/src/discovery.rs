@@ -9,7 +9,7 @@ use crate::ext::ResultExt;
 use crate::pylibp2p::connection::PyConnectionId;
 use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
 use crate::pylibp2p::multiaddr::PyMultiaddr;
-use crate::{alias, pyclass, MPSC_CHANNEL_SIZE};
+use crate::{MPSC_CHANNEL_SIZE, alias, pyclass};
 use discovery::behaviour::{DiscoveryBehaviour, DiscoveryBehaviourEvent};
 use discovery::discovery_swarm;
 use libp2p::core::ConnectedPoint;
@@ -17,9 +17,9 @@ use libp2p::futures::StreamExt;
 use libp2p::multiaddr::multiaddr;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{ConnectionId, SwarmEvent, ToSwarm};
-use libp2p::{gossipsub, mdns, Multiaddr, PeerId, Swarm};
+use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
-use pyo3::{pymethods, Bound, Py, PyObject, PyResult, PyTraverseError, PyVisit, Python};
+use pyo3::{Bound, Py, PyObject, PyResult, PyTraverseError, PyVisit, Python, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::convert::identity;
 use std::error::Error;
@@ -274,7 +274,10 @@ impl PyDiscoveryService {
     #[allow(clippy::expect_used)]
     fn add_connected_callback<'py>(
         &self,
-        #[override_type(type_repr="collections.abc.Callable[[ConnectionUpdate], None]", imports=("collections.abc"))]
+        #[gen_stub(override_type(
+            type_repr="collections.abc.Callable[[ConnectionUpdate], None]",
+            imports=("collections.abc")
+        ))]
         callback: PyObject,
     ) -> PyResult<()> {
         use pyo3_async_runtimes::tokio::get_runtime;
@@ -304,7 +307,10 @@ impl PyDiscoveryService {
     #[allow(clippy::expect_used)]
     fn add_disconnected_callback<'py>(
         &self,
-        #[override_type(type_repr="collections.abc.Callable[[ConnectionUpdate], None]", imports=("collections.abc"))]
+        #[gen_stub(override_type(
+            type_repr="collections.abc.Callable[[ConnectionUpdate], None]",
+            imports=("collections.abc")
+        ))]
         callback: PyObject,
     ) -> PyResult<()> {
         use pyo3_async_runtimes::tokio::get_runtime;

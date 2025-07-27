@@ -13,10 +13,10 @@ def test_state_serialization_roundtrip() -> None:
     node_b = NodeId("node-b")
 
     connection = Connection(
-        source_node_id=node_a,
-        sink_node_id=node_b,
-        source_multiaddr="/ip4/127.0.0.1/tcp/10000",
-        sink_multiaddr="/ip4/127.0.0.1/tcp/10001",
+        local_node_id=node_a,
+        send_back_node_id=node_b,
+        local_multiaddr="/ip4/127.0.0.1/tcp/10000",
+        send_back_multiaddr="/ip4/127.0.0.1/tcp/10001",
     )
 
     state = State()
@@ -27,4 +27,4 @@ def test_state_serialization_roundtrip() -> None:
     restored_state = State.model_validate_json(json_repr)
 
     assert state.topology.to_snapshot() == restored_state.topology.to_snapshot()
-    assert restored_state.model_dump_json() == json_repr 
+    assert restored_state.model_dump_json() == json_repr

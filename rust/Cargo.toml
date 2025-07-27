@@ -76,7 +76,7 @@ libp2p-tcp = "0.44"
 # interop
 pyo3 = "0.25"
 #pyo3-stub-gen = { git = "https://github.com/Jij-Inc/pyo3-stub-gen.git", rev = "d2626600e52452e71095c57e721514de748d419d" } # v0.11 not yet published to crates
-pyo3-stub-gen = { git = "https://github.com/cstruct/pyo3-stub-gen.git", rev = "2efddde7dcffc462868aa0e4bbc46877c657a0fe" } # This fork adds support for type overrides => not merged yet!!!
+pyo3-stub-gen = { git = "https://github.com/cstruct/pyo3-stub-gen.git", rev = "a935099276fa2d273496a2759d4af7177a6acd57" } # This fork adds support for type overrides => not merged yet!!!
 pyo3-async-runtimes = "0.25"
 
 [workspace.lints.rust]
