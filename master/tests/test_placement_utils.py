@@ -37,6 +37,8 @@ def test_filter_cycles_by_memory(topology: Topology, create_node: Callable[[int,
     topology.add_connection(connection2)
     
     cycles = topology.get_cycles()
+    assert len(cycles) == 1
+    assert len(cycles[0]) == 2
 
     # act
     filtered_cycles = filter_cycles_by_memory(cycles, 1)
@@ -65,7 +67,7 @@ def test_filter_cycles_by_insufficient_memory(topology: Topology, create_node: C
     topology.add_connection(connection2)
     
     # act
-    filtered_cycles = filter_cycles_by_memory(topology.get_cycles(), 2001)
+    filtered_cycles = filter_cycles_by_memory(topology.get_cycles(), 2001*1024)
 
     # assert
     assert len(filtered_cycles) == 0
@@ -94,7 +96,7 @@ def test_filter_multiple_cycles_by_memory(topology: Topology, create_node: Calla
     cycles = topology.get_cycles()
     
     # act
-    filtered_cycles = filter_cycles_by_memory(cycles, 1500)
+    filtered_cycles = filter_cycles_by_memory(cycles, 1500*1024)
     
     # assert
     assert len(filtered_cycles) == 1

@@ -64,10 +64,9 @@ def test_get_instance_placements_create_instance(
     create_node: Callable[[int, NodeId | None], Node],
     create_connection: Callable[[NodeId, NodeId], Connection]
 ):
-    # TODO: this test is not exactly what we want. if a model can fit on one node, it should be placed there.
-    # TODO: right now we assume it will be placed across all nodes.
     # arrange
     model_meta.n_layers = total_layers
+    model_meta.storage_size_kilobytes = sum(available_memory) # make it exactly fit across all nodes
     
     create_instance_command = CreateInstanceCommand(
         command_id=CommandId(),
