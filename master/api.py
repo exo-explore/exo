@@ -5,6 +5,7 @@ from typing import Callable, List, Sequence, final
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
@@ -16,6 +17,8 @@ from shared.types.api import (
     CreateInstanceResponse,
     CreateInstanceTaskParams,
     DeleteInstanceResponse,
+    ModelList,
+    ModelListModel,
     StreamingChoiceResponse,
 )
 from shared.types.common import CommandId
@@ -64,11 +67,21 @@ async def resolve_model_meta(model_id: str) -> ModelMetadata:
 class API:
     def __init__(self, command_buffer: List[Command], global_events: AsyncSQLiteEventStorage, get_state: Callable[[], State]) -> None:
         self._app = FastAPI()
+        self._setup_cors()
         self._setup_routes()
 
         self.command_buffer = command_buffer
         self.global_events = global_events
         self.get_state = get_state
+
+    def _setup_cors(self) -> None:
+        self._app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     def _setup_routes(self) -> None:
         # self._app.get("/topology/control_plane")(self.get_control_plane_topology)
@@ -77,6 +90,8 @@ class API:
         self._app.post("/instance")(self.create_instance)
         self._app.get("/instance/{instance_id}")(self.get_instance)
         self._app.delete("/instance/{instance_id}")(self.delete_instance)
+        self._app.get("/models")(self.get_models)
+        self._app.get("/v1/models")(self.get_models)
         # self._app.get("/model/{model_id}/metadata")(self.get_model_data)
         # self._app.post("/model/{model_id}/instances")(self.get_instances_by_model)
         self._app.post("/v1/chat/completions")(self.chat_completions)
@@ -195,6 +210,16 @@ class API:
             self._generate_chat_stream(command.command_id),
             media_type="text/plain"
         )
+
+    async def get_models(self) -> ModelList:
+        """Returns list of available models."""
+        return ModelList(data=[
+            ModelListModel(
+                id=card.short_id,
+                hugging_face_id=card.model_id,
+                name=card.name,
+                description=card.description,
+                tags=card.tags) for card in MODEL_CARDS.values()])
 
 
 

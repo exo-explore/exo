@@ -1,12 +1,29 @@
-from typing import Any, Literal
+import time
+from typing import Any, List, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from shared.openai_compat import FinishReason
 from shared.types.common import CommandId
 from shared.types.models import ModelMetadata
 from shared.types.worker.instances import InstanceId
 
+
+class ModelListModel(BaseModel):
+    id: str
+    object: str = "model"
+    created: int = Field(default_factory=lambda: int(time.time()))
+    owned_by: str = "exo"
+    # openwebui fields
+    hugging_face_id: str = Field(default="")
+    name: str = Field(default="")
+    description: str = Field(default="")
+    context_length: int = Field(default=0)
+    tags: List[str] = Field(default=[])
+
+class ModelList(BaseModel):
+    object: str = "list"
+    data: List[ModelListModel]
 
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]

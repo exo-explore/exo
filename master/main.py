@@ -127,7 +127,7 @@ class Master:
             print(f"applying event: {event_from_log}")
             self.state = apply(self.state, event_from_log)
 
-        self.logger.info(f"state: {self.state.model_dump_json()}")
+        self.logger.info(f"state: {self.state}")
 
     async def run(self):
         self.state = await self._get_state_snapshot()

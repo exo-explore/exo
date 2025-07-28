@@ -1,3 +1,4 @@
+import random
 from collections.abc import Mapping
 from copy import deepcopy
 from functools import singledispatch
@@ -16,6 +17,9 @@ from shared.types.events.commands import CreateInstanceCommand, DeleteInstanceCo
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import Instance, InstanceStatus
 
+
+def random_ephemeral_port() -> int:
+    return random.randint(49152, 65535)
 
 @singledispatch
 def get_instance_placements(
@@ -52,7 +56,8 @@ def get_instance_placements(
         shard_assignments=shard_assignments,
         hosts=[Host(
             ip=host.ip,
-            port=host.port,
+            # NOTE: it's fine to have non-deterministic ports here since this is in a command decision
+            port=random_ephemeral_port(),
         ) for host in hosts]
     )
     return target_instances
