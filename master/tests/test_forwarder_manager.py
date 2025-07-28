@@ -24,6 +24,7 @@ from shared.constants import (
     LIBP2P_GLOBAL_EVENTS_TOPIC,
     LIBP2P_WORKER_EVENTS_TOPIC,
 )
+from shared.types.common import NodeId
 
 # Mock forwarder script content
 MOCK_FORWARDER_SCRIPT = '''#!/usr/bin/env python3
@@ -182,7 +183,7 @@ class TestForwardersupervisorBasic:
         # Set environment
         os.environ.update(mock_env_vars)
         
-        supervisor = ForwarderSupervisor(mock_forwarder_script, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
         await supervisor.start_as_replica()
         
         # Track the process for cleanup
@@ -224,7 +225,7 @@ class TestForwardersupervisorBasic:
         """Test changing role from replica to master."""
         os.environ.update(mock_env_vars)
         
-        supervisor = ForwarderSupervisor(mock_forwarder_script, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
         await supervisor.start_as_replica()
         
         if supervisor.process:
@@ -268,7 +269,7 @@ class TestForwardersupervisorBasic:
         """Test that setting the same role twice doesn't restart the process."""
         os.environ.update(mock_env_vars)
         
-        supervisor = ForwarderSupervisor(mock_forwarder_script, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
         await supervisor.start_as_replica()
         
         original_pid = supervisor.process_pid
@@ -300,6 +301,7 @@ class TestForwardersupervisorBasic:
         os.environ.update(mock_env_vars)
         
         supervisor = ForwarderSupervisor(
+            NodeId(),
             mock_forwarder_script,
             test_logger,
             health_check_interval=0.5  # Faster health checks for testing
@@ -346,7 +348,7 @@ class TestForwardersupervisorBasic:
         """Test behavior when forwarder binary doesn't exist."""
         nonexistent_path = temp_dir / "nonexistent_forwarder"
         
-        supervisor = ForwarderSupervisor(nonexistent_path, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), nonexistent_path, test_logger)
         
         # Should raise FileNotFoundError
         with pytest.raises(FileNotFoundError):

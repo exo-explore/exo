@@ -41,6 +41,8 @@ pub(crate) mod private {
 /// Create and configure a swarm, and start listening to all ports/OS.
 #[inline]
 pub fn discovery_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm<DiscoveryBehaviour>> {
+    let peer_id = keypair.public().to_peer_id();
+    log::info!("RUST: Creating discovery swarm with peer_id: {}", peer_id);
     let mut swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(discovery_transport)?
@@ -49,7 +51,9 @@ pub fn discovery_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm<Dis
 
     // Listen on all interfaces and whatever port the OS assigns
     // swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?; // TODO: make this
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let listen_addr = "/ip4/0.0.0.0/tcp/0".parse()?;
+    log::info!("RUST: Attempting to listen on: {}", listen_addr);
+    swarm.listen_on(listen_addr)?;
 
     Ok(swarm)
 }

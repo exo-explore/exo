@@ -114,6 +114,9 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 def apply_node_performance_measured(event: NodePerformanceMeasured, state: State) -> State:
     new_profiles: Mapping[NodeId, NodePerformanceProfile] = {**state.node_profiles, event.node_id: event.node_profile}
     state = state.model_copy(update={"node_profiles": new_profiles})
+    if not state.topology.contains_node(event.node_id):
+        # TODO: figure out why this is happening in the first place
+        return state
     topology = copy.copy(state.topology)
     topology.update_node_profile(event.node_id, event.node_profile)
     return state.model_copy(update={"topology": topology})
@@ -148,5 +151,7 @@ def apply_topology_edge_replaced_atomically(event: TopologyEdgeReplacedAtomicall
 @event_apply.register(TopologyEdgeDeleted)
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
     topology = copy.copy(state.topology)
+    if not topology.contains_connection(event.edge):
+        return state
     topology.remove_connection(event.edge)
     return state.model_copy(update={"topology": topology})

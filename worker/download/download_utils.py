@@ -198,17 +198,22 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
       hasher.update(chunk)
   return hasher.hexdigest()
 
-async def file_meta(repo_id: str, revision: str, path: str) -> Tuple[int, str]:
-  url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
+async def file_meta(repo_id: str, revision: str, path: str, redirected_location: str | None = None) -> Tuple[int, str]:
+  # NOTE: huggingface broke the E-Tag so we can no longer assume E-Tag == sha256(file)
+  url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path) if redirected_location is None else f"{get_hf_endpoint()}{redirected_location}"
   headers = await get_auth_headers()
   async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session, session.head(url, headers=headers) as r:
-      content_length = int(r.headers.get('x-linked-size') or r.headers.get('content-length') or 0)
-      etag = r.headers.get('X-Linked-ETag') or r.headers.get('ETag') or r.headers.get('Etag')
-      assert content_length > 0, f"No content length for {url}"
-      assert etag is not None, f"No remote hash for {url}"
-      if  (etag[0] == '"' and etag[-1] == '"') or (etag[0] == "'" and etag[-1] == "'"):
-        etag = etag[1:-1]
-      return content_length, etag
+    if r.status == 307:
+      redirected_location = r.headers.get('Location')
+      return await file_meta(repo_id, revision, path, redirected_location)
+
+    content_length = int(r.headers.get('x-linked-size') or r.headers.get('content-length') or 0)
+    etag = r.headers.get('X-Linked-ETag') or r.headers.get('ETag') or r.headers.get('Etag')
+    assert content_length > 0, f"No content length for {url}"
+    assert etag is not None, f"No remote hash for {url}"
+    if  (etag[0] == '"' and etag[-1] == '"') or (etag[0] == "'" and etag[-1] == "'"):
+      etag = etag[1:-1]
+    return content_length, etag
 
 async def download_file_with_retry(repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Callable[[int, int], None] = lambda _, __: None) -> Path:
   n_attempts = 30
@@ -243,7 +248,8 @@ async def _download_file(repo_id: str, revision: str, path: str, target_dir: Pat
         assert r.status in [200, 206], f"Failed to download {path} from {url}: {r.status}"
         async with aiofiles.open(partial_path, 'ab' if resume_byte_pos else 'wb') as f:
           while chunk := await r.content.read(8 * 1024 * 1024):
-            on_progress(n_read := n_read + await f.write(chunk), length)
+            n_read = n_read + (await f.write(chunk))
+            on_progress(n_read, length)
 
   final_hash = await calc_hash(partial_path, hash_type="sha256" if len(remote_hash) == 64 else "sha1")
   integrity = final_hash == remote_hash

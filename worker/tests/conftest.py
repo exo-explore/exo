@@ -9,7 +9,7 @@ from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from shared.models.model_meta import get_model_meta
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
-from shared.types.common import NodeId
+from shared.types.common import CommandId, NodeId
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
 from shared.types.tasks import (
@@ -27,6 +27,7 @@ from shared.types.worker.ops import (
 )
 from shared.types.worker.runners import RunnerId, ShardAssignments
 from shared.types.worker.shards import PipelineShardMetadata
+from worker.download.shard_downloader import NoopShardDownloader
 from worker.main import Worker
 
 
@@ -103,6 +104,7 @@ def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
     def _chat_completion_task(instance_id: InstanceId) -> ChatCompletionTask:
         return ChatCompletionTask(
             task_id=TaskId(),
+            command_id=CommandId(),
             instance_id=instance_id,
             task_type=TaskType.CHAT_COMPLETION,
             task_status=TaskStatus.PENDING,
@@ -153,9 +155,10 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
 @pytest.fixture
 async def worker(node_id: NodeId, logger: Logger):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
+    shard_downloader = NoopShardDownloader()
     await event_log_manager.initialize()
 
-    return Worker(node_id, logger, worker_events=event_log_manager.global_events, global_events=event_log_manager.global_events)
+    return Worker(node_id, logger, shard_downloader, worker_events=event_log_manager.global_events, global_events=event_log_manager.global_events)
 
 @pytest.fixture
 async def worker_with_assigned_runner(worker: Worker, instance: Callable[[InstanceId, NodeId, RunnerId], Instance]):
@@ -204,7 +207,8 @@ def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker,
         global_events = event_log_manager.global_events
         await global_events.delete_all_events()
 
-        worker = Worker(node_id, logger=logger, worker_events=global_events, global_events=global_events)
+        shard_downloader = NoopShardDownloader()
+        worker = Worker(node_id, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
         asyncio.create_task(worker.run())
 
         return worker, global_events

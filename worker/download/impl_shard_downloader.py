@@ -64,6 +64,9 @@ class SingletonShardDownloader(ShardDownloader):
     async for path, status in self.shard_downloader.get_shard_download_status():
       yield path, status
 
+  async def get_shard_download_status_for_shard(self, shard: ShardMetadata) -> RepoDownloadProgress:
+    return await self.shard_downloader.get_shard_download_status_for_shard(shard)
+
 class CachedShardDownloader(ShardDownloader):
   def __init__(self, shard_downloader: ShardDownloader):
     self.shard_downloader = shard_downloader
@@ -85,6 +88,9 @@ class CachedShardDownloader(ShardDownloader):
   async def get_shard_download_status(self) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
     async for path, status in self.shard_downloader.get_shard_download_status():
       yield path, status
+
+  async def get_shard_download_status_for_shard(self, shard: ShardMetadata) -> RepoDownloadProgress:
+    return await self.shard_downloader.get_shard_download_status_for_shard(shard)
 
 class ResumableShardDownloader(ShardDownloader):
   def __init__(self, max_parallel_downloads: int = 8):
@@ -126,3 +132,7 @@ class ResumableShardDownloader(ShardDownloader):
         yield (path, progress)
       except Exception as e:
         print("Error downloading shard:", e)
+
+  async def get_shard_download_status_for_shard(self, shard: ShardMetadata) -> RepoDownloadProgress:
+    _, progress = await download_shard(shard, self.on_progress_wrapper, skip_download=True)
+    return progress

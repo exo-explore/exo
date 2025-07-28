@@ -32,6 +32,7 @@ from shared.types.worker.runners import (
     # RunningRunnerStatus,
 )
 from shared.types.worker.shards import PipelineShardMetadata
+from worker.download.shard_downloader import NoopShardDownloader
 from worker.main import AssignedRunner, Worker
 from worker.tests.test_worker_integration_utils import read_streaming_response
 
@@ -269,14 +270,15 @@ async def test_2_runner_inference(
     ):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
+    shard_downloader = NoopShardDownloader()
 
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
-    worker1 = Worker(NODE_A, logger=logger, worker_events=global_events, global_events=global_events)
+    worker1 = Worker(NODE_A, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
     asyncio.create_task(worker1.run())
 
-    worker2 = Worker(NODE_B, logger=logger, worker_events=global_events, global_events=global_events)
+    worker2 = Worker(NODE_B, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
     asyncio.create_task(worker2.run())
 
     ## Instance
@@ -348,14 +350,15 @@ async def test_runner_respawn(
     ):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
+    shard_downloader = NoopShardDownloader()
 
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
-    worker1 = Worker(NODE_A, logger=logger, worker_events=global_events, global_events=global_events)
+    worker1 = Worker(NODE_A, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
     asyncio.create_task(worker1.run())
 
-    worker2 = Worker(NODE_B, logger=logger, worker_events=global_events, global_events=global_events)
+    worker2 = Worker(NODE_B, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
     asyncio.create_task(worker2.run())
 
     ## Instance

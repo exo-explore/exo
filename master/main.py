@@ -39,6 +39,7 @@ class Master:
     def __init__(self, node_id_keypair: Keypair, node_id: NodeId, command_buffer: list[Command],
                  global_events: AsyncSQLiteEventStorage, worker_events: AsyncSQLiteEventStorage,
                  forwarder_binary_path: Path, logger: logging.Logger):
+        self.state = State()
         self.node_id = node_id
         self.command_buffer = command_buffer
         self.global_events = global_events
@@ -46,15 +47,21 @@ class Master:
         self.discovery_supervisor = DiscoverySupervisor(
             node_id_keypair,
             node_id,
-            global_events,
+            # TODO: needs to be more general for when we have master election
+            worker_events if os.getenv('EXO_RUN_AS_REPLICA') in set(['TRUE', 'true', '1']) else global_events,
             logger
         )
         self.forwarder_supervisor = ForwarderSupervisor(
+            self.node_id,
             forwarder_binary_path=forwarder_binary_path,
             logger=logger
         )
         self.election_callbacks = ElectionCallbacks(self.forwarder_supervisor, logger)
         self.logger = logger
+
+    @property
+    def event_log_for_reads(self) -> AsyncSQLiteEventStorage:
+        return self.global_events
 
     @property
     def event_log_for_writes(self) -> AsyncSQLiteEventStorage:
@@ -89,8 +96,9 @@ class Master:
                     next_events.append(TaskCreated(
                         task_id=task_id,
                         task=ChatCompletionTask(
-                            task_id=task_id,
                             task_type=TaskType.CHAT_COMPLETION,
+                            task_id=task_id,
+                            command_id=next_command.command_id,
                             instance_id=matching_instance.instance_id,
                             task_status=TaskStatus.PENDING,
                             task_params=next_command.request_params
@@ -108,16 +116,18 @@ class Master:
             await self.event_log_for_writes.append_events(next_events, origin=self.node_id)
 
         # 2. get latest events
-        events = await self.global_events.get_events_since(self.state.last_event_applied_idx)
+        events = await self.event_log_for_reads.get_events_since(self.state.last_event_applied_idx)
         if len(events) == 0:
             await asyncio.sleep(0.01)
             return
+        self.logger.info(f"got events: {events}")
 
         # 3. for each event, apply it to the state
         for event_from_log in events:
+            print(f"applying event: {event_from_log}")
             self.state = apply(self.state, event_from_log)
 
-        self.logger.info(f"state: {self.state}")
+        self.logger.info(f"state: {self.state.model_dump_json()}")
 
     async def run(self):
         self.state = await self._get_state_snapshot()

@@ -24,8 +24,8 @@ def test_filter_cycles_by_memory(topology: Topology, create_node: Callable[[int,
     node1_id = NodeId()
     node2_id = NodeId()
 
-    node1 = create_node(1000, node1_id)
-    node2 = create_node(1000, node2_id)
+    node1 = create_node(1000*1024, node1_id)
+    node2 = create_node(1000*1024, node2_id)
     
     topology.add_node(node1)
     topology.add_node(node2)
@@ -52,8 +52,8 @@ def test_filter_cycles_by_insufficient_memory(topology: Topology, create_node: C
     node1_id = NodeId()
     node2_id = NodeId()
 
-    node1 = create_node(1000, node1_id)
-    node2 = create_node(1000, node2_id)
+    node1 = create_node(1000*1024, node1_id)
+    node2 = create_node(1000*1024, node2_id)
 
     topology.add_node(node1)
     topology.add_node(node2)
@@ -77,9 +77,9 @@ def test_filter_multiple_cycles_by_memory(topology: Topology, create_node: Calla
     node_b_id = NodeId()
     node_c_id = NodeId()
     
-    node_a = create_node(500, node_a_id)
-    node_b = create_node(500, node_b_id)
-    node_c = create_node(1000, node_c_id)
+    node_a = create_node(500*1024, node_a_id)
+    node_b = create_node(500*1024, node_b_id)
+    node_c = create_node(1000*1024, node_c_id)
     
     topology.add_node(node_a)
     topology.add_node(node_b)
@@ -107,9 +107,9 @@ def test_get_smallest_cycles(topology: Topology, create_node: Callable[[int, Nod
     node_b_id = NodeId()
     node_c_id = NodeId()
     
-    node_a = create_node(500, node_a_id)
-    node_b = create_node(500, node_b_id)
-    node_c = create_node(1000, node_c_id)
+    node_a = create_node(500*1024, node_a_id)
+    node_b = create_node(500*1024, node_b_id)
+    node_c = create_node(1000*1024, node_c_id)
 
     topology.add_node(node_a)
     topology.add_node(node_b)
@@ -139,9 +139,9 @@ def test_get_shard_assignments(topology: Topology, create_node: Callable[[int, N
     node_b_id = NodeId()
     node_c_id = NodeId()
     
-    node_a = create_node(available_memory[0], node_a_id)
-    node_b = create_node(available_memory[1], node_b_id)
-    node_c = create_node(available_memory[2], node_c_id)
+    node_a = create_node(available_memory[0]*1024, node_a_id)
+    node_b = create_node(available_memory[1]*1024, node_b_id)
+    node_c = create_node(available_memory[2]*1024, node_c_id)
 
     topology.add_node(node_a)
     topology.add_node(node_b)

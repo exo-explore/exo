@@ -1,8 +1,9 @@
 import asyncio
 import logging
-import os
 from asyncio import Queue
+from copy import deepcopy
 from functools import partial
+from time import process_time
 from typing import AsyncGenerator, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -54,7 +55,8 @@ from shared.types.worker.runners import (
 )
 from shared.types.worker.shards import ShardMetadata
 from shared.utils import get_node_id_keypair
-from worker.download.download_utils import build_model_path
+from worker.download.impl_shard_downloader import exo_shard_downloader
+from worker.download.shard_downloader import RepoDownloadProgress, ShardDownloader
 from worker.runner.runner_supervisor import RunnerSupervisor
 from worker.utils.profile import start_polling_node_metrics
 
@@ -70,15 +72,15 @@ class AssignedRunner(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    @property
-    def is_downloaded(self) -> bool:
-        # TODO: Do this properly with huggingface validating each of the files.
-        return os.path.exists(build_model_path(self.shard_metadata.model_meta.model_id))
-
+    is_downloaded: bool = False
+    
+    def set_is_downloaded(self, is_downloaded: bool) -> None:
+        self.is_downloaded = is_downloaded
+    
     def status_update_event(self) -> RunnerStatusUpdated:
         return RunnerStatusUpdated(
             runner_id=self.runner_id,
-            runner_status=self.status,
+            runner_status=deepcopy(self.status),
         )
 
 class Worker:
@@ -86,11 +88,13 @@ class Worker:
         self,
         node_id: NodeId,
         logger: logging.Logger,
+        shard_downloader: ShardDownloader,
         worker_events: AsyncSQLiteEventStorage | None,
         global_events: AsyncSQLiteEventStorage | None,
     ):
         self.node_id: NodeId = node_id
         self.state: State = State()
+        self.shard_downloader: ShardDownloader = shard_downloader
         self.worker_events: AsyncSQLiteEventStorage | None = worker_events # worker_events is None in some tests.
         self.global_events: AsyncSQLiteEventStorage | None = global_events
         self.logger: logging.Logger = logger
@@ -183,12 +187,26 @@ class Worker:
         The model needs assigning and then downloading.
         This op moves the runner from Assigned -> Downloading -> Ready state.
         '''
+        
+        initial_progress = await self.shard_downloader.get_shard_download_status_for_shard(op.shard_metadata)
+        if initial_progress.status == "complete":
+            self.assigned_runners[op.runner_id].set_is_downloaded(True)
+            self.assigned_runners[op.runner_id].status = DownloadingRunnerStatus(
+                download_progress=DownloadCompleted(
+                    node_id=self.node_id,
+                )
+            )
+            yield self.assigned_runners[op.runner_id].status_update_event()
+            self.assigned_runners[op.runner_id].status = ReadyRunnerStatus()
+            yield self.assigned_runners[op.runner_id].status_update_event()
+            return
+        
         initial_status = DownloadingRunnerStatus(
             download_progress=DownloadOngoing(
                 node_id=self.node_id,
                 download_progress=DownloadProgressData(
-                    total_bytes=1, # tmp
-                    downloaded_bytes=0
+                    total_bytes=initial_progress.total_bytes,
+                    downloaded_bytes=initial_progress.downloaded_bytes
                 )
             )
         )
@@ -206,25 +224,53 @@ class Worker:
 
         # Download it!
         # TODO: we probably want download progress as part of a callback that gets passed to the downloader.
+        download_progress_queue: asyncio.Queue[RepoDownloadProgress] = asyncio.Queue()
+        def download_progress_callback(shard: ShardMetadata, progress: RepoDownloadProgress) -> None:
+            download_progress_queue.put_nowait(progress)
 
-        try:
-            assert assigned_runner.is_downloaded
-            assigned_runner.status = DownloadingRunnerStatus(
-                download_progress=DownloadCompleted(
-                    node_id=self.node_id,
+
+        self.shard_downloader.on_progress(download_progress_callback)
+
+        asyncio.create_task(self.shard_downloader.ensure_shard(op.shard_metadata))
+
+        timeout_secs = 10 * 60
+        start_time = process_time()
+        last_yield_progress = start_time
+        while process_time() - start_time < timeout_secs:
+            progress: RepoDownloadProgress = await download_progress_queue.get()
+            if progress.status == "complete":
+                assigned_runner.status = DownloadingRunnerStatus(
+                    download_progress=DownloadCompleted(
+                        node_id=self.node_id,
+                    )
                 )
-            )
-        except Exception as e:
+                yield assigned_runner.status_update_event()
+                assigned_runner.set_is_downloaded(True)
+                assigned_runner.status = ReadyRunnerStatus()
+                yield assigned_runner.status_update_event()
+                break
+            elif progress.status == "in_progress":
+                if process_time() - last_yield_progress > 1:
+                    assigned_runner.status = DownloadingRunnerStatus(
+                        download_progress=DownloadOngoing(
+                            node_id=self.node_id,
+                            download_progress=DownloadProgressData(
+                                total_bytes=progress.total_bytes,
+                                downloaded_bytes=progress.downloaded_bytes,
+                            )
+                        )
+                    )
+                    yield assigned_runner.status_update_event()
+                    last_yield_progress = process_time()
+        else:
             assigned_runner.status = DownloadingRunnerStatus(
                 download_progress=DownloadFailed(
                     node_id=self.node_id,
-                    error_message=str(e)
+                    error_message=f"Timeout downloading model: {op.shard_metadata.model_meta.model_id}"
                 )
             )
-        yield assigned_runner.status_update_event()
+            yield assigned_runner.status_update_event()
 
-        assigned_runner.status = ReadyRunnerStatus()
-        yield assigned_runner.status_update_event()
 
     async def _execute_task_op(
         self, op: ExecuteTaskOp
@@ -383,6 +429,7 @@ class Worker:
         for _instance_id, instance in state.instances.items():
             if self.node_id in instance.shard_assignments.node_to_runner and \
                 instance.shard_assignments.node_to_runner[self.node_id] in state.runners and \
+                instance.shard_assignments.node_to_runner[self.node_id] in self.assigned_runners and \
                 isinstance(self.assigned_runners[instance.shard_assignments.node_to_runner[self.node_id]].status, FailedRunnerStatus):
 
                 num_spundown_nodes = 0
@@ -484,6 +531,7 @@ class Worker:
     async def event_publisher(self, event: Event) -> None:
         assert self.worker_events is not None
         await self.worker_events.append_events([event], self.node_id)
+        print(f"published event: {event}")
 
     # Handle state updates
     async def run(self):
@@ -500,6 +548,8 @@ class Worker:
 
             # 3. based on the updated state, we plan & execute an operation.
             op: RunnerOp | None = self.plan(self.state)
+            if op is not None:
+                self.logger.info(f"!!! plan result: {op}")
 
             # run the op, synchronously blocking for now
             if op is not None:
@@ -507,7 +557,8 @@ class Worker:
                     await self.event_publisher(event)
 
             await asyncio.sleep(0.01)
-            self.logger.info(f"state: {self.state}")
+            if len(events) > 0:
+                self.logger.info(f"state: {self.state}")
 
 
 async def main():
@@ -522,6 +573,7 @@ async def main():
 
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
+    shard_downloader = exo_shard_downloader()
     
     # TODO: add profiling etc to resource monitor
     async def resource_monitor_callback(node_performance_profile: NodePerformanceProfile) -> None:
@@ -530,7 +582,7 @@ async def main():
         )
     asyncio.create_task(start_polling_node_metrics(callback=resource_monitor_callback))
 
-    worker = Worker(node_id, logger, event_log_manager.worker_events, event_log_manager.global_events)
+    worker = Worker(node_id, logger, shard_downloader, event_log_manager.worker_events, event_log_manager.global_events)
 
     await worker.run()
 

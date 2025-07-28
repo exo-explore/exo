@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, List, Optional, override
+from typing import Final, List, Optional
 
 from shared.models.model_cards import MODEL_CARDS, ModelCard
-from shared.types.common import NodeId
+from shared.types.common import CommandId, NodeId
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
 from shared.types.tasks import TaskId
@@ -20,7 +20,6 @@ from shared.types.worker.runners import (
     ShardAssignments,
 )
 from shared.types.worker.shards import PipelineShardMetadata
-from worker.main import AssignedRunner
 
 NODE_A: Final[NodeId] = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 NODE_B: Final[NodeId] = NodeId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
@@ -33,11 +32,11 @@ INSTANCE_2_ID: Final[InstanceId] = InstanceId()
 MODEL_A_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
 MODEL_B_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
 TASK_1_ID: Final[TaskId] = TaskId()
+COMMAND_1_ID: Final[CommandId] = CommandId()
 
 @dataclass(slots=True, frozen=True)
 class InProcessRunner:
     """Minimal description of a runner's in-process state."""
-    # TODO: Rename to InProcessRunnerConfig and create a constructor for OverrideAssignedRunner.
 
     runner_id: RunnerId
     instance_id: InstanceId
@@ -45,15 +44,6 @@ class InProcessRunner:
     status: RunnerStatus
     downloaded: bool
     device_rank: int = 0
-
-# Helper class to override the is_downloaded property to whatever is specified by InProcessRunner
-class OverrideAssignedRunner(AssignedRunner):
-    downloaded: bool    
-
-    @property
-    @override
-    def is_downloaded(self) -> bool:
-        return self.downloaded
 
 
 @dataclass(slots=True, frozen=True)

@@ -63,6 +63,12 @@ class Topology(TopologyProto):
         self._node_id_to_rx_id_map[node.node_id] = rx_id
         self._rx_id_to_node_id_map[rx_id] = node.node_id
 
+    def contains_node(self, node_id: NodeId) -> bool:
+        return node_id in self._node_id_to_rx_id_map
+
+    def contains_connection(self, connection: Connection) -> bool:
+        return connection in self._edge_id_to_rx_id_map
+
     def add_connection(
             self,
             connection: Connection,
@@ -120,7 +126,8 @@ class Topology(TopologyProto):
         else:
             self._graph.remove_edge_from_index(rx_idx)
             del self._edge_id_to_rx_id_map[connection]
-            del self._rx_id_to_node_id_map[rx_idx]
+            if rx_idx in self._rx_id_to_node_id_map:
+                del self._rx_id_to_node_id_map[rx_idx]
 
     def get_cycles(self) -> list[list[Node]]:
         cycle_idxs = rx.simple_cycles(self._graph)

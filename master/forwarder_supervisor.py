@@ -10,6 +10,7 @@ from shared.constants import (
     LIBP2P_GLOBAL_EVENTS_TOPIC,
     LIBP2P_WORKER_EVENTS_TOPIC,
 )
+from shared.types.common import NodeId
 
 
 class ForwarderRole(str, Enum):
@@ -35,10 +36,12 @@ class ForwarderSupervisor:
     
     def __init__(
         self, 
+        node_id: NodeId,
         forwarder_binary_path: Path,
         logger: Logger,
         health_check_interval: float = 5.0
     ):
+        self.node_id = node_id
         self._binary_path = forwarder_binary_path
         self._logger = logger
         self._health_check_interval = health_check_interval
@@ -108,6 +111,9 @@ class ForwarderSupervisor:
             f'{pairs}',
             stdout=None,
             stderr=None,
+            env={
+                "FORWARDER_NODE_ID": str(self.node_id),
+            }
         )
         
         self._logger.info(f"Starting forwarder with forwarding pairs: {pairs}")

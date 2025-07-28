@@ -29,6 +29,7 @@ from shared.types.events.commands import (
     DeleteInstanceCommand,
 )
 from shared.types.events.components import EventFromEventLog
+from shared.types.models import ModelMetadata
 from shared.types.state import State
 from shared.types.tasks import ChatCompletionTaskParams
 from shared.types.worker.common import InstanceId
@@ -37,9 +38,9 @@ from shared.types.worker.instances import Instance
 
 def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
     return ChatCompletionResponse(
-        id='abc',
+        id=chunk.command_id,
         created=int(time.time()),
-        model='idk',
+        model=chunk.model,
         choices=[
             StreamingChoiceResponse(
                 index=0,
@@ -52,6 +53,12 @@ def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
         ]
     )
 
+async def resolve_model_meta(model_id: str) -> ModelMetadata:
+    if model_id in MODEL_CARDS:
+        model_card = MODEL_CARDS[model_id]
+        return model_card.metadata
+    else:
+        return await get_model_meta(model_id)
 
 @final
 class API:
@@ -67,7 +74,7 @@ class API:
         # self._app.get("/topology/control_plane")(self.get_control_plane_topology)
         # self._app.get("/topology/data_plane")(self.get_data_plane_topology)
         # self._app.get("/instances/list")(self.list_instances)
-        self._app.post("/instances/create")(self.create_instance)
+        self._app.post("/instance")(self.create_instance)
         self._app.get("/instance/{instance_id}")(self.get_instance)
         self._app.delete("/instance/{instance_id}")(self.delete_instance)
         # self._app.get("/model/{model_id}/metadata")(self.get_model_data)
@@ -92,11 +99,7 @@ class API:
     #     return {"message": "Hello, World!"}
 
     async def create_instance(self, payload: CreateInstanceTaskParams) -> CreateInstanceResponse:
-        if payload.model_id in MODEL_CARDS:
-            model_card = MODEL_CARDS[payload.model_id]
-            model_meta = model_card.metadata
-        else:
-            model_meta = await get_model_meta(payload.model_id)
+        model_meta = await resolve_model_meta(payload.model_id)
 
         command = CreateInstanceCommand(
             command_id=CommandId(),
@@ -139,21 +142,11 @@ class API:
 
     # def get_instances_by_model(self, model_id: ModelId) -> list[Instance]: ...
 
-    async def _generate_chat_stream(self, payload: ChatCompletionTaskParams) -> AsyncGenerator[str, None]:
+    async def _generate_chat_stream(self, command_id: CommandId) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
+
         events = await self.global_events.get_events_since(0)
         prev_idx = await self.global_events.get_last_idx()
-
-        # At the moment, we just create the task in the API.
-        # In the future, a `Request` will be created here and they will be bundled into `Task` objects by the master.
-        command_id=CommandId()
-
-        request = ChatCompletionCommand(
-            command_id=command_id,
-            command_type=CommandType.CHAT_COMPLETION,
-            request_params=payload,
-        )
-        self.command_buffer.append(request)
 
         finished = False
         while not finished:
@@ -177,10 +170,29 @@ class API:
 
         return
 
+    async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
+        print("TODO: we should send a notification to the user to download the model")
+
     async def chat_completions(self, payload: ChatCompletionTaskParams) -> StreamingResponse:
         """Handle chat completions with proper streaming response."""
+        model_meta = await resolve_model_meta(payload.model)
+        payload.model = model_meta.model_id
+
+        for instance in self.get_state().instances.values():
+            if instance.shard_assignments.model_id == payload.model:
+                break
+        else:
+            await self._trigger_notify_user_to_download_model(payload.model)
+            raise HTTPException(status_code=404, detail=f"No instance found for model {payload.model}")
+
+        command = ChatCompletionCommand(
+            command_id=CommandId(),
+            command_type=CommandType.CHAT_COMPLETION,
+            request_params=payload,
+        )
+        self.command_buffer.append(command)
         return StreamingResponse(
-            self._generate_chat_stream(payload),
+            self._generate_chat_stream(command.command_id),
             media_type="text/plain"
         )
 

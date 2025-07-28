@@ -33,6 +33,7 @@ thiserror = { workspace = true }
 #itertools = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = ["default", "env-filter"] }
 keccak-const = { workspace = true }
+log = "0.4"
 
 # Networking
 libp2p = { workspace = true, features = ["full"] }

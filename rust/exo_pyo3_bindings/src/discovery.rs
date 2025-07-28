@@ -120,11 +120,29 @@ async fn discovery_task(
                     Behaviour(Mdns(Discovered(list))) => {
                         for (peer_id, multiaddr) in list {
                             log::info!("RUST: mDNS discovered a new peer: {peer_id} on {multiaddr}");
-                            // TODO: this does the job of (actually) creating & maintaining connection
-                            //       but its coupled to gossipsub & also the connection isn't configured
-                            //       for setting "connection keep alive" in NetworkBehavior's ConnectionHandler
-                            //       >in future, make own small NetworkBehavior impl just to track this state
+                            let local_peer_id = *swarm.local_peer_id();
+                            // To avoid simultaneous dial races, only the lexicographically larger peer_id dials.
+                            if peer_id > local_peer_id {
+                                let dial_opts = DialOpts::peer_id(peer_id)
+                                    .addresses(vec![multiaddr.clone()].into())
+                                    .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
+                                    .build();
+                                match swarm.dial(dial_opts) {
+                                    Ok(()) => log::info!("RUST: Dial initiated to {multiaddr}"),
+                                    Err(libp2p::swarm::DialError::DialPeerConditionFalse(_)) => {
+                                        // Another dial is already in progress; not an error for us.
+                                        log::debug!(
+                                            "RUST: Dial skipped because another dial is active for {peer_id}"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!("RUST: Failed to dial {multiaddr}: {e:?}");
+                                    }
+                                }
+                            }
+                            // Maintain peer in gossipsub mesh so the connection stays alive once established.
                             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                            log::info!("RUST: Added peer {peer_id} to gossipsub explicit peers");
                         }
                     }
                     Behaviour(Mdns(Expired(list))) => {
@@ -149,6 +167,7 @@ async fn discovery_task(
                         concurrent_dial_errors,
                         established_in: _established_in,
                     } => {
+                        log::info!("RUST: ConnectionEstablished event - peer_id: {peer_id}, connection_id: {connection_id:?}, endpoint: {endpoint:?}");
                         // log any connection errors
                         if let Some(concurrent_dial_errors) = concurrent_dial_errors {
                             for (multiaddr, error) in concurrent_dial_errors {
@@ -156,17 +175,21 @@ async fn discovery_task(
                             }
                         }
 
-                        // TODO: right now we assume we are using TCP/IP which treats all nodes
-                        //       as both dialers AND listeners. This means for each connection you will actually
-                        //       see TWO duplicate Connected events => Dialer & Listener
-                        //       SO ignore the Dialer & extract the info we need from Listener
-                        //       HOWEVER this makes the swarm implicitly rely on TCP/IP, so is brittle to changes
-                        //       e.g. adding QUIC protocol or something
-                        //       >As soon as we add anything other than TCP/IP, this must be updated or there will be broken code
-                        let ConnectedPoint::Listener { local_addr, send_back_addr } = endpoint else {
-                            log::warn!("Ignoring `ConnectedPoint::Dialer` event because for TCP/IP it has a dual `ConnectedPoint::Listener` event: {endpoint:?}");
-                            continue;
+                        // Extract addresses based on endpoint type
+                        let (local_addr, send_back_addr) = match &endpoint {
+                            ConnectedPoint::Listener { local_addr, send_back_addr } => {
+                                log::info!("RUST: Connection established (Listener) - local_addr: {local_addr}, send_back_addr: {send_back_addr}");
+                                (local_addr.clone(), send_back_addr.clone())
+                            },
+                            ConnectedPoint::Dialer { address, .. } => {
+                                log::info!("RUST: Connection established (Dialer) - remote_addr: {address}");
+                                // For dialer, we use the dialed address as both local and send_back
+                                // This isn't perfect but allows both sides to be notified
+                                (address.clone(), address.clone())
+                            }
                         };
+                        
+                        log::info!("RUST: Number of connected callbacks: {}", connected_callbacks.len());
 
 
                         // trigger callback on connected peer
@@ -180,22 +203,27 @@ async fn discovery_task(
                         }
                     },
                     ConnectionClosed { peer_id, connection_id, endpoint, num_established, cause }  => {
+                        log::info!("RUST: ConnectionClosed event - peer_id: {peer_id}, connection_id: {connection_id:?}, endpoint: {endpoint:?}, num_established: {num_established}");
                         // log any connection errors
                         if let Some(cause) = cause {
                             log::error!("Connection error: cause={cause:?}");
                         }
 
-                        // TODO: right now we assume we are using TCP/IP which treats all nodes
-                        //       as both dialers AND listeners. This means for each connection you will actually
-                        //       see TWO duplicate Connected events => Dialer & Listener
-                        //       SO ignore the Dialer & extract the info we need from Listener
-                        //       HOWEVER this makes the swarm implicitly rely on TCP/IP, so is brittle to changes
-                        //       e.g. adding QUIC protocol or something
-                        //       >As soon as we add anything other than TCP/IP, this must be updated or there will be broken code
-                        let ConnectedPoint::Listener { local_addr, send_back_addr } = endpoint else {
-                            log::warn!("Ignoring `ConnectedPoint::Dialer` event because for TCP/IP it has a dual `ConnectedPoint::Listener` event: {endpoint:?}");
-                            continue;
+                        // Extract addresses based on endpoint type
+                        let (local_addr, send_back_addr) = match &endpoint {
+                            ConnectedPoint::Listener { local_addr, send_back_addr } => {
+                                log::info!("RUST: Connection closed (Listener) - local_addr: {local_addr}, send_back_addr: {send_back_addr}");
+                                (local_addr.clone(), send_back_addr.clone())
+                            },
+                            ConnectedPoint::Dialer { address, .. } => {
+                                log::info!("RUST: Connection closed (Dialer) - remote_addr: {address}");
+                                // For dialer, we use the dialed address as both local and send_back
+                                // This isn't perfect but allows both sides to be notified
+                                (address.clone(), address.clone())
+                            }
                         };
+                        
+                        log::info!("RUST: Number of disconnected callbacks: {}", disconnected_callbacks.len());
 
                         // trigger callback on connected peer
                         for disconnected_callback in &disconnected_callbacks {
@@ -207,8 +235,13 @@ async fn discovery_task(
                             });
                         }
                     }
+                    NewListenAddr { address, .. } => {
+                        log::info!("RUST: Local node is listening on {address}");
+                        let local_peer = swarm.local_peer_id();
+                        log::info!("RUST: Local peer_id: {local_peer}");
+                    }
                     e => {
-                        log::info!("RUST: Other event {e:?}");
+                        log::debug!("RUST: Other event {e:?}");
                     }
                 }
             }
@@ -258,15 +291,19 @@ impl PyDiscoveryService {
 
         // get identity
         let identity = identity.borrow().0.clone();
+        log::info!("RUST: Creating DiscoveryService with keypair");
 
         // create discovery swarm (within tokio context!! or it crashes)
         let swarm = get_runtime()
             .block_on(async { discovery_swarm(identity) })
             .pyerr()?;
+        log::info!("RUST: Discovery swarm created successfully");
 
         // spawn tokio task
         get_runtime().spawn(async move {
+            log::info!("RUST: Starting discovery task");
             discovery_task(receiver, swarm).await;
+            log::info!("RUST: Discovery task ended");
         });
         Ok(Self::new(sender))
     }

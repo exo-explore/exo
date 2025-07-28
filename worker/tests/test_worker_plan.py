@@ -36,9 +36,11 @@ from shared.types.worker.runners import (
 )
 from shared.types.worker.shards import PipelineShardMetadata
 from worker.download.download_utils import build_model_path
-from worker.main import Worker
+from worker.download.shard_downloader import NoopShardDownloader
+from worker.main import AssignedRunner, Worker
 
 from .test_worker_plan_utils import (
+    COMMAND_1_ID,
     INSTANCE_1_ID,
     MODEL_A_ID,
     NODE_A,
@@ -47,7 +49,6 @@ from .test_worker_plan_utils import (
     RUNNER_2_ID,
     TASK_1_ID,
     InProcessRunner,
-    OverrideAssignedRunner,
     PlanTestCase,
     make_downloading_status,
     make_model_meta,
@@ -339,7 +340,7 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                     )
                 },
                 runners={RUNNER_1_ID: ReadyRunnerStatus(), RUNNER_2_ID: DownloadingRunnerStatus(download_progress=DownloadPending(node_id=NODE_A))},
-                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
+                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, command_id=COMMAND_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
             ),
             expected_op=None
         ),
@@ -382,7 +383,7 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                     )
                 },
                 runners={RUNNER_1_ID: ReadyRunnerStatus(), RUNNER_2_ID: ReadyRunnerStatus()},
-                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
+                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, command_id=COMMAND_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
             ),
             expected_op=RunnerUpOp(runner_id=RUNNER_1_ID)
         ),
@@ -484,6 +485,7 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                 tasks={
                     TASK_1_ID: ChatCompletionTask(
                         task_id=TASK_1_ID,
+                        command_id=COMMAND_1_ID,
                         task_type=TaskType.CHAT_COMPLETION,
                         task_status=TaskStatus.PENDING,
                         task_params=ChatCompletionTaskParams(
@@ -501,6 +503,7 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
             ),
             expected_op=ExecuteTaskOp(runner_id=RUNNER_1_ID, task=ChatCompletionTask(
                 task_id=TASK_1_ID,
+                command_id=COMMAND_1_ID,
                 instance_id=INSTANCE_1_ID,
                 task_type=TaskType.CHAT_COMPLETION,
                 task_status=TaskStatus.PENDING,
@@ -550,7 +553,7 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: LoadedRunnerStatus()},
-                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
+                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, command_id=COMMAND_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
             ),
             expected_op=None
         ),
@@ -593,12 +596,13 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: LoadedRunnerStatus()},
-                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
+                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, command_id=COMMAND_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
             ),
             expected_op=ExecuteTaskOp(
                 runner_id=RUNNER_1_ID,
                 task=ChatCompletionTask(
                     task_id=TASK_1_ID,
+                    command_id=COMMAND_1_ID,
                     instance_id=INSTANCE_1_ID,
                     task_type=TaskType.CHAT_COMPLETION,
                     task_params=ChatCompletionTaskParams(
@@ -648,12 +652,13 @@ def _get_test_cases(tmp_path: Path) -> list[PlanTestCase]:
                     )
                 },
                 runners={RUNNER_1_ID: LoadedRunnerStatus(), RUNNER_2_ID: RunningRunnerStatus()},
-                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
+                tasks={TASK_1_ID: ChatCompletionTask(task_id=TASK_1_ID, command_id=COMMAND_1_ID, task_type=TaskType.CHAT_COMPLETION, task_status=TaskStatus.PENDING, task_params=ChatCompletionTaskParams(model=str(MODEL_A_ID), messages=[ChatCompletionMessage(role="user", content="Hello, world!")]), instance_id=INSTANCE_1_ID)},
             ),
             expected_op=ExecuteTaskOp(
                 runner_id=RUNNER_1_ID,
                 task=ChatCompletionTask(
                     task_id=TASK_1_ID,
+                    command_id=COMMAND_1_ID,
                     instance_id=INSTANCE_1_ID,
                     task_type=TaskType.CHAT_COMPLETION,
                     task_params=ChatCompletionTaskParams(
@@ -851,7 +856,8 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
     node_id = NODE_A
 
     logger = logging.getLogger("test_worker_plan")
-    worker = Worker(node_id=node_id, worker_events=None, global_events=None, logger=logger)
+    shard_downloader = NoopShardDownloader()
+    worker = Worker(node_id=node_id, shard_downloader=shard_downloader, worker_events=None, global_events=None, logger=logger)
 
     path_downloaded_map: dict[str, bool] = {}
 
@@ -891,25 +897,17 @@ def test_worker_plan(case: PlanTestCase, tmp_path: Path, monkeypatch: pytest.Mon
             raise Exception('test_worker_plan not currently designed to have more than 1 instance.')
 
 
-        assigned_runner = OverrideAssignedRunner(
+        assigned_runner = AssignedRunner(
             runner_id=runner_config.runner_id,
             instance_id=runner_config.instance_id,
             shard_metadata=shard_metadata,
             hosts=[],
             status=runner_config.status,
             runner=None,
-            downloaded=runner_config.downloaded
+            is_downloaded=runner_config.downloaded
         )
         worker.assigned_runners[runner_config.runner_id] = assigned_runner
         path_downloaded_map[str(build_model_path(shard_metadata.model_meta.model_id))] = runner_config.downloaded
-
-    # Stub filesystem existence check ------------------------------------------------------
-    from worker import main as worker_main  # local import for module-scoped os
-
-    def _fake_exists(path: str | Path) -> bool:  # noqa: ANN001  – match os.path.exists signature
-        return path_downloaded_map.get(str(path), False)
-
-    monkeypatch.setattr(worker_main.os.path, "exists", _fake_exists)
 
     op = worker.plan(case.state)
     assert op == case.expected_op

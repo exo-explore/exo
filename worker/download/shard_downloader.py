@@ -68,6 +68,10 @@ class ShardDownloader(ABC):
         )
     )
 
+  @abstractmethod
+  async def get_shard_download_status_for_shard(self, shard: ShardMetadata) -> RepoDownloadProgress:
+    ...
+
 
 class NoopShardDownloader(ShardDownloader):
   async def ensure_shard(self, shard: ShardMetadata, config_only: bool = False) -> Path:
@@ -105,4 +109,19 @@ class NoopShardDownloader(ShardDownloader):
             overall_eta=timedelta(seconds=0),
             status="complete",
         )
+    )
+
+  async def get_shard_download_status_for_shard(self, shard: ShardMetadata) -> RepoDownloadProgress:
+    return RepoDownloadProgress(
+        repo_id="noop",
+        repo_revision="noop",
+        shard=shard,
+        completed_files=0,
+        total_files=0,
+        downloaded_bytes=0,
+        downloaded_bytes_this_session=0,
+        total_bytes=0,
+        overall_speed=0,
+        overall_eta=timedelta(seconds=0),
+        status="complete",
     )

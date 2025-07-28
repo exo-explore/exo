@@ -28,10 +28,10 @@ def get_instance_placements(
     
     all_nodes = list(topology.list_nodes())
     cycles = topology.get_cycles()
-    nodes_in_cycles = {node.node_id for cycle in cycles for node in cycle}
-    singleton_cycles = [[node] for node in all_nodes if node.node_id not in nodes_in_cycles]
+    # we can also always just have a node on its own
+    singleton_cycles = [[node] for node in all_nodes]
     candidate_cycles = cycles + singleton_cycles
-    cycles_with_sufficient_memory = filter_cycles_by_memory(candidate_cycles, command.model_meta.storage_size_kilobytes)
+    cycles_with_sufficient_memory = filter_cycles_by_memory(candidate_cycles, command.model_meta.storage_size_kilobytes * 1024)
     if not cycles_with_sufficient_memory:
         raise ValueError("No cycles found with sufficient memory")
 
