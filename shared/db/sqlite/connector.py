@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlmodel import SQLModel
 
 from shared.types.events import Event, EventParser, NodeId
+from shared.types.events._events import Heartbeat
 from shared.types.events.components import EventFromEventLog
 
 from .types import StoredEvent
@@ -246,8 +247,8 @@ class AsyncSQLiteEventStorage:
                     session.add(stored_event)
                 
                 await session.commit()
-            
-            self._logger.debug(f"Committed batch of {len(batch)} events")
+            if len([ev for ev in batch if not isinstance(ev[0], Heartbeat)]) > 0:
+                self._logger.debug(f"Committed batch of {len(batch)} events")
         
         except Exception as e:
             self._logger.error(f"Failed to commit batch: {e}")

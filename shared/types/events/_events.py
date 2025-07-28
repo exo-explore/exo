@@ -43,6 +43,9 @@ class _EventType(str, Enum):
     Here are all the unique kinds of events that can be sent over the network.
     """
 
+    # Heartbeat Events
+    Heartbeat = "Heartbeat"
+
     # Task Events
     TaskCreated = "TaskCreated"
     TaskStateUpdated = "TaskStateUpdated"
@@ -95,6 +98,9 @@ class _BaseEvent[T: _EventType](BaseModel):
         """
         return True
 
+class Heartbeat(_BaseEvent[_EventType.Heartbeat]):
+    event_type: Literal[_EventType.Heartbeat] = _EventType.Heartbeat
+    node_id: NodeId
 
 class TaskCreated(_BaseEvent[_EventType.TaskCreated]):
     event_type: Literal[_EventType.TaskCreated] = _EventType.TaskCreated
@@ -170,6 +176,7 @@ class ChunkGenerated(_BaseEvent[_EventType.ChunkGenerated]):
 class TopologyNodeCreated(_BaseEvent[_EventType.TopologyNodeCreated]):
     event_type: Literal[_EventType.TopologyNodeCreated] = _EventType.TopologyNodeCreated
     node_id: NodeId
+    role: Literal["MASTER", "REPLICA"]
 
 class TopologyEdgeCreated(_BaseEvent[_EventType.TopologyEdgeCreated]):
     event_type: Literal[_EventType.TopologyEdgeCreated] = _EventType.TopologyEdgeCreated
@@ -192,6 +199,7 @@ class TopologyEdgeDeleted(_BaseEvent[_EventType.TopologyEdgeDeleted]):
 
 
 _Event = Union[
+    Heartbeat,
     TaskCreated,
     TaskStateUpdated,
     TaskDeleted,

@@ -8,6 +8,7 @@ from shared.types.events import (
     ChunkGenerated,
     Event,
     EventFromEventLog,
+    Heartbeat,
     InstanceActivated,
     InstanceCreated,
     InstanceDeactivated,
@@ -28,7 +29,7 @@ from shared.types.events import (
 from shared.types.profiling import NodePerformanceProfile
 from shared.types.state import State
 from shared.types.tasks import Task, TaskId
-from shared.types.topology import Node
+from shared.types.topology import Connection, Node
 from shared.types.worker.common import NodeStatus, RunnerId
 from shared.types.worker.instances import Instance, InstanceId, InstanceStatus
 from shared.types.worker.runners import RunnerStatus
@@ -42,6 +43,10 @@ def event_apply(event: Event, state: State) -> State:
 def apply(state: State, event: EventFromEventLog[Event]) -> State:
     new_state: State = event_apply(event.event, state)
     return new_state.model_copy(update={"last_event_applied_idx": event.idx_in_log})
+
+@event_apply.register(Heartbeat)
+def apply_heartbeat(event: Heartbeat, state: State) -> State:
+    return state
 
 @event_apply.register(TaskCreated)
 def apply_task_created(event: TaskCreated, state: State) -> State:
@@ -134,6 +139,8 @@ def apply_chunk_generated(event: ChunkGenerated, state: State) -> State:
 def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> State:
     topology = copy.copy(state.topology)
     topology.add_node(Node(node_id=event.node_id))
+    if event.role == "MASTER":
+        topology.set_master_node_id(event.node_id)
     return state.model_copy(update={"topology": topology})
 
 @event_apply.register(TopologyEdgeCreated)
@@ -154,4 +161,13 @@ def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> Sta
     if not topology.contains_connection(event.edge):
         return state
     topology.remove_connection(event.edge)
+    opposite_edge = Connection(
+        local_node_id=event.edge.send_back_node_id,
+        send_back_node_id=event.edge.local_node_id,
+        local_multiaddr=event.edge.send_back_multiaddr,
+        send_back_multiaddr=event.edge.local_multiaddr
+    )
+    if not topology.contains_connection(opposite_edge):
+        return state.model_copy(update={"topology": topology})
+    topology.remove_connection(opposite_edge)
     return state.model_copy(update={"topology": topology})

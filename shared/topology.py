@@ -53,6 +53,9 @@ class Topology(TopologyProto):
         rx_id = self._graph.add_node(node)
         self._node_id_to_rx_id_map[node.node_id] = rx_id
         self._rx_id_to_node_id_map[rx_id] = node.node_id
+        
+    def set_master_node_id(self, node_id: NodeId) -> None:
+        self.master_node_id = node_id
 
     def contains_node(self, node_id: NodeId) -> bool:
         return node_id in self._node_id_to_rx_id_map
@@ -115,18 +118,27 @@ class Topology(TopologyProto):
 
     def remove_connection(self, connection: Connection) -> None:
         rx_idx = self._edge_id_to_rx_id_map[connection]
+        print(f"removing connection: {connection}, is bridge: {self._is_bridge(connection)}")
         if self._is_bridge(connection):
-            orphan_node_ids = self._get_orphan_node_ids(connection.local_node_id, connection)
+            # Determine the reference node from which reachability is calculated.
+            # Prefer a master node if the topology knows one; otherwise fall back to
+            # the local end of the connection being removed.
+            reference_node_id: NodeId = self.master_node_id if self.master_node_id is not None else connection.local_node_id
+            orphan_node_ids = self._get_orphan_node_ids(reference_node_id, connection)
+            print(f"orphan node ids: {orphan_node_ids}")
             for orphan_node_id in orphan_node_ids:
                 orphan_node_rx_id = self._node_id_to_rx_id_map[orphan_node_id]
+                print(f"removing orphan node: {orphan_node_id}, rx_id: {orphan_node_rx_id}")
                 self._graph.remove_node(orphan_node_rx_id)
                 del self._node_id_to_rx_id_map[orphan_node_id]
-                del self._rx_id_to_node_id_map[orphan_node_rx_id]
-        else:
-            self._graph.remove_edge_from_index(rx_idx)
-            del self._edge_id_to_rx_id_map[connection]
-            if rx_idx in self._rx_id_to_node_id_map:
-                del self._rx_id_to_node_id_map[rx_idx]
+            
+        self._graph.remove_edge_from_index(rx_idx)
+        del self._edge_id_to_rx_id_map[connection]
+        if rx_idx in self._rx_id_to_node_id_map:
+            del self._rx_id_to_node_id_map[rx_idx]
+        
+        
+        print(f"topology after edge removal: {self.to_snapshot()}")
 
     def get_cycles(self) -> list[list[Node]]:
         cycle_idxs = rx.simple_cycles(self._graph)
@@ -150,24 +162,42 @@ class Topology(TopologyProto):
 
     def _is_bridge(self, connection: Connection) -> bool:
         edge_idx = self._edge_id_to_rx_id_map[connection]
-        graph_copy = self._graph.copy().to_undirected()
-        components_before = rx.number_connected_components(graph_copy)
+        graph_copy: rx.PyDiGraph[Node, Connection] = self._graph.copy()
+        components_before = rx.strongly_connected_components(graph_copy)
 
         graph_copy.remove_edge_from_index(edge_idx)
-        components_after = rx.number_connected_components(graph_copy)
+        components_after = rx.strongly_connected_components(graph_copy)
 
         return components_after > components_before
 
     def _get_orphan_node_ids(self, master_node_id: NodeId, connection: Connection) -> list[NodeId]:
+        """Return node_ids that become unreachable from `master_node_id` once `connection` is removed.
+
+        A node is considered *orphaned* if there exists **no directed path** from
+        the master node to that node after deleting the edge identified by
+        ``connection``. This definition is strictly weaker than being in a
+        different *strongly* connected component and more appropriate for
+        directed networks where information only needs to flow *outwards* from
+        the master.
+        """
         edge_idx = self._edge_id_to_rx_id_map[connection]
-        graph_copy = self._graph.copy().to_undirected()
+        # Operate on a copy so the original topology remains intact while we
+        # compute reachability.
+        graph_copy: rx.PyDiGraph[Node, Connection] = self._graph.copy()
         graph_copy.remove_edge_from_index(edge_idx)
-        components = rx.connected_components(graph_copy)
 
-        orphan_node_rx_ids: set[int] = set()
-        master_node_rx_id = self._node_id_to_rx_id_map[master_node_id]
-        for component in components:
-            if master_node_rx_id not in component:
-                orphan_node_rx_ids.update(component)
+        if master_node_id not in self._node_id_to_rx_id_map:
+            # If the provided master node isn't present we conservatively treat
+            # every other node as orphaned.
+            return list(self._node_id_to_rx_id_map.keys())
 
-        return [self._rx_id_to_node_id_map[rx_id] for rx_id in orphan_node_rx_ids]
+        master_rx_id = self._node_id_to_rx_id_map[master_node_id]
+
+        # Nodes reachable by following outgoing edges from the master.
+        reachable_rx_ids: set[int] = set(rx.descendants(graph_copy, master_rx_id))
+        reachable_rx_ids.add(master_rx_id)
+
+        # Every existing node index not reachable is orphaned.
+        orphan_rx_ids = set(graph_copy.node_indices()) - reachable_rx_ids
+
+        return [self._rx_id_to_node_id_map[rx_id] for rx_id in orphan_rx_ids if rx_id in self._rx_id_to_node_id_map]

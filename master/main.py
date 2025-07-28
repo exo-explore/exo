@@ -20,6 +20,7 @@ from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.common import NodeId
 from shared.types.events import (
     Event,
+    Heartbeat,
     TaskCreated,
     TopologyNodeCreated,
 )
@@ -114,7 +115,6 @@ class Master:
                     next_events.extend(transition_events)
 
             await self.event_log_for_writes.append_events(next_events, origin=self.node_id)
-
         # 2. get latest events
         events = await self.event_log_for_reads.get_events_since(self.state.last_event_applied_idx)
         if len(events) == 0:
@@ -126,11 +126,16 @@ class Master:
         for event_from_log in events:
             print(f"applying event: {event_from_log}")
             self.state = apply(self.state, event_from_log)
-
-        self.logger.info(f"state: {self.state}")
+        self.logger.info(f"state: {self.state.model_dump_json()}")
 
     async def run(self):
         self.state = await self._get_state_snapshot()
+        
+        async def heartbeat_task():
+            while True:
+                await self.event_log_for_writes.append_events([Heartbeat(node_id=self.node_id)], origin=self.node_id)
+                await asyncio.sleep(5)
+        asyncio.create_task(heartbeat_task())
 
         # TODO: we should clean these up on shutdown
         await self.forwarder_supervisor.start_as_replica()
@@ -139,7 +144,8 @@ class Master:
         else:
             await self.election_callbacks.on_became_master()
 
-        await self.event_log_for_writes.append_events([TopologyNodeCreated(node_id=self.node_id)], origin=self.node_id)
+        role = "MASTER" if self.forwarder_supervisor.current_role == ForwarderRole.MASTER else "REPLICA"
+        await self.event_log_for_writes.append_events([TopologyNodeCreated(node_id=self.node_id, role=role)], origin=self.node_id)
         while True:
             try:
                 await self._run_event_loop_body()
