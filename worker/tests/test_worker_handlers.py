@@ -14,7 +14,7 @@ from shared.types.events import (
     TaskStateUpdated,
 )
 from shared.types.events.chunks import TokenChunk
-from shared.types.tasks import Task, TaskStatus
+from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import RunnerId
 from shared.types.worker.instances import Instance, InstanceId
 from shared.types.worker.ops import (
@@ -26,6 +26,7 @@ from shared.types.worker.ops import (
     UnassignRunnerOp,
 )
 from shared.types.worker.runners import (
+    AssignedRunnerStatus,
     FailedRunnerStatus,
     LoadedRunnerStatus,
     ReadyRunnerStatus,
@@ -59,11 +60,11 @@ async def test_assign_op(worker: Worker, instance: Callable[[InstanceId, NodeId,
     # We should have a status update saying 'starting'.
     assert len(events) == 1
     assert isinstance(events[0], RunnerStatusUpdated)
-    assert isinstance(events[0].runner_status, ReadyRunnerStatus)
+    assert isinstance(events[0].runner_status, AssignedRunnerStatus)
 
     # And the runner should be assigned
     assert runner_id in worker.assigned_runners
-    assert isinstance(worker.assigned_runners[runner_id].status, ReadyRunnerStatus)
+    assert isinstance(worker.assigned_runners[runner_id].status, AssignedRunnerStatus)
 
 @pytest.mark.asyncio
 async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], tmp_path: Path):
@@ -84,7 +85,11 @@ async def test_unassign_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
     assert isinstance(events[0], RunnerDeleted)
 
 @pytest.mark.asyncio
-async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], chat_completion_task: Callable[[InstanceId], Task], tmp_path: Path):
+async def test_runner_up_op(
+    worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], 
+    chat_completion_task: Callable[[InstanceId, TaskId], Task], 
+    tmp_path: Path
+    ):
     worker, runner_id, _ = worker_with_assigned_runner
 
     runner_up_op = RunnerUpOp(runner_id=runner_id)
@@ -104,7 +109,7 @@ async def test_runner_up_op(worker_with_assigned_runner: tuple[Worker, RunnerId,
 
     full_response = ''
 
-    async for chunk in supervisor.stream_response(task=chat_completion_task(InstanceId())):
+    async for chunk in supervisor.stream_response(task=chat_completion_task(InstanceId(), TaskId())):
         if isinstance(chunk, TokenChunk):
             full_response += chunk.text
 
@@ -153,12 +158,12 @@ async def test_download_op(worker_with_assigned_runner: tuple[Worker, RunnerId, 
 @pytest.mark.asyncio
 async def test_execute_task_op(
     worker_with_running_runner: tuple[Worker, RunnerId, Instance], 
-    chat_completion_task: Callable[[InstanceId], Task], tmp_path: Path):
+    chat_completion_task: Callable[[InstanceId, TaskId], Task], tmp_path: Path):
     worker, runner_id, _ = worker_with_running_runner
 
     execute_task_op = ExecuteTaskOp(
         runner_id=runner_id,
-        task=chat_completion_task(InstanceId())
+        task=chat_completion_task(InstanceId(), TaskId())
     )
 
     events: list[Event] = []
@@ -196,10 +201,10 @@ async def test_execute_task_op(
 @pytest.mark.asyncio
 async def test_execute_task_fails(
     worker_with_running_runner: tuple[Worker, RunnerId, Instance], 
-    chat_completion_task: Callable[[InstanceId], Task], tmp_path: Path):
+    chat_completion_task: Callable[[InstanceId, TaskId], Task], tmp_path: Path):
     worker, runner_id, _ = worker_with_running_runner
 
-    task = chat_completion_task(InstanceId())
+    task = chat_completion_task(InstanceId(), TaskId())
     messages = task.task_params.messages
     messages[0].content = 'Artificial prompt: EXO RUNNER MUST FAIL'
 

@@ -101,9 +101,9 @@ def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
 
 @pytest.fixture
 def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
-    def _chat_completion_task(instance_id: InstanceId) -> ChatCompletionTask:
+    def _chat_completion_task(instance_id: InstanceId, task_id: TaskId) -> ChatCompletionTask:
         return ChatCompletionTask(
-            task_id=TaskId(),
+            task_id=task_id,
             command_id=CommandId(),
             instance_id=instance_id,
             task_type=TaskType.CHAT_COMPLETION,
@@ -145,7 +145,7 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
         )
         
         return Instance(
-            instance_id=InstanceId(),
+            instance_id=instance_id,
             instance_type=InstanceStatus.ACTIVE,
             shard_assignments=shard_assignments,
             hosts=hosts_one

@@ -44,6 +44,7 @@ from shared.types.worker.ops import (
     UnassignRunnerOp,
 )
 from shared.types.worker.runners import (
+    AssignedRunnerStatus,
     DownloadingRunnerStatus,
     FailedRunnerStatus,
     LoadedRunnerStatus,
@@ -115,7 +116,7 @@ class Worker:
             instance_id=op.instance_id,
             shard_metadata=op.shard_metadata,
             hosts=op.hosts,
-            status=ReadyRunnerStatus(),
+            status=AssignedRunnerStatus(),
             runner=None,
         )
 
@@ -232,6 +233,7 @@ class Worker:
 
         asyncio.create_task(self.shard_downloader.ensure_shard(op.shard_metadata))
 
+        # TODO: Dynamic timeout, timeout on no packet update received.
         timeout_secs = 10 * 60
         start_time = process_time()
         last_yield_progress = start_time
@@ -472,7 +474,8 @@ class Worker:
                 runner = self.assigned_runners[runner_id]
 
                 if not runner.is_downloaded:
-                    if runner.status.runner_status == RunnerStatusType.Downloading:
+                    if runner.status.runner_status == RunnerStatusType.Downloading: # Forward compatibility
+                        # TODO: If failed status then we retry
                         return None
                     else:
                         return DownloadOp(

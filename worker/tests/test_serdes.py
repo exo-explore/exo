@@ -3,8 +3,8 @@ from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
+from shared.types.tasks import Task, TaskId
 from shared.types.common import Host
-from shared.types.tasks import Task
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     RunnerMessageTypeAdapter,
@@ -38,9 +38,9 @@ def test_supervisor_setup_message_serdes(
 
 
 def test_supervisor_task_message_serdes(
-    chat_completion_task: Callable[[InstanceId], Task],
+    chat_completion_task: Callable[[InstanceId, TaskId], Task],
 ):
-    task = chat_completion_task(InstanceId())
+    task = chat_completion_task(InstanceId(), TaskId())
     task_message = ChatTaskMessage(
         task_data=task.task_params,
     )
