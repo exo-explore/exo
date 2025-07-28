@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import time
 from collections.abc import AsyncGenerator
 from typing import Callable, List, Sequence, final
@@ -7,6 +8,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.models.model_cards import MODEL_CARDS
@@ -37,6 +39,10 @@ from shared.types.state import State
 from shared.types.tasks import ChatCompletionTaskParams
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import Instance
+
+# TODO: Make sure that when we package the app the dashboard is in the right place.
+_ROOT_DIR = Path(__file__).resolve().parents[1]
+_DASHBOARD_DIR = _ROOT_DIR / "dashboard"
 
 
 def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
@@ -74,6 +80,8 @@ class API:
         self.global_events = global_events
         self.get_state = get_state
 
+        self._app.mount("/", StaticFiles(directory=_DASHBOARD_DIR, html=True), name="dashboard")
+
     def _setup_cors(self) -> None:
         self._app.add_middleware(
             CORSMiddleware,
@@ -84,34 +92,17 @@ class API:
         )
 
     def _setup_routes(self) -> None:
-        # self._app.get("/topology/control_plane")(self.get_control_plane_topology)
-        # self._app.get("/topology/data_plane")(self.get_data_plane_topology)
-        # self._app.get("/instances/list")(self.list_instances)
         self._app.post("/instance")(self.create_instance)
         self._app.get("/instance/{instance_id}")(self.get_instance)
         self._app.delete("/instance/{instance_id}")(self.delete_instance)
         self._app.get("/models")(self.get_models)
         self._app.get("/v1/models")(self.get_models)
-        # self._app.get("/model/{model_id}/metadata")(self.get_model_data)
-        # self._app.post("/model/{model_id}/instances")(self.get_instances_by_model)
         self._app.post("/v1/chat/completions")(self.chat_completions)
+        self._app.get("/state")(self.get_state)
 
     @property
     def app(self) -> FastAPI:
         return self._app
-
-    # def get_control_plane_topology(self):
-    #     return {"message": "Hello, World!"}
-
-    # def get_data_plane_topology(self):
-    #     return {"message": "Hello, World!"}
-
-    # def get_model_metadata(self, model_id: ModelId) -> ModelMetadata: ...
-
-    # def download_model(self, model_id: ModelId) -> None: ...
-
-    # def list_instances(self):
-    #     return {"message": "Hello, World!"}
 
     async def create_instance(self, payload: CreateInstanceTaskParams) -> CreateInstanceResponse:
         model_meta = await resolve_model_meta(payload.model_id)
@@ -152,10 +143,6 @@ class API:
             command_id=command.command_id,
             instance_id=instance_id,
         )
-
-    # def get_model_data(self, model_id: ModelId) -> ModelInfo: ...
-
-    # def get_instances_by_model(self, model_id: ModelId) -> list[Instance]: ...
 
     async def _generate_chat_stream(self, command_id: CommandId) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
@@ -221,6 +208,8 @@ class API:
                 description=card.description,
                 tags=card.tags) for card in MODEL_CARDS.values()])
 
+    async def get_state(self) -> State:
+        return self.get_state()
 
 
 def start_fastapi_server(
