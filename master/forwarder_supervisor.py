@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 from enum import Enum
 from logging import Logger
 from pathlib import Path
@@ -106,14 +107,14 @@ class ForwarderSupervisor:
         
         
         pairs: str = self._get_forwarding_pairs(role)
+        env_vars = os.environ.copy()
+        env_vars["FORWARDER_NODE_ID"] = str(self.node_id)
         self._process = await asyncio.create_subprocess_exec(
             str(self._binary_path),
             f'{pairs}',
             stdout=None,
             stderr=None,
-            env={
-                "FORWARDER_NODE_ID": str(self.node_id),
-            }
+            env=env_vars
         )
         
         self._logger.info(f"Starting forwarder with forwarding pairs: {pairs}")
