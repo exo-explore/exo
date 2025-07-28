@@ -11,8 +11,6 @@ from shared.types.topology import Connection, Node, TopologyProto
 
 
 class TopologySnapshot(BaseModel):
-    """Immutable serialisable representation of a :class:`Topology`."""
-
     nodes: list[Node]
     connections: list[Connection]
     master_node_id: NodeId | None = None
@@ -29,8 +27,6 @@ class Topology(TopologyProto):
         self.master_node_id: NodeId | None = None
 
     def to_snapshot(self) -> TopologySnapshot:
-        """Return an immutable snapshot suitable for JSON serialisation."""
-
         return TopologySnapshot(
             nodes=list(self.list_nodes()),
             connections=list(self.list_connections()),
@@ -39,12 +35,6 @@ class Topology(TopologyProto):
 
     @classmethod
     def from_snapshot(cls, snapshot: TopologySnapshot) -> "Topology":
-        """Reconstruct a :class:`Topology` from *snapshot*.
-
-        The reconstructed topology is equivalent (w.r.t. nodes, connections
-        and ``master_node_id``) to the original one that produced *snapshot*.
-        """
-
         topology = cls()
         topology.master_node_id = snapshot.master_node_id
 

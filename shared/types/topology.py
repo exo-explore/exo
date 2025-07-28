@@ -33,8 +33,8 @@ class Connection(BaseModel):
         return (
                 self.local_node_id == other.local_node_id
                 and self.send_back_node_id == other.send_back_node_id
-                and self.local_multiaddr == other.local_multiaddr
-                and self.send_back_multiaddr == other.send_back_multiaddr
+                and self.local_multiaddr.address == other.local_multiaddr.address
+                and self.send_back_multiaddr.address == other.send_back_multiaddr.address
         )
 
 

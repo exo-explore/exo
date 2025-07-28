@@ -2,7 +2,7 @@ import re
 from ipaddress import IPv4Address
 from typing import ClassVar
 
-from pydantic import BaseModel, computed_field, field_validator
+from pydantic import BaseModel, computed_field, field_serializer, field_validator
 
 
 class Multiaddr(BaseModel):
@@ -31,6 +31,11 @@ class Multiaddr(BaseModel):
         if not match:
             raise ValueError(f"Invalid multiaddr format: {self.address}. Expected format like /ip4/127.0.0.1/tcp/4001")
         return IPv4Address(match.group(1))
+
+    @field_serializer("ipv4_address")
+    def serialize_ipv4_address(self, value: IPv4Address) -> str:
+        return str(value)
+
     
     @computed_field
     @property
