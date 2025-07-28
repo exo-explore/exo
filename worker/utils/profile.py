@@ -13,6 +13,11 @@ from worker.utils.macmon.macmon import (
 from worker.utils.macmon.macmon import (
     get_metrics_async as macmon_get_metrics_async,
 )
+from worker.utils.system_info import (
+    get_mac_friendly_name_async,
+    get_mac_system_info_async,
+    get_network_interface_info_async,
+)
 
 # from exo.infra.event_log import EventLog
 # from exo.app.config import ResourceMonitorConfig
@@ -53,12 +58,20 @@ async def start_polling_node_metrics(
                 else 0
             )
 
+            system_info, network_interfaces, mac_friendly_name = await asyncio.gather(
+                get_mac_system_info_async(),
+                get_network_interface_info_async(),
+                get_mac_friendly_name_async(),
+            )
+
             # Run heavy FLOPs profiling only if enough time has elapsed
 
             await callback(
                 NodePerformanceProfile(
-                    model_id=platform.machine(),
-                    chip_id=platform.processor(),
+                    model_id=system_info.model_id,
+                    chip_id=system_info.chip_id,
+                    friendly_name=mac_friendly_name or "Unknown",
+                    network_interfaces=network_interfaces,
                     memory=MemoryPerformanceProfile(
                         ram_total=total_mem,
                         ram_available=total_mem - used_mem,
@@ -73,7 +86,6 @@ async def start_polling_node_metrics(
                         and metrics.memory.swap_total is not None
                         else 0,
                     ),
-                    network_interfaces=[],
                     system=SystemPerformanceProfile(
                         flops_fp16=0,
                     ),

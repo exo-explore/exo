@@ -20,6 +20,7 @@ def create_node():
             node_profile=NodePerformanceProfile(
                 model_id="test",
                 chip_id="test",
+                friendly_name="test",
                 memory=MemoryPerformanceProfile(
                     ram_total=1000,
                     ram_available=memory,

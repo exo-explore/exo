@@ -73,6 +73,7 @@ async def test_master():
             node_profile=NodePerformanceProfile(
                 model_id="maccy",
                 chip_id="arm",
+                friendly_name="test",
                 memory=MemoryPerformanceProfile(ram_total=678948*1024, ram_available=678948*1024, swap_total=0, swap_available=0),
                 network_interfaces=[],
                 system=SystemPerformanceProfile(flops_fp16=0)

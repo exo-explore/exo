@@ -21,6 +21,7 @@ class NetworkInterfaceInfo(BaseModel):
 class NodePerformanceProfile(BaseModel):
     model_id: str
     chip_id: str
+    friendly_name: str
     memory: MemoryPerformanceProfile
     network_interfaces: list[NetworkInterfaceInfo] = Field(default_factory=list)
     system: SystemPerformanceProfile
