@@ -88,6 +88,12 @@ async def start_polling_node_metrics(
                     ),
                     system=SystemPerformanceProfile(
                         flops_fp16=0,
+                        gpu_usage=metrics.gpu_usage[1] if metrics.gpu_usage is not None else 0,
+                        temp=metrics.temp.gpu_temp_avg if metrics.temp is not None and metrics.temp.gpu_temp_avg is not None else 0,
+                        sys_power=metrics.sys_power if metrics.sys_power is not None else 0,
+                        pcpu_usage=metrics.pcpu_usage[1] if metrics.pcpu_usage is not None else 0,
+                        ecpu_usage=metrics.ecpu_usage[1] if metrics.ecpu_usage is not None else 0,
+                        ane_power=metrics.ane_power if metrics.ane_power is not None else 0,
                     ),
                 )
             )
