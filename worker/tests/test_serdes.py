@@ -3,8 +3,8 @@ from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
-from shared.types.tasks import Task, TaskId
 from shared.types.common import Host
+from shared.types.tasks import Task, TaskId
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
     RunnerMessageTypeAdapter,
