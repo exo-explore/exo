@@ -6,6 +6,7 @@ from exo_pyo3_bindings import ConnectionUpdate, DiscoveryService, Keypair
 from shared.db import AsyncSQLiteEventStorage
 from shared.types.common import NodeId
 from shared.types.events import TopologyEdgeCreated, TopologyEdgeDeleted
+from shared.types.multiaddr import Multiaddr
 from shared.types.topology import Connection
 
 
@@ -44,8 +45,8 @@ class DiscoverySupervisor:
     async def _connected_callback(self, e: ConnectionUpdate) -> None:
         local_node_id = self.node_id
         send_back_node_id = NodeId(e.peer_id.to_base58())
-        local_multiaddr = e.local_addr.to_string()
-        send_back_multiaddr = e.send_back_addr.to_string()
+        local_multiaddr = Multiaddr(address=str(e.local_addr))
+        send_back_multiaddr = Multiaddr(address=str(e.send_back_addr))
         connection_profile = None
 
         topology_edge_created = TopologyEdgeCreated(edge=Connection(
@@ -65,8 +66,8 @@ class DiscoverySupervisor:
     async def _disconnected_callback(self, e: ConnectionUpdate) -> None:
         local_node_id = self.node_id
         send_back_node_id = NodeId(e.peer_id.to_base58())
-        local_multiaddr = e.local_addr.to_string()
-        send_back_multiaddr = e.send_back_addr.to_string()
+        local_multiaddr = Multiaddr(address=str(e.local_addr))
+        send_back_multiaddr = Multiaddr(address=str(e.send_back_addr))
         connection_profile = None
 
         topology_edge_created = TopologyEdgeDeleted(edge=Connection(

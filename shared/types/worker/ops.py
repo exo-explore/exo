@@ -3,10 +3,10 @@ from typing import Annotated, Generic, Literal, TypeVar, Union
 
 from pydantic import BaseModel, Field
 
+from shared.types.common import Host
 from shared.types.events import InstanceId
 from shared.types.tasks import Task
 from shared.types.worker.common import RunnerId
-from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMetadata
 
 

@@ -12,8 +12,8 @@ from mlx_lm.utils import load_model  # type: ignore
 from pydantic import RootModel
 
 from engines.mlx.auto_parallel import auto_parallel
+from shared.types.common import Host
 from shared.types.tasks import ChatCompletionTaskParams
-from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMetadata
 from worker.download.download_utils import build_model_path
 from worker.runner.communication import runner_print

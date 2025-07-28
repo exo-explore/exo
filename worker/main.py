@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from shared.apply import apply
 from shared.db.sqlite import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from shared.types.common import NodeId
+from shared.types.common import Host, NodeId
 from shared.types.events import (
     ChunkGenerated,
     Event,
@@ -32,7 +32,6 @@ from shared.types.worker.downloads import (
     DownloadProgressData,
 )
 from shared.types.worker.instances import InstanceStatus
-from shared.types.worker.mlx import Host
 from shared.types.worker.ops import (
     AssignRunnerOp,
     DownloadOp,

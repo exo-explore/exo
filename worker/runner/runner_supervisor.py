@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from types import CoroutineType
 from typing import Any, Callable
 
-from shared.types.common import CommandId
+from shared.types.common import CommandId, Host
 from shared.types.events.chunks import GenerationChunk, TokenChunk
 from shared.types.tasks import ChatCompletionTaskParams, Task
 from shared.types.worker.commands_runner import (
@@ -18,7 +18,6 @@ from shared.types.worker.commands_runner import (
     RunnerResponse,
     SetupMessage,
 )
-from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMetadata
 from worker.runner.communication import (
     supervisor_read_response,

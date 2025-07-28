@@ -7,7 +7,7 @@ import pytest
 # TaskStateUpdated and ChunkGenerated are used in test_worker_integration_utils.py
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from shared.types.common import NodeId
+from shared.types.common import Host, NodeId
 from shared.types.events import (
     InstanceCreated,
     InstanceDeleted,
@@ -24,7 +24,6 @@ from shared.types.worker.instances import (
     InstanceStatus,
     ShardAssignments,
 )
-from shared.types.worker.mlx import Host
 from shared.types.worker.runners import (
     FailedRunnerStatus,
     LoadedRunnerStatus,

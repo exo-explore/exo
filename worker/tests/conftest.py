@@ -1,4 +1,5 @@
 import asyncio
+from ipaddress import IPv4Address
 from logging import Logger, getLogger
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -9,7 +10,7 @@ from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from shared.models.model_meta import get_model_meta
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
-from shared.types.common import CommandId, NodeId
+from shared.types.common import CommandId, Host, NodeId
 from shared.types.models import ModelId, ModelMetadata
 from shared.types.state import State
 from shared.types.tasks import (
@@ -20,7 +21,6 @@ from shared.types.tasks import (
 )
 from shared.types.worker.common import InstanceId, NodeStatus
 from shared.types.worker.instances import Instance, InstanceStatus
-from shared.types.worker.mlx import Host
 from shared.types.worker.ops import (
     AssignRunnerOp,
     RunnerUpOp,
@@ -36,7 +36,7 @@ def hosts():
     def _hosts(count: int, offset: int = 0) -> list[Host]:
         return [
             Host(
-                host="127.0.0.1",
+                ip=IPv4Address("127.0.0.1"),
                 port=5000 + offset + i,
             )
             for i in range(count)

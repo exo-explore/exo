@@ -1,6 +1,7 @@
 import pytest
 
 from shared.topology import Topology
+from shared.types.multiaddr import Multiaddr
 from shared.types.profiling import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
@@ -16,10 +17,12 @@ def topology() -> Topology:
 
 @pytest.fixture
 def connection() -> Connection:
-    return Connection(local_node_id=NodeId(), send_back_node_id=NodeId(), local_multiaddr="/ip4/127.0.0.1/tcp/1234",
-                      send_back_multiaddr="/ip4/127.0.0.1/tcp/1235",
-                      connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000))
-
+    return Connection(
+        local_node_id=NodeId(),
+        send_back_node_id=NodeId(),
+        local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
+        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
+        connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000))
 
 @pytest.fixture
 def node_profile() -> NodePerformanceProfile:
@@ -128,16 +131,16 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
     connection_master_to_a = Connection(
         local_node_id=master_id,
         send_back_node_id=node_a_id,
-        local_multiaddr="/ip4/127.0.0.1/tcp/1234",
-        send_back_multiaddr="/ip4/127.0.0.1/tcp/1235",
+        local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
+        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
         connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000)
     )
 
     connection_a_to_b = Connection(
         local_node_id=node_a_id,
         send_back_node_id=node_b_id,
-        local_multiaddr="/ip4/127.0.0.1/tcp/1236",
-        send_back_multiaddr="/ip4/127.0.0.1/tcp/1237",
+        local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1236"),
+        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1237"),
         connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000)
     )
 

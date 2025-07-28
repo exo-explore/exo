@@ -5,6 +5,7 @@ from typing import Callable
 import pytest
 
 from shared.openai_compat import FinishReason
+from shared.types.common import Host
 from shared.types.events.chunks import TokenChunk
 from shared.types.tasks import (
     ChatCompletionTaskParams,
@@ -12,7 +13,6 @@ from shared.types.tasks import (
     TaskType,
 )
 from shared.types.worker.common import InstanceId
-from shared.types.worker.mlx import Host
 from shared.types.worker.shards import PipelineShardMetadata
 from worker.runner.runner_supervisor import RunnerSupervisor
 

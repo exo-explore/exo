@@ -2,8 +2,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from shared.types.common import Host
 from shared.types.worker.common import InstanceId
-from shared.types.worker.mlx import Host
 from shared.types.worker.runners import (
     ShardAssignments,
 )

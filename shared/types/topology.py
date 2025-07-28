@@ -3,14 +3,15 @@ from typing import Iterable, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from shared.types.common import NodeId
+from shared.types.multiaddr import Multiaddr
 from shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 
 
 class Connection(BaseModel):
     local_node_id: NodeId
     send_back_node_id: NodeId
-    local_multiaddr: str
-    send_back_multiaddr: str
+    local_multiaddr: Multiaddr
+    send_back_multiaddr: Multiaddr
     connection_profile: ConnectionProfile | None = None
 
     # required for Connection to be used as a key
@@ -21,8 +22,8 @@ class Connection(BaseModel):
             (
                 self.local_node_id,
                 self.send_back_node_id,
-                self.local_multiaddr,
-                self.send_back_multiaddr,
+                self.local_multiaddr.address,
+                self.send_back_multiaddr.address,
             )
         )
 

@@ -3,6 +3,7 @@ from typing import Callable, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
+from shared.types.common import Host
 from shared.types.tasks import Task
 from shared.types.worker.commands_runner import (
     ChatTaskMessage,
@@ -10,7 +11,6 @@ from shared.types.worker.commands_runner import (
     SetupMessage,
 )
 from shared.types.worker.common import InstanceId
-from shared.types.worker.mlx import Host
 from shared.types.worker.shards import PipelineShardMetadata
 
 T = TypeVar("T", bound=BaseModel)

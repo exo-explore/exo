@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from shared.types.common import NodeId
+from shared.types.multiaddr import Multiaddr
 from shared.types.state import State
 from shared.types.topology import Connection
 
@@ -15,8 +16,8 @@ def test_state_serialization_roundtrip() -> None:
     connection = Connection(
         local_node_id=node_a,
         send_back_node_id=node_b,
-        local_multiaddr="/ip4/127.0.0.1/tcp/10000",
-        send_back_multiaddr="/ip4/127.0.0.1/tcp/10001",
+        local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10000"),
+        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10001"),
     )
 
     state = State()

@@ -4,8 +4,8 @@ from typing import Annotated, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field, TypeAdapter
 
 from shared.openai_compat import FinishReason
+from shared.types.common import Host
 from shared.types.tasks import ChatCompletionTaskParams
-from shared.types.worker.mlx import Host
 from shared.types.worker.shards import ShardMetadata
 
 ## Messages passed TO the runner

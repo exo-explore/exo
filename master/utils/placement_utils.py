@@ -2,7 +2,8 @@ from typing import TypeGuard, cast
 
 from pydantic import BaseModel
 
-from shared.types.common import NodeId
+from shared.topology import Topology
+from shared.types.common import Host, NodeId
 from shared.types.models import ModelMetadata
 from shared.types.profiling import NodePerformanceProfile
 from shared.types.topology import Node
@@ -75,3 +76,27 @@ def get_shard_assignments(
     )
 
     return shard_assignments
+
+
+def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
+    cycles = cycle_digraph.get_cycles()
+    if not cycles:
+        return []
+    
+    cycle = cycles[0]
+    hosts: list[Host] = []
+    for i in range(len(cycle)):
+        current_node = cycle[i]
+        next_node = cycle[(i + 1) % len(cycle)]
+        
+        for connection in cycle_digraph.list_connections():
+            if (connection.local_node_id == current_node.node_id and 
+                connection.send_back_node_id == next_node.node_id):
+                host = Host(
+                    ip=connection.send_back_multiaddr.ipv4_address,
+                    port=connection.send_back_multiaddr.port
+                )
+                hosts.append(host)
+                break
+    
+    return hosts

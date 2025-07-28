@@ -1,6 +1,7 @@
 import pytest
 
 from shared.types.common import NodeId
+from shared.types.multiaddr import Multiaddr
 from shared.types.profiling import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
@@ -33,14 +34,20 @@ def create_node():
     return _create_node
 
 
+# TODO: this is a hack to get the port for the send_back_multiaddr
 @pytest.fixture
 def create_connection():
-    def _create_connection(source_node_id: NodeId, sink_node_id: NodeId) -> Connection:
+    port_counter = 1235
+    def _create_connection(source_node_id: NodeId, sink_node_id: NodeId, send_back_port: int | None = None) -> Connection:
+        nonlocal port_counter
+        if send_back_port is None:
+            send_back_port = port_counter
+            port_counter += 1
         return Connection(
             local_node_id=source_node_id,
             send_back_node_id=sink_node_id,
-            local_multiaddr="/ip4/127.0.0.1/tcp/1234",
-            send_back_multiaddr="/ip4/127.0.0.1/tcp/1235",
+            local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
+            send_back_multiaddr=Multiaddr(address=f"/ip4/127.0.0.1/tcp/{send_back_port}"),
             connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000)
         )
 

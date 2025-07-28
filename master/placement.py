@@ -1,4 +1,3 @@
-
 from collections.abc import Mapping
 from copy import deepcopy
 from functools import singledispatch
@@ -6,10 +5,12 @@ from typing import Sequence
 
 from master.utils.placement_utils import (
     filter_cycles_by_memory,
+    get_hosts_from_subgraph,
     get_shard_assignments,
     get_smallest_cycles,
 )
 from shared.topology import Topology
+from shared.types.common import Host
 from shared.types.events import Event, InstanceCreated, InstanceDeleted
 from shared.types.events.commands import CreateInstanceCommand, DeleteInstanceCommand
 from shared.types.worker.common import InstanceId
@@ -40,13 +41,19 @@ def get_instance_placements(
     
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)
     
+    cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle)
+    hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
+    
     instance_id = command.instance_id
     target_instances = deepcopy(current_instances)
     target_instances[instance_id] = Instance(
         instance_id=instance_id,
         instance_type=InstanceStatus.ACTIVE,
         shard_assignments=shard_assignments,
-        hosts=[]
+        hosts=[Host(
+            ip=host.ip,
+            port=host.port,
+        ) for host in hosts]
     )
     return target_instances
 

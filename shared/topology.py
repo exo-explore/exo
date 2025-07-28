@@ -5,6 +5,7 @@ import rustworkx as rx
 from pydantic import BaseModel, ConfigDict
 
 from shared.types.common import NodeId
+from shared.types.multiaddr import Multiaddr
 from shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 from shared.types.topology import Connection, Node, TopologyProto
 
@@ -94,7 +95,15 @@ class Topology(TopologyProto):
     def get_node_profile(self, node_id: NodeId) -> NodePerformanceProfile | None:
         rx_idx = self._node_id_to_rx_id_map[node_id]
         return self._graph.get_node_data(rx_idx).node_profile
-
+    
+    def get_node_multiaddr(self, node_id: NodeId) -> Multiaddr:
+        for connection in self.list_connections():
+            if connection.local_node_id == node_id:
+                return connection.local_multiaddr
+            if connection.send_back_node_id == node_id:
+                return connection.send_back_multiaddr
+        raise ValueError(f"Node {node_id} is not connected to any other nodes")
+    
     def update_node_profile(self, node_id: NodeId, node_profile: NodePerformanceProfile) -> None:
         rx_idx = self._node_id_to_rx_id_map[node_id]
         self._graph[rx_idx].node_profile = node_profile
@@ -137,6 +146,17 @@ class Topology(TopologyProto):
             cycles.append(cycle)
 
         return cycles
+    
+    def get_subgraph_from_nodes(self, nodes: list[Node]) -> "Topology":
+        node_idxs = [node.node_id for node in nodes]
+        rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
+        topology = Topology()
+        for rx_idx in rx_idxs:
+            topology.add_node(self._graph[rx_idx])
+        for connection in self.list_connections():
+            if connection.local_node_id in node_idxs and connection.send_back_node_id in node_idxs:
+                topology.add_connection(connection)
+        return topology
 
     def _is_bridge(self, connection: Connection) -> bool:
         edge_idx = self._edge_id_to_rx_id_map[connection]
