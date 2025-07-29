@@ -26,7 +26,7 @@ sync:
     uv sync --all-packages
 
 sync-clean:
-    uv sync --all-packages --force-reinstall
+    uv sync --all-packages --force-reinstall --no-cache
 
 protobufs:
     just regenerate-protobufs
@@ -44,3 +44,12 @@ test-forwarder:
 
 # Build all components (Python packages and Go forwarder)
 build-all: build build-forwarder
+
+run n="1" clean="false":
+    @echo "→ Spinning up {{n}} node(s) (clean={{clean}})"
+    if [ "{{clean}}" = "true" ]; then ./run.sh -c; else ./run.sh; fi
+    if [ "{{n}}" -gt 1 ]; then \
+        for i in $(seq 2 "{{n}}"); do \
+            if [ "{{clean}}" = "true" ]; then ./run.sh -rc; else ./run.sh -r; fi; \
+        done; \
+    fi
