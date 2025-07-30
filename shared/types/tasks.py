@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -30,5 +30,8 @@ class ChatCompletionTask(BaseModel):
     instance_id: InstanceId
     task_status: TaskStatus
     task_params: ChatCompletionTaskParams
+
+    error_type: Optional[str] = Field(default=None)
+    error_message: Optional[str] = Field(default=None)
 
 Task = Annotated[ChatCompletionTask, Field(discriminator="task_type")]

@@ -7,7 +7,8 @@ import pytest
 # TaskStateUpdated and ChunkGenerated are used in test_worker_integration_utils.py
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from shared.types.common import Host, NodeId
+from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
+from shared.types.common import CommandId, Host, NodeId
 from shared.types.events import (
     InstanceCreated,
     InstanceDeleted,
@@ -17,7 +18,7 @@ from shared.types.events import (
 )
 from shared.types.events.chunks import TokenChunk
 from shared.types.models import ModelId
-from shared.types.tasks import Task, TaskId
+from shared.types.tasks import ChatCompletionTask, Task, TaskId, TaskStatus, TaskType
 from shared.types.worker.common import InstanceId, RunnerId
 from shared.types.worker.instances import (
     Instance,
@@ -117,7 +118,7 @@ async def test_runner_assigned_active(
         origin=MASTER_NODE_ID
     )
 
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(1.0)
 
     assert len(worker.assigned_runners) == 1
     assert RUNNER_1_ID in worker.assigned_runners
@@ -200,7 +201,7 @@ async def test_runner_unassigns(
         origin=MASTER_NODE_ID
     )
 
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.5)
 
     # already tested by test_runner_assigned_active
     assert len(worker.assigned_runners) == 1
@@ -354,6 +355,102 @@ async def test_2_runner_inference(
 
     await asyncio.sleep(2.0)
 
+async def test_2_runner_multi_message(
+    logger: Logger,
+    pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
+    hosts: Callable[[int], list[Host]],
+    ):
+    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    await event_log_manager.initialize()
+    shard_downloader = NoopShardDownloader()
+
+    global_events = event_log_manager.global_events
+    await global_events.delete_all_events()
+
+    worker1 = Worker(NODE_A, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+    asyncio.create_task(worker1.run())
+
+    worker2 = Worker(NODE_B, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+    asyncio.create_task(worker2.run())
+
+    ## Instance
+    model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
+
+    shard_assignments = ShardAssignments(
+        model_id=model_id,
+        runner_to_shard={
+            RUNNER_1_ID: pipeline_shard_meta(2, 0),
+            RUNNER_2_ID: pipeline_shard_meta(2, 1)
+        },
+        node_to_runner={
+            NODE_A: RUNNER_1_ID,
+            NODE_B: RUNNER_2_ID
+        }
+    )
+    
+    instance = Instance(
+        instance_id=INSTANCE_1_ID,
+        instance_type=InstanceStatus.ACTIVE,
+        shard_assignments=shard_assignments,
+        hosts=hosts(2)
+    )
+
+    # Task - we have three messages here, which is what the task is about
+
+    completion_create_params = ChatCompletionTaskParams(
+        model="gpt-4",
+        messages=[
+            ChatCompletionMessage(role="user", content='What is the capital of France?'),
+            ChatCompletionMessage(role="assistant", content='The capital of France is Paris.'),
+            ChatCompletionMessage(role="user", content='Ok great. Now write me a haiku about what you can do there.'),
+        ],
+        stream=True,
+    )
+
+    task = ChatCompletionTask(
+        task_id=TASK_1_ID,
+        command_id=CommandId(),
+        instance_id=INSTANCE_1_ID,
+        task_type=TaskType.CHAT_COMPLETION,
+        task_status=TaskStatus.PENDING,
+        task_params=completion_create_params
+    )
+
+    await global_events.append_events(
+        [
+            InstanceCreated(
+                instance=instance
+            ),
+            TaskCreated(
+                task_id=task.task_id,
+                task=task
+            )
+        ], 
+        origin=MASTER_NODE_ID
+    )
+
+    seen_task_started, seen_task_finished, response_string = await read_streaming_response(global_events)    
+
+    assert seen_task_started
+    assert seen_task_finished
+    assert any(keyword in response_string.lower() for keyword in ('kiss', 'paris', 'art', 'love'))
+
+
+    idx = await global_events.get_last_idx()
+    await asyncio.sleep(1.0)
+    events = await global_events.get_events_since(idx)
+    assert len(events) == 0
+
+    await global_events.append_events(
+        [
+            InstanceDeleted(
+                instance_id=instance.instance_id,
+            ),
+        ], 
+        origin=MASTER_NODE_ID
+    )
+
+    await asyncio.sleep(2.0)
 
 
 async def test_runner_respawn(

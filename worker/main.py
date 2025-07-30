@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from asyncio import Queue
 from copy import deepcopy
 from functools import partial
@@ -15,15 +16,17 @@ from shared.types.common import Host, NodeId
 from shared.types.events import (
     ChunkGenerated,
     Event,
+    InstanceDeleted,
     InstanceId,
     NodePerformanceMeasured,
     RunnerDeleted,
     RunnerStatusUpdated,
+    TaskFailed,
     TaskStateUpdated,
 )
 from shared.types.profiling import NodePerformanceProfile
 from shared.types.state import State
-from shared.types.tasks import TaskStatus
+from shared.types.tasks import TaskId, TaskStatus
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import (
     DownloadCompleted,
@@ -68,6 +71,7 @@ class AssignedRunner(BaseModel):
     hosts: list[Host]
 
     status: RunnerStatus
+    failures: list[tuple[float, Exception]] = []
     runner: Optional[RunnerSupervisor]  # set if the runner is 'up'
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -141,14 +145,36 @@ class Worker:
         yield
 
     async def _execute_runner_up_op(
-        self, op: RunnerUpOp
+        self, op: RunnerUpOp, initialize_timeout: Optional[float] = None
     ) -> AsyncGenerator[Event, None]:
         assigned_runner = self.assigned_runners[op.runner_id]
 
-        assigned_runner.runner = await RunnerSupervisor.create(
-            model_shard_meta=assigned_runner.shard_metadata,
-            hosts=assigned_runner.hosts,
-        )
+        # TODO: This should be dynamic, based on the size of the model.
+        if not initialize_timeout:
+            GBPS = 10
+            
+            shard = assigned_runner.shard_metadata
+            weights_size_kb = (shard.end_layer - shard.start_layer) / shard.n_layers * shard.model_meta.storage_size_kilobytes
+            
+            initialize_timeout = weights_size_kb / (1024**2 * GBPS) + 2.0 # Add a constant 2.0 to ensure connection can be made as well
+
+        try:
+            assigned_runner.runner = await asyncio.wait_for(
+                RunnerSupervisor.create(
+                    model_shard_meta=assigned_runner.shard_metadata,
+                    hosts=assigned_runner.hosts,
+                    logger=self.logger,
+                ),
+                timeout=initialize_timeout,
+            )
+        except TimeoutError as e:
+            import traceback
+
+            tb = traceback.format_exc()
+            e = Exception(f"{type(e).__name__}: {str(e)}. Traceback: {tb}")
+            async for event in self._fail_runner(e=e, runner_id=op.runner_id):
+                yield event
+            return
 
         if assigned_runner.runner.healthy:
             assigned_runner.status = LoadedRunnerStatus()
@@ -161,8 +187,9 @@ class Worker:
     ) -> AsyncGenerator[Event, None]:
         assigned_runner = self.assigned_runners[op.runner_id]
 
-        assert isinstance(assigned_runner.runner, RunnerSupervisor)
-        await assigned_runner.runner.astop()
+        if isinstance(assigned_runner.runner, RunnerSupervisor):
+            await assigned_runner.runner.astop()
+
         assigned_runner.runner = None
 
         assigned_runner.status = ReadyRunnerStatus()
@@ -287,9 +314,6 @@ class Worker:
         assigned_runner = self.assigned_runners[op.runner_id]
 
         async def inner_execute(queue: asyncio.Queue[Event]) -> None:
-            assert assigned_runner.runner is not None
-            assert assigned_runner.runner.healthy
-
             async def running_callback(queue: asyncio.Queue[Event]) -> None:
                 # Called when the MLX process has been kicked off
                 assigned_runner.status = RunningRunnerStatus()
@@ -302,6 +326,9 @@ class Worker:
                     ))
 
             try:
+                assert assigned_runner.runner is not None
+                assert assigned_runner.runner.healthy
+
                 async for chunk in assigned_runner.runner.stream_response(
                         task=op.task,
                         request_started_callback=partial(running_callback, queue)):
@@ -325,34 +352,44 @@ class Worker:
 
 
             except Exception as e:
-                # TODO: What log level?
-                self.logger.log(2, f'Runner failed whilst running inference task. Task: {op.task}. Error: {e}')
-
-                if assigned_runner.shard_metadata.device_rank == 0:
-                    await queue.put(TaskStateUpdated(
-                        task_id=op.task.task_id,
-                        task_status=TaskStatus.FAILED,
-                    ))
-
-                assigned_runner.runner = None
-                assigned_runner.status = FailedRunnerStatus(error_message=str(e))
-                await queue.put(assigned_runner.status_update_event())
+                # An exception occurs in the runner supervisor
+                self.logger.warning(f'Runner failed whilst running inference task. Task: {op.task}. Error: {e}')
+                async for event in self._fail_task(e, op.runner_id, op.task.task_id):
+                    await queue.put(event)
 
         queue: Queue[Event] = asyncio.Queue()
         task = asyncio.create_task(inner_execute(queue))
 
+        # TODO: Initial (prefil) timeout can be dynamic
+        # model_kb = assigned_runner.shard_metadata.model_meta.storage_size_kilobytes
+
         try:
             # Yield items from the queue
+            # timeout = 30.
+            timeout = 3.
             while True:
-                item: Event = await asyncio.wait_for(queue.get(), timeout=5)
+                item: Event = await asyncio.wait_for(queue.get(), timeout=timeout)
                 yield item
+                timeout = 2.
                 if isinstance(item, RunnerStatusUpdated) and isinstance(
                     item.runner_status, (LoadedRunnerStatus, FailedRunnerStatus)
                 ):
+                    if isinstance(item.runner_status, LoadedRunnerStatus):
+                        assigned_runner.failures = []
+                        
                     break
+        except TimeoutError as e:
+            # Runner supervisor doesn't respond in time; so we put the runner & task into a failed state
+            self.logger.warning(f'Timed out waiting for runner response to inference task. Task: {op.task}.')
+            async for event in self._fail_task(e, op.runner_id, op.task.task_id):
+                yield event
         finally:
             # Ensure the task is cleaned up
-            await task
+            try:
+                await asyncio.wait_for(task, timeout=5)
+            except asyncio.TimeoutError:
+                self.logger.warning("Timed out waiting for task cleanup after inference execution.")
+        
 
     ## Operation Planner
 
@@ -380,6 +417,10 @@ class Worker:
     ## Planning logic
     def plan(self, state: State) -> RunnerOp | None:
         # Compare state to worker 'mood'
+
+        # for runner_id, assigned_runner in self.assigned_runners.items():
+        #     if len(assigned_runner.failures) == 3:
+        #         raise Exception('Too many error occurred in assigned runner - assumed to be recurrent and unrecoverable.\nErrors are as follows: {assigned_runner.failures}')
 
         # First, unassign assigned runners that are no longer in the state.
         for runner_id, _ in self.assigned_runners.items():
@@ -512,7 +553,9 @@ class Worker:
                     continue # The only previous state to get to Running is from Loaded
 
                 for _, task in state.tasks.items():
-                    if task.instance_id == instance_id and task.task_status == TaskStatus.PENDING:
+                    if task.instance_id == instance_id and (
+                        task.task_status == TaskStatus.PENDING or task.task_status == TaskStatus.FAILED
+                    ):
                         if (runner.shard_metadata.device_rank >= 1 or runner.shard_metadata.world_size == 1):
                             return ExecuteTaskOp(runner_id=runner_id, task=task)
                         else:
@@ -530,17 +573,56 @@ class Worker:
         return None
 
 
+    async def _fail_runner(self, e: Exception, runner_id: RunnerId) -> AsyncGenerator[Event]:
+        if runner_id in self.assigned_runners:
+            assigned_runner = self.assigned_runners[runner_id]
+
+            assigned_runner.runner = None
+            assigned_runner.status = FailedRunnerStatus(error_message=str(e))
+            assigned_runner.failures.append(
+                (
+                    time.time(),
+                    e
+                )
+            )
+
+            # Reset failure count back to 0 when succesful
+            if len(assigned_runner.failures) >= 3:
+                # Too many retries. We will emit a DeleteInstance 
+                yield InstanceDeleted(
+                    instance_id=assigned_runner.instance_id
+                )
+
+            yield assigned_runner.status_update_event()
+
+    
+    async def _fail_task(self, e: Exception, runner_id: RunnerId, task_id: TaskId) -> AsyncGenerator[Event]:
+        if runner_id in self.assigned_runners:
+            yield TaskStateUpdated(
+                task_id=task_id,
+                task_status=TaskStatus.FAILED,
+            )
+
+            yield TaskFailed(
+                task_id=task_id,
+                error_type=str(type(e)),
+                error_message=str(e)
+            )
+
+            async for event in self._fail_runner(e, runner_id):
+                yield event
+
+
     async def event_publisher(self, event: Event) -> None:
         assert self.worker_events is not None
         await self.worker_events.append_events([event], self.node_id)
-        print(f"published event: {event}")
+        self.logger.info(f"published event: {event}")
 
     # Handle state updates
     async def run(self):
         assert self.global_events is not None
 
         while True:
-            _rank = list(self.assigned_runners.values())[0].shard_metadata.device_rank if self.assigned_runners else None
             # 1. get latest events
             events = await self.global_events.get_events_since(self.state.last_event_applied_idx)
 
@@ -555,8 +637,18 @@ class Worker:
 
             # run the op, synchronously blocking for now
             if op is not None:
-                async for event in self._execute_op(op):
-                    await self.event_publisher(event)
+                try:
+                    async for event in self._execute_op(op):
+                        await self.event_publisher(event)
+                except Exception as e:
+                    # execeute_task_op already has its own exception handling here. So we assume we had an exception in one of the other op types.
+                    # we therefore just fail the runner.
+                    self.logger.warning(f"Encountered exception when executing worker op {op}: {e}. \n Runner will be spun down and retried.")
+                    async for event in self._fail_runner(
+                        e, 
+                        runner_id=op.runner_id, 
+                    ):
+                        await self.event_publisher(event)
 
             await asyncio.sleep(0.01)
             if len(events) > 0:

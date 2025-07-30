@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import time
 from collections.abc import AsyncGenerator
 from functools import partial
 from typing import Callable, cast
@@ -17,6 +18,7 @@ from shared.types.worker.commands_runner import (
     ExitMessage,
     FinishedResponse,
     GenerationResponse,
+    InitializedResponse,
     RunnerMessage,
     SetupMessage,
 )
@@ -98,22 +100,23 @@ async def _mlx_generate(
 async def main():
     try:
         runner_print("hello from the runner")
-
         # Get setup info from worker
         init_message = await runner_read_message()
         setup_message = ensure_type(init_message, SetupMessage)
         model_shard_meta = setup_message.model_shard_meta
         hosts = setup_message.hosts
+        
+        setup_start_time = time.time()
 
         mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_running_loop()
-
-        runner_print(f"got here; {hosts}")
 
         model, tokenizer, sampler = await loop.run_in_executor(
             mlx_executor,
             partial(initialize_mlx, model_shard_meta=model_shard_meta, hosts=hosts),
         )
+
+        runner_write_response(InitializedResponse(time_taken=time.time() - setup_start_time))
 
         while True:
             message: RunnerMessage = await runner_read_message()

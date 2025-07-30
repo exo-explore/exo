@@ -11,6 +11,7 @@ from shared.types.events import (
     Event,
     RunnerDeleted,
     RunnerStatusUpdated,
+    TaskFailed,
     TaskStateUpdated,
 )
 from shared.types.events.chunks import TokenChunk
@@ -217,7 +218,7 @@ async def test_execute_task_fails(
     async for event in worker._execute_op(execute_task_op): # type: ignore[misc]
         events.append(event)
 
-    assert len(events) == 4
+    assert len(events) == 5
 
     print(events)    
 
@@ -230,5 +231,7 @@ async def test_execute_task_fails(
     assert isinstance(events[2], TaskStateUpdated)
     assert events[2].task_status == TaskStatus.FAILED # Task marked as failed. 
 
-    assert isinstance(events[3], RunnerStatusUpdated)
-    assert isinstance(events[3].runner_status, FailedRunnerStatus) # It should have failed.
+    assert isinstance(events[3], TaskFailed)
+
+    assert isinstance(events[4], RunnerStatusUpdated)
+    assert isinstance(events[4].runner_status, FailedRunnerStatus) # It should have failed.

@@ -51,6 +51,7 @@ RunnerMessageTypeAdapter: TypeAdapter[RunnerMessage] = TypeAdapter(RunnerMessage
 
 
 class RunnerResponseType(str, Enum):
+    InitializedResponse = "initialized_response"
     GenerationResponse = "generation_response"
     FinishedResponse = "finished_response"
     PrintResponse = "print_response"
@@ -62,6 +63,13 @@ RRT = TypeVar(name="RRT", bound=RunnerResponseType)
 
 class BaseRunnerResponse(BaseModel, Generic[RRT]):
     pass
+
+
+class InitializedResponse(BaseRunnerResponse[RunnerResponseType.InitializedResponse]):
+    type: Literal[RunnerResponseType.InitializedResponse] = Field(
+        default=RunnerResponseType.InitializedResponse, frozen=True
+    )
+    time_taken: float
 
 
 class GenerationResponse(BaseRunnerResponse[RunnerResponseType.GenerationResponse]):
@@ -97,7 +105,7 @@ class ErrorResponse(BaseRunnerResponse[RunnerResponseType.ErrorResponse]):
 
 
 RunnerResponse = Annotated[
-    GenerationResponse | PrintResponse | FinishedResponse | ErrorResponse,
+    InitializedResponse | GenerationResponse | PrintResponse | FinishedResponse | ErrorResponse,
     Field(discriminator="type"),
 ]
 RunnerResponseTypeAdapter: TypeAdapter[RunnerResponse] = TypeAdapter(RunnerResponse)

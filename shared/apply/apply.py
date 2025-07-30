@@ -19,6 +19,7 @@ from shared.types.events import (
     RunnerStatusUpdated,
     TaskCreated,
     TaskDeleted,
+    TaskFailed,
     TaskStateUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
@@ -28,7 +29,7 @@ from shared.types.events import (
 )
 from shared.types.profiling import NodePerformanceProfile
 from shared.types.state import State
-from shared.types.tasks import Task, TaskId
+from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.topology import Connection, Node
 from shared.types.worker.common import NodeStatus, RunnerId
 from shared.types.worker.instances import Instance, InstanceId, InstanceStatus
@@ -63,7 +64,23 @@ def apply_task_state_updated(event: TaskStateUpdated, state: State) -> State:
     if event.task_id not in state.tasks:
         return state
     
-    updated_task = state.tasks[event.task_id].model_copy(update={"task_status": event.task_status})
+    update: dict[str, TaskStatus | None] = {
+        "task_status": event.task_status,
+    }
+    if event.task_status != TaskStatus.FAILED:
+        update["error_type"] = None
+        update["error_message"] = None
+
+    updated_task = state.tasks[event.task_id].model_copy(update=update)
+    new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: updated_task}
+    return state.model_copy(update={"tasks": new_tasks})
+
+@event_apply.register(TaskFailed)
+def apply_task_failed(event: TaskFailed, state: State) -> State:
+    if event.task_id not in state.tasks:
+        return state
+    
+    updated_task = state.tasks[event.task_id].model_copy(update={"error_type": event.error_type, "error_message": event.error_message})
     new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: updated_task}
     return state.model_copy(update={"tasks": new_tasks})
 

@@ -47,9 +47,13 @@ async def runner_read_message() -> RunnerMessage:
 
 
 def runner_write_response(obj: RunnerResponse) -> None:
-    encoded: bytes = obj.model_dump_json().encode("utf-8") + b"\n"
-    _ = sys.stdout.buffer.write(encoded)
-    _ = sys.stdout.buffer.flush()
+    try:
+        encoded: bytes = obj.model_dump_json().encode("utf-8") + b"\n"
+        _ = sys.stdout.buffer.write(encoded)
+        _ = sys.stdout.buffer.flush()
+    except BrokenPipeError:
+        # Supervisor has closed the pipe, silently exit
+        sys.exit(0)
 
 
 async def supervisor_read_response(
@@ -83,6 +87,10 @@ def runner_print(text: str) -> None:
 
 
 def runner_write_error(error: Exception) -> None:
+    # Skip writing error if it's a BrokenPipeError - supervisor is already gone
+    if isinstance(error, BrokenPipeError):
+        sys.exit(0)
+    
     error_response: ErrorResponse = ErrorResponse(
         type=RunnerResponseType.ErrorResponse,
         error_type=type(error).__name__,

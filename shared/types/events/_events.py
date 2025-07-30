@@ -49,6 +49,7 @@ class _EventType(str, Enum):
     # Task Events
     TaskCreated = "TaskCreated"
     TaskStateUpdated = "TaskStateUpdated"
+    TaskFailed = "TaskFailed"
     TaskDeleted = "TaskDeleted"
 
     # Streaming Events
@@ -117,6 +118,13 @@ class TaskStateUpdated(_BaseEvent[_EventType.TaskStateUpdated]):
     event_type: Literal[_EventType.TaskStateUpdated] = _EventType.TaskStateUpdated
     task_id: TaskId
     task_status: TaskStatus
+
+
+class TaskFailed(_BaseEvent[_EventType.TaskFailed]):
+    event_type: Literal[_EventType.TaskFailed] = _EventType.TaskFailed
+    task_id: TaskId
+    error_type: str
+    error_message: str
 
 
 class InstanceCreated(_BaseEvent[_EventType.InstanceCreated]):
@@ -202,6 +210,7 @@ _Event = Union[
     Heartbeat,
     TaskCreated,
     TaskStateUpdated,
+    TaskFailed,
     TaskDeleted,
     InstanceCreated,
     InstanceActivated,

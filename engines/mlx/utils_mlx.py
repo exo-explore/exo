@@ -52,7 +52,6 @@ def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group: 
     os.environ["MLX_RANK"] = str(rank)
     os.environ["MLX_RING_VERBOSE"] = "1"
 
-    # Initialize distributed
     group = mx.distributed.init(backend="ring", strict=True)
     runner_print(f"Rank {rank} mlx distributed initialization complete")
 

@@ -1,4 +1,5 @@
 import asyncio
+from logging import Logger
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +31,7 @@ async def test_supervisor_single_node_response(
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     tmp_path: Path,
+    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -40,6 +42,7 @@ async def test_supervisor_single_node_response(
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
+        logger=logger,
     )
 
     try:
@@ -68,18 +71,25 @@ async def test_supervisor_two_node_response(
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     tmp_path: Path,
+    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     instance_id = InstanceId()
-    supervisor_0 = await RunnerSupervisor.create(
-        model_shard_meta=pipeline_shard_meta(2, 0),
-        hosts=hosts(2, offset=15),
+    create_supervisor_0 = asyncio.create_task(
+        RunnerSupervisor.create(
+            model_shard_meta=pipeline_shard_meta(2, 0),
+            hosts=hosts(2, offset=15),
+            logger=logger,
+        )
     )
-
-    supervisor_1 = await RunnerSupervisor.create(
-        model_shard_meta=pipeline_shard_meta(2, 1),
-        hosts=hosts(2, offset=15),
+    create_supervisor_1 = asyncio.create_task(
+        RunnerSupervisor.create(
+            model_shard_meta=pipeline_shard_meta(2, 1),
+            hosts=hosts(2, offset=15),
+            logger=logger,
+        )
     )
+    supervisor_0, supervisor_1 = await asyncio.gather(create_supervisor_0, create_supervisor_1)
 
     await asyncio.sleep(0.1)
 
@@ -124,6 +134,7 @@ async def test_supervisor_early_stopping(
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     tmp_path: Path,
+    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -132,6 +143,7 @@ async def test_supervisor_early_stopping(
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
+        logger=logger,
     )
 
     task = chat_completion_task(instance_id, TaskId())    
@@ -176,6 +188,7 @@ async def test_supervisor_early_stopping(
 async def test_supervisor_handles_terminated_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
+    logger: Logger,
     tmp_path: Path,
 ):
     """Test that the supervisor handles a terminated runner"""
@@ -184,6 +197,7 @@ async def test_supervisor_handles_terminated_runner(
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
+        logger=logger,
     )
 
     # Terminate the runner
@@ -201,6 +215,7 @@ async def test_supervisor_handles_killed_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     tmp_path: Path,
+    logger: Logger,
 ):
     """Test that the supervisor handles a killed runner"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -208,6 +223,7 @@ async def test_supervisor_handles_killed_runner(
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
+        logger=logger,
     )
 
     assert supervisor.healthy

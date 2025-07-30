@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import sys
 from collections.abc import AsyncGenerator
+from logging import Logger
 from types import CoroutineType
 from typing import Any, Callable
 
@@ -14,6 +15,7 @@ from shared.types.worker.commands_runner import (
     ExitMessage,
     FinishedResponse,
     GenerationResponse,
+    InitializedResponse,
     PrintResponse,
     RunnerResponse,
     SetupMessage,
@@ -54,6 +56,7 @@ class RunnerSupervisor:
         cls,
         model_shard_meta: ShardMetadata,
         hosts: list[Host],
+        logger: Logger
     ) -> "RunnerSupervisor":
         """
         Create and initialize a RunnerSupervisor instance.
@@ -66,7 +69,7 @@ class RunnerSupervisor:
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=sys.stderr,
+                stderr=sys.stderr
             )
         )
 
@@ -78,6 +81,21 @@ class RunnerSupervisor:
                 hosts=hosts,
             ),
         )
+
+        while True:
+            line: RunnerResponse | None = await supervisor_read_response(
+                runner_process
+            )
+            if line is None or isinstance(line, PrintResponse):
+                # print(line)
+                continue
+            elif isinstance(line, ErrorResponse):
+                raise Exception(line.error_type, line.error_message, line.traceback or "")
+            else:
+                assert isinstance(line, InitializedResponse)
+                logger.info(f'Runner initialized in {line.time_taken} seconds')
+                print(f'Runner initialized in {line.time_taken} seconds')
+                break
 
         return cls(
             model_shard_meta=model_shard_meta,
@@ -203,6 +221,8 @@ class RunnerSupervisor:
                             token_id=token,
                             finish_reason=finish_reason,
                         )
+                    case InitializedResponse():
+                        raise ValueError('Initialized Response read during streaming flow')
                     case FinishedResponse():
                         break
                     case PrintResponse(text=text):
