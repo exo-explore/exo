@@ -1,7 +1,7 @@
 import asyncio
-from pathlib import Path
 import time
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Callable, List, Sequence, final
 
 import uvicorn
@@ -72,13 +72,13 @@ async def resolve_model_meta(model_id: str) -> ModelMetadata:
 @final
 class API:
     def __init__(self, command_buffer: List[Command], global_events: AsyncSQLiteEventStorage, get_state: Callable[[], State]) -> None:
+        self.get_state = get_state
+        self.command_buffer = command_buffer
+        self.global_events = global_events
+
         self._app = FastAPI()
         self._setup_cors()
         self._setup_routes()
-
-        self.command_buffer = command_buffer
-        self.global_events = global_events
-        self.get_state = get_state
 
         self._app.mount("/", StaticFiles(directory=_DASHBOARD_DIR, html=True), name="dashboard")
 
@@ -207,9 +207,6 @@ class API:
                 name=card.name,
                 description=card.description,
                 tags=card.tags) for card in MODEL_CARDS.values()])
-
-    async def get_state(self) -> State:
-        return self.get_state()
 
 
 def start_fastapi_server(

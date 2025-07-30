@@ -151,12 +151,12 @@ class Worker:
 
         # TODO: This should be dynamic, based on the size of the model.
         if not initialize_timeout:
-            GBPS = 10
+            gigabytes_per_second = 10
             
             shard = assigned_runner.shard_metadata
             weights_size_kb = (shard.end_layer - shard.start_layer) / shard.n_layers * shard.model_meta.storage_size_kilobytes
             
-            initialize_timeout = weights_size_kb / (1024**2 * GBPS) + 2.0 # Add a constant 2.0 to ensure connection can be made as well
+            initialize_timeout = weights_size_kb / (1024**2 * gigabytes_per_second) + 2.0 # Add a constant 2.0 to ensure connection can be made as well
 
         try:
             assigned_runner.runner = await asyncio.wait_for(

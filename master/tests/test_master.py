@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 from logging import Logger
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import pytest
 from exo_pyo3_bindings import Keypair
@@ -13,7 +13,7 @@ from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogManager
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from shared.types.common import NodeId
-from shared.types.events import TaskCreated
+from shared.types.events import Event, EventFromEventLog, Heartbeat, TaskCreated
 from shared.types.events._events import (
     InstanceCreated,
     NodePerformanceMeasured,
@@ -52,6 +52,21 @@ async def test_master():
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
     await global_events.delete_all_events()
+
+    async def _get_events() -> Sequence[EventFromEventLog[Event]]:
+        orig_events = await global_events.get_events_since(0)
+        override_idx_in_log = 1
+        events: List[EventFromEventLog[Event]] = []
+        for e in orig_events:
+            if isinstance(e.event, Heartbeat):
+                continue
+            events.append(EventFromEventLog(
+                event=e.event,
+                origin=e.origin,
+                idx_in_log=override_idx_in_log
+            ))
+            override_idx_in_log += 1
+        return events
 
     command_buffer: List[Command] = []
 
@@ -104,10 +119,10 @@ async def test_master():
             )
         )
     )
-    while len(await global_events.get_events_since(0)) < 4:
+    while len(await _get_events()) < 4:
         await asyncio.sleep(0.001)
 
-    events = await global_events.get_events_since(0)
+    events = await _get_events()
     print(events)
     assert len(events) == 4
     assert events[0].idx_in_log == 1

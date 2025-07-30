@@ -15,8 +15,8 @@ from shared.types.events import (
     InstanceDeleted,
     RunnerStatusUpdated,
     TaskCreated,
-    TaskStateUpdated,
     TaskFailed,
+    TaskStateUpdated,
 )
 from shared.types.events.chunks import GenerationChunk, TokenChunk
 from shared.types.models import ModelId
@@ -57,7 +57,7 @@ async def test_stream_response_failed_always(
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
     chat_completion_task: Callable[[InstanceId, TaskId], Task]
 ):
-    worker, global_events = await worker_running(NODE_A)
+    _, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
     instance_value.instance_type = InstanceStatus.ACTIVE
