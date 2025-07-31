@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import os
+import resource
 from asyncio import AbstractEventLoop
 from typing import Any, Callable
 
@@ -18,6 +19,8 @@ from shared.types.worker.shards import ShardMetadata
 from worker.download.download_utils import build_model_path
 from worker.runner.communication import runner_print
 
+# Needed for 8 bit model
+resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 def mx_barrier():
     mx.eval( # type: ignore
@@ -86,6 +89,7 @@ def shard_and_load(model_shard_meta: ShardMetadata) -> tuple[nn.Module, Tokenize
     tokenizer = load_tokenizer(model_path)
     assert isinstance(tokenizer, TokenizerWrapper)
     model = auto_parallel(model, model_shard_meta)
+    mx.eval(model.parameters()) # type: ignore
 
     # Synchronize processes before generation to avoid timeout
     mx_barrier()

@@ -10,13 +10,13 @@ from shared.types.events import (
 )
 from shared.types.events._events import RunnerStatusUpdated
 from shared.types.tasks import Task, TaskId
-from shared.types.worker.common import RunnerId
 from shared.types.worker.instances import Instance, InstanceId
 from shared.types.worker.ops import (
     RunnerUpOp,
 )
 from shared.types.worker.runners import FailedRunnerStatus
 from worker.main import Worker
+from worker.tests.constants import RUNNER_1_ID
 
 # To enable this test, run pytest with: ENABLE_SPINUP_TIMEOUT_TEST=true pytest
 
@@ -26,13 +26,13 @@ from worker.main import Worker
 )
 @pytest.mark.asyncio
 async def test_runner_up_op_timeout(
-    worker_with_assigned_runner: tuple[Worker, RunnerId, Instance], 
+    worker_with_assigned_runner: tuple[Worker, Instance], 
     chat_completion_task: Callable[[InstanceId, TaskId], Task], 
     monkeypatch: pytest.MonkeyPatch
     ):
-    worker, runner_id, _ = worker_with_assigned_runner
+    worker, _ = worker_with_assigned_runner
 
-    runner_up_op = RunnerUpOp(runner_id=runner_id)
+    runner_up_op = RunnerUpOp(runner_id=RUNNER_1_ID)
 
     # _execute_runner_up_op should throw a TimeoutError with a short timeout
     events: list[Event] = []

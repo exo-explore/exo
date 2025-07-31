@@ -200,7 +200,7 @@ fn mdns_behaviour(keypair: &identity::Keypair) -> AnyResult<mdns::tokio::Behavio
 
     // mDNS config => enable IPv6
     let mdns_config = Config {
-        // enable_ipv6: true, // TODO: for some reason, TCP+mDNS don't work well with ipv6?? figure out how to make work
+        enable_ipv6: true,
         ..Default::default()
     };
 

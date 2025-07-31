@@ -6,5 +6,5 @@ runs:
   using: "composite"
   steps:
     - name: Lint code
-      run: nix develop -c just lint
+      run: nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just lint
       shell: bash

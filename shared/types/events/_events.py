@@ -3,7 +3,9 @@ from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    Any,
     Literal,
+    TypeVar,
     Union,
     get_args,
     get_origin,
@@ -90,6 +92,7 @@ class _BaseEvent[T: _EventType](BaseModel):
 
     event_type: T
     event_id: EventId = EventId()
+    __no_apply__: bool = False
 
     def check_event_was_sent_by_correct_node(self, origin_id: NodeId) -> bool:
         """Check if the event was sent by the correct node.
@@ -99,6 +102,20 @@ class _BaseEvent[T: _EventType](BaseModel):
         """
         return True
 
+_E = TypeVar("_E", bound=_BaseEvent[Any])
+
+def no_op_event(cls: type[_E]) -> type[_E]:
+    """Decorator to mark an event class as a *no-op*.
+
+    Events marked as no-ops do not require an `event_apply` registration – the
+    apply layer will simply return the current state unchanged.  This reduces
+    boilerplate and keeps console output quieter for high-frequency events
+    such as *Heartbeat* or streaming *ChunkGenerated* messages.
+    """
+
+    cls.__no_apply__ = True  # Used by the apply layer to identify no-op events
+    return cls
+@no_op_event
 class Heartbeat(_BaseEvent[_EventType.Heartbeat]):
     event_type: Literal[_EventType.Heartbeat] = _EventType.Heartbeat
     node_id: NodeId
@@ -152,6 +169,7 @@ class InstanceReplacedAtomically(_BaseEvent[_EventType.InstanceReplacedAtomicall
     instance_to_replace: InstanceId
     new_instance_id: InstanceId
 
+# TODO: RunnerCreated
 
 class RunnerStatusUpdated(_BaseEvent[_EventType.RunnerStatusUpdated]):
     event_type: Literal[_EventType.RunnerStatusUpdated] = _EventType.RunnerStatusUpdated
@@ -176,6 +194,7 @@ class WorkerStatusUpdated(_BaseEvent[_EventType.WorkerStatusUpdated]):
     node_state: NodeStatus
 
 
+@no_op_event
 class ChunkGenerated(_BaseEvent[_EventType.ChunkGenerated]):
     event_type: Literal[_EventType.ChunkGenerated] = _EventType.ChunkGenerated
     command_id: CommandId

@@ -1,5 +1,8 @@
+import asyncio
 from logging import Logger
-from typing import Dict
+from typing import Dict, Optional, cast
+
+from sqlalchemy.exc import OperationalError
 
 from shared.constants import EXO_HOME
 from shared.db.sqlite.config import EventLogConfig, EventLogType
@@ -25,11 +28,34 @@ class EventLogManager:
         EXO_HOME.mkdir(parents=True, exist_ok=True)
     
     # TODO: This seems like it's a pattern to avoid an async __init__ function. But as we know, there's a better pattern for this - using a create() function, like in runner_supervisor.
-    async def initialize(self) -> None:
-        """Initialize both connectors - call this during startup"""
+    async def initialize(self, max_retries: int = 3) -> None:
+        """Initialize both connectors with retry logic - call this during startup"""
         # Both master and worker need both connectors
-        await self.get_connector(EventLogType.WORKER_EVENTS)
-        await self.get_connector(EventLogType.GLOBAL_EVENTS)
+        for log_type in [EventLogType.WORKER_EVENTS, EventLogType.GLOBAL_EVENTS]:
+            retry_count: int = 0
+            last_error: Optional[Exception] = None
+            
+            while retry_count < max_retries:
+                try:
+                    await self.get_connector(log_type)
+                    break
+                except OperationalError as e:
+                    last_error = e
+                    if "database is locked" in str(e) and retry_count < max_retries - 1:
+                        retry_count += 1
+                        delay = cast(float, 0.5 * (2 ** retry_count))
+                        self._logger.warning(f"Database locked while initializing {log_type.value}, retry {retry_count}/{max_retries} after {delay}s")
+                        await asyncio.sleep(delay)
+                    else:
+                        self._logger.error(f"Failed to initialize {log_type.value} after {retry_count + 1} attempts: {e}")
+                        raise RuntimeError(f"Could not initialize {log_type.value} database after {retry_count + 1} attempts") from e
+                except Exception as e:
+                    self._logger.error(f"Unexpected error initializing {log_type.value}: {e}")
+                    raise
+            
+            if retry_count >= max_retries and last_error:
+                raise RuntimeError(f"Could not initialize {log_type.value} database after {max_retries} attempts") from last_error
+        
         self._logger.info("Initialized all event log connectors")
     
     async def get_connector(self, log_type: EventLogType) -> AsyncSQLiteEventStorage:
@@ -37,20 +63,24 @@ class EventLogManager:
         if log_type not in self._connectors:
             db_path = self._config.get_db_path(log_type)
             
-            connector = AsyncSQLiteEventStorage(
-                db_path=db_path,
-                batch_size=self._config.batch_size,
-                batch_timeout_ms=self._config.batch_timeout_ms,
-                debounce_ms=self._config.debounce_ms,
-                max_age_ms=self._config.max_age_ms,
-                logger=self._logger
-            )
-            
-            # Start the connector (creates tables if needed)
-            await connector.start()
-            
-            self._connectors[log_type] = connector
-            self._logger.info(f"Initialized {log_type.value} connector at {db_path}")
+            try:
+                connector = AsyncSQLiteEventStorage(
+                    db_path=db_path,
+                    batch_size=self._config.batch_size,
+                    batch_timeout_ms=self._config.batch_timeout_ms,
+                    debounce_ms=self._config.debounce_ms,
+                    max_age_ms=self._config.max_age_ms,
+                    logger=self._logger
+                )
+                
+                # Start the connector (creates tables if needed)
+                await connector.start()
+                
+                self._connectors[log_type] = connector
+                self._logger.info(f"Initialized {log_type.value} connector at {db_path}")
+            except Exception as e:
+                self._logger.error(f"Failed to create {log_type.value} connector: {e}")
+                raise
         
         return self._connectors[log_type]
     

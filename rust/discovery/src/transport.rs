@@ -33,7 +33,8 @@ fn tcp_transport(
     };
 
     // `TCP_NODELAY` enabled => avoid latency
-    let tcp_config = Config::default().nodelay(true);
+    let tcp_config = Config::default()
+        .nodelay(true);
 
     // V1 + lazy flushing => 0-RTT negotiation
     let upgrade_version = Version::V1Lazy;

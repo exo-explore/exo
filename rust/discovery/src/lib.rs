@@ -17,6 +17,7 @@
 use crate::behaviour::{discovery_behaviour, DiscoveryBehaviour};
 use crate::transport::discovery_transport;
 use libp2p::{identity, Swarm, SwarmBuilder};
+use std::net::IpAddr;
 
 pub mod behaviour;
 pub mod transport;
@@ -49,11 +50,18 @@ pub fn discovery_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm<Dis
         .with_behaviour(discovery_behaviour)?
         .build();
 
-    // Listen on all interfaces and whatever port the OS assigns
-    // swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?; // TODO: make this
-    let listen_addr = "/ip4/0.0.0.0/tcp/0".parse()?;
-    log::info!("RUST: Attempting to listen on: {}", listen_addr);
-    swarm.listen_on(listen_addr)?;
+    // Listen on IPv4
+    let listen_addr_ipv4 = "/ip4/0.0.0.0/tcp/0".parse()?;
+    log::info!("RUST: Attempting to listen on: {}", listen_addr_ipv4);
+    swarm.listen_on(listen_addr_ipv4)?;
+
+    // Listen on IPv6 - try but don't fail if not available
+    let listen_addr_ipv6 = "/ip6/::/tcp/0".parse()?;
+    log::info!("RUST: Attempting to listen on: {}", listen_addr_ipv6);
+    match swarm.listen_on(listen_addr_ipv6) {
+        Ok(_) => log::info!("RUST: Successfully listening on IPv6"),
+        Err(e) => log::warn!("RUST: Failed to listen on IPv6 (this is okay if IPv6 is not available): {:?}", e),
+    }
 
     Ok(swarm)
 }

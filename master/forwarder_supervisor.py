@@ -111,6 +111,7 @@ class ForwarderSupervisor:
         env_vars["FORWARDER_NODE_ID"] = str(self.node_id)
         self._process = await asyncio.create_subprocess_exec(
             str(self._binary_path),
+            "--events-db", str(EXO_WORKER_EVENT_DB),
             f'{pairs}',
             stdout=None,
             stderr=None,

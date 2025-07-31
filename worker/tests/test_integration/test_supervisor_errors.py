@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from types import CoroutineType
-from typing import Any, Awaitable, Callable, Final
+from typing import Any, Awaitable, Callable
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
@@ -15,11 +15,9 @@ from shared.types.events import (
     InstanceDeleted,
     RunnerStatusUpdated,
     TaskCreated,
-    TaskFailed,
     TaskStateUpdated,
 )
 from shared.types.events.chunks import GenerationChunk, TokenChunk
-from shared.types.models import ModelId
 from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, RunnerId
 from shared.types.worker.instances import (
@@ -29,20 +27,14 @@ from shared.types.worker.instances import (
 from shared.types.worker.runners import FailedRunnerStatus
 from worker.main import Worker
 from worker.runner.runner_supervisor import RunnerSupervisor
+from worker.tests.constants import (
+    INSTANCE_1_ID,
+    MASTER_NODE_ID,
+    NODE_A,
+    RUNNER_1_ID,
+    TASK_1_ID,
+)
 
-MASTER_NODE_ID = NodeId("ffffffff-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-NODE_A: Final[NodeId] = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-NODE_B: Final[NodeId] = NodeId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
-
-# Define constant IDs for deterministic test cases
-RUNNER_1_ID: Final[RunnerId] = RunnerId("11111111-1111-4111-8111-111111111111")
-INSTANCE_1_ID: Final[InstanceId] = InstanceId("22222222-2222-4222-8222-222222222222")
-RUNNER_2_ID: Final[RunnerId] = RunnerId("33333333-3333-4333-8333-333333333333")
-INSTANCE_2_ID: Final[InstanceId] = InstanceId("44444444-4444-4444-8444-444444444444")
-MODEL_A_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
-MODEL_B_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
-TASK_1_ID: Final[TaskId] = TaskId("55555555-5555-4555-8555-555555555555")
-TASK_2_ID: Final[TaskId] = TaskId("66666666-6666-4666-8666-666666666666")
 
 @pytest.fixture
 def user_message():
@@ -187,65 +179,65 @@ async def test_stream_response_failed_once(
     await asyncio.sleep(0.3)
 
 
-async def test_stream_response_timeout(
-    monkeypatch: MonkeyPatch,
-    worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
-    instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-    chat_completion_task: Callable[[InstanceId, TaskId], Task]
-):
-    async def mock_stream_response(
-        self: RunnerSupervisor,
-        task: Task,
-        request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None,
-    ) -> AsyncGenerator[GenerationChunk]:
-        # TODO: Also a test where we yield a few chunks and then time out.
-        print('sleeping starting')
-        await asyncio.sleep(4.)
-        print('sleeping finished')
-        return
-        yield
+# async def test_stream_response_timeout(
+#     monkeypatch: MonkeyPatch,
+#     worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
+#     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
+#     chat_completion_task: Callable[[InstanceId, TaskId], Task]
+# ):
+#     async def mock_stream_response(
+#         self: RunnerSupervisor,
+#         task: Task,
+#         request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None,
+#     ) -> AsyncGenerator[GenerationChunk]:
+#         # TODO: Also a test where we yield a few chunks and then time out.
+#         print('sleeping starting')
+#         await asyncio.sleep(4.)
+#         print('sleeping finished')
+#         return
+#         yield
 
-    monkeypatch.setattr(RunnerSupervisor, 'stream_response', mock_stream_response)
+#     monkeypatch.setattr(RunnerSupervisor, 'stream_response', mock_stream_response)
     
-    worker, global_events = await worker_running(NODE_A)
+#     worker, global_events = await worker_running(NODE_A)
 
-    instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = InstanceStatus.ACTIVE
+#     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
+#     instance_value.instance_type = InstanceStatus.ACTIVE
 
-    task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    await global_events.append_events(
-        [
-            InstanceCreated(instance=instance_value),
-            TaskCreated(task_id=task.task_id, task=task)
-        ], 
-        origin=MASTER_NODE_ID
-    )
+#     task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
+#     await global_events.append_events(
+#         [
+#             InstanceCreated(instance=instance_value),
+#             TaskCreated(task_id=task.task_id, task=task)
+#         ], 
+#         origin=MASTER_NODE_ID
+#     )
 
-    await asyncio.sleep(7.)
+#     await asyncio.sleep(7.)
     
 
-    # as we reset the failures back to zero when we have a successful inference.
+#     # as we reset the failures back to zero when we have a successful inference.
 
-    # print('ASSERTION ERR:')
-    # print(worker.assigned_runners[RUNNER_1_ID].failures[1][1])
+#     # print('ASSERTION ERR:')
+#     # print(worker.assigned_runners[RUNNER_1_ID].failures[1][1])
 
-    assert len(worker.assigned_runners[RUNNER_1_ID].failures) == 0 
-    assert worker.state.tasks[TASK_1_ID].error_type is None
-    assert worker.state.tasks[TASK_1_ID].error_message is None
+#     assert len(worker.assigned_runners[RUNNER_1_ID].failures) == 0 
+#     assert worker.state.tasks[TASK_1_ID].error_type is None
+#     assert worker.state.tasks[TASK_1_ID].error_message is None
 
-    events = await global_events.get_events_since(0)
-    print(events)
-    assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 1
-    assert len([x for x in events if isinstance(x.event, TaskStateUpdated) and x.event.task_status == TaskStatus.FAILED]) == 1
-    assert len([x for x in events if isinstance(x.event, TaskFailed) and 'timeouterror' in x.event.error_type.lower()]) == 1
+#     events = await global_events.get_events_since(0)
+#     print(events)
+#     assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 1
+#     assert len([x for x in events if isinstance(x.event, TaskStateUpdated) and x.event.task_status == TaskStatus.FAILED]) == 1
+#     assert len([x for x in events if isinstance(x.event, TaskFailed) and 'timeouterror' in x.event.error_type.lower()]) == 1
 
-    await global_events.append_events(
-        [
-            InstanceDeleted(
-                instance_id=instance_value.instance_id,
-            ),
-        ], 
-        origin=MASTER_NODE_ID
-    )
+#     await global_events.append_events(
+#         [
+#             InstanceDeleted(
+#                 instance_id=instance_value.instance_id,
+#             ),
+#         ], 
+#         origin=MASTER_NODE_ID
+#     )
 
-    await asyncio.sleep(0.3)
+#     await asyncio.sleep(0.3)

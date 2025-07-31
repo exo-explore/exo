@@ -48,7 +48,10 @@ class DiscoverySupervisor:
         local_multiaddr = Multiaddr(address=str(e.local_addr))
         send_back_multiaddr = Multiaddr(address=str(e.send_back_addr))
         connection_profile = None
-
+        
+        if send_back_multiaddr.ipv4_address == local_multiaddr.ipv4_address:
+            return
+        
         topology_edge_created = TopologyEdgeCreated(edge=Connection(
             local_node_id=local_node_id,
             send_back_node_id=send_back_node_id,
@@ -56,7 +59,7 @@ class DiscoverySupervisor:
             send_back_multiaddr=send_back_multiaddr,
             connection_profile=connection_profile
         ))
-        self.logger.error(
+        self.logger.info(
             msg=f"CONNECTED CALLBACK: {local_node_id} -> {send_back_node_id}, {local_multiaddr} -> {send_back_multiaddr}")
         await self.global_events.append_events(
             [topology_edge_created],

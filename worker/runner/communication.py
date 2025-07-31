@@ -62,7 +62,7 @@ async def supervisor_read_response(
     assert proc.stdout is not None, (
         "proc.stdout should not be None when created with stdout=PIPE"
     )
-    line_bytes: bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=10)
+    line_bytes: bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=180)
     line: str = line_bytes.decode("utf-8").strip()
 
     if not line:

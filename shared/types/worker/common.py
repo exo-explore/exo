@@ -14,4 +14,3 @@ class RunnerId(ID):
 class NodeStatus(str, Enum):
     Idle = "Idle"
     Running = "Running"
-    Paused = "Paused"

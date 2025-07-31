@@ -6,5 +6,5 @@ runs:
   using: "composite"
   steps:
     - name: Regenerate protobufs
-      run: nix develop -c just regenerate-protobufs
+      run: nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just regenerate-protobufs
       shell: bash

@@ -114,3 +114,7 @@ extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
 [tool.pytest.ini_options]
 pythonpath = "."
 asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselected by default)"
+]
+addopts = "-m 'not slow'"

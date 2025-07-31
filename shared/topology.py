@@ -86,8 +86,11 @@ class Topology(TopologyProto):
             yield connection
 
     def get_node_profile(self, node_id: NodeId) -> NodePerformanceProfile | None:
-        rx_idx = self._node_id_to_rx_id_map[node_id]
-        return self._graph.get_node_data(rx_idx).node_profile
+        try:
+            rx_idx = self._node_id_to_rx_id_map[node_id]
+            return self._graph.get_node_data(rx_idx).node_profile
+        except KeyError:
+            return None
     
     def get_node_multiaddr(self, node_id: NodeId) -> Multiaddr:
         for connection in self.list_connections():
@@ -106,8 +109,11 @@ class Topology(TopologyProto):
         self._graph.update_edge_by_index(rx_idx, connection)
 
     def get_connection_profile(self, connection: Connection) -> ConnectionProfile | None:
-        rx_idx = self._edge_id_to_rx_id_map[connection]
-        return self._graph.get_edge_data_by_index(rx_idx).connection_profile
+        try:
+            rx_idx = self._edge_id_to_rx_id_map[connection]
+            return self._graph.get_edge_data_by_index(rx_idx).connection_profile
+        except KeyError:
+            return None
 
     def remove_node(self, node_id: NodeId) -> None:
         rx_idx = self._node_id_to_rx_id_map[node_id]
@@ -118,27 +124,22 @@ class Topology(TopologyProto):
 
     def remove_connection(self, connection: Connection) -> None:
         rx_idx = self._edge_id_to_rx_id_map[connection]
-        print(f"removing connection: {connection}, is bridge: {self._is_bridge(connection)}")
         if self._is_bridge(connection):
             # Determine the reference node from which reachability is calculated.
             # Prefer a master node if the topology knows one; otherwise fall back to
             # the local end of the connection being removed.
             reference_node_id: NodeId = self.master_node_id if self.master_node_id is not None else connection.local_node_id
             orphan_node_ids = self._get_orphan_node_ids(reference_node_id, connection)
-            print(f"orphan node ids: {orphan_node_ids}")
             for orphan_node_id in orphan_node_ids:
                 orphan_node_rx_id = self._node_id_to_rx_id_map[orphan_node_id]
-                print(f"removing orphan node: {orphan_node_id}, rx_id: {orphan_node_rx_id}")
                 self._graph.remove_node(orphan_node_rx_id)
                 del self._node_id_to_rx_id_map[orphan_node_id]
+                del self._rx_id_to_node_id_map[orphan_node_rx_id]
             
         self._graph.remove_edge_from_index(rx_idx)
         del self._edge_id_to_rx_id_map[connection]
         if rx_idx in self._rx_id_to_node_id_map:
             del self._rx_id_to_node_id_map[rx_idx]
-        
-        
-        print(f"topology after edge removal: {self.to_snapshot()}")
 
     def get_cycles(self) -> list[list[Node]]:
         cycle_idxs = rx.simple_cycles(self._graph)
@@ -161,14 +162,12 @@ class Topology(TopologyProto):
         return topology
 
     def _is_bridge(self, connection: Connection) -> bool:
-        edge_idx = self._edge_id_to_rx_id_map[connection]
-        graph_copy: rx.PyDiGraph[Node, Connection] = self._graph.copy()
-        components_before = rx.strongly_connected_components(graph_copy)
-
-        graph_copy.remove_edge_from_index(edge_idx)
-        components_after = rx.strongly_connected_components(graph_copy)
-
-        return components_after > components_before
+        """Check if removing this connection will orphan any nodes from the master."""
+        if self.master_node_id is None:
+            return False
+        
+        orphan_node_ids = self._get_orphan_node_ids(self.master_node_id, connection)
+        return len(orphan_node_ids) > 0
 
     def _get_orphan_node_ids(self, master_node_id: NodeId, connection: Connection) -> list[NodeId]:
         """Return node_ids that become unreachable from `master_node_id` once `connection` is removed.

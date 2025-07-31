@@ -40,7 +40,7 @@ fi
 
 # Second command (master) - changes based on replica flag
 if [ "$REPLICA" = true ]; then
-  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export EXO_RUN_AS_REPLICA=1 EXO_HOME=.exo_replica API_PORT=8001; uv run -m master.main'\""
+  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export RUST_LOG=true EXO_RUN_AS_REPLICA=1 EXO_HOME=.exo_replica API_PORT=8001; uv run -m master.main'\""
 else
-  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c uv run -m master.main\""
+  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export RUST_LOG=true; uv run -m master.main'\""
 fi

@@ -1,14 +1,13 @@
+from __future__ import annotations
+
 import copy
 from functools import singledispatch
-from typing import Mapping, TypeVar
+from typing import Mapping
 
-# from shared.topology import Topology
 from shared.types.common import NodeId
 from shared.types.events import (
-    ChunkGenerated,
     Event,
     EventFromEventLog,
-    Heartbeat,
     InstanceActivated,
     InstanceCreated,
     InstanceDeactivated,
@@ -35,19 +34,24 @@ from shared.types.worker.common import NodeStatus, RunnerId
 from shared.types.worker.instances import Instance, InstanceId, InstanceStatus
 from shared.types.worker.runners import RunnerStatus
 
-S = TypeVar("S", bound=State)
 
 @singledispatch
 def event_apply(event: Event, state: State) -> State:
+    """Apply an event to *state*.
+
+    Events decorated with ``@no_op_event`` set ``__no_apply__ = True`` on the
+    class.  Such events are considered *no-ops* and therefore leave the state
+    unchanged without requiring a dedicated handler in this dispatch table.
+    """
+
+    if getattr(event, "__no_apply__", False):
+        return state
+
     raise RuntimeError(f"no handler registered for event type {type(event).__name__}")
 
 def apply(state: State, event: EventFromEventLog[Event]) -> State:
     new_state: State = event_apply(event.event, state)
     return new_state.model_copy(update={"last_event_applied_idx": event.idx_in_log})
-
-@event_apply.register(Heartbeat)
-def apply_heartbeat(event: Heartbeat, state: State) -> State:
-    return state
 
 @event_apply.register(TaskCreated)
 def apply_task_created(event: TaskCreated, state: State) -> State:
@@ -148,10 +152,6 @@ def apply_worker_status_updated(event: WorkerStatusUpdated, state: State) -> Sta
     new_node_status: Mapping[NodeId, NodeStatus] = {**state.node_status, event.node_id: event.node_state}
     return state.model_copy(update={"node_status": new_node_status})
 
-@event_apply.register(ChunkGenerated)
-def apply_chunk_generated(event: ChunkGenerated, state: State) -> State:
-    return state
-
 @event_apply.register(TopologyNodeCreated)
 def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> State:
     topology = copy.copy(state.topology)
@@ -164,6 +164,13 @@ def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> Sta
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
     topology = copy.copy(state.topology)
     topology.add_connection(event.edge)
+    opposite_edge = Connection(
+        local_node_id=event.edge.send_back_node_id,
+        send_back_node_id=event.edge.local_node_id,
+        local_multiaddr=event.edge.send_back_multiaddr,
+        send_back_multiaddr=event.edge.local_multiaddr
+    )
+    topology.add_connection(opposite_edge)
     return state.model_copy(update={"topology": topology})
 
 @event_apply.register(TopologyEdgeReplacedAtomically)

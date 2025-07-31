@@ -11,6 +11,7 @@ import (
 )
 
 var nodeID = flag.String("node-id", "", "Node ID (defaults to FORWARDER_NODE_ID env var or a new UUID)")
+var eventsDBPath = flag.String("events-db", "", "Path to the worker events SQLite database")
 
 func main() {
 	flag.Parse()
@@ -22,6 +23,12 @@ func main() {
 		id = forwarder.GetNodeId()
 	}
 	log.Printf("Starting forwarder with node ID: %s", id)
+
+	// Set the events database path if provided
+	if *eventsDBPath != "" {
+		forwarder.SetEventsDBPath(*eventsDBPath)
+		log.Printf("Using events database: %s", *eventsDBPath)
+	}
 
 	args := flag.Args()
 	if len(args) == 0 {

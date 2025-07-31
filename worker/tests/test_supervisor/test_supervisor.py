@@ -1,6 +1,5 @@
 import asyncio
 from logging import Logger
-from pathlib import Path
 from typing import Callable
 
 import pytest
@@ -30,7 +29,6 @@ async def test_supervisor_single_node_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    tmp_path: Path,
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
@@ -70,7 +68,6 @@ async def test_supervisor_two_node_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    tmp_path: Path,
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
@@ -133,7 +130,6 @@ async def test_supervisor_early_stopping(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    tmp_path: Path,
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
@@ -189,7 +185,6 @@ async def test_supervisor_handles_terminated_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     logger: Logger,
-    tmp_path: Path,
 ):
     """Test that the supervisor handles a terminated runner"""
     model_shard_meta = pipeline_shard_meta(1, 0)
@@ -214,7 +209,6 @@ async def test_supervisor_handles_terminated_runner(
 async def test_supervisor_handles_killed_runner(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    tmp_path: Path,
     logger: Logger,
 ):
     """Test that the supervisor handles a killed runner"""

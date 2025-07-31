@@ -114,8 +114,7 @@ def test_remove_connection_still_connected(topology: Topology, node_profile: Nod
     topology.remove_connection(connection)
 
     # assert
-    with pytest.raises(IndexError):
-        topology.get_connection_profile(connection)
+    assert topology.get_connection_profile(connection) is None
 
 
 def test_remove_connection_bridge(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
@@ -129,7 +128,9 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
     topology.add_node(Node(node_id=master_id, node_profile=node_profile))
     topology.add_node(Node(node_id=node_a_id, node_profile=node_profile))
     topology.add_node(Node(node_id=node_b_id, node_profile=node_profile))
-
+    
+    topology.set_master_node_id(master_id)
+    
     connection_master_to_a = Connection(
         local_node_id=master_id,
         send_back_node_id=node_a_id,
@@ -157,11 +158,8 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
     assert len(remaining_nodes) == 1
     assert remaining_nodes[0].node_id == master_id
 
-    with pytest.raises(KeyError):
-        topology.get_node_profile(node_a_id)
-
-    with pytest.raises(KeyError):
-        topology.get_node_profile(node_b_id)
+    assert topology.get_node_profile(node_a_id) is None
+    assert topology.get_node_profile(node_b_id) is None
 
 
 def test_remove_node_still_connected(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
@@ -174,8 +172,7 @@ def test_remove_node_still_connected(topology: Topology, node_profile: NodePerfo
     topology.remove_node(connection.local_node_id)
 
     # assert
-    with pytest.raises(KeyError):
-        topology.get_node_profile(connection.local_node_id)
+    assert topology.get_node_profile(connection.local_node_id) is None
 
 
 def test_list_nodes(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):

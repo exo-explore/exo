@@ -16,7 +16,6 @@ class RunnerOpType(str, Enum):
     RUNNER_UP = "runner_up"
     RUNNER_DOWN = "runner_down"
     RUNNER_FAILED = "runner_failed"
-    DOWNLOAD = "download"
     CHAT_COMPLETION = "chat_completion"
 
 RunnerOpT = TypeVar("RunnerOpT", bound=RunnerOpType)
@@ -47,13 +46,6 @@ class RunnerFailedOp(BaseRunnerOp[Literal[RunnerOpType.RUNNER_FAILED]]):
     op_type: Literal[RunnerOpType.RUNNER_FAILED] = Field(default=RunnerOpType.RUNNER_FAILED, frozen=True)
     runner_id: RunnerId
 
-class DownloadOp(BaseRunnerOp[Literal[RunnerOpType.DOWNLOAD]]):
-    op_type: Literal[RunnerOpType.DOWNLOAD] = Field(default=RunnerOpType.DOWNLOAD, frozen=True)
-    instance_id: InstanceId
-    runner_id: RunnerId
-    shard_metadata: ShardMetadata
-    hosts: list[Host]
-
 class ExecuteTaskOp(BaseRunnerOp[Literal[RunnerOpType.CHAT_COMPLETION]]):
     op_type: Literal[RunnerOpType.CHAT_COMPLETION] = Field(default=RunnerOpType.CHAT_COMPLETION, frozen=True)
     runner_id: RunnerId
@@ -68,7 +60,6 @@ RunnerOp = Annotated[
         RunnerUpOp,
         RunnerDownOp,
         RunnerFailedOp,
-        DownloadOp,
         ExecuteTaskOp,
     ],
     Field(discriminator="op_type")

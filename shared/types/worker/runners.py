@@ -12,9 +12,8 @@ from shared.types.worker.shards import ShardMetadata
 
 
 class RunnerStatusType(str, Enum):
-    Assigned = "Assigned"
     Downloading = "Downloading"
-    Ready = "Ready"
+    Inactive = "Inactive"
     Starting = "Starting"
     Loaded = "Loaded"
     Running = "Running"
@@ -28,41 +27,30 @@ class BaseRunnerStatus(BaseModel, Generic[RunnerStatusTypeT]):
     runner_status: RunnerStatusTypeT
 
 
-# Emitted by the Master
-class AssignedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Assigned]):
-    runner_status: Literal[RunnerStatusType.Assigned] = Field(default=RunnerStatusType.Assigned)
-
-# Emitted by the Worker
 class DownloadingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Downloading]):
     runner_status: Literal[RunnerStatusType.Downloading] = Field(default=RunnerStatusType.Downloading)
     download_progress: DownloadProgress
 
-# Emitted by the Worker
-class ReadyRunnerStatus(BaseRunnerStatus[RunnerStatusType.Ready]):
-    runner_status: Literal[RunnerStatusType.Ready] = Field(default=RunnerStatusType.Ready)
+class InactiveRunnerStatus(BaseRunnerStatus[RunnerStatusType.Inactive]):
+    runner_status: Literal[RunnerStatusType.Inactive] = Field(default=RunnerStatusType.Inactive)
 
-# Emitted by the Master
 class StartingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Starting]):
     runner_status: Literal[RunnerStatusType.Starting] = Field(default=RunnerStatusType.Starting)
 
-# Emitted by the Worker
 class LoadedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Loaded]):
     runner_status: Literal[RunnerStatusType.Loaded] = Field(default=RunnerStatusType.Loaded)
 
-# Emitted by the Worker
 class RunningRunnerStatus(BaseRunnerStatus[RunnerStatusType.Running]):
     runner_status: Literal[RunnerStatusType.Running] = Field(default=RunnerStatusType.Running)
 
-# Emitted by the Worker
 class FailedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Failed]):
     runner_status: Literal[RunnerStatusType.Failed] = Field(default=RunnerStatusType.Failed)
     error_message: str | None = None
 
 
 RunnerStatus = Annotated[
-    AssignedRunnerStatus
-    | DownloadingRunnerStatus
-    | ReadyRunnerStatus
+    DownloadingRunnerStatus
+    | InactiveRunnerStatus
     | StartingRunnerStatus
     | LoadedRunnerStatus
     | RunningRunnerStatus

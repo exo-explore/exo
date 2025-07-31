@@ -19,6 +19,9 @@ lint-check:
 test:
     uv run pytest master worker shared engines/*
 
+test-fast:
+    uv run pytest master shared engines/*
+
 check:
     uv run basedpyright --project pyproject.toml
 

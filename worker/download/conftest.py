@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from shared.models.model_meta import get_model_meta
@@ -13,7 +11,7 @@ async def model_meta() -> ModelMetadata:
 
 
 @pytest.fixture
-def pipeline_shard_meta(model_meta: ModelMetadata, tmp_path: Path):
+def pipeline_shard_meta(model_meta: ModelMetadata):
     def _pipeline_shard_meta(
         num_nodes: int = 1, device_rank: int = 0
     ) -> PipelineShardMetadata:

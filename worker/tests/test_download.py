@@ -8,6 +8,7 @@ from worker.download.impl_shard_downloader import exo_shard_downloader
 from worker.download.shard_downloader import ShardDownloader
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_shard_downloader(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata]):
     shard_downloader: ShardDownloader = exo_shard_downloader()

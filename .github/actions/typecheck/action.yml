@@ -1,12 +1,12 @@
 name: Type Check
 
-description: "Run static type checker"
+description: "Run type checker"
 
 runs:
   using: "composite"
   steps:
     - name: Run type checker
       run: |
-        nix develop -c just sync
-        nix develop -c just check
+        nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just sync
+        nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just check
       shell: bash

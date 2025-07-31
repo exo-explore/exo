@@ -1,35 +1,45 @@
-import asyncio
 from ipaddress import IPv4Address
 from logging import Logger, getLogger
-from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Callable, Optional
 
 import pytest
 
-from shared.db.sqlite.connector import AsyncSQLiteEventStorage
-from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from shared.models.model_meta import get_model_meta
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
-from shared.types.common import CommandId, Host, NodeId
+from shared.types.common import Host, NodeId
 from shared.types.models import ModelId, ModelMetadata
-from shared.types.state import State
 from shared.types.tasks import (
     ChatCompletionTask,
     TaskId,
     TaskStatus,
     TaskType,
 )
-from shared.types.worker.common import InstanceId, NodeStatus
+from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import Instance, InstanceStatus
-from shared.types.worker.ops import (
-    AssignRunnerOp,
-    RunnerUpOp,
-)
 from shared.types.worker.runners import RunnerId, ShardAssignments
 from shared.types.worker.shards import PipelineShardMetadata
-from worker.download.shard_downloader import NoopShardDownloader
-from worker.main import Worker
+from worker.tests.constants import (
+    COMMAND_1_ID,
+    INSTANCE_1_ID,
+    MODEL_A_ID,
+    NODE_A,
+    RUNNER_1_ID,
+    TASK_1_ID,
+)
 
+
+@pytest.fixture
+def user_message():
+    """Override this fixture in tests to customize the message"""
+    return "Hello, how are you?"
+
+@pytest.fixture
+def logger() -> Logger:
+    return getLogger("test_logger")
+
+@pytest.fixture
+async def model_meta() -> ModelMetadata:
+    return await get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit')
 
 @pytest.fixture
 def hosts():
@@ -44,29 +54,8 @@ def hosts():
 
     return _hosts
 
-
 @pytest.fixture
-def hosts_one(hosts: Callable[[int], list[Host]]):
-    return hosts(1)
-
-
-@pytest.fixture
-def hosts_two(hosts: Callable[[int], list[Host]]):
-    return hosts(2)
-
-
-@pytest.fixture
-def user_message():
-    """Override this fixture in tests to customize the message"""
-    return "Hello, how are you?"
-
-@pytest.fixture
-async def model_meta() -> ModelMetadata:
-    return await get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit')
-
-
-@pytest.fixture
-def pipeline_shard_meta(model_meta: ModelMetadata, tmp_path: Path) -> Callable[[int, int], PipelineShardMetadata]:
+def pipeline_shard_meta(model_meta: ModelMetadata) -> Callable[[int, int], PipelineShardMetadata]:
     def _pipeline_shard_meta(
         num_nodes: int = 1, device_rank: int = 0
     ) -> PipelineShardMetadata:
@@ -91,6 +80,37 @@ def pipeline_shard_meta(model_meta: ModelMetadata, tmp_path: Path) -> Callable[[
     return _pipeline_shard_meta
 
 @pytest.fixture
+def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], hosts: Callable[[int], list[Host]]):
+    from typing import Optional
+
+    def _instance(
+        instance_id: Optional[InstanceId] = None,
+        node_id: Optional[NodeId] = None,
+        runner_id: Optional[RunnerId] = None,
+        model_id: Optional[ModelId] = None,
+    ) -> Instance:
+        resolved_instance_id = instance_id if instance_id is not None else INSTANCE_1_ID
+        resolved_node_id = node_id if node_id is not None else NODE_A
+        resolved_runner_id = runner_id if runner_id is not None else RUNNER_1_ID
+        resolved_model_id = model_id if model_id is not None else MODEL_A_ID
+
+        shard_assignments = ShardAssignments(
+            model_id=resolved_model_id,
+            runner_to_shard={
+                resolved_runner_id: pipeline_shard_meta(1, 0)
+            },
+            node_to_runner={resolved_node_id: resolved_runner_id}
+        )
+
+        return Instance(
+            instance_id=resolved_instance_id,
+            instance_type=InstanceStatus.ACTIVE,
+            shard_assignments=shard_assignments,
+            hosts=hosts(1)
+        )
+    return _instance
+
+@pytest.fixture
 def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
     """Creates ChatCompletionParams with the given message"""
     return ChatCompletionTaskParams(
@@ -101,10 +121,14 @@ def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
 
 @pytest.fixture
 def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
-    def _chat_completion_task(instance_id: InstanceId, task_id: TaskId) -> ChatCompletionTask:
+    def _chat_completion_task(instance_id: Optional[InstanceId] = None, task_id: Optional[TaskId] = None) -> ChatCompletionTask:
+        if instance_id is None:
+            instance_id = INSTANCE_1_ID
+        if task_id is None:
+            task_id = TASK_1_ID
         return ChatCompletionTask(
             task_id=task_id,
-            command_id=CommandId(),
+            command_id=COMMAND_1_ID,
             instance_id=instance_id,
             task_type=TaskType.CHAT_COMPLETION,
             task_status=TaskStatus.PENDING,
@@ -112,105 +136,4 @@ def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
         )
     return _chat_completion_task
 
-@pytest.fixture
-def node_id() -> NodeId:
-    """Shared node ID for tests"""
-    return NodeId()
 
-@pytest.fixture
-def state(node_id: NodeId):
-    node_status={
-        node_id: NodeStatus.Idle
-    }
-
-    return State(
-        node_status=node_status,
-    )
-
-@pytest.fixture
-def logger() -> Logger:
-    return getLogger("test_logger")
-
-@pytest.fixture
-def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], hosts_one: list[Host]):
-    def _instance(instance_id: InstanceId, node_id: NodeId, runner_id: RunnerId) -> Instance:
-        model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
-
-        shard_assignments = ShardAssignments(
-            model_id=model_id,
-            runner_to_shard={
-                runner_id: pipeline_shard_meta(1, 0)
-            },
-            node_to_runner={node_id: runner_id}
-        )
-        
-        return Instance(
-            instance_id=instance_id,
-            instance_type=InstanceStatus.ACTIVE,
-            shard_assignments=shard_assignments,
-            hosts=hosts_one
-        )
-    return _instance
-
-@pytest.fixture
-async def worker(node_id: NodeId, logger: Logger):
-    event_log_manager = EventLogManager(EventLogConfig(), logger)
-    shard_downloader = NoopShardDownloader()
-    await event_log_manager.initialize()
-
-    return Worker(node_id, logger, shard_downloader, worker_events=event_log_manager.global_events, global_events=event_log_manager.global_events)
-
-@pytest.fixture
-async def worker_with_assigned_runner(worker: Worker, instance: Callable[[InstanceId, NodeId, RunnerId], Instance]):
-    """Fixture that provides a worker with an already assigned runner."""
-    
-    instance_obj: Instance = instance(InstanceId(), worker.node_id, RunnerId())
-    
-    # Extract runner_id from shard assignments
-    runner_id = next(iter(instance_obj.shard_assignments.runner_to_shard))
-    
-    # Assign the runner
-    assign_op = AssignRunnerOp(
-        runner_id=runner_id,
-        shard_metadata=instance_obj.shard_assignments.runner_to_shard[runner_id],
-        hosts=instance_obj.hosts,
-        instance_id=instance_obj.instance_id,
-    )
-    
-    async for _ in worker._execute_op(assign_op):  # type: ignore[misc]
-        pass
-    
-    return worker, runner_id, instance_obj
-
-@pytest.fixture
-async def worker_with_running_runner(worker_with_assigned_runner: tuple[Worker, RunnerId, Instance]):
-    """Fixture that provides a worker with an already assigned runner."""
-    worker, runner_id, instance_obj = worker_with_assigned_runner
-
-    runner_up_op = RunnerUpOp(runner_id=runner_id)
-    async for _ in worker._execute_op(runner_up_op):  # type: ignore[misc]
-        pass
-
-    # Is the runner actually running?
-    supervisor = next(iter(worker.assigned_runners.values())).runner
-    assert supervisor is not None
-    assert supervisor.healthy
-
-    return worker, runner_id, instance_obj
-
-@pytest.fixture
-def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]]:
-    async def _worker_running(node_id: NodeId) -> tuple[Worker, AsyncSQLiteEventStorage]:
-        event_log_manager = EventLogManager(EventLogConfig(), logger)
-        await event_log_manager.initialize()
-
-        global_events = event_log_manager.global_events
-        await global_events.delete_all_events()
-
-        shard_downloader = NoopShardDownloader()
-        worker = Worker(node_id, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
-        asyncio.create_task(worker.run())
-
-        return worker, global_events
-
-    return _worker_running

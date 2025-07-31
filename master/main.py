@@ -9,7 +9,8 @@ from typing import List
 from exo_pyo3_bindings import Keypair
 
 from master.api import start_fastapi_server
-from master.discovery_supervisor import DiscoverySupervisor
+
+# from master.discovery_supervisor import DiscoverySupervisor
 from master.election_callback import ElectionCallbacks
 from master.forwarder_supervisor import ForwarderRole, ForwarderSupervisor
 from master.placement import get_instance_placements, get_transition_events
@@ -45,13 +46,13 @@ class Master:
         self.command_buffer = command_buffer
         self.global_events = global_events
         self.worker_events = worker_events
-        self.discovery_supervisor = DiscoverySupervisor(
-            node_id_keypair,
-            node_id,
-            # TODO: needs to be more general for when we have master election
-            worker_events if os.getenv('EXO_RUN_AS_REPLICA') in set(['TRUE', 'true', '1']) else global_events,
-            logger
-        )
+        # self.discovery_supervisor = DiscoverySupervisor(
+        #     node_id_keypair,
+        #     node_id,
+        #     # TODO: needs to be more general for when we have master election
+        #     worker_events if os.getenv('EXO_RUN_AS_REPLICA') in set(['TRUE', 'true', '1']) else global_events,
+        #     logger
+        # )
         self.forwarder_supervisor = ForwarderSupervisor(
             self.node_id,
             forwarder_binary_path=forwarder_binary_path,
@@ -116,7 +117,7 @@ class Master:
 
             await self.event_log_for_writes.append_events(next_events, origin=self.node_id)
         # 2. get latest events
-        events = await self.event_log_for_reads.get_events_since(self.state.last_event_applied_idx)
+        events = await self.event_log_for_reads.get_events_since(self.state.last_event_applied_idx, ignore_no_op_events=True)
         if len(events) == 0:
             await asyncio.sleep(0.01)
             return
@@ -157,7 +158,7 @@ class Master:
 
 async def main():
     logger = logging.getLogger('master_logger')
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     if not logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
