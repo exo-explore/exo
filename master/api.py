@@ -106,6 +106,14 @@ class API:
 
     async def create_instance(self, payload: CreateInstanceTaskParams) -> CreateInstanceResponse:
         model_meta = await resolve_model_meta(payload.model_id)
+        required_memory_bytes = model_meta.storage_size_kilobytes * 1024
+        available_memory_bytes = self._calculate_total_available_memory()
+        
+        if required_memory_bytes > available_memory_bytes:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient memory to create instance. Required: {required_memory_bytes // (1024**3):.1f}GB, Available: {available_memory_bytes // (1024**3):.1f}GB"
+            )
 
         command = CreateInstanceCommand(
             command_id=CommandId(),
@@ -197,6 +205,16 @@ class API:
             self._generate_chat_stream(command.command_id),
             media_type="text/plain"
         )
+
+    def _calculate_total_available_memory(self) -> int:
+        """Calculate total available memory across all nodes in bytes."""
+        state = self.get_state()
+        total_available = 0
+        
+        for node_profile in state.node_profiles.values():
+            total_available += node_profile.memory.ram_available
+            
+        return total_available
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""

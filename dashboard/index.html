@@ -20,7 +20,7 @@
             color: var(--exo-light-gray);
             font-family: var(--font-family);
             margin: 0;
-            padding: 20px;
+            padding: 40px 20px 20px 20px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -31,6 +31,9 @@
             max-width: 1200px;
             margin-bottom: 30px;
             text-align: left;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
         }
 
         .dashboard-header h1 {
@@ -53,6 +56,37 @@
             margin-top: 10px;
         }
 
+        .header-left {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header-instances-button {
+            background-color: transparent;
+            border: 1px solid var(--exo-medium-gray);
+            color: var(--exo-light-gray);
+            font-family: var(--font-family);
+            font-size: 14px;
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+            align-self: flex-start;
+            margin-top: 8px;
+        }
+
+        .header-instances-button:hover {
+            background-color: var(--exo-medium-gray);
+            color: var(--exo-yellow);
+            border-color: var(--exo-yellow);
+        }
+
+        .header-instances-button.active {
+            background-color: var(--exo-yellow);
+            color: var(--exo-black);
+            border-color: var(--exo-yellow);
+        }
+
         /* Removed .node-grid and related card styles as we move to SVG graph */
         /* Styles for the new topology graph */
         #topologyGraphContainer {
@@ -67,6 +101,9 @@
             position: relative; /* For potential absolute positioning of elements within */
         }
 
+        .graph-node {
+            cursor: pointer;
+        }
         .graph-node circle {
             stroke: var(--exo-medium-gray);
             stroke-width: 1.5px;
@@ -201,9 +238,15 @@
             transition: right 0.3s ease-in-out;
             z-index: 1000;
             border-left: 1px solid var(--exo-medium-gray);
+            transform: translateX(100%);
+            opacity: 0;
+            visibility: hidden;
         }
         #nodeDetailPanel.visible {
             right: 0;
+            transform: translateX(0);
+            opacity: 1;
+            visibility: visible;
         }
         #nodeDetailPanel h2 {
             color: var(--exo-yellow);
@@ -265,13 +308,314 @@
             color: var(--exo-yellow);
         }
 
+
+
+        /* Sidebar styles */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: -350px;
+            width: 350px;
+            height: 100vh;
+            background-color: var(--exo-dark-gray);
+            border-right: 1px solid var(--exo-medium-gray);
+            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+            transition: left 0.3s ease;
+            z-index: 999;
+            overflow-y: auto;
+            visibility: hidden;
+            opacity: 0;
+        }
+
+        .sidebar.open {
+            left: 0;
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--exo-medium-gray);
+            background-color: var(--exo-medium-gray);
+        }
+
+        .sidebar-header h3 {
+            margin: 0;
+            color: var(--exo-yellow);
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .sidebar-content {
+            padding: 20px;
+        }
+
+        /* Instance list styles */
+        .instance-item {
+            background-color: var(--exo-medium-gray);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 12px;
+            border-left: 4px solid var(--exo-yellow);
+            transition: background-color 0.2s ease;
+        }
+
+        .instance-item:hover {
+            background-color: #353535;
+        }
+
+        .instance-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .instance-id {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            color: var(--exo-light-gray);
+            background-color: var(--exo-black);
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-right: 10px;
+        }
+
+        .instance-status {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: 500;
+        }
+
+        .instance-status.active {
+            background-color: #4ade80;
+            color: var(--exo-black);
+        }
+
+        .instance-status.inactive {
+            background-color: #ef4444;
+            color: white;
+        }
+
+        .instance-status.downloading {
+            background-color: #f59e0b;
+            color: var(--exo-black);
+        }
+
+        .instance-delete-button {
+            background-color: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            margin-left: 8px;
+        }
+
+        .instance-delete-button:hover {
+            background-color: #dc2626;
+        }
+
+        .instance-actions {
+            display: flex;
+            align-items: center;
+        }
+
+        .instance-info {
+            display: flex;
+            align-items: center;
+        }
+
+        .instance-model {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--exo-yellow);
+            margin-bottom: 8px;
+        }
+
+        .instance-details {
+            font-size: 12px;
+            color: var(--exo-light-gray);
+        }
+
+
+
+        .download-progress {
+            font-size: 11px;
+            color: var(--exo-light-gray);
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .progress-bar-container {
+            background-color: var(--exo-black);
+            border-radius: 8px;
+            height: 6px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            background-color: #3b82f6;
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.3s ease;
+        }
+
+        /* Launch instance section styles */
+        .launch-instance-section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 50px;
+        }
+
+        .launch-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--exo-light-gray);
+            margin-bottom: 4px;
+        }
+
+        .model-select {
+            background-color: var(--exo-medium-gray);
+            color: var(--exo-light-gray);
+            border: 1px solid var(--exo-light-gray);
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 14px;
+            font-family: var(--font-family);
+            cursor: pointer;
+        }
+
+        .model-select:focus {
+            outline: none;
+            border-color: var(--exo-yellow);
+            box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.2);
+        }
+
+        .model-select option {
+            background-color: var(--exo-medium-gray);
+            color: var(--exo-light-gray);
+        }
+
+        .launch-button {
+            background-color: var(--exo-yellow);
+            color: var(--exo-black);
+            border: none;
+            border-radius: 6px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: var(--font-family);
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .launch-button:hover:not(:disabled) {
+            background-color: var(--exo-yellow-darker);
+        }
+
+        .launch-button:disabled {
+            background-color: var(--exo-medium-gray);
+            color: var(--exo-light-gray);
+            cursor: not-allowed;
+        }
+
+        .launch-status {
+            font-size: 12px;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+            display: none;
+        }
+
+        .launch-status.success {
+            background-color: rgba(74, 222, 128, 0.1);
+            color: #4ade80;
+            border: 1px solid #4ade80;
+            display: block;
+        }
+
+        .launch-status.error {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            border: 1px solid #ef4444;
+            display: block;
+        }
+
+        .launch-status.loading {
+            background-color: rgba(255, 215, 0, 0.1);
+            color: var(--exo-yellow);
+            border: 1px solid var(--exo-yellow);
+            display: block;
+        }
+
+        .instance-hosts {
+            margin-top: 8px;
+        }
+
+        .instance-host {
+            display: inline-block;
+            background-color: var(--exo-black);
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-right: 6px;
+            margin-bottom: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 11px;
+        }
+
+        .no-instances {
+            text-align: center;
+            color: var(--exo-light-gray);
+            font-style: italic;
+            margin-top: 40px;
+        }
+
+
+
     </style>
 </head>
 <body>
 
+
+
+    <!-- Sidebar -->
+    <div class="sidebar" id="instancesSidebar">
+        <div class="sidebar-header">
+            <h3>Launch Instance</h3>
+        </div>
+        <div class="sidebar-content">
+            <div class="launch-instance-section">
+                <label for="modelSelect" class="launch-label">Select Model:</label>
+                <select id="modelSelect" class="model-select">
+                    <option value="">Loading models...</option>
+                </select>
+                <button id="launchInstanceButton" class="launch-button" disabled>Launch Instance</button>
+                <div id="launchStatus" class="launch-status"></div>
+            </div>
+        </div>
+        
+        <div class="sidebar-header">
+            <h3>Running Instances</h3>
+        </div>
+        <div class="sidebar-content" id="instancesList">
+            <div class="no-instances">Loading instances...</div>
+        </div>
+    </div>
+
     <div class="dashboard-header">
-        <h1><span class="logo-text">EXO</span></h1>
-        <p class="last-updated" id="lastUpdated">Fetching data...</p>
+        <div class="header-left">
+            <h1><span class="logo-text">EXO</span></h1>
+            <p class="last-updated" id="lastUpdated">Fetching data...</p>
+        </div>
+        <button class="header-instances-button" id="instancesMenuButton">Instances</button>
     </div>
 
     <!-- Replaced node-grid with SVG container for topology graph -->
@@ -303,6 +647,16 @@
         const detailFriendlyName = document.getElementById('detailFriendlyName');
         const detailNodeId = document.getElementById('detailNodeId');
         const detailContent = document.getElementById('detailContent');
+        
+        // Sidebar elements
+        const instancesMenuButton = document.getElementById('instancesMenuButton');
+        const instancesSidebar = document.getElementById('instancesSidebar');
+        const instancesList = document.getElementById('instancesList');
+        
+        // Launch instance elements
+        const modelSelect = document.getElementById('modelSelect');
+        const launchInstanceButton = document.getElementById('launchInstanceButton');
+        const launchStatus = document.getElementById('launchStatus');
 
         const USE_MOCK_DATA = false; // <<< FLAG TO TOGGLE MOCK DATA
         let currentlySelectedNodeId = null; // To store the ID of the currently selected node
@@ -409,6 +763,264 @@
             }
             const days = Math.floor(secondsPast / 86400);
             return days + (days === 1 ? ' day ago' : ' days ago');
+        }
+
+        // Sidebar toggle functionality
+        let sidebarOpen = false;
+
+        function toggleSidebar() {
+            sidebarOpen = !sidebarOpen;
+            instancesSidebar.classList.toggle('open', sidebarOpen);
+            instancesMenuButton.classList.toggle('active', sidebarOpen);
+        }
+
+        // Fetch available models and populate dropdown
+        async function fetchAndPopulateModels() {
+            try {
+                const response = await fetch(window.location.origin + '/models');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch models: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                // Clear existing options
+                modelSelect.innerHTML = '';
+                
+                if (data.data && data.data.length > 0) {
+                    // Add default option
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = 'Select a model...';
+                    modelSelect.appendChild(defaultOption);
+                    
+                    // Add models
+                    data.data.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.id;
+                        option.textContent = model.name || model.id;
+                        option.title = model.description || model.id;
+                        modelSelect.appendChild(option);
+                    });
+                    
+                    launchInstanceButton.disabled = false;
+                } else {
+                    const noModelsOption = document.createElement('option');
+                    noModelsOption.value = '';
+                    noModelsOption.textContent = 'No models available';
+                    modelSelect.appendChild(noModelsOption);
+                }
+            } catch (error) {
+                console.error('Error fetching models:', error);
+                modelSelect.innerHTML = '<option value="">Error loading models</option>';
+            }
+        }
+
+        // Show launch status message
+        function showLaunchStatus(message, type) {
+            launchStatus.textContent = message;
+            launchStatus.className = `launch-status ${type}`;
+            
+            if (type !== 'loading') {
+                setTimeout(() => {
+                    launchStatus.className = 'launch-status';
+                }, 5000);
+            }
+        }
+
+        // Launch instance
+        async function launchInstance() {
+            const selectedModelId = modelSelect.value;
+            console.log("selectedModelId", selectedModelId);
+            if (!selectedModelId) {
+                showLaunchStatus('Please select a model', 'error');
+                return;
+            }
+
+            try {
+                showLaunchStatus('Launching instance...', 'loading');
+                launchInstanceButton.disabled = true;
+
+                const response = await fetch(window.location.origin + '/instance', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ model_id: selectedModelId })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to launch instance: ${response.status} - ${errorText}`);
+                }
+
+                const result = await response.json();
+                showLaunchStatus(`Instance launched successfully: ${result.instance_id}`, 'success');
+                
+                // Reset form
+                modelSelect.value = '';
+                
+                // Refresh instances list
+                fetchAndRenderInstances();
+                
+            } catch (error) {
+                console.error('Error launching instance:', error);
+                showLaunchStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                launchInstanceButton.disabled = false;
+            }
+        }
+
+        // Fetch instances data and render
+        async function fetchAndRenderInstances() {
+            try {
+                const response = await fetch(API_ENDPOINT);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch state: ${response.status}`);
+                }
+                const data = await response.json();
+                renderInstances(data.instances || {}, data.runners || {});
+            } catch (error) {
+                console.error('Error fetching instances:', error);
+                instancesList.innerHTML = '<div class="no-instances">Error loading instances</div>';
+            }
+        }
+
+        // Calculate download status for an instance based on its runners
+        function calculateInstanceDownloadStatus(instance, runners) {
+            if (!instance.shard_assignments?.runner_to_shard || !runners) {
+                return { isDownloading: false, progress: 0 };
+            }
+
+            const runnerIds = Object.keys(instance.shard_assignments.runner_to_shard);
+            const downloadingRunners = [];
+            let totalBytes = 0;
+            let downloadedBytes = 0;
+
+            for (const runnerId of runnerIds) {
+                const runner = runners[runnerId];
+                if (runner && runner.runner_status === 'Downloading' && runner.download_progress) {
+                    downloadingRunners.push(runner);
+                    
+                    // Aggregate download progress across all downloading runners
+                    if (runner.download_progress.download_status === 'Downloading' && runner.download_progress.download_progress) {
+                        totalBytes += runner.download_progress.download_progress.total_bytes || 0;
+                        downloadedBytes += runner.download_progress.download_progress.downloaded_bytes || 0;
+                    }
+                }
+            }
+
+            const isDownloading = downloadingRunners.length > 0;
+            const progress = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+
+            return { isDownloading, progress, downloadingRunners: downloadingRunners.length };
+        }
+
+        function renderInstances(instances, runners = {}) {
+            const instancesArray = Object.values(instances);
+            
+            if (instancesArray.length === 0) {
+                instancesList.innerHTML = '<div class="no-instances">No instances running</div>';
+                return;
+            }
+
+            const instancesHTML = instancesArray.map(instance => {
+                const modelId = instance.shard_assignments?.model_id || 'Unknown Model';
+                const truncatedInstanceId = instance.instance_id.length > 8 
+                    ? instance.instance_id.substring(0, 8) + '...' 
+                    : instance.instance_id;
+                
+                const hostsHTML = instance.hosts?.map(host => 
+                    `<span class="instance-host">${host.ip}:${host.port}</span>`
+                ).join('') || '';
+
+                // Calculate download status for this instance
+                const downloadStatus = calculateInstanceDownloadStatus(instance, runners);
+                
+                // Determine status display - prioritize downloading over original status
+                const statusText = downloadStatus.isDownloading ? 'DOWNLOADING' : instance.instance_type;
+                const statusClass = downloadStatus.isDownloading ? 'downloading' : instance.instance_type.toLowerCase();
+
+                // Generate download progress HTML
+                const downloadProgressHTML = downloadStatus.isDownloading 
+                    ? `<div class="download-progress">
+                        <span>${downloadStatus.progress}% downloaded</span>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: ${downloadStatus.progress}%;"></div>
+                        </div>
+                       </div>` 
+                    : '';
+
+                return `
+                    <div class="instance-item">
+                        <div class="instance-header">
+                            <div class="instance-info">
+                                <span class="instance-id">${truncatedInstanceId}</span>
+                                <span class="instance-status ${statusClass}">${statusText}</span>
+                            </div>
+                            <div class="instance-actions">
+                                <button class="instance-delete-button" data-instance-id="${instance.instance_id}" title="Delete Instance">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                        <div class="instance-model">${modelId}</div>
+                        <div class="instance-details">
+                            Shards: ${Object.keys(instance.shard_assignments?.runner_to_shard || {}).length}
+                        </div>
+                        ${downloadProgressHTML}
+                        ${hostsHTML ? `<div class="instance-hosts">${hostsHTML}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            instancesList.innerHTML = instancesHTML;
+            
+            // Add event listeners to delete buttons using event delegation
+            instancesList.removeEventListener('click', handleInstanceListClick);
+            instancesList.addEventListener('click', handleInstanceListClick);
+        }
+
+        // Handle clicks on the instances list (event delegation)
+        function handleInstanceListClick(event) {
+            if (event.target.classList.contains('instance-delete-button')) {
+                const instanceId = event.target.getAttribute('data-instance-id');
+                if (instanceId) {
+                    deleteInstance(instanceId);
+                }
+            }
+        }
+
+        // Delete instance with confirmation
+        async function deleteInstance(instanceId) {
+            const confirmMessage = `Are you sure you want to delete instance ${instanceId}?\n\nThis action cannot be undone.`;
+            
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${window.location.origin}/instance/${instanceId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `Failed to delete instance: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log('Instance deletion initiated:', result);
+                
+                // Refresh instances list immediately to show the change
+                fetchAndRenderInstances();
+                
+            } catch (error) {
+                console.error('Error deleting instance:', error);
+                alert(`Error deleting instance: ${error.message}`);
+            }
         }
 
         function renderNodes(nodesData) {
@@ -1082,6 +1694,22 @@
             });
         }
 
+        // Set up sidebar toggle functionality
+        if (instancesMenuButton) {
+            instancesMenuButton.addEventListener('click', toggleSidebar);
+        }
+
+        // Set up launch instance functionality
+        if (modelSelect) {
+            modelSelect.addEventListener('change', () => {
+                launchInstanceButton.disabled = !modelSelect.value;
+            });
+        }
+
+        if (launchInstanceButton) {
+            launchInstanceButton.addEventListener('click', launchInstance);
+        }
+
         let isFetching = false; // Lock to prevent multiple concurrent fetches
         let fetchIntervalId = null;
 
@@ -1251,8 +1879,11 @@
         if (!USE_MOCK_DATA) {
             // Initial fetch for live data
             fetchDataAndRender();
+            fetchAndRenderInstances();
+            fetchAndPopulateModels();
             // Periodic refresh for live data
             fetchIntervalId = setInterval(fetchDataAndRender, REFRESH_INTERVAL);
+            setInterval(fetchAndRenderInstances, REFRESH_INTERVAL);
         } else {
             // Use Mock Data
             lastUpdatedElement.textContent = "Using Mock Data";
@@ -1394,17 +2025,6 @@
             updateMockData(); // Initial render with mock
             setInterval(updateMockData, REFRESH_INTERVAL);
         }
-
-
-        // Mock data for local testing if the API is not available
-        // Comment out fetchDataAndRender() and setInterval() above
-        // and uncomment the block below to use mock data.
-        /*  <<<< This comment and the one below should be removed or adjusted
-        const mockData = {
-            "12D3KooWEbiTv9MkyNu5aVi4A7A2xHhwyrFxPEqso2ciJtPDjKcn": {
-// ... existing old mock data ...
-        setInterval(updateMockData, REFRESH_INTERVAL); // Update mock data every second
-        */
 
     </script>
 </body>
