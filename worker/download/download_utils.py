@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import os
 import shutil
-import tempfile
 import time
 import traceback
 from datetime import timedelta
@@ -91,19 +90,12 @@ class RepoDownloadProgress(BaseModel):
 def build_model_path(model_id: str) -> DirectoryPath:
   return EXO_HOME / "models" / model_id.replace("/", "--")
 
-def exo_tmp() -> Path:
-  return Path(tempfile.gettempdir())/"exo"
-
 async def resolve_model_path_for_repo(repo_id: str) -> Path:
   return (await ensure_models_dir())/repo_id.replace("/", "--")
 
 async def ensure_exo_home() -> Path:
   await aios.makedirs(EXO_HOME, exist_ok=True)
   return EXO_HOME
-
-async def ensure_exo_tmp() -> Path:
-  await aios.makedirs(exo_tmp(), exist_ok=True)
-  return exo_tmp()
 
 async def has_exo_home_read_access() -> bool:
   try:
@@ -146,7 +138,9 @@ async def seed_models(seed_dir: Union[str, Path]):
           traceback.print_exc()
 
 async def fetch_file_list_with_cache(repo_id: str, revision: str = "main", recursive: bool = False) -> List[FileListEntry]:
-  cache_file = (await ensure_exo_tmp())/f"{repo_id.replace('/', '--')}--{revision}--file_list.json"
+  target_dir = (await ensure_models_dir())/"caches"/str(repo_id).replace("/", "--")
+  await aios.makedirs(target_dir, exist_ok=True)
+  cache_file = target_dir/f"{repo_id.replace('/', '--')}--{revision}--file_list.json"
   if await aios.path.exists(cache_file):
     async with aiofiles.open(cache_file, 'r') as f:
         return TypeAdapter(List[FileListEntry]).validate_json(await f.read())
@@ -198,22 +192,29 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
       hasher.update(chunk)
   return hasher.hexdigest()
 
-async def file_meta(repo_id: str, revision: str, path: str, redirected_location: str | None = None) -> Tuple[int, str]:
-  # NOTE: huggingface broke the E-Tag so we can no longer assume E-Tag == sha256(file)
-  url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path) if redirected_location is None else f"{get_hf_endpoint()}{redirected_location}"
-  headers = await get_auth_headers()
-  async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session, session.head(url, headers=headers) as r:
-    if r.status == 307:
-      redirected_location = r.headers.get('Location')
-      return await file_meta(repo_id, revision, path, redirected_location)
 
-    content_length = int(r.headers.get('x-linked-size') or r.headers.get('content-length') or 0)
-    etag = r.headers.get('X-Linked-ETag') or r.headers.get('ETag') or r.headers.get('Etag')
-    assert content_length > 0, f"No content length for {url}"
-    assert etag is not None, f"No remote hash for {url}"
-    if  (etag[0] == '"' and etag[-1] == '"') or (etag[0] == "'" and etag[-1] == "'"):
-      etag = etag[1:-1]
-    return content_length, etag
+async def file_meta(repo_id: str, revision: str, path: str, redirected_location: str | None = None) -> Tuple[int, str]:
+    url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path) if redirected_location is None else f"{get_hf_endpoint()}{redirected_location}"
+    headers = await get_auth_headers()
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1800, connect=60, sock_read=1800, sock_connect=60)) as session, session.head(url, headers=headers) as r:
+        if r.status == 307:
+            # Try to extract from X-Linked headers first (common for HF redirects)
+            content_length = int(r.headers.get('x-linked-size') or r.headers.get('content-length') or 0)
+            etag = r.headers.get('X-Linked-ETag') or r.headers.get('ETag') or r.headers.get('Etag')
+            if content_length > 0 and etag is not None:
+                if (etag[0] == '"' and etag[-1] == '"') or (etag[0] == "'" and etag[-1] == "'"):
+                    etag = etag[1:-1]
+                return content_length, etag
+            # If not available, recurse with the redirect
+            redirected_location = r.headers.get('Location')
+            return await file_meta(repo_id, revision, path, redirected_location)
+        content_length = int(r.headers.get('x-linked-size') or r.headers.get('content-length') or 0)
+        etag = r.headers.get('X-Linked-ETag') or r.headers.get('ETag') or r.headers.get('Etag')
+        assert content_length > 0, f"No content length for {url}"
+        assert etag is not None, f"No remote hash for {url}"
+        if (etag[0] == '"' and etag[-1] == '"') or (etag[0] == "'" and etag[-1] == "'"):
+            etag = etag[1:-1]
+        return content_length, etag
 
 async def download_file_with_retry(repo_id: str, revision: str, path: str, target_dir: Path, on_progress: Callable[[int, int], None] = lambda _, __: None) -> Path:
   n_attempts = 30
@@ -291,7 +292,8 @@ def calculate_repo_progress(shard: ShardMetadata, repo_id: str, revision: str, f
   )
 
 async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]:
-  target_dir = (await ensure_exo_tmp())/repo_id.replace("/", "--")
+  target_dir = (await ensure_models_dir())/str(repo_id).replace("/", "--")
+  await aios.makedirs(target_dir, exist_ok=True)
   index_file = await download_file_with_retry(repo_id, revision, "model.safetensors.index.json", target_dir)
   async with aiofiles.open(index_file, 'r') as f:
     index_data = ModelSafetensorsIndex.model_validate_json(await f.read())

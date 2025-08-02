@@ -29,7 +29,6 @@ def mx_barrier():
         )
     )
 
-
 class HostList(RootModel[list[str]]):
     @classmethod
     def from_hosts(cls, hosts: list[Host]) -> "HostList":
@@ -130,3 +129,18 @@ async def apply_chat_template(
     )
 
     return prompt
+
+
+def mlx_force_oom(size: int = 40000) -> None:
+    """
+    Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
+    """
+    mx.set_default_device(mx.gpu) # type: ignore
+    a = mx.random.uniform(shape=(size, size), dtype=mx.float32) # type: ignore
+    b = mx.random.uniform(shape=(size, size), dtype=mx.float32) # type: ignore
+    mx.eval(a, b) # type: ignore
+    c = mx.matmul(a, b) # type: ignore
+    d = mx.matmul(a, c) # type: ignore
+    e = mx.matmul(b, c) # type: ignore
+    f = mx.sigmoid(d + e) # type: ignore
+    mx.eval(f) # type: ignore

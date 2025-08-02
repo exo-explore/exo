@@ -112,7 +112,6 @@ def instance(pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata], h
 
 @pytest.fixture
 def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
-    """Creates ChatCompletionParams with the given message"""
     return ChatCompletionTaskParams(
         model="gpt-4",
         messages=[ChatCompletionMessage(role="user", content=user_message)],
@@ -121,19 +120,19 @@ def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
 
 @pytest.fixture
 def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
-    def _chat_completion_task(instance_id: Optional[InstanceId] = None, task_id: Optional[TaskId] = None) -> ChatCompletionTask:
-        if instance_id is None:
-            instance_id = INSTANCE_1_ID
-        if task_id is None:
-            task_id = TASK_1_ID
+    def _chat_completion_task(
+        instance_id: Optional[InstanceId] = None,
+        task_id: Optional[TaskId] = None,
+        user_message: str = "Hello"
+    ) -> ChatCompletionTask:
+        resolved_instance_id = instance_id if instance_id is not None else INSTANCE_1_ID
+        resolved_task_id = task_id if task_id is not None else TASK_1_ID
         return ChatCompletionTask(
-            task_id=task_id,
+            task_id=resolved_task_id,
             command_id=COMMAND_1_ID,
-            instance_id=instance_id,
+            instance_id=resolved_instance_id,
             task_type=TaskType.CHAT_COMPLETION,
             task_status=TaskStatus.PENDING,
             task_params=completion_create_params
         )
     return _chat_completion_task
-
-

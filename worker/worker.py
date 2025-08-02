@@ -3,7 +3,6 @@ import logging
 import time
 from asyncio import Queue
 from functools import partial
-from time import process_time
 from typing import AsyncGenerator, Optional
 
 from shared.db.sqlite import AsyncSQLiteEventStorage
@@ -22,7 +21,6 @@ from shared.types.tasks import TaskId, TaskStatus
 from shared.types.worker.common import RunnerId
 from shared.types.worker.downloads import (
     DownloadCompleted,
-    DownloadFailed,
     DownloadOngoing,
     DownloadPending,
     DownloadProgressData,
@@ -71,104 +69,116 @@ class Worker:
 
     ## Op Executors
 
-    async def _execute_assign_op(
-        self, op: AssignRunnerOp
-    ) -> AsyncGenerator[Event, None]:
-        '''
-        A runner has been assigned. We need to also ensure that it's downloaded.
-        This op assigns the runner, and moves from Downloading -> Inactive (ready to spin) state.
-        '''
-        self.assigned_runners[op.runner_id] = AssignedRunner(
+    def _create_assigned_runner(self, op: AssignRunnerOp) -> AssignedRunner:
+        """Creates and stores a new AssignedRunner with initial downloading status."""
+        assigned_runner = AssignedRunner(
             runner_id=op.runner_id,
             instance_id=op.instance_id,
             shard_metadata=op.shard_metadata,
             hosts=op.hosts,
             status=DownloadingRunnerStatus(
-                download_progress=DownloadPending(
-                    node_id=self.node_id
-                )
+                download_progress=DownloadPending(node_id=self.node_id)
             ),
             runner=None,
         )
+        self.assigned_runners[op.runner_id] = assigned_runner
+        return assigned_runner
 
-        assigned_runner = self.assigned_runners[op.runner_id]
+    async def _update_runner_status_to_completed_then_inactive(
+        self, assigned_runner: AssignedRunner
+    ) -> AsyncGenerator[Event, None]:
+        """Updates runner status from downloading to completed, then to inactive."""
+        assigned_runner.status = DownloadingRunnerStatus(
+            download_progress=DownloadCompleted(node_id=self.node_id)
+        )
+        yield assigned_runner.status_update_event()
+
+        assigned_runner.status = InactiveRunnerStatus()
+        yield assigned_runner.status_update_event()
+
+    async def _handle_already_downloaded_shard(
+        self, assigned_runner: AssignedRunner
+    ) -> AsyncGenerator[Event, None]:
+        """Handles the case where the shard is already downloaded."""
+        async for event in self._update_runner_status_to_completed_then_inactive(assigned_runner):
+            yield event
+
+    async def _handle_shard_download_process(
+        self, assigned_runner: AssignedRunner, op: AssignRunnerOp, initial_progress: RepoDownloadProgress
+    ) -> AsyncGenerator[Event, None]:
+        """Manages the shard download process with progress tracking."""
+        # Set initial ongoing status
+        assigned_runner.status = DownloadingRunnerStatus(
+            download_progress=DownloadOngoing(
+                node_id=self.node_id,
+                download_progress=DownloadProgressData(
+                    total_bytes=initial_progress.total_bytes,
+                    downloaded_bytes=initial_progress.downloaded_bytes
+                )
+            )
+        )
+        yield assigned_runner.status_update_event()
+
+        # Set up download progress tracking
+        download_progress_queue: asyncio.Queue[RepoDownloadProgress] = asyncio.Queue()
+
+        def download_progress_callback(shard: ShardMetadata, progress: RepoDownloadProgress) -> None:
+            download_progress_queue.put_nowait(progress)
+
+        self.shard_downloader.on_progress(download_progress_callback)
+        download_task = asyncio.create_task(self.shard_downloader.ensure_shard(op.shard_metadata))
+
+        try:
+            async for event in self._monitor_download_progress(assigned_runner, download_progress_queue):
+                yield event
+        finally:
+            if not download_task.done():
+                download_task.cancel()
+
+    async def _monitor_download_progress(
+        self, assigned_runner: AssignedRunner, download_progress_queue: asyncio.Queue[RepoDownloadProgress]
+    ) -> AsyncGenerator[Event, None]:
+        """Monitors download progress and yields status updates."""
+        last_progress_time = 0.0
+        throttle_interval_secs = 1.0
+
+        while True:
+            progress: RepoDownloadProgress = await asyncio.wait_for(download_progress_queue.get(), timeout=15)
+
+            if progress.status == "complete":
+                async for event in self._update_runner_status_to_completed_then_inactive(assigned_runner):
+                    yield event
+                break
+            elif progress.status == "in_progress":
+                if time.monotonic() - last_progress_time > throttle_interval_secs:
+                    assigned_runner.status = DownloadingRunnerStatus(
+                        download_progress=DownloadOngoing(
+                            node_id=self.node_id,
+                            download_progress=DownloadProgressData(
+                                total_bytes=progress.total_bytes,
+                                downloaded_bytes=progress.downloaded_bytes,
+                            )
+                        )
+                    )
+                    yield assigned_runner.status_update_event()
+                    last_progress_time = time.monotonic()
+
+    async def _execute_assign_op(
+        self, op: AssignRunnerOp
+    ) -> AsyncGenerator[Event, None]:
+        """
+        A runner has been assigned. We need to also ensure that it's downloaded.
+        This op assigns the runner, and moves from Downloading -> Inactive (ready to spin) state.
+        """
+        assigned_runner = self._create_assigned_runner(op)
         initial_progress = await self.shard_downloader.get_shard_download_status_for_shard(op.shard_metadata)
 
         if initial_progress.status == "complete":
-            assigned_runner.status = DownloadingRunnerStatus(
-                download_progress=DownloadCompleted(
-                    node_id=self.node_id
-                )
-            )
-            yield assigned_runner.status_update_event()
-
-            assigned_runner.status = InactiveRunnerStatus()
-            yield assigned_runner.status_update_event()
-
-            return
+            async for event in self._handle_already_downloaded_shard(assigned_runner):
+                yield event
         else:
-            assigned_runner.status = DownloadingRunnerStatus(
-                download_progress=DownloadOngoing(
-                    node_id=self.node_id,
-                    download_progress=DownloadProgressData(
-                        total_bytes=initial_progress.total_bytes,
-                        downloaded_bytes=initial_progress.downloaded_bytes
-                    )
-                )
-            )
-            yield assigned_runner.status_update_event()
-
-            # Download it!
-            # TODO: we probably want download progress as part of a callback that gets passed to the downloader.
-            download_progress_queue: asyncio.Queue[RepoDownloadProgress] = asyncio.Queue()
-            def download_progress_callback(shard: ShardMetadata, progress: RepoDownloadProgress) -> None:
-                download_progress_queue.put_nowait(progress)
-
-
-            self.shard_downloader.on_progress(download_progress_callback)
-
-            asyncio.create_task(self.shard_downloader.ensure_shard(op.shard_metadata))
-
-            # TODO: Dynamic timeout, timeout on no packet update received.
-            timeout_secs = 10 * 60
-            start_time = process_time()
-            last_yield_progress = start_time
-            while process_time() - start_time < timeout_secs:
-                progress: RepoDownloadProgress = await download_progress_queue.get()
-                if progress.status == "complete":
-                    assigned_runner.status = DownloadingRunnerStatus(
-                        download_progress=DownloadCompleted(
-                            node_id=self.node_id,
-                        )
-                    )
-                    yield assigned_runner.status_update_event()
-
-                    assigned_runner.status = InactiveRunnerStatus()
-                    yield assigned_runner.status_update_event()
-
-                    break
-                elif progress.status == "in_progress":
-                    if process_time() - last_yield_progress > 1:
-                        assigned_runner.status = DownloadingRunnerStatus(
-                            download_progress=DownloadOngoing(
-                                node_id=self.node_id,
-                                download_progress=DownloadProgressData(
-                                    total_bytes=progress.total_bytes,
-                                    downloaded_bytes=progress.downloaded_bytes,
-                                )
-                            )
-                        )
-                        yield assigned_runner.status_update_event()
-
-                        last_yield_progress = process_time()
-            else:
-                assigned_runner.status = DownloadingRunnerStatus(
-                    download_progress=DownloadFailed(
-                        node_id=self.node_id,
-                        error_message=f"Timeout downloading model: {op.shard_metadata.model_meta.model_id}"
-                    )
-                )
-                yield assigned_runner.status_update_event()
+            async for event in self._handle_shard_download_process(assigned_runner, op, initial_progress):
+                yield event
 
     async def _execute_unassign_op(
         self, op: UnassignRunnerOp
@@ -193,39 +203,32 @@ class Worker:
     ) -> AsyncGenerator[Event, None]:
         assigned_runner = self.assigned_runners[op.runner_id]
 
-        # TODO: This should be dynamic, based on the size of the model.
-        if not initialize_timeout:
-            gigabytes_per_second = 10
-            kilobytes_per_second = gigabytes_per_second * 1024 * 1024
-            
-            shard = assigned_runner.shard_metadata
-            weights_size_kb = (shard.end_layer - shard.start_layer) / shard.n_layers * shard.model_meta.storage_size_kilobytes
-            
-            initialize_timeout = weights_size_kb / kilobytes_per_second + 120.0 # Add a constant 120.0 to ensure connection can be made as well
-
-            self.logger.info(f"initialize_timeout: {initialize_timeout}")
-
-        try:
-            assigned_runner.runner = await asyncio.wait_for(
-                RunnerSupervisor.create(
-                    model_shard_meta=assigned_runner.shard_metadata,
-                    hosts=assigned_runner.hosts,
-                    logger=self.logger,
-                ),
-                timeout=initialize_timeout,
-            )
-        except TimeoutError as e:
-            import traceback
-
-            tb = traceback.format_exc()
-            e = Exception(f"{type(e).__name__}: {str(e)}. Traceback: {tb}")
-            async for event in self._fail_runner(e=e, runner_id=op.runner_id):
-                yield event
-            return
+        assigned_runner.runner = await RunnerSupervisor.create(
+            model_shard_meta=assigned_runner.shard_metadata,
+            hosts=assigned_runner.hosts,
+            logger=self.logger,
+            initialize_timeout=initialize_timeout
+        )
 
         if assigned_runner.runner.healthy:
             assigned_runner.status = LoadedRunnerStatus()
         else:
+            # Log detailed reasons why the runner is not healthy
+            runner = assigned_runner.runner
+            health_issues: list[str] = []
+            
+            if not runner.running:
+                health_issues.append("runner.running is False")
+            if runner.runner_process.returncode is not None:
+                health_issues.append(f"runner_process.returncode is {runner.runner_process.returncode}")
+            if runner.runner_process.stdin is None:
+                health_issues.append("runner_process.stdin is None")
+            elif runner.runner_process.stdin.is_closing():
+                health_issues.append("runner_process.stdin is closing")
+            if runner.runner_process.stdout is None:
+                health_issues.append("runner_process.stdout is None")
+            
+            self.logger.warning(f"Runner status is not healthy: {', '.join(health_issues)}")
             assigned_runner.status = FailedRunnerStatus()
         yield self.assigned_runners[op.runner_id].status_update_event()
 
@@ -250,6 +253,9 @@ class Worker:
         We detected that this runner has failed. So we'll put it into 'failed' state now, triggering the rest of the instance to spin down.
         '''
         assigned_runner = self.assigned_runners[op.runner_id]
+
+        if isinstance(assigned_runner.runner, RunnerSupervisor):
+            await assigned_runner.runner.astop() # astop the runner to ensure it clears out of memory.
 
         assigned_runner.status = FailedRunnerStatus()
         yield self.assigned_runners[op.runner_id].status_update_event()
@@ -280,37 +286,30 @@ class Worker:
                         task_status=TaskStatus.RUNNING,
                     ))
 
-            try:
-                assert assigned_runner.runner is not None
-                assert assigned_runner.runner.healthy
+            assert assigned_runner.runner is not None
+            assert assigned_runner.runner.healthy
 
-                async for chunk in assigned_runner.runner.stream_response(
-                        task=op.task,
-                        request_started_callback=partial(running_callback, queue)):
-                    if assigned_runner.shard_metadata.device_rank == 0:
-                        await queue.put(ChunkGenerated(
-                            # todo: at some point we will no longer have a bijection between task_id and row_id. 
-                            # So we probably want to store a mapping between these two in our Worker object.
-                            command_id=chunk.command_id, 
-                            chunk=chunk
-                        ))
-
+            async for chunk in assigned_runner.runner.stream_response(
+                    task=op.task,
+                    request_started_callback=partial(running_callback, queue)):
                 if assigned_runner.shard_metadata.device_rank == 0:
-                    await queue.put(TaskStateUpdated(
-                        task_id=op.task.task_id,
-                        task_status=TaskStatus.COMPLETE,
+                    await queue.put(ChunkGenerated(
+                        # todo: at some point we will no longer have a bijection between task_id and row_id.
+                        # So we probably want to store a mapping between these two in our Worker object.
+                        command_id=chunk.command_id,
+                        chunk=chunk
                     ))
 
-                # After a successful inference:
-                assigned_runner.status = LoadedRunnerStatus()
-                await queue.put(assigned_runner.status_update_event())
+            if assigned_runner.shard_metadata.device_rank == 0:
+                await queue.put(TaskStateUpdated(
+                    task_id=op.task.task_id,
+                    task_status=TaskStatus.COMPLETE,
+                ))
 
+            # After a successful inference:
+            assigned_runner.status = LoadedRunnerStatus()
+            await queue.put(assigned_runner.status_update_event())
 
-            except Exception as e:
-                # An exception occurs in the runner supervisor
-                self.logger.warning(f'Runner failed whilst running inference task. Task: {op.task}. Error: {e}')
-                async for event in self._fail_task(e, op.runner_id, op.task.task_id):
-                    await queue.put(event)
 
         queue: Queue[Event] = asyncio.Queue()
         task = asyncio.create_task(inner_execute(queue))
@@ -320,31 +319,31 @@ class Worker:
 
         try:
             # Yield items from the queue
-            # timeout = 30.
-            timeout = 3.
             while True:
-                item: Event = await asyncio.wait_for(queue.get(), timeout=timeout)
+                if task.done() and (exception := task.exception()):
+                    raise exception
+
+                try:
+                    # Use a timeout to periodically check task status
+                    item: Event = await asyncio.wait_for(queue.get(), timeout=0.01)
+                except asyncio.TimeoutError:
+                    continue
+
                 yield item
-                timeout = 2.
                 if isinstance(item, RunnerStatusUpdated) and isinstance(
                     item.runner_status, (LoadedRunnerStatus, FailedRunnerStatus)
                 ):
                     if isinstance(item.runner_status, LoadedRunnerStatus):
                         assigned_runner.failures = []
-                        
+
                     break
-        except TimeoutError as e:
-            # Runner supervisor doesn't respond in time; so we put the runner & task into a failed state
-            self.logger.warning(f'Timed out waiting for runner response to inference task. Task: {op.task}.')
-            async for event in self._fail_task(e, op.runner_id, op.task.task_id):
-                yield event
         finally:
             # Ensure the task is cleaned up
             try:
                 await asyncio.wait_for(task, timeout=5)
             except asyncio.TimeoutError:
                 self.logger.warning("Timed out waiting for task cleanup after inference execution.")
-        
+
 
     ## Operation Planner
 
@@ -368,7 +367,7 @@ class Worker:
             yield event
 
 
-    async def _fail_runner(self, e: Exception, runner_id: RunnerId) -> AsyncGenerator[Event]:
+    async def fail_runner(self, e: Exception, runner_id: RunnerId) -> AsyncGenerator[Event]:
         if runner_id in self.assigned_runners:
             assigned_runner = self.assigned_runners[runner_id]
 
@@ -383,15 +382,15 @@ class Worker:
 
             # Reset failure count back to 0 when succesful
             if len(assigned_runner.failures) >= 3:
-                # Too many retries. We will emit a DeleteInstance 
+                # Too many retries. We will emit a DeleteInstance
                 yield InstanceDeleted(
                     instance_id=assigned_runner.instance_id
                 )
 
             yield assigned_runner.status_update_event()
 
-    
-    async def _fail_task(self, e: Exception, runner_id: RunnerId, task_id: TaskId) -> AsyncGenerator[Event]:
+
+    async def fail_task(self, e: Exception, runner_id: RunnerId, task_id: TaskId) -> AsyncGenerator[Event]:
         if runner_id in self.assigned_runners:
             yield TaskStateUpdated(
                 task_id=task_id,
@@ -404,7 +403,7 @@ class Worker:
                 error_message=str(e)
             )
 
-            async for event in self._fail_runner(e, runner_id):
+            async for event in self.fail_runner(e, runner_id):
                 yield event
 
 

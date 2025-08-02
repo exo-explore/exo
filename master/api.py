@@ -32,6 +32,7 @@ from shared.types.events.commands import (
     CommandType,
     CreateInstanceCommand,
     DeleteInstanceCommand,
+    TaskFinishedCommand,
 )
 from shared.types.events.components import EventFromEventLog
 from shared.types.models import ModelMetadata
@@ -177,6 +178,11 @@ class API:
                     if event.chunk.finish_reason is not None:
                         yield "data: [DONE]"
                         finished = True
+        
+        command = TaskFinishedCommand(
+            command_id=command_id
+        )
+        self.command_buffer.append(command)
 
         return
 

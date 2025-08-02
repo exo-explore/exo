@@ -1,20 +1,22 @@
 import asyncio
 from logging import Logger
-from typing import Awaitable, Callable
+from typing import Callable
+
+import pytest
 
 # TaskStateUpdated and ChunkGenerated are used in test_worker_integration_utils.py
-from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from shared.models.model_meta import get_model_meta
 from shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
-from shared.types.common import CommandId, Host, NodeId
+from shared.types.common import Host
 from shared.types.events import (
     InstanceCreated,
     InstanceDeleted,
     TaskCreated,
 )
-from shared.types.models import ModelId
+from shared.types.models import ModelId, ModelMetadata
 from shared.types.tasks import ChatCompletionTask, Task, TaskId, TaskStatus, TaskType
-from shared.types.worker.common import InstanceId, RunnerId
+from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import (
     Instance,
     InstanceStatus,
@@ -24,6 +26,8 @@ from shared.types.worker.shards import PipelineShardMetadata
 from worker.download.shard_downloader import NoopShardDownloader
 from worker.main import run
 from worker.tests.constants import (
+    COMMAND_1_ID,
+    COMMAND_2_ID,
     INSTANCE_1_ID,
     MASTER_NODE_ID,
     NODE_A,
@@ -31,54 +35,18 @@ from worker.tests.constants import (
     RUNNER_1_ID,
     RUNNER_2_ID,
     TASK_1_ID,
+    TASK_2_ID,
 )
 from worker.tests.test_integration.integration_utils import (
     read_streaming_response,
 )
 from worker.worker import Worker
 
+MODEL_ID = 'mlx-community/Llama-3.3-70B-Instruct-4bit'
 
-async def test_runner_inference(
-    worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
-    instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-    chat_completion_task: Callable[[InstanceId, TaskId], Task]
-    ):
-    _worker, global_events = await worker_running(NODE_A)
-
-    instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = InstanceStatus.ACTIVE
-
-    task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    await global_events.append_events(
-        [
-            InstanceCreated(
-                instance=instance_value,
-            ),
-            TaskCreated(
-                task_id=task.task_id,
-                task=task
-            )
-        ], 
-        origin=MASTER_NODE_ID
-    )
-    
-    # TODO: This needs to get fixed - sometimes it misses the 'starting' event.
-    seen_task_started, seen_task_finished, response_string = await read_streaming_response(global_events)
-
-    assert seen_task_started
-    assert seen_task_finished
-    assert 'tokyo' in response_string.lower()
-
-    await global_events.append_events(
-        [
-            InstanceDeleted(
-                instance_id=instance_value.instance_id,
-            ),
-        ], 
-        origin=MASTER_NODE_ID
-    )
-
-    await asyncio.sleep(0.3)
+@pytest.fixture
+async def model_meta() -> ModelMetadata:
+    return await get_model_meta(MODEL_ID)
 
 async def test_2_runner_inference(
     logger: Logger,
@@ -100,7 +68,7 @@ async def test_2_runner_inference(
     asyncio.create_task(run(worker2, logger))
 
     ## Instance
-    model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
+    model_id = ModelId(MODEL_ID)
 
     shard_assignments = ShardAssignments(
         model_id=model_id,
@@ -122,6 +90,9 @@ async def test_2_runner_inference(
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
+    task.task_params.messages[0].content = 'Can you explain to me how a bubble sort works, speaking as if you are a fairy.'
+    task.task_params.max_tokens = 1000
+
     await global_events.append_events(
         [
             InstanceCreated(
@@ -139,7 +110,7 @@ async def test_2_runner_inference(
 
     assert seen_task_started
     assert seen_task_finished
-    assert 'tokyo' in response_string.lower()
+    assert 'swap' in response_string.lower()
 
 
     idx = await global_events.get_last_idx()
@@ -158,11 +129,14 @@ async def test_2_runner_inference(
 
     await asyncio.sleep(2.0)
 
-# TODO: Multi message parallel
-async def test_2_runner_multi_message(
+
+
+
+async def test_parallel_inference(
     logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
+    chat_completion_task: Callable[[InstanceId, TaskId], Task]
     ):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
@@ -178,7 +152,7 @@ async def test_2_runner_multi_message(
     asyncio.create_task(run(worker2, logger))
 
     ## Instance
-    model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
+    model_id = ModelId(MODEL_ID)
 
     shard_assignments = ShardAssignments(
         model_id=model_id,
@@ -199,26 +173,35 @@ async def test_2_runner_multi_message(
         hosts=hosts(2)
     )
 
-    # Task - we have three messages here, which is what the task is about
-
-    completion_create_params = ChatCompletionTaskParams(
+    completion_create_params_1 = ChatCompletionTaskParams(
         model="gpt-4",
-        messages=[
-            ChatCompletionMessage(role="user", content='What is the capital of France?'),
-            ChatCompletionMessage(role="assistant", content='The capital of France is Paris.'),
-            ChatCompletionMessage(role="user", content='Ok great. Now write me a haiku about what you can do there.'),
-        ],
+        messages=[ChatCompletionMessage(role="user", content='Tell me a haiku that uses the word "pond".')],
         stream=True,
+        max_tokens=1000
     )
-
-    task = ChatCompletionTask(
+    task1 = ChatCompletionTask(
         task_id=TASK_1_ID,
-        command_id=CommandId(),
+        command_id=COMMAND_1_ID,
         instance_id=INSTANCE_1_ID,
         task_type=TaskType.CHAT_COMPLETION,
         task_status=TaskStatus.PENDING,
-        task_params=completion_create_params
+        task_params=completion_create_params_1
     )
+   
+    completion_create_params_2 = ChatCompletionTaskParams(
+        model="gpt-4",
+        messages=[ChatCompletionMessage(role="user", content='Tell me a haiku that uses the word "tree".')],
+        stream=True,
+        max_tokens=1000
+    )
+    task2 = ChatCompletionTask(
+        task_id=TASK_2_ID,
+        command_id=COMMAND_2_ID,
+        instance_id=INSTANCE_1_ID,
+        task_type=TaskType.CHAT_COMPLETION,
+        task_status=TaskStatus.PENDING,
+        task_params=completion_create_params_2
+    ) 
 
     await global_events.append_events(
         [
@@ -226,18 +209,36 @@ async def test_2_runner_multi_message(
                 instance=instance
             ),
             TaskCreated(
-                task_id=task.task_id,
-                task=task
-            )
+                task_id=task1.task_id,
+                task=task1
+            ),
+            TaskCreated(
+                task_id=task2.task_id,
+                task=task2
+            ),
         ], 
         origin=MASTER_NODE_ID
     )
 
-    seen_task_started, seen_task_finished, response_string = await read_streaming_response(global_events)    
+    seen_task_started_1, seen_task_finished_1, response_string_1 = await read_streaming_response(global_events)
 
-    assert seen_task_started
-    assert seen_task_finished
-    assert any(keyword in response_string.lower() for keyword in ('kiss', 'paris', 'art', 'love'))
+    incomplete_task = TASK_2_ID if worker1.state.tasks[TASK_1_ID].task_status == TaskStatus.COMPLETE else TASK_2_ID
+    seen_task_started_2, seen_task_finished_2, response_string_2 = await read_streaming_response(global_events, filter_task=incomplete_task)
+
+    assert seen_task_started_1
+    assert seen_task_finished_1
+    assert seen_task_started_2
+    assert seen_task_finished_2
+
+    print(response_string_1)
+    print(response_string_2)
+
+    assert (
+        ('pond' in response_string_1.lower()) ^ ('pond' in response_string_2.lower())
+    ), "'pond' must appear in exactly one response"
+    assert (
+        ('tree' in response_string_1.lower()) ^ ('tree' in response_string_2.lower())
+    ), "'tree' must appear in exactly one response"
 
 
     idx = await global_events.get_last_idx()

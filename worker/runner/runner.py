@@ -10,7 +10,7 @@ import mlx.nn as nn
 from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx
+from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx, mlx_force_oom
 from shared.openai_compat import FinishReason
 from shared.types.tasks import ChatCompletionTaskParams
 from shared.types.worker.commands_runner import (
@@ -73,7 +73,7 @@ async def _mlx_generate(
         chat_task_data=task,
     )
 
-    max_tokens = task.max_tokens or 100
+    max_tokens = task.max_tokens or 1000
     generation_fn = partial(_generate_tokens, prompt, max_tokens)
 
     future = loop.run_in_executor(mlx_executor, generation_fn)
@@ -105,6 +105,12 @@ async def main():
         setup_message = ensure_type(init_message, SetupMessage)
         model_shard_meta = setup_message.model_shard_meta
         hosts = setup_message.hosts
+
+        # For testing - these are fake break conditions
+        if model_shard_meta.immediate_exception:
+            raise Exception('Fake exception - runner failed to spin up.')
+        if model_shard_meta.should_timeout:
+            await asyncio.sleep(model_shard_meta.should_timeout)
         
         setup_start_time = time.time()
 
@@ -127,7 +133,12 @@ async def main():
                     # TODO: this is a hack, why are we only looking at the first message? should have a tokenizer
                     prompt = task.messages[0]
                     if prompt.content is not None and 'EXO RUNNER MUST FAIL' in prompt.content:
+                        runner_print('raising exception')
                         raise Exception('Artificial runner exception - for testing purposes only.')
+                    if prompt.content is not None and 'EXO RUNNER MUST OOM' in prompt.content:
+                        mlx_force_oom()
+                    if prompt.content is not None and 'EXO RUNNER MUST TIMEOUT' in prompt.content:
+                        await asyncio.sleep(100)
 
                     # Generate responses using the actual MLX generation
                     async for generation_response in _mlx_generate(

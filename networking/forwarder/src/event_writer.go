@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -18,6 +19,10 @@ var (
 	eventsDBPath string
 	eventsDB     *sql.DB
 	eventsDBMu   sync.Mutex
+	
+	// Track connections to prevent duplicate events
+	connectionTracker = make(map[string]bool)
+	connTrackerMu     sync.Mutex
 )
 
 // SetEventsDBPath sets the path to the events database
@@ -166,33 +171,44 @@ func (n *NotifeeHandler) Connected(net network.Network, conn network.Conn) {
 	localAddr := conn.LocalMultiaddr()
 	remoteAddr := conn.RemoteMultiaddr()
 
-	// Get the actual node IDs (not peer IDs)
+	// Check if we've already processed this connection
+	connKey := fmt.Sprintf("%s-%s", conn.LocalPeer(), remotePeer)
+	connTrackerMu.Lock()
+	if connectionTracker[connKey] {
+		connTrackerMu.Unlock()
+		log.Printf("Skipping duplicate connection event for %s", remotePeer)
+		return
+	}
+	connectionTracker[connKey] = true
+	connTrackerMu.Unlock()
+
+	// Get the local node ID
 	localNodeID := GetNodeId()
 	
-	// For remote node, we need to extract from peer ID or use a mapping
-	// For now, we'll use the peer ID as a placeholder
-	// TODO: Implement proper node ID mapping/discovery
-	remoteNodeID := remotePeer.String()
-
-	// Create connection event
-	event := &TopologyEdgeCreated{
-		EventType: EventTypeTopologyEdgeCreated,
-		EventID:   uuid.New().String(),
-		Edge: Connection{
-			LocalNodeID:       localNodeID,
-			SendBackNodeID:    remoteNodeID,
-			LocalMultiaddr:    parseMultiaddr(localAddr),
-			SendBackMultiaddr: parseMultiaddr(remoteAddr),
-			ConnectionProfile: nil, // TODO: Add connection profiling if needed
-		},
-	}
-
-	// Write event to database
-	if err := writeEvent(EventTypeTopologyEdgeCreated, event); err != nil {
-		log.Printf("Failed to write edge created event: %v", err)
-	} else {
-		log.Printf("Wrote edge created event: %s -> %s", localNodeID, remoteNodeID)
-	}
+	// Asynchronously exchange node IDs and write event
+	go func() {
+		mapper := GetNodeIDMapper()
+		
+		// Add a small delay to ensure both sides are ready
+		time.Sleep(100 * time.Millisecond)
+		
+		// Exchange node IDs
+		if err := mapper.ExchangeNodeID(remotePeer); err != nil {
+			log.Printf("Failed to exchange node ID with %s: %v", remotePeer, err)
+			// Don't write event if we can't get the node ID
+			return
+		}
+		
+		// Get the actual remote node ID
+		remoteNodeID, ok := mapper.GetNodeIDForPeer(remotePeer)
+		if !ok {
+			log.Printf("Node ID not found for peer %s after successful exchange", remotePeer)
+			return
+		}
+		
+		// Write edge created event with correct node IDs
+		writeEdgeCreatedEvent(localNodeID, remoteNodeID, localAddr, remoteAddr)
+	}()
 }
 
 // Disconnected is called when a connection is closed
@@ -201,9 +217,27 @@ func (n *NotifeeHandler) Disconnected(net network.Network, conn network.Conn) {
 	localAddr := conn.LocalMultiaddr()
 	remoteAddr := conn.RemoteMultiaddr()
 
+	// Clear connection tracker
+	connKey := fmt.Sprintf("%s-%s", conn.LocalPeer(), remotePeer)
+	connTrackerMu.Lock()
+	delete(connectionTracker, connKey)
+	connTrackerMu.Unlock()
+
 	// Get the actual node IDs (not peer IDs)
 	localNodeID := GetNodeId()
-	remoteNodeID := remotePeer.String() // TODO: Implement proper node ID mapping
+	
+	// Get the remote node ID from the mapper
+	mapper := GetNodeIDMapper()
+	remoteNodeID, ok := mapper.GetNodeIDForPeer(remotePeer)
+	if !ok {
+		// Don't write event if we don't have the node ID mapping
+		log.Printf("No node ID mapping found for disconnected peer %s, skipping event", remotePeer)
+		mapper.RemoveMapping(remotePeer)
+		return
+	}
+	
+	// Clean up the mapping
+	mapper.RemoveMapping(remotePeer)
 
 	// Create disconnection event
 	event := &TopologyEdgeDeleted{
@@ -251,6 +285,27 @@ func parseMultiaddr(ma multiaddr.Multiaddr) Multiaddr {
 	}
 	
 	return result
+}
+
+// writeEdgeCreatedEvent writes a topology edge created event
+func writeEdgeCreatedEvent(localNodeID, remoteNodeID string, localAddr, remoteAddr multiaddr.Multiaddr) {
+	event := &TopologyEdgeCreated{
+		EventType: EventTypeTopologyEdgeCreated,
+		EventID:   uuid.New().String(),
+		Edge: Connection{
+			LocalNodeID:       localNodeID,
+			SendBackNodeID:    remoteNodeID,
+			LocalMultiaddr:    parseMultiaddr(localAddr),
+			SendBackMultiaddr: parseMultiaddr(remoteAddr),
+			ConnectionProfile: nil,
+		},
+	}
+
+	if err := writeEvent(EventTypeTopologyEdgeCreated, event); err != nil {
+		log.Printf("Failed to write edge created event: %v", err)
+	} else {
+		log.Printf("Wrote edge created event: %s -> %s", localNodeID, remoteNodeID)
+	}
 }
 
 // GetNotifee returns a singleton instance of the notifee handler

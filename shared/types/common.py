@@ -1,4 +1,4 @@
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv6Address
 from typing import Any, Self
 from uuid import uuid4
 
@@ -29,7 +29,7 @@ class CommandId(ID):
 
 
 class Host(BaseModel):
-    ip: IPv4Address
+    ip: IPv4Address | IPv6Address
     port: int
 
     def __str__(self) -> str:

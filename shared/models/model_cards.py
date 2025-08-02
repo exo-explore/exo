@@ -14,7 +14,20 @@ class ModelCard(BaseModel):
     metadata: ModelMetadata
 
 
-MODEL_CARDS = {
+MODEL_CARDS: dict[str, ModelCard] = {
+  "deepseek-v3-0324": ModelCard(
+    short_id="deepseek-v3-0324",
+    model_id="mlx-community/DeepSeek-v3-0324-8bit",
+    name="DeepSeek V3 fp8",
+    description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
+    tags=[],
+    metadata=ModelMetadata(
+      model_id="mlx-community/DeepSeek-v3-0324-8bit",
+      pretty_name="DeepSeek V3 fp8",
+      storage_size_kilobytes=754998771712//1024,
+      n_layers=61,
+    ),
+  ),
   "llama-3.3": ModelCard(
     short_id="llama-3.3",
     model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",

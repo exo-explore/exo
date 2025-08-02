@@ -1,27 +1,45 @@
 ## Tests for worker state handlers
 
+import asyncio
 from typing import Callable
 
 import pytest
 
-from shared.types.events import (
-    RunnerStatusUpdated,
-    TaskFailed,
-    TaskStateUpdated,
-)
-from shared.types.tasks import ChatCompletionTask, TaskStatus
+from shared.types.tasks import ChatCompletionTask
+from shared.types.worker.common import RunnerError
 from shared.types.worker.instances import Instance
 from shared.types.worker.ops import (
     ExecuteTaskOp,
-)
-from shared.types.worker.runners import (
-    FailedRunnerStatus,
-    RunningRunnerStatus,
+    RunnerUpOp,
 )
 from worker.main import Worker
 from worker.tests.constants import RUNNER_1_ID
 from worker.tests.test_handlers.utils import read_events_op
 
+
+@pytest.mark.asyncio
+async def test_runner_up_fails(
+    worker_with_assigned_runner: tuple[Worker, Instance], 
+    chat_completion_task: Callable[[], ChatCompletionTask]):
+    worker, _ = worker_with_assigned_runner
+    worker.assigned_runners[RUNNER_1_ID].shard_metadata.immediate_exception = True
+
+    runner_up_op = RunnerUpOp(runner_id=RUNNER_1_ID)
+
+    with pytest.raises(RunnerError):
+        await read_events_op(worker, runner_up_op)
+
+@pytest.mark.asyncio
+async def test_runner_up_timeouts(
+    worker_with_assigned_runner: tuple[Worker, Instance], 
+    chat_completion_task: Callable[[], ChatCompletionTask]):
+    worker, _ = worker_with_assigned_runner
+    worker.assigned_runners[RUNNER_1_ID].shard_metadata.should_timeout = 10
+
+    runner_up_op = RunnerUpOp(runner_id=RUNNER_1_ID)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await read_events_op(worker, runner_up_op)
 
 @pytest.mark.asyncio
 async def test_execute_task_fails(
@@ -38,24 +56,27 @@ async def test_execute_task_fails(
         task=task
     )
 
-    events = await read_events_op(worker, execute_task_op)
+    with pytest.raises(RunnerError):
+        await read_events_op(worker, execute_task_op)
 
-    assert len(events) == 5
+@pytest.mark.asyncio
+async def test_execute_task_timeouts(
+    worker_with_running_runner: tuple[Worker, Instance], 
+    chat_completion_task: Callable[[], ChatCompletionTask]):
+    worker, _ = worker_with_running_runner
 
-    print(events)    
+    task = chat_completion_task()
+    messages = task.task_params.messages
+    messages[0].content = 'Artificial prompt: EXO RUNNER MUST TIMEOUT'
 
-    assert isinstance(events[0], RunnerStatusUpdated)
-    assert isinstance(events[0].runner_status, RunningRunnerStatus) # It tried to start.
+    execute_task_op = ExecuteTaskOp(
+        runner_id=RUNNER_1_ID,
+        task=task
+    )
 
-    assert isinstance(events[1], TaskStateUpdated)
-    assert events[1].task_status == TaskStatus.RUNNING # It tried to start.
+    with pytest.raises(RunnerError): # At the moment this is a RunnerError that says 'TimeoutError'.
+        await read_events_op(worker, execute_task_op)
 
-    assert isinstance(events[2], TaskStateUpdated)
-    assert events[2].task_status == TaskStatus.FAILED # Task marked as failed. 
-
-    assert isinstance(events[3], TaskFailed)
-
-    assert isinstance(events[4], RunnerStatusUpdated)
-    assert isinstance(events[4].runner_status, FailedRunnerStatus) # It should have failed.
 
 # TODO: Much more to do here!
+# runner assigned download stuff

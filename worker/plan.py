@@ -95,7 +95,8 @@ def spin_down_runners(
 
             num_spundown_nodes = 0
             for runner_id in instance.shard_assignments.runner_to_shard:
-                if isinstance(state_runners[runner_id], InactiveRunnerStatus) and \
+                if runner_id in state_runners and \
+                    isinstance(state_runners[runner_id], InactiveRunnerStatus) and \
                     runner_id not in assigned_runners:
                     num_spundown_nodes += 1
                 # Suggested:

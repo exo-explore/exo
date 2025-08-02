@@ -22,8 +22,8 @@ class Connection(BaseModel):
             (
                 self.local_node_id,
                 self.send_back_node_id,
-                self.local_multiaddr.ipv4_address,
-                self.send_back_multiaddr.ipv4_address,
+                self.local_multiaddr.ip_address,
+                self.send_back_multiaddr.ip_address,
             )
         )
 
@@ -33,9 +33,12 @@ class Connection(BaseModel):
         return (
                 self.local_node_id == other.local_node_id
                 and self.send_back_node_id == other.send_back_node_id
-                and self.local_multiaddr.ipv4_address == other.local_multiaddr.ipv4_address
-                and self.send_back_multiaddr.ipv4_address == other.send_back_multiaddr.ipv4_address
+                and self.local_multiaddr.ip_address == other.local_multiaddr.ip_address
+                and self.send_back_multiaddr.ip_address == other.send_back_multiaddr.ip_address
         )
+        
+    def is_thunderbolt(self) -> bool:
+        return str(self.local_multiaddr.ip_address).startswith('169.254') and str(self.send_back_multiaddr.ip_address).startswith('169.254')
 
 
 class Node(BaseModel):

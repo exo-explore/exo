@@ -1,4 +1,5 @@
 import asyncio
+import os
 import platform
 from typing import Any, Callable, Coroutine
 
@@ -66,6 +67,11 @@ async def start_polling_node_metrics(
 
             # Run heavy FLOPs profiling only if enough time has elapsed
 
+            override_memory_env = os.getenv('OVERRIDE_MEMORY')
+            override_memory: int | None = (
+                int(override_memory_env) * 2**30 if override_memory_env else None
+            )
+
             await callback(
                 NodePerformanceProfile(
                     model_id=system_info.model_id,
@@ -74,7 +80,7 @@ async def start_polling_node_metrics(
                     network_interfaces=network_interfaces,
                     memory=MemoryPerformanceProfile(
                         ram_total=total_mem,
-                        ram_available=total_mem - used_mem,
+                        ram_available=override_memory if override_memory else total_mem - used_mem,
                         swap_total=metrics.memory.swap_total
                         if metrics.memory is not None
                         and metrics.memory.swap_total is not None

@@ -83,6 +83,10 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
     if not cycles:
         return []
     
+    get_thunderbolt = False
+    if cycle_digraph.is_thunderbolt_cycle(cycles[0]):
+        get_thunderbolt = True
+        
     cycle = cycles[0]
     hosts: list[Host] = []
     for i in range(len(cycle)):
@@ -92,8 +96,10 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
         for connection in cycle_digraph.list_connections():
             if (connection.local_node_id == current_node.node_id and 
                 connection.send_back_node_id == next_node.node_id):
+                if get_thunderbolt and not connection.is_thunderbolt():
+                    continue
                 host = Host(
-                    ip=connection.send_back_multiaddr.ipv4_address,
+                    ip=connection.send_back_multiaddr.ip_address,
                     port=connection.send_back_multiaddr.port
                 )
                 hosts.append(host)

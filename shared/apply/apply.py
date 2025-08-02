@@ -140,10 +140,10 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
 def apply_node_performance_measured(event: NodePerformanceMeasured, state: State) -> State:
     new_profiles: Mapping[NodeId, NodePerformanceProfile] = {**state.node_profiles, event.node_id: event.node_profile}
     state = state.model_copy(update={"node_profiles": new_profiles})
-    if not state.topology.contains_node(event.node_id):
-        # TODO: figure out why this is happening in the first place
-        return state
     topology = copy.copy(state.topology)
+    if not topology.contains_node(event.node_id):
+        # TODO: figure out why this is happening in the first place
+        topology.add_node(Node(node_id=event.node_id))
     topology.update_node_profile(event.node_id, event.node_profile)
     return state.model_copy(update={"topology": topology})
 
@@ -164,13 +164,6 @@ def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> Sta
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
     topology = copy.copy(state.topology)
     topology.add_connection(event.edge)
-    opposite_edge = Connection(
-        local_node_id=event.edge.send_back_node_id,
-        send_back_node_id=event.edge.local_node_id,
-        local_multiaddr=event.edge.send_back_multiaddr,
-        send_back_multiaddr=event.edge.local_multiaddr
-    )
-    topology.add_connection(opposite_edge)
     return state.model_copy(update={"topology": topology})
 
 @event_apply.register(TopologyEdgeReplacedAtomically)

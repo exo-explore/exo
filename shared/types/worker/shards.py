@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Generic, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -24,6 +24,11 @@ class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
     partition_strategy: PartitionStrategyT
     device_rank: int
     world_size: int
+    
+    # Error handling; equivalent to monkey-patch, but we can't monkey-patch runner.py
+    # This is kinda annoying because it allocates memory in the ShardMetadata object. Can be rethought after Shanghai.
+    immediate_exception: bool = False
+    should_timeout: Optional[float] = None
 
 
 class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):

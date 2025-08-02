@@ -41,7 +41,14 @@ def get_instance_placements(
         raise ValueError("No cycles found with sufficient memory")
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
-    selected_cycle = max(smallest_cycles, key=lambda cycle: sum(node.node_profile.memory.ram_available for node in cycle if node.node_profile is not None))
+    selected_cycle = None
+    for cycle in smallest_cycles:
+        cycle_graph: Topology = topology.get_subgraph_from_nodes(cycle)
+        if cycle_graph.is_thunderbolt_cycle(cycle):
+            selected_cycle = cycle
+            break
+    if selected_cycle is None:
+        selected_cycle = max(smallest_cycles, key=lambda cycle: sum(node.node_profile.memory.ram_available for node in cycle if node.node_profile is not None))
     
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)
     

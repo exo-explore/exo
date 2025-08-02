@@ -1,34 +1,29 @@
 import asyncio
 import os
 from logging import Logger
-from typing import Callable, Final
+from typing import Callable
 
 import pytest
 
 from shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from shared.types.common import Host, NodeId
+from shared.types.common import Host
 from shared.types.events import InstanceCreated, InstanceDeleted
 from shared.types.models import ModelId
-from shared.types.worker.common import InstanceId, RunnerId
 from shared.types.worker.instances import Instance, InstanceStatus, ShardAssignments
 from shared.types.worker.runners import FailedRunnerStatus
 from shared.types.worker.shards import PipelineShardMetadata
 from worker.download.shard_downloader import NoopShardDownloader
 from worker.main import run
+from worker.tests.constants import (
+    INSTANCE_1_ID,
+    MASTER_NODE_ID,
+    NODE_A,
+    NODE_B,
+    RUNNER_1_ID,
+    RUNNER_2_ID,
+)
 from worker.worker import Worker
 
-MASTER_NODE_ID = NodeId("ffffffff-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-NODE_A: Final[NodeId] = NodeId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-NODE_B: Final[NodeId] = NodeId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
-
-RUNNER_1_ID: Final[RunnerId] = RunnerId("11111111-1111-4111-8111-111111111111")
-INSTANCE_1_ID: Final[InstanceId] = InstanceId("22222222-2222-4222-8222-222222222222")
-RUNNER_2_ID: Final[RunnerId] = RunnerId("33333333-3333-4333-8333-333333333333")
-INSTANCE_2_ID: Final[InstanceId] = InstanceId("44444444-4444-4444-8444-444444444444")
-MODEL_A_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
-MODEL_B_ID: Final[ModelId] = 'mlx-community/Llama-3.2-1B-Instruct-4bit'
-TASK_1_ID: Final = "55555555-5555-4555-8555-555555555555"
-TASK_2_ID: Final = "66666666-6666-4666-8666-666666666666"
 
 @pytest.fixture
 def user_message() -> str:
@@ -63,7 +58,7 @@ async def check_runner_connection(
             global_events=global_events,
         )
         workers.append(worker1)
-        task1 = asyncio.create_task(run(worker1))
+        task1 = asyncio.create_task(run(worker1, logger))
         tasks.append(task1)
 
         worker2 = Worker(
@@ -74,7 +69,7 @@ async def check_runner_connection(
             global_events=global_events,
         )
         workers.append(worker2)
-        task2 = asyncio.create_task(run(worker2))
+        task2 = asyncio.create_task(run(worker2, logger))
         tasks.append(task2)
 
         model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
@@ -160,7 +155,21 @@ async def check_runner_connection(
 # ) -> None:
 #     total_runs = 100
 #     successes = 0
+# # not now.
+
+# def test_runner_connection_stress(
+#     logger: Logger,
+#     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
+#     hosts: Callable[[int], list[Host]],
+#     chat_completion_task: Callable[[InstanceId, str], Task],
+# ) -> None:
+#     total_runs = 100
+#     successes = 0
     
+#     for _ in range(total_runs):
+#         # Create a fresh event loop for each iteration
+#         loop = asyncio.new_event_loop()
+#         asyncio.set_event_loop(loop)
 #     for _ in range(total_runs):
 #         # Create a fresh event loop for each iteration
 #         loop = asyncio.new_event_loop()
@@ -180,11 +189,30 @@ async def check_runner_connection(
 #             pending = asyncio.all_tasks(loop)
 #             for task in pending:
 #                 task.cancel()
+#         try:
+#             result = loop.run_until_complete(check_runner_connection(
+#                 logger=logger,
+#                 pipeline_shard_meta=pipeline_shard_meta,
+#                 hosts=hosts,
+#                 chat_completion_task=chat_completion_task,
+#             ))
+#             if result:
+#                 successes += 1
+#         finally:
+#             # Cancel all running tasks
+#             pending = asyncio.all_tasks(loop)
+#             for task in pending:
+#                 task.cancel()
             
+#             # Run the event loop briefly to allow cancellation to complete
+#             loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 #             # Run the event loop briefly to allow cancellation to complete
 #             loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             
 #             # Close the event loop
 #             loop.close()
+#             # Close the event loop
+#             loop.close()
     
+#     print(f"Runner connection successes: {successes} / {total_runs}")
 #     print(f"Runner connection successes: {successes} / {total_runs}")

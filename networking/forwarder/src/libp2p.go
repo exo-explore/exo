@@ -433,6 +433,9 @@ func getNode(ctx context.Context) {
 
 		// Register event notifiee to track topology changes
 		node.Network().Notify(GetNotifee())
+		
+		// Set up node ID mapper
+		GetNodeIDMapper().SetHost(node)
 
 		// Start a goroutine to periodically trigger mDNS discovery
 		go periodicMDNSDiscovery()

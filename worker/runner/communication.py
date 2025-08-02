@@ -34,7 +34,7 @@ async def runner_read_message() -> RunnerMessage:
 
     line: bytes = await loop.run_in_executor(None, sys.stdin.buffer.readline)
     if not line: # This seems to be what triggers when we don't clean up the runner neatly and leave the process dangling.
-        raise EOFError("No more data to read")
+        raise EOFError("No more data to read when reading runner message")
     line = line.strip()
 
     try:
@@ -66,7 +66,7 @@ async def supervisor_read_response(
     line: str = line_bytes.decode("utf-8").strip()
 
     if not line:
-        raise EOFError("No more data to read")
+        raise EOFError("No more data to read when reading response from runner")
 
     try:
         return RunnerResponseTypeAdapter.validate_json(line)

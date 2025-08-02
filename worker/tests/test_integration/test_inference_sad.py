@@ -17,6 +17,7 @@ from shared.types.events import (
     TaskCreated,
     TaskStateUpdated,
 )
+from shared.types.events._events import TaskFailed
 from shared.types.events.chunks import GenerationChunk, TokenChunk
 from shared.types.tasks import Task, TaskId, TaskStatus
 from shared.types.worker.common import InstanceId, RunnerId
@@ -34,6 +35,7 @@ from worker.tests.constants import (
     RUNNER_1_ID,
     TASK_1_ID,
 )
+from worker.tests.test_integration.integration_utils import until_event_with_timeout
 
 
 @pytest.fixture
@@ -41,14 +43,13 @@ def user_message():
     """Override this fixture in tests to customize the message"""
     return "Who is the longest ruling monarch of England?"
 
-# TODO: Make this all monkeypatched instead.
 
 async def test_stream_response_failed_always(
     monkeypatch: MonkeyPatch,
     worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
     chat_completion_task: Callable[[InstanceId, TaskId], Task]
-):
+) -> None:
     _, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
@@ -74,7 +75,7 @@ async def test_stream_response_failed_always(
         origin=MASTER_NODE_ID
     )
 
-    await asyncio.sleep(5.)
+    await until_event_with_timeout(global_events, InstanceDeleted)
 
 
     events = await global_events.get_events_since(0)
@@ -133,7 +134,7 @@ async def test_stream_response_failed_once(
         origin=MASTER_NODE_ID
     )
 
-    await asyncio.sleep(5.)
+    await until_event_with_timeout(global_events, ChunkGenerated, 1, condition=lambda x: isinstance(x.chunk, TokenChunk) and x.chunk.finish_reason is not None)
     
     # TODO: The ideal with this test is if we had some tooling to scroll through the state, and say
     # 'asser that there was a time that the error_type, error_message was not none and the failure count was nonzero'
@@ -179,65 +180,41 @@ async def test_stream_response_failed_once(
     await asyncio.sleep(0.3)
 
 
-# async def test_stream_response_timeout(
-#     monkeypatch: MonkeyPatch,
-#     worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
-#     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-#     chat_completion_task: Callable[[InstanceId, TaskId], Task]
-# ):
-#     async def mock_stream_response(
-#         self: RunnerSupervisor,
-#         task: Task,
-#         request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None,
-#     ) -> AsyncGenerator[GenerationChunk]:
-#         # TODO: Also a test where we yield a few chunks and then time out.
-#         print('sleeping starting')
-#         await asyncio.sleep(4.)
-#         print('sleeping finished')
-#         return
-#         yield
+async def test_stream_response_timeout(
+    worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
+    instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
+    chat_completion_task: Callable[[InstanceId, TaskId], Task]
+):
+    _, global_events = await worker_running(NODE_A)
 
-#     monkeypatch.setattr(RunnerSupervisor, 'stream_response', mock_stream_response)
-    
-#     worker, global_events = await worker_running(NODE_A)
+    instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
+    instance_value.instance_type = InstanceStatus.ACTIVE
 
-#     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-#     instance_value.instance_type = InstanceStatus.ACTIVE
+    task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
+    task.task_params.messages[0].content = 'EXO RUNNER MUST TIMEOUT'
+    await global_events.append_events(
+        [
+            InstanceCreated(instance=instance_value),
+            TaskCreated(task_id=task.task_id, task=task)
+        ], 
+        origin=MASTER_NODE_ID
+    )
 
-#     task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-#     await global_events.append_events(
-#         [
-#             InstanceCreated(instance=instance_value),
-#             TaskCreated(task_id=task.task_id, task=task)
-#         ], 
-#         origin=MASTER_NODE_ID
-#     )
+    await until_event_with_timeout(global_events, TaskFailed, multiplicity=3)
 
-#     await asyncio.sleep(7.)
-    
+    events = await global_events.get_events_since(0)
+    print(events)
+    assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 3
+    assert len([x for x in events if isinstance(x.event, TaskStateUpdated) and x.event.task_status == TaskStatus.FAILED]) == 3
+    assert len([x for x in events if isinstance(x.event, TaskFailed) and 'timeouterror' in x.event.error_message.lower()]) == 3
 
-#     # as we reset the failures back to zero when we have a successful inference.
+    await global_events.append_events(
+        [
+            InstanceDeleted(
+                instance_id=instance_value.instance_id,
+            ),
+        ], 
+        origin=MASTER_NODE_ID
+    )
 
-#     # print('ASSERTION ERR:')
-#     # print(worker.assigned_runners[RUNNER_1_ID].failures[1][1])
-
-#     assert len(worker.assigned_runners[RUNNER_1_ID].failures) == 0 
-#     assert worker.state.tasks[TASK_1_ID].error_type is None
-#     assert worker.state.tasks[TASK_1_ID].error_message is None
-
-#     events = await global_events.get_events_since(0)
-#     print(events)
-#     assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 1
-#     assert len([x for x in events if isinstance(x.event, TaskStateUpdated) and x.event.task_status == TaskStatus.FAILED]) == 1
-#     assert len([x for x in events if isinstance(x.event, TaskFailed) and 'timeouterror' in x.event.error_type.lower()]) == 1
-
-#     await global_events.append_events(
-#         [
-#             InstanceDeleted(
-#                 instance_id=instance_value.instance_id,
-#             ),
-#         ], 
-#         origin=MASTER_NODE_ID
-#     )
-
-#     await asyncio.sleep(0.3)
+    await asyncio.sleep(0.3)

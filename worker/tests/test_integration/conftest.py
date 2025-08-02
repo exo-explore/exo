@@ -29,7 +29,7 @@ def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker,
 
         shard_downloader = NoopShardDownloader()
         worker = Worker(node_id, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
-        asyncio.create_task(run(worker))
+        asyncio.create_task(run(worker, logger))
 
         return worker, global_events
 

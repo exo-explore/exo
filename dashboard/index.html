@@ -483,25 +483,89 @@
         }
 
         .model-select {
-            background-color: var(--exo-medium-gray);
+            background: linear-gradient(135deg, #2a2a2a 0%, #3c3c3c 50%, #2a2a2a 100%);
             color: var(--exo-light-gray);
-            border: 1px solid var(--exo-light-gray);
-            border-radius: 6px;
-            padding: 10px 12px;
-            font-size: 14px;
+            border: 2px solid rgba(255, 215, 0, 0.2);
+            border-radius: 12px;
+            padding: 14px 20px 14px 16px;
+            font-size: 15px;
             font-family: var(--font-family);
+            font-weight: 500;
             cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 4px 12px rgba(0, 0, 0, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.12),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+            position: relative;
+            appearance: none;
+            width: 100%;
+            min-height: 48px;
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23FFD700' d='M6 8.5L2.5 5h7z'/%3E%3C/svg%3E");
+            background-position: calc(100% - 16px) center;
+            background-size: 12px 12px;
+            background-repeat: no-repeat;
+        }
+
+        .model-select:hover {
+            background: linear-gradient(135deg, #363636 0%, #484848 50%, #363636 100%);
+            border-color: rgba(255, 215, 0, 0.5);
+            box-shadow: 
+                0 6px 20px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.1),
+                0 0 0 1px rgba(255, 215, 0, 0.1);
+            transform: translateY(-2px);
         }
 
         .model-select:focus {
             outline: none;
             border-color: var(--exo-yellow);
-            box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.2);
+            box-shadow: 
+                0 0 0 4px rgba(255, 215, 0, 0.25),
+                0 8px 24px rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+            background: linear-gradient(135deg, #404040 0%, #525252 50%, #404040 100%);
+            transform: translateY(-1px);
+        }
+
+        .model-select:active {
+            transform: translateY(0);
+            box-shadow: 
+                0 2px 8px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                inset 0 2px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .model-select:disabled {
+            background: linear-gradient(135deg, #1a1a1a 0%, #222222 100%);
+            color: #555555;
+            border-color: #333333;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23555555' d='M6 8.5L2.5 5h7z'/%3E%3C/svg%3E");
         }
 
         .model-select option {
-            background-color: var(--exo-medium-gray);
+            background-color: var(--exo-dark-gray);
             color: var(--exo-light-gray);
+            padding: 12px 16px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .model-select option:hover {
+            background-color: var(--exo-medium-gray);
+            color: var(--exo-yellow);
+        }
+
+        .model-select option:checked {
+            background-color: var(--exo-yellow);
+            color: var(--exo-black);
+            font-weight: 600;
         }
 
         .launch-button {
@@ -576,6 +640,7 @@
             color: var(--exo-light-gray);
             font-style: italic;
             margin-top: 40px;
+            margin-bottom: 30px;
         }
 
 
@@ -589,6 +654,13 @@
     <!-- Sidebar -->
     <div class="sidebar" id="instancesSidebar">
         <div class="sidebar-header">
+            <h3>Running Instances</h3>
+        </div>
+        <div class="sidebar-content" id="instancesList">
+            <div class="no-instances">Loading instances...</div>
+        </div>
+        
+        <div class="sidebar-header">
             <h3>Launch Instance</h3>
         </div>
         <div class="sidebar-content">
@@ -600,13 +672,6 @@
                 <button id="launchInstanceButton" class="launch-button" disabled>Launch Instance</button>
                 <div id="launchStatus" class="launch-status"></div>
             </div>
-        </div>
-        
-        <div class="sidebar-header">
-            <h3>Running Instances</h3>
-        </div>
-        <div class="sidebar-content" id="instancesList">
-            <div class="no-instances">Loading instances...</div>
         </div>
     </div>
 

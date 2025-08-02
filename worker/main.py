@@ -9,16 +9,17 @@ from shared.types.events import (
 )
 from shared.types.profiling import NodePerformanceProfile
 from shared.types.worker.ops import (
+        ExecuteTaskOp,
         RunnerOp,
 )
-from shared.utils import get_node_id_keypair
+from shared.utils import Keypair, get_node_id_keypair
 from worker.download.impl_shard_downloader import exo_shard_downloader
 from worker.plan import plan
 from worker.utils.profile import start_polling_node_metrics
 from worker.worker import Worker
 
 
-async def run(worker_state: Worker):
+async def run(worker_state: Worker, logger: logging.Logger):
         assert worker_state.global_events is not None
 
         while True:
@@ -42,15 +43,26 @@ async def run(worker_state: Worker):
 
             # run the op, synchronously blocking for now
             if op is not None:
-                async for event in worker_state.execute_op(op):
-                    await worker_state.event_publisher(event)
+                logger.info(f'Executing op {op}')
+                try:
+                    async for event in worker_state.execute_op(op):
+                        await worker_state.event_publisher(event)
+                except Exception as e:
+                    if isinstance(op, ExecuteTaskOp):
+                        generator = worker_state.fail_task(e, runner_id=op.runner_id, task_id=op.task.task_id)
+                    else:
+                        generator = worker_state.fail_runner(e, runner_id=op.runner_id)
+                    
+                    async for event in generator:
+                        await worker_state.event_publisher(event)
 
             await asyncio.sleep(0.01)
 
 
 
+
 async def main():
-    node_id_keypair = get_node_id_keypair()
+    node_id_keypair: Keypair = get_node_id_keypair()
     node_id = NodeId(node_id_keypair.to_peer_id().to_base58())
     logger: logging.Logger = logging.getLogger('worker_logger')
     logger.setLevel(logging.DEBUG)
@@ -72,7 +84,7 @@ async def main():
 
     worker = Worker(node_id, logger, shard_downloader, event_log_manager.worker_events, event_log_manager.global_events)
 
-    await run(worker)
+    await run(worker, logger)
 
 if __name__ == "__main__":
     asyncio.run(main())

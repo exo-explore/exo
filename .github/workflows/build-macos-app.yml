@@ -3,13 +3,14 @@ name: Build and Release Exo macOS App
 on:
   push:
     tags:
-      - 'v*' # Trigger only on version tags
+      - 'v*' # Trigger on version tags
     branches:
       - main # Also build on main branch for testing
       - app-staging # Add app-staging for testing
   pull_request:
     branches:
-      - main # Test builds on PRs
+      - staging # Test builds on PRs to staging
+      - main # Build on PRs to main
 
 jobs:
   build-exov2-macos:
@@ -19,18 +20,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Rust (nightly)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly
-          components: rustfmt, clippy
-          default: true
-
-      - name: Set Rust toolchain override
-        run: |
-          rustup default nightly
-          cd rust && rustup override set nightly
 
       - name: Install Go
         uses: actions/setup-go@v5
@@ -51,12 +40,6 @@ jobs:
         run: |
           uv python install
           uv sync --locked --all-extras
-
-      - name: Build Rust Components
-        env:
-          RUSTFLAGS: "-A unused-imports -A dead-code -A unreachable-code"
-        run: |
-          just build-all
 
       - name: Install Python Bindings
         run: |

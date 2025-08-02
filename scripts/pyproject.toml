@@ -1,15 +1,12 @@
 [project]
-name = "exo-worker"
+name = "exo-scripts"
 version = "0.1.0"
-description = "Worker for the Exo project"
+description = "Scripts for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "exo-shared",
     "huggingface_hub>=0.33.4",
-    "mlx==0.26.3",
-    "mlx-lm>=0.25.3",
-    "psutil>=7.0.0",
 ]
 
 [build-system]

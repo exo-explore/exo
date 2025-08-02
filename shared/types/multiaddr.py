@@ -1,5 +1,5 @@
 import re
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv6Address
 from typing import ClassVar
 
 from pydantic import BaseModel, computed_field, field_serializer, field_validator
@@ -26,17 +26,35 @@ class Multiaddr(BaseModel):
     
     @computed_field
     @property
+    def address_type(self) -> str:
+        for pattern in self.PATTERNS:
+            if re.match(pattern, self.address):
+                return pattern.split('/')[1]
+        raise ValueError(f"Invalid multiaddr format: {self.address}")
+        
+    @property
+    def ipv6_address(self) -> IPv6Address:
+        match = re.match(r'^/ip6/([0-9a-fA-F:]+)', self.address)
+        if not match:
+            raise ValueError(f"Invalid multiaddr format: {self.address}. Expected format like /ip6/::1/tcp/4001")
+        return IPv6Address(match.group(1))
+    
+    @property
     def ipv4_address(self) -> IPv4Address:
         match = re.match(r'^/ip4/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', self.address)
         if not match:
             raise ValueError(f"Invalid multiaddr format: {self.address}. Expected format like /ip4/127.0.0.1/tcp/4001")
         return IPv4Address(match.group(1))
 
-    @field_serializer("ipv4_address")
-    def serialize_ipv4_address(self, value: IPv4Address) -> str:
+    @computed_field
+    @property
+    def ip_address(self) -> IPv4Address | IPv6Address:
+        return self.ipv4_address if self.address_type == 'ip4' else self.ipv6_address
+    
+    @field_serializer("ip_address")
+    def serialize_ipv4_address(self, value: IPv4Address | IPv6Address) -> str:
         return str(value)
 
-    
     @computed_field
     @property
     def port(self) -> int:

@@ -20,6 +20,10 @@ EXO_MASTER_KEYRING_FILE = EXO_HOME / "master_keyring"
 LIBP2P_WORKER_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
 
+# lower bounds define timeouts for flops and memory bandwidth - these are the values for the M1 chip.
+LB_TFLOPS = 2.3
+LB_MEMBW_GBPS = 68
+LB_DISK_GBPS = 1.5
 
 # little helper function to get the name of the module that raised the error
 def get_caller_module_name() -> str:

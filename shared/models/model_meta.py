@@ -1,6 +1,7 @@
 from typing import Annotated, Dict, Optional
 
 import aiofiles
+import aiofiles.os as aios
 from huggingface_hub import model_info
 from pydantic import BaseModel, Field
 
@@ -8,7 +9,7 @@ from shared.types.models import ModelMetadata
 from worker.download.download_utils import (
     ModelSafetensorsIndex,
     download_file_with_retry,
-    ensure_exo_tmp,
+    ensure_models_dir,
 )
 
 
@@ -43,14 +44,16 @@ class ConfigData(BaseModel):
 
 async def get_config_data(model_id: str) -> ConfigData:
     """Downloads and parses config.json for a model."""
-    target_dir = (await ensure_exo_tmp())/model_id.replace("/", "--")
+    target_dir = (await ensure_models_dir())/str(model_id).replace("/", "--")
+    await aios.makedirs(target_dir, exist_ok=True)
     config_path = await download_file_with_retry(model_id, "main", "config.json", target_dir, lambda curr_bytes, total_bytes: print(f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes}"))
     async with aiofiles.open(config_path, 'r') as f:
         return ConfigData.model_validate_json(await f.read())
 
 async def get_safetensors_size(model_id: str) -> int:
     """Gets model size from safetensors index or falls back to HF API."""
-    target_dir = (await ensure_exo_tmp())/model_id.replace("/", "--")
+    target_dir = (await ensure_models_dir())/str(model_id).replace("/", "--")
+    await aios.makedirs(target_dir, exist_ok=True)
     index_path = await download_file_with_retry(model_id, "main", "model.safetensors.index.json", target_dir, lambda curr_bytes, total_bytes: print(f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes}"))
     async with aiofiles.open(index_path, 'r') as f:
         index_data = ModelSafetensorsIndex.model_validate_json(await f.read())

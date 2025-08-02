@@ -161,6 +161,22 @@ class Topology(TopologyProto):
                 topology.add_connection(connection)
         return topology
 
+    def is_thunderbolt_cycle(self, cycle: list[Node]) -> bool:
+        node_idxs = [node.node_id for node in cycle]
+        rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
+        for rid in rx_idxs:
+            for neighbor_rid in self._graph.neighbors(rid):
+                if neighbor_rid not in rx_idxs:
+                    continue
+                has_tb = False
+                for edge in self._graph.get_all_edge_data(rid, neighbor_rid):
+                    if edge.is_thunderbolt():
+                        has_tb = True
+                        break
+                if not has_tb:
+                    return False
+        return True
+    
     def _is_bridge(self, connection: Connection) -> bool:
         """Check if removing this connection will orphan any nodes from the master."""
         if self.master_node_id is None:

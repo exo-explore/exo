@@ -39,7 +39,8 @@ members = [
     "master",
     "worker",
     "shared",
-    "engines/*"
+    "engines/*",
+    "scripts"
 ]
 
 [tool.uv.sources]

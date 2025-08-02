@@ -14,11 +14,14 @@ from shared.apply import apply
 from shared.db.sqlite.config import EventLogConfig
 from shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from shared.db.sqlite.event_log_manager import EventLogManager
-from shared.types.common import NodeId
+from shared.types.common import CommandId, NodeId
 from shared.types.events import (
     Event,
     Heartbeat,
+    InstanceDeleted,
     TaskCreated,
+    TaskDeleted,
+    TopologyEdgeDeleted,
     TopologyNodeCreated,
 )
 from shared.types.events.commands import (
@@ -26,6 +29,7 @@ from shared.types.events.commands import (
     Command,
     CreateInstanceCommand,
     DeleteInstanceCommand,
+    TaskFinishedCommand,
 )
 from shared.types.state import State
 from shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
@@ -43,6 +47,7 @@ class Master:
         self.command_buffer = command_buffer
         self.global_events = global_events
         self.worker_events = worker_events
+        self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.forwarder_supervisor = ForwarderSupervisor(
             self.node_id,
             forwarder_binary_path=forwarder_binary_path,
@@ -96,6 +101,8 @@ class Master:
                             task_params=next_command.request_params
                         )
                     ))
+
+                    self.command_task_mapping[next_command.command_id] = task_id
                 case DeleteInstanceCommand():
                     placement = get_instance_placements(next_command, self.state.topology, self.state.instances)
                     transition_events = get_transition_events(self.state.instances, placement)
@@ -104,6 +111,11 @@ class Master:
                     placement = get_instance_placements(next_command, self.state.topology, self.state.instances)
                     transition_events = get_transition_events(self.state.instances, placement)
                     next_events.extend(transition_events)
+                case TaskFinishedCommand():
+                    next_events.append(TaskDeleted(
+                        task_id=self.command_task_mapping[next_command.command_id]
+                    ))
+                    del self.command_task_mapping[next_command.command_id]
 
             await self.event_log_for_writes.append_events(next_events, origin=self.node_id)
         # 2. get latest events
@@ -118,6 +130,24 @@ class Master:
             print(f"applying event: {event_from_log}")
             self.state = apply(self.state, event_from_log)
         self.logger.info(f"state: {self.state.model_dump_json()}")
+
+        # TODO: This can be done in a better place. But for now, we use this to check if any running instances have been broken.
+        write_events: list[Event] = []
+        if any([isinstance(event_from_log.event, TopologyEdgeDeleted) for event_from_log in events]):
+            connected_node_ids = set([x.node_id for x in self.state.topology.list_nodes()])
+            for instance_id, instance in self.state.instances.items():
+                delete = False
+                for node_id in instance.shard_assignments.node_to_runner:
+                    if node_id not in connected_node_ids:
+                        delete = True
+                        break
+                if delete:
+                    write_events.append(InstanceDeleted(
+                        instance_id=instance_id
+                    ))
+
+        if write_events:
+            await self.event_log_for_writes.append_events(events=write_events, origin=self.node_id)
 
     async def run(self):
         self.state = await self._get_state_snapshot()

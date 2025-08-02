@@ -16,6 +16,7 @@ class CommandType(str, Enum):
     CHAT_COMPLETION = "CHAT_COMPLETION"
     CREATE_INSTANCE = "CREATE_INSTANCE"
     DELETE_INSTANCE = "DELETE_INSTANCE"
+    TASK_FINISHED = "TASK_FINISHED"
 
 
 class _BaseCommand[T: CommandType](BaseModel):
@@ -39,8 +40,12 @@ class DeleteInstanceCommand(_BaseCommand[CommandType.DELETE_INSTANCE]):
     instance_id: InstanceId
 
 
+class TaskFinishedCommand(_BaseCommand[CommandType.TASK_FINISHED]):
+    command_type: Literal[CommandType.TASK_FINISHED] = CommandType.TASK_FINISHED
+
+
 Command = Annotated[
-    ChatCompletionCommand | CreateInstanceCommand | DeleteInstanceCommand, 
+    ChatCompletionCommand | CreateInstanceCommand | DeleteInstanceCommand | TaskFinishedCommand, 
     Field(discriminator="command_type")
 ]
 
