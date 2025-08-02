@@ -7,18 +7,13 @@
         url = "github:numtide/flake-utils";
         inputs.nixpkgs.follows = "nixpkgs";
     };
-    rust-overlay = {
-        url = "github:oxalica/rust-overlay";
-        inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
         pkgs = (import nixpkgs) {
-          inherit system overlays;
+          inherit system;
         };
 
         # Go 1.23 compiler – align with go.mod
@@ -38,11 +33,6 @@
         buildInputs = with pkgs; [
         ];
         nativeBuildInputs = with pkgs; [
-          # This sets up the rust suite, automatically selecting the latest nightly version
-          (rust-bin.selectLatestNightlyWith
-            (toolchain: toolchain.default.override {
-              extensions = [ "rust-src" "clippy" ];
-            }))
         ];
       in
         {
@@ -80,7 +70,6 @@
             '';
 
             nativeBuildInputs = with pkgs; [
-              cargo-expand
               nixpkgs-fmt
               cmake
             ] ++ buildInputs ++ nativeBuildInputs;

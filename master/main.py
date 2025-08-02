@@ -6,11 +6,7 @@ import traceback
 from pathlib import Path
 from typing import List
 
-from exo_pyo3_bindings import Keypair
-
 from master.api import start_fastapi_server
-
-# from master.discovery_supervisor import DiscoverySupervisor
 from master.election_callback import ElectionCallbacks
 from master.forwarder_supervisor import ForwarderRole, ForwarderSupervisor
 from master.placement import get_instance_placements, get_transition_events
@@ -34,7 +30,7 @@ from shared.types.events.commands import (
 from shared.types.state import State
 from shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
 from shared.types.worker.instances import Instance
-from shared.utils import get_node_id_keypair
+from shared.utils import Keypair, get_node_id_keypair
 
 
 class Master:
@@ -42,17 +38,11 @@ class Master:
                  global_events: AsyncSQLiteEventStorage, worker_events: AsyncSQLiteEventStorage,
                  forwarder_binary_path: Path, logger: logging.Logger):
         self.state = State()
+        self.node_id_keypair = node_id_keypair
         self.node_id = node_id
         self.command_buffer = command_buffer
         self.global_events = global_events
         self.worker_events = worker_events
-        # self.discovery_supervisor = DiscoverySupervisor(
-        #     node_id_keypair,
-        #     node_id,
-        #     # TODO: needs to be more general for when we have master election
-        #     worker_events if os.getenv('EXO_RUN_AS_REPLICA') in set(['TRUE', 'true', '1']) else global_events,
-        #     logger
-        # )
         self.forwarder_supervisor = ForwarderSupervisor(
             self.node_id,
             forwarder_binary_path=forwarder_binary_path,
@@ -191,7 +181,7 @@ async def main():
     logger.info('Running FastAPI server in a separate thread. Listening on port 8000.')
 
     master = Master(node_id_keypair, node_id, command_buffer, global_events, worker_events,
-                    forwarder_binary_path=Path("./build/forwarder"), logger=logger)
+                    Path("./build/forwarder"), logger)
     await master.run()
 
 

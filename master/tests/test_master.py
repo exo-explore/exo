@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import List, Sequence
 
 import pytest
-from exo_pyo3_bindings import Keypair
 
 from master.main import Master
 from shared.db.sqlite.config import EventLogConfig
@@ -35,6 +34,7 @@ from shared.types.tasks import ChatCompletionTask, TaskStatus, TaskType
 from shared.types.worker.common import InstanceId
 from shared.types.worker.instances import Instance, InstanceStatus, ShardAssignments
 from shared.types.worker.shards import PartitionStrategy, PipelineShardMetadata
+from shared.utils import Keypair
 
 
 def _create_forwarder_dummy_binary() -> Path:

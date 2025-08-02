@@ -17,6 +17,8 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "sqlalchemy[asyncio]>=2.0.0",
     "greenlet>=3.2.3",
+    "cryptography>=44.0.0",
+    "base58>=2.1.1",
 ]
 
 [build-system]
