@@ -11,3 +11,4 @@ networking/target/
 networking/topology/target/
 
 build/
+*.xcuserstate
