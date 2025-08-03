@@ -31,6 +31,9 @@ if [ "$CLEAN" = true ]; then
   rm -f ~/.exo_replica/*db*
 fi
 
+# Configure MLX
+./configure_mlx.sh
+
 # First command (worker) - changes based on replica flag
 if [ "$REPLICA" = true ]; then
   osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export EXO_HOME=.exo_replica; uv run -m worker.main'\""
