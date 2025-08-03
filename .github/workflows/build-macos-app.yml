@@ -6,6 +6,7 @@ on:
       - 'v*' # Trigger on version tags
     branches:
       - main # Also build on main branch for testing
+      - staging
       - python-modules # Add app-staging for testing
   pull_request:
     branches:
