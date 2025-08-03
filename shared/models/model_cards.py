@@ -15,86 +15,66 @@ class ModelCard(BaseModel):
 
 
 MODEL_CARDS: dict[str, ModelCard] = {
-  "deepseek-v3-0324": ModelCard(
+  # deepseek v3
+  "deepseek-v3-0324:4bit": ModelCard(
     short_id="deepseek-v3-0324",
-    model_id="mlx-community/DeepSeek-v3-0324-8bit",
-    name="DeepSeek V3 fp8",
+    model_id="mlx-community/DeepSeek-V3-0324-4bit",
+    name="DeepSeek V3 0324 (4-bit)",
     description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/DeepSeek-v3-0324-8bit",
-      pretty_name="DeepSeek V3 fp8",
+      model_id="mlx-community/DeepSeek-V3-0324-4bit",
+      pretty_name="DeepSeek V3 0324 (4-bit)",
       storage_size_kilobytes=754998771712//1024,
       n_layers=61,
     ),
   ),
-  "llama-3.3": ModelCard(
-    short_id="llama-3.3",
-    model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",
-    name="Llama 3.3 70B",
-    description="""The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)""",
+  "deepseek-v3-0324": ModelCard(
+    short_id="deepseek-v3-0324",
+    model_id="mlx-community/DeepSeek-v3-0324-8bit",
+    name="DeepSeek V3 0324 (8-bit)",
+    description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",
-      pretty_name="Llama 3.3 70B",
-      storage_size_kilobytes=38758160,
-      n_layers=80,
+      model_id="mlx-community/DeepSeek-v3-0324-8bit",
+      pretty_name="DeepSeek V3 0324 (8-bit)",
+      storage_size_kilobytes=754998771712//1024,
+      n_layers=61,
     ),
   ),
-  "llama-3.3:70b": ModelCard(
-    short_id="llama-3.3:70b",
-    model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",
-    name="Llama 3.3 70B",
-    description="""The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)""",
+
+  # deepseek r1
+  "deepseek-r1-0528:4bit": ModelCard(
+    short_id="deepseek-r1-0528",
+    model_id="mlx-community/DeepSeek-R1-0528-4bit",
+    name="DeepSeek-R1-0528 (4-bit)",
+    description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",
-      pretty_name="Llama 3.3 70B",
-      storage_size_kilobytes=38758160,
-      n_layers=80,
+      model_id="mlx-community/DeepSeek-R1-0528-4bit",
+      pretty_name="DeepSeek R1 671B (4-bit)",
+      storage_size_kilobytes=409706307,
+      n_layers=61,
     ),
   ),
-  "llama-3.2": ModelCard(
-    short_id="llama-3.2",
-    model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
-    name="Llama 3.2 1B",
-    description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
+  "deepseek-r1-0528": ModelCard(
+    short_id="deepseek-r1-0528",
+    model_id="mlx-community/DeepSeek-R1-0528-8bit",
+    name="DeepSeek-R1-0528 (8-bit)",
+    description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
-      pretty_name="Llama 3.2 1B",
-      storage_size_kilobytes=678948,
-      n_layers=16,
+      model_id="mlx-community/DeepSeek-R1-0528-8bit",
+      pretty_name="DeepSeek R1 671B (8-bit)",
+      storage_size_kilobytes=409706307,
+      n_layers=61,
     ),
   ),
-  "llama-3.2:1b": ModelCard(
-    short_id="llama-3.2:1b",
-    model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
-    name="Llama 3.2 1B",
-    description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
-    tags=[],
-    metadata=ModelMetadata(
-      model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
-      pretty_name="Llama 3.2 1B",
-      storage_size_kilobytes=678948,
-      n_layers=16,
-    ),
-  ),
-  "llama-3.2:3b": ModelCard(
-    short_id="llama-3.2:3b",
-    model_id="mlx-community/Llama-3.2-3B-Instruct-4bit",
-    name="Llama 3.2 3B",
-    description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
-    tags=[],
-    metadata=ModelMetadata(
-      model_id="mlx-community/Llama-3.2-3B-Instruct-4bit",
-      pretty_name="Llama 3.2 3B",
-      storage_size_kilobytes=1765062,
-      n_layers=28,
-    ),
-  ),
-  "llama-3.1:8b": ModelCard(
-    short_id="llama-3.1:8b",
+
+
+  # llama-3.1
+  "llama-3.1-8b": ModelCard(
+    short_id="llama-3.1-8b",
     model_id="mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
     name="Llama 3.1 8B",
     description="""Llama 3.1 is a large language model trained on the Llama 3.1 dataset.""",
@@ -119,58 +99,51 @@ MODEL_CARDS: dict[str, ModelCard] = {
       n_layers=80,
     ),
   ),
-  "deepseek-r1": ModelCard(
-    short_id="deepseek-r1",
-    model_id="mlx-community/DeepSeek-R1-4bit",
-    name="DeepSeek R1 671B (4-bit)",
-    description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
+
+  # llama-3.2
+  "llama-3.2-1b": ModelCard(
+    short_id="llama-3.2-1b",
+    model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
+    name="Llama 3.2 1B",
+    description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/DeepSeek-R1-4bit",
-      pretty_name="DeepSeek R1 671B (4-bit)",
-      storage_size_kilobytes=409706307,
-      n_layers=61,
+      model_id="mlx-community/Llama-3.2-1B-Instruct-4bit",
+      pretty_name="Llama 3.2 1B",
+      storage_size_kilobytes=678948,
+      n_layers=16,
     ),
   ),
-  "deepseek-r1:671b": ModelCard(
-    short_id="deepseek-r1:671b",
-    model_id="mlx-community/DeepSeek-R1-4bit",
-    name="DeepSeek R1 671B",
-    description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
+  "llama-3.2-3b": ModelCard(
+    short_id="llama-3.2-3b",
+    model_id="mlx-community/Llama-3.2-3B-Instruct-4bit",
+    name="Llama 3.2 3B",
+    description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/DeepSeek-R1-4bit",
-      pretty_name="DeepSeek R1 671B",
-      storage_size_kilobytes=409706307,
-      n_layers=61,
+      model_id="mlx-community/Llama-3.2-3B-Instruct-4bit",
+      pretty_name="Llama 3.2 3B",
+      storage_size_kilobytes=1765062,
+      n_layers=28,
     ),
   ),
-  "deepseek-v3": ModelCard(
-    short_id="deepseek-v3",
-    model_id="mlx-community/DeepSeek-V3-0324-4bit",
-    name="DeepSeek V3 4B",
-    description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
+
+  # llama-3.3
+  "llama-3.3-70b": ModelCard(
+    short_id="llama-3.3-70b",
+    model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",
+    name="Llama 3.3 70B",
+    description="""The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)""",
     tags=[],
     metadata=ModelMetadata(
-      model_id="mlx-community/DeepSeek-V3-0324-4bit",
-      pretty_name="DeepSeek V3 4B",
-      storage_size_kilobytes=368756663,
-      n_layers=61,
+      model_id="mlx-community/Llama-3.3-70B-Instruct-4bit",
+      pretty_name="Llama 3.3 70B",
+      storage_size_kilobytes=38758160,
+      n_layers=80,
     ),
   ),
-  "deepseek-v3:671b": ModelCard(
-    short_id="deepseek-v3:671b",
-    model_id="mlx-community/DeepSeek-V3-0324-4bit",
-    name="DeepSeek V3 671B",
-    description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
-    tags=[],
-    metadata=ModelMetadata(
-      model_id="mlx-community/DeepSeek-V3-0324-4bit",
-      pretty_name="DeepSeek V3 671B",
-      storage_size_kilobytes=368756663,
-      n_layers=61,
-    ),
-  ),
+
+  # phi-3
   "phi-3-mini": ModelCard(
     short_id="phi-3-mini",
     model_id="mlx-community/Phi-3-mini-128k-instruct-4bit",
@@ -197,6 +170,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
       n_layers=32,
     ),
   ),
+
+  # qwen3
   "qwen3-0.6b": ModelCard(
     short_id="qwen3-0.6b",
     model_id="mlx-community/Qwen3-0.6B-4bit",
@@ -223,6 +198,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
       n_layers=48,
     ),
   ),
+
+  # granite
   "granite-3.3-2b": ModelCard(
     short_id="granite-3.3-2b",
     model_id="mlx-community/granite-3.3-2b-instruct-fp16",
@@ -249,6 +226,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
       n_layers=40,
     ),
   ),
+
+  # smol-lm
   "smol-lm-135m": ModelCard(
     short_id="smol-lm-135m",
     model_id="mlx-community/SmolLM-135M-4bit",
