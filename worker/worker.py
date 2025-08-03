@@ -171,7 +171,7 @@ class Worker:
         This op assigns the runner, and moves from Downloading -> Inactive (ready to spin) state.
         """
         assigned_runner = self._create_assigned_runner(op)
-        initial_progress = await self.shard_downloader.get_shard_download_status_for_shard(op.shard_metadata)
+        initial_progress = await asyncio.wait_for(self.shard_downloader.get_shard_download_status_for_shard(op.shard_metadata), timeout=15)
 
         if initial_progress.status == "complete":
             async for event in self._handle_already_downloaded_shard(assigned_runner):
