@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E07D64B92E36127E009BFB4D"
-               BuildableName = "exov2.app"
+               BuildableName = "EXO.app"
                BlueprintName = "exov2"
                ReferencedContainer = "container:exov2.xcodeproj">
             </BuildableReference>
@@ -69,7 +69,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E07D64B92E36127E009BFB4D"
-            BuildableName = "exov2.app"
+            BuildableName = "EXO.app"
             BlueprintName = "exov2"
             ReferencedContainer = "container:exov2.xcodeproj">
          </BuildableReference>
@@ -93,7 +93,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E07D64B92E36127E009BFB4D"
-            BuildableName = "exov2.app"
+            BuildableName = "EXO.app"
             BlueprintName = "exov2"
             ReferencedContainer = "container:exov2.xcodeproj">
          </BuildableReference>

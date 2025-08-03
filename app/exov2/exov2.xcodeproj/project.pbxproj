@@ -24,7 +24,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		E07D64BA2E36127E009BFB4D /* exov2.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = exov2.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E07D64BA2E36127E009BFB4D /* EXO.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EXO.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E07D64CB2E36127F009BFB4D /* exov2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = exov2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E07D64D52E36127F009BFB4D /* exov2UITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = exov2UITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -85,7 +85,7 @@
 		E07D64BB2E36127E009BFB4D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				E07D64BA2E36127E009BFB4D /* exov2.app */,
+				E07D64BA2E36127E009BFB4D /* EXO.app */,
 				E07D64CB2E36127F009BFB4D /* exov2Tests.xctest */,
 				E07D64D52E36127F009BFB4D /* exov2UITests.xctest */,
 			);
@@ -114,7 +114,7 @@
 			packageProductDependencies = (
 			);
 			productName = exov2;
-			productReference = E07D64BA2E36127E009BFB4D /* exov2.app */;
+			productReference = E07D64BA2E36127E009BFB4D /* EXO.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E07D64CA2E36127F009BFB4D /* exov2Tests */ = {
@@ -399,6 +399,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"exov2/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = EXO;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -407,7 +408,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = exolabs.exov2;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = EXO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -425,6 +426,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"exov2/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = EXO;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -433,7 +435,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = exolabs.exov2;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = EXO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
