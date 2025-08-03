@@ -29,11 +29,12 @@
         .dashboard-header {
             width: 100%;
             max-width: 1200px;
-            margin-bottom: 30px;
+            margin-bottom: 15px;
+            margin-top: 20px;
             text-align: left;
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
+            align-items: flex-end;
         }
 
         .dashboard-header h1 {
@@ -41,6 +42,7 @@
             color: var(--exo-yellow);
             margin: 0;
             font-weight: 600;
+            line-height: 1;
         }
         .dashboard-header h1 .logo-text {
             font-weight: bold;
@@ -49,11 +51,15 @@
             font-size: 1em;
             color: var(--exo-light-gray);
             margin-top: 5px;
+            margin-bottom: 0;
+            line-height: 1;
         }
         .dashboard-header .last-updated {
             font-size: 0.8em;
             color: var(--exo-medium-gray);
             margin-top: 10px;
+            margin-bottom: 0;
+            line-height: 1;
         }
 
         .header-left {
@@ -71,8 +77,7 @@
             cursor: pointer;
             border-radius: 4px;
             transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-            align-self: flex-start;
-            margin-top: 8px;
+            line-height: 1;
         }
 
         .header-instances-button:hover {
@@ -97,7 +102,7 @@
             background-color: var(--exo-dark-gray); /* Dark background for the graph area */
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-            margin-top: 20px;
+            margin-top: 5px;
             position: relative; /* For potential absolute positioning of elements within */
         }
 
@@ -863,7 +868,6 @@
                         const option = document.createElement('option');
                         option.value = model.id;
                         option.textContent = model.name || model.id;
-                        option.title = model.description || model.id;
                         modelSelect.appendChild(option);
                     });
                     
