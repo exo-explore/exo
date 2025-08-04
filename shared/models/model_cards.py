@@ -17,7 +17,7 @@ class ModelCard(BaseModel):
 MODEL_CARDS: dict[str, ModelCard] = {
   # deepseek v3
   "deepseek-v3-0324:4bit": ModelCard(
-    short_id="deepseek-v3-0324",
+    short_id="deepseek-v3-0324:4bit",
     model_id="mlx-community/DeepSeek-V3-0324-4bit",
     name="DeepSeek V3 0324 (4-bit)",
     description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
@@ -25,7 +25,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     metadata=ModelMetadata(
       model_id="mlx-community/DeepSeek-V3-0324-4bit",
       pretty_name="DeepSeek V3 0324 (4-bit)",
-      storage_size_kilobytes=754998771712//1024,
+      storage_size_kilobytes=409706307,
       n_layers=61,
     ),
   ),
@@ -38,14 +38,14 @@ MODEL_CARDS: dict[str, ModelCard] = {
     metadata=ModelMetadata(
       model_id="mlx-community/DeepSeek-v3-0324-8bit",
       pretty_name="DeepSeek V3 0324 (8-bit)",
-      storage_size_kilobytes=754998771712//1024,
+      storage_size_kilobytes=754706307,
       n_layers=61,
     ),
   ),
 
   # deepseek r1
   "deepseek-r1-0528:4bit": ModelCard(
-    short_id="deepseek-r1-0528",
+    short_id="deepseek-r1-0528:4bit",
     model_id="mlx-community/DeepSeek-R1-0528-4bit",
     name="DeepSeek-R1-0528 (4-bit)",
     description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
