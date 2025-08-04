@@ -12,3 +12,6 @@ networking/topology/target/
 
 build/
 *.xcuserstate
+
+rust/target/
+rust/Cargo.lock
