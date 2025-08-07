@@ -1,6 +1,7 @@
 import asyncio
 from logging import Logger
 from typing import Callable
+import os
 
 import pytest
 
@@ -48,6 +49,25 @@ MODEL_ID = 'mlx-community/Llama-3.3-70B-Instruct-4bit'
 async def model_meta() -> ModelMetadata:
     return await get_model_meta(MODEL_ID)
 
+
+
+def _get_model_size_gb(path: str) -> float:
+    """Calculate total size of directory recursively in GB."""
+    total_size = 0
+    for dirpath, _, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            if os.path.isfile(filepath):
+                total_size += os.path.getsize(filepath)
+    return total_size / (1024**3)  # Convert bytes to GB
+
+@pytest.mark.skipif(
+    not (
+        os.path.exists(os.path.expanduser("~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/")) 
+        and _get_model_size_gb(os.path.expanduser("~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/")) > 30
+    ),
+    reason="This test only runs when model mlx-community/Llama-3.3-70B-Instruct-4bit is downloaded"
+)
 async def test_2_runner_inference(
     logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
