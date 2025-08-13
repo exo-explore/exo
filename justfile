@@ -1,3 +1,9 @@
+# See flake.nix (just-flake)
+import "just-flake.just"
+
+default:
+    @just --list
+
 regenerate-protobufs:
     #!/usr/bin/env bash
     if [ -f shared/protobufs/schemas/*.proto ]; then

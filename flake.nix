@@ -3,80 +3,133 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils = {
-        url = "github:numtide/flake-utils";
-        inputs.nixpkgs.follows = "nixpkgs";
+
+    # Use flake-parts for modular configs
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
     };
+
+    # Flake-parts wrapper for mkShell
+    make-shell.url = "github:nicknovitski/make-shell";
+
+    # Provides path to project root with:
+    #   1. ${lib.getExe config.flake-root.package}
+    #   2. $FLAKE_ROOT environment-varible
+    flake-root.url = "github:srid/flake-root";
+
+    # Provides flake integration with [Just](https://just.systems/man/en/)
+    just-flake.url = "github:juspay/just-flake";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    inputs@{
+      flake-parts,
+      ...
+    }:
+    flake-parts.lib.mkFlake { inherit inputs; } (
+      {
+        flake-parts-lib,
+        self,
+        ...
+      }:
       let
-        pkgs = (import nixpkgs) {
-          inherit system;
+        nixpkgs-lib = inputs.nixpkgs.lib;
+
+        # A wraper around importApply that supplies default parameters
+        importApply' =
+          path: extraParams:
+          (flake-parts-lib.importApply path (
+            nixpkgs-lib.recursiveUpdate {
+              localSelf = self;
+              inherit flake-parts-lib;
+              inherit nixpkgs-lib;
+            } extraParams
+          ));
+
+        # instantiate all the flake modules, passing custom arguments to them as needed
+        flakeModules = {
+          flakeRoot = importApply' ./.flake-modules/flake-root.nix { inherit (inputs) flake-root; };
+          justFlake = importApply' ./.flake-modules/just-flake.nix {
+            inherit (inputs) just-flake;
+          };
+          goForwarder = importApply' ./.flake-modules/go-forwarder.nix { };
         };
-
-        # Go 1.23 compiler – align with go.mod
-        go = pkgs.go_1_23;
-        # Build the networking/forwarder Go utility.
-        forwarder = pkgs.buildGoModule {
-          pname = "exo-forwarder";
-          version = "0.1.0";
-          src = ./networking/forwarder;
-
-          vendorHash = "sha256-BXIGg2QYqHDz2TNe8hLAGC6jVlffp9766H+WdkkuVgA=";
-
-          # Only the main package at the repository root needs building.
-          subPackages = [ "." ];
-        };
-
-        buildInputs = with pkgs; [
-        ];
-        nativeBuildInputs = with pkgs; [
-        ];
       in
-        {
-          packages = {
-            inherit forwarder;
-            default = forwarder;
-          };
-
-          apps = {
-            forwarder = {
-              type = "app";
-              program = "${forwarder}/bin/forwarder";
-            };
-            python-lsp = {
-              type = "app";
-              program = "${pkgs.basedpyright}/bin/basedpyright-langserver";
-            };
-            default = self.apps.${system}.forwarder;
-          };
-
-          devShells.default = pkgs.mkShell {
-            packages = [
-              pkgs.python313
-              pkgs.uv
-              pkgs.just
-              pkgs.protobuf
-              pkgs.basedpyright
-              pkgs.ruff
-              go
+      {
+        imports = [
+          inputs.make-shell.flakeModules.default
+          flakeModules.flakeRoot
+          flakeModules.justFlake
+          flakeModules.goForwarder
+        ];
+        systems = [
+          "x86_64-linux"
+          "aarch64-darwin"
+        ];
+        perSystem =
+          {
+            config,
+            self',
+            inputs',
+            pkgs,
+            system,
+            ...
+          }:
+          let
+            buildInputs = with pkgs; [
             ];
-
-            # TODO: change this into exported env via nix directly???
-            shellHook = ''
-              export GOPATH=$(mktemp -d)
-            '';
-
             nativeBuildInputs = with pkgs; [
-              nixpkgs-fmt
-              cmake
-            ] ++ buildInputs ++ nativeBuildInputs;
+            ];
+          in
+          {
+            # Per-system attributes can be defined here. The self' and inputs'
+            # module parameters provide easy access to attributes of the same
+            # system.
+            # NOTE: pkgs is equivalent to inputs'.nixpkgs.legacyPackages.hello;
+            apps = {
+              python-lsp = {
+                type = "app";
+                program = "${pkgs.basedpyright}/bin/basedpyright-langserver";
+              };
+              default = self'.apps.forwarder;
+            };
 
-            # fixes libstdc++.so issues and libgl.so issues
-            LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
+            make-shells.default = {
+              packages = [
+                pkgs.python313
+                pkgs.uv
+                pkgs.protobuf
+                pkgs.basedpyright
+                pkgs.ruff
+              ];
+
+              nativeBuildInputs =
+                with pkgs;
+                [
+                  nixpkgs-fmt
+                  cmake
+                ]
+                ++ buildInputs
+                ++ nativeBuildInputs;
+
+              # Arguments which are intended to be environment variables in the shell environment
+              # should be changed to attributes of the `env` option
+              env = {
+                # fixes libstdc++.so issues and libgl.so issues
+                LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
+              };
+
+              # Arbitrary mkDerivation arguments should be changed to be attributes of the `additionalArguments` option
+              additionalArguments = { };
+            };
           };
-        }
+        flake = {
+          # The usual flake attributes can be defined here, including system-
+          # agnostic ones like nixosModule and system-enumerating ones, although
+          # those are more easily expressed in perSystem.
+
+        };
+      }
     );
 }
