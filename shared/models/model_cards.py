@@ -66,7 +66,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     metadata=ModelMetadata(
       model_id="mlx-community/DeepSeek-R1-0528-8bit",
       pretty_name="DeepSeek R1 671B (8-bit)",
-      storage_size_kilobytes=754706307,
+      storage_size_kilobytes=754998771712//1024,
       n_layers=61,
     ),
   ),

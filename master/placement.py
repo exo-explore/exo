@@ -1,3 +1,4 @@
+import json
 import random
 from collections.abc import Mapping
 from copy import deepcopy
@@ -11,7 +12,7 @@ from master.utils.placement_utils import (
     get_smallest_cycles,
 )
 from shared.topology import Topology
-from shared.types.common import Host
+from shared.types.common import Host, NodeId
 from shared.types.events import Event, InstanceCreated, InstanceDeleted
 from shared.types.events.commands import CreateInstanceCommand, DeleteInstanceCommand
 from shared.types.worker.common import InstanceId
@@ -20,6 +21,13 @@ from shared.types.worker.instances import Instance, InstanceStatus
 
 def random_ephemeral_port() -> int:
     return random.randint(49152, 65535)
+
+DEVICE_ORDERING: list[str] = []
+with open('nodes.json', ('r')) as f:
+    device_json: list[str] = json.load(f) # type: ignore
+    for device in device_json:
+        DEVICE_ORDERING.append(NodeId(device))
+assert len(DEVICE_ORDERING) == 4
 
 @singledispatch
 def get_instance_placements(
@@ -42,12 +50,30 @@ def get_instance_placements(
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
     selected_cycle = None
+
+    has_thunderbolt_cycle = any([
+        topology.get_subgraph_from_nodes(cycle).is_thunderbolt_cycle(cycle) 
+        for cycle in smallest_cycles
+    ])
+    if has_thunderbolt_cycle:
+        smallest_cycles = [
+            cycle for cycle in smallest_cycles 
+            if topology.get_subgraph_from_nodes(cycle).is_thunderbolt_cycle(cycle)
+        ]
+
+    nodes_01, nodes_23 = None, None
     for cycle in smallest_cycles:
-        cycle_graph: Topology = topology.get_subgraph_from_nodes(cycle)
-        if cycle_graph.is_thunderbolt_cycle(cycle):
-            selected_cycle = cycle
-            break
-    if selected_cycle is None:
+        cycle_ids = [x.node_id for x in cycle]
+        if nodes_01 is None and set(cycle_ids) == set(DEVICE_ORDERING[:2]):
+            nodes_01= cycle
+        if nodes_23 is None and set(cycle_ids) == set(DEVICE_ORDERING[2:]):
+            nodes_23= cycle
+
+    if nodes_01:
+        selected_cycle = nodes_01
+    elif nodes_23:
+        selected_cycle = nodes_23
+    else:
         selected_cycle = max(smallest_cycles, key=lambda cycle: sum(node.node_profile.memory.ram_available for node in cycle if node.node_profile is not None))
     
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)

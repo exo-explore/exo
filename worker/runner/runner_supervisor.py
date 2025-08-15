@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import time
 import traceback
 from collections.abc import AsyncGenerator
 from logging import Logger
@@ -55,13 +56,13 @@ class RunnerSupervisor:
         self.hosts: list[Host] = hosts
         self.runner_process: asyncio.subprocess.Process = runner_process
         self.running: bool = True
-        self.stderr_task = asyncio.create_task(self._watch_stderr(logger))
+        
+        self.stderr_queue = asyncio.Queue[tuple[float, str]]()
+        self.stderr_task = asyncio.create_task(self._watch_stderr(logger, self.stderr_queue))
         self.running_task: asyncio.Task[None] = asyncio.create_task(
             self._watch_runner()
         )
         self.logger = logger
-        self.stderr_buffer: list[str] = []  # Accumulate stderr lines
-        self.crash_detected: bool = False
         self.returncode: int | None = None
         self.stderr_outpu: str | None = None
 
@@ -78,6 +79,7 @@ class RunnerSupervisor:
         The .create() classmethod pattern is used to ensure the constructor is asynchronous.
         """
         cmd: list[str] = get_runner_command()
+
         runner_process: asyncio.subprocess.Process = (
             await asyncio.create_subprocess_exec(
                 *cmd,
@@ -87,6 +89,14 @@ class RunnerSupervisor:
             )
         )
         logger.info(f'initializing mlx instance with {model_shard_meta=}')
+        
+        self = cls(
+            model_shard_meta=model_shard_meta,
+            hosts=hosts,
+            runner_process=runner_process,
+            logger=logger,
+        )
+
         await supervisor_write_message(
             runner_process,
             SetupMessage(
@@ -97,13 +107,19 @@ class RunnerSupervisor:
 
         async def read_initialization_message() -> None:
             while True:
-                line: RunnerResponse | None = await supervisor_read_response(
-                    runner_process
-                )
-                if line is None:
-                    continue
-                elif isinstance(line, PrintResponse):
-                    logger.info(line)
+                try:
+                    line: RunnerResponse | None = await supervisor_read_response(
+                        self.runner_process
+                    )
+                    if line is None:
+                        continue
+                except EOFError:
+                    if not self.runner_process.returncode:
+                        continue
+                    raise await self._raise_crashed() from EOFError
+
+                if isinstance(line, PrintResponse):
+                    self.logger.info(f"runner printed: {line.text}")
                     continue
                 elif isinstance(line, ErrorResponse):
                     raise RunnerError(line.error_type, line.error_message, line.traceback or "")
@@ -117,12 +133,8 @@ class RunnerSupervisor:
         if not initialize_timeout:
             initialize_timeout = get_init_timeout(model_shard_meta)
         await asyncio.wait_for(read_initialization_message(), timeout=initialize_timeout)
-        return cls(
-            model_shard_meta=model_shard_meta,
-            hosts=hosts,
-            runner_process=runner_process,
-            logger=logger,
-        )
+
+        return self
 
     async def astop(self) -> None:
         # Cancel the stderr monitoring task
@@ -189,45 +201,45 @@ class RunnerSupervisor:
     async def _watch_runner(self) -> None:
         returncode = await self.runner_process.wait()
         self.running = False
+
         if returncode != 0:
-            self.crash_detected = True
             self.returncode = returncode  # Will be picked up by _watch_stderr too
 
-    async def _watch_stderr(self, logger: Logger) -> None:
+        await self.astop()
+
+    async def _watch_stderr(self, logger: Logger, stderr_queue: asyncio.Queue[tuple[float, str]]) -> None:
         assert self.runner_process.stderr is not None
         while self.running:
             try:
                 line_bytes = await self.runner_process.stderr.readline()
                 if not line_bytes:
-                    break  # EOF
+                    break
                 line = line_bytes.decode('utf-8').strip()
-                self.stderr_buffer.append(line)
-                logger.error(f"Runner stderr: {line}")
-                # Detect common crash patterns (extend as needed, e.g., for OOM: "Killed" or "Out of memory")
 
-                self.crash_detected = True
-                self.stderr_output = "\n".join(self.stderr_buffer)
-                logger.critical(f"Runner crash detected: {self.stderr_output}")
-                # Don't raise here—let callers (e.g., stream_response) detect via healthy/returncode
+                await stderr_queue.put((time.time(), line))
+                logger.warning(f"Runner stderr read: {line}")
             except Exception as e:
-                logger.error(f"Error reading runner stderr: {e}")
+                logger.warning(f"Error reading runner stderr: {e}")
                 break
 
-        # After EOF, inspect returncode for confirmation (Unix-like: negative == signal)
-        returncode = self.runner_process.returncode
-        if returncode is not None and returncode != 0:
-            self.crash_detected = True
-            self.returncode = returncode
-            self.stderr_output = "\n".join(self.stderr_buffer)
+    async def _raise_crashed(self) -> Exception:
+        await self.astop()
 
-    def _raise_if_crashed(self) -> None:
-        if self.crash_detected:
-            self.logger.error(f'Error {self.returncode}: {self.stderr_output}')
-            raise RunnerError(
-                error_type="RunnerCrash",
-                error_message=self.stderr_output,
-                traceback=traceback.format_exc(),
-            )
+        # Accumulate all stderr messages from the queue
+        stderr_output = ''            
+        while not self.stderr_queue.empty():
+            try:
+                timestamp, line = self.stderr_queue.get_nowait()
+                stderr_output += f"[{timestamp}] {line}\n"
+            except asyncio.QueueEmpty:
+                break
+
+        self.logger.error(f'Error {self.returncode}: {stderr_output}')
+        return RunnerError(
+            error_type="MLXCrash",
+            error_message=stderr_output,
+            traceback=traceback.format_exc(),
+        )
 
     def __del__(self) -> None:
         if self.running:
@@ -262,7 +274,7 @@ class RunnerSupervisor:
     async def stream_response(
         self,
         task: Task,
-        request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None,  # fyi this is async now
+        request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None,
     ) -> AsyncGenerator[GenerationChunk]:
         """
         Streams a chat request from the model.
@@ -282,9 +294,11 @@ class RunnerSupervisor:
         # This is easy for now. If we need more reliability, the runner can have a new 'ready' message type.
         if request_started_callback is not None:
             await request_started_callback()
-        prefil_timeout = get_prefil_timeout(self.model_shard_meta)
+        prefil_timeout = get_prefil_timeout(task, self.model_shard_meta)
         token_timeout = get_token_generate_timeout(self.model_shard_meta)
         timeout = prefil_timeout
+        self.logger.info(f'starting chat completion with timeout {timeout}')
+
         while True:
             try:
                 line: RunnerResponse | None = await asyncio.wait_for(supervisor_read_response(
@@ -292,13 +306,19 @@ class RunnerSupervisor:
                 ), timeout=timeout)
                 if line is None:
                     continue
-            except (asyncio.TimeoutError, EOFError) as e:
-                self._raise_if_crashed()
+            except asyncio.TimeoutError as e:
+                self.logger.info(f'timed out from timeout duration {timeout} - {"prefil" if timeout == prefil_timeout else "decoding stage"}')
+                await self.astop()
                 raise RunnerError(
                     error_type=type(e).__name__,
                     error_message=str(e),
-                    traceback="",
+                    traceback=traceback.format_exc(),
                 ) from e
+            # TODO: change this to a return none instead of error coming from the supervisor_Read_respons3
+            except EOFError as e:
+                if not self.runner_process.returncode:
+                    continue
+                raise await self._raise_crashed() from e
             match line:
                 case GenerationResponse():
                     yield TokenChunk(
@@ -319,4 +339,4 @@ class RunnerSupervisor:
                     self.logger.info(f"runner printed: {line.text}")
                 case ErrorResponse():
                     await self.astop()
-                    raise RunnerError(line.error_type, line.error_message, line.traceback or "")
+                    raise RunnerError(line.error_type, line.error_message, line.traceback)

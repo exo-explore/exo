@@ -70,7 +70,7 @@ def initialize_mlx(
     mx.random.seed(42)
     if len(hosts) > 1:
         mlx_distributed_init(model_shard_meta.device_rank, hosts)
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7) # type: ignore
+    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
 
     model, tokenizer = shard_and_load(model_shard_meta)
 
@@ -107,14 +107,18 @@ async def apply_chat_template(
     messages = chat_task_data.messages
     messages_dicts = [msg.model_dump() for msg in messages]
 
-    # Filter out None values, keeping only 'role' and 'content' keys
+    # Filter out None values, keeping relevant keys for the model
     formatted_messages = []
     for message in messages_dicts:
         filtered_message: dict[str, Any] = {k: v for k, v in message.items() if v is not None} # type: ignore
-        # Verify we have exactly the expected keys
-        assert set(filtered_message.keys()) == {"role", "content"}, (
-            f"Expected only 'role' and 'content' keys, got: {filtered_message.keys()}"
-        )
+        
+        # Verify we have required fields
+        if "role" not in filtered_message:
+            raise ValueError(f"Message missing 'role' field: {filtered_message}")
+        if "content" not in filtered_message and "thinking" not in filtered_message:
+            # If neither content nor thinking is present, skip this message
+            continue
+        
         formatted_messages.append(filtered_message) # type: ignore
 
     messages_dicts = formatted_messages

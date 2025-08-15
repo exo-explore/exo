@@ -28,6 +28,7 @@ class ModelList(BaseModel):
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: str | None = None
+    thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None

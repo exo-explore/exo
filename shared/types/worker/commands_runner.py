@@ -101,8 +101,7 @@ class ErrorResponse(BaseRunnerResponse[RunnerResponseType.ErrorResponse]):
     )
     error_type: str
     error_message: str
-    traceback: str | None = None
-
+    traceback: str
 
 RunnerResponse = Annotated[
     InitializedResponse | GenerationResponse | PrintResponse | FinishedResponse | ErrorResponse,

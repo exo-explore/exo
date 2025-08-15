@@ -63,10 +63,11 @@ async def supervisor_read_response(
         "proc.stdout should not be None when created with stdout=PIPE"
     )
     line_bytes: bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=180)
-    line: str = line_bytes.decode("utf-8").strip()
-
-    if not line:
+    if not line_bytes:
+        # return None
         raise EOFError("No more data to read when reading response from runner")
+
+    line: str = line_bytes.decode("utf-8").strip()
 
     try:
         return RunnerResponseTypeAdapter.validate_json(line)

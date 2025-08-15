@@ -7,9 +7,10 @@ requires-python = ">=3.13"
 dependencies = [
     "exo-shared",
     "huggingface_hub>=0.33.4",
-    "mlx==0.26.3",
-    "mlx-lm>=0.25.3",
+    "mlx>=0.26.3",
+    "mlx-lm @ https://github.com/ml-explore/mlx-lm.git",
     "psutil>=7.0.0",
+    "transformers>=4.55.0",
 ]
 
 [build-system]

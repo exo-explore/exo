@@ -193,6 +193,25 @@ class API:
         """Handle chat completions with proper streaming response."""
         model_meta = await resolve_model_meta(payload.model)
         payload.model = model_meta.model_id
+        
+        # Preprocess messages for GPT-OSS harmony format if needed
+        if "gpt-oss" in payload.model.lower():
+            import re
+            for message in payload.messages:
+                if message.content and "<|channel|>" in message.content:
+                    # Parse harmony format tags
+                    thinking_pattern = r'<\|channel\|>(.*?)(?=<\|message\|>|$)'
+                    content_pattern = r'<\|message\|>(.*?)(?=<\|end\|>|$)'
+                    
+                    thinking_match = re.search(thinking_pattern, message.content, re.DOTALL)
+                    content_match = re.search(content_pattern, message.content, re.DOTALL)
+                    
+                    if content_match:
+                        # Extract the actual content
+                        message.content = content_match.group(1).strip()
+                    if thinking_match:
+                        # Store thinking in the thinking field
+                        message.thinking = thinking_match.group(1).strip()
 
         for instance in self.get_state().instances.values():
             if instance.shard_assignments.model_id == payload.model:

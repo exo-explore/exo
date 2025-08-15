@@ -91,3 +91,5 @@ async def test_supervisor_inference_timeout(
     with pytest.raises(RunnerError):
         async for _ in supervisor.stream_response(task):
             pass
+
+    await asyncio.sleep(0.1)

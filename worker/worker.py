@@ -348,7 +348,6 @@ class Worker:
     ## Operation Planner
 
     async def execute_op(self, op: RunnerOp) -> AsyncGenerator[Event, None]:
-        ## It would be great if we can get rid of this async for ... yield pattern.
         match op.op_type:
             case RunnerOpType.ASSIGN_RUNNER:
                 event_generator = self._execute_assign_op(op)

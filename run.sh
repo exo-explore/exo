@@ -32,7 +32,7 @@ if [ "$CLEAN" = true ]; then
 fi
 
 # Configure MLX
-./configure_mlx.sh
+# ./configure_mlx.sh
 
 # First command (worker) - changes based on replica flag
 if [ "$REPLICA" = true ]; then
