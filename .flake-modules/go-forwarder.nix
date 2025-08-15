@@ -62,11 +62,8 @@
       make-shells.default = {
         # Go 1.24 compiler – align with go.mod
         packages = [ pkgs.go_1_24 ];
-
-        # TODO: change this into exported env via nix directly???
-        shellHook = ''
-          export GOPATH=$(mktemp -d)
-        '';
+        shellHook = "export GOPATH=$FLAKE_ROOT/.go_cache";
       };
     };
 }
+
