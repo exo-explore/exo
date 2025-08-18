@@ -5,10 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -65,42 +65,18 @@ const (
 	mdnsSlowInterval = 30 * time.Second
 )
 
-func sortAddrs(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-	s := make([]multiaddr.Multiaddr, len(addrs))
-	copy(s, addrs)
-	sort.Slice(s, func(i, j int) bool {
-		return s[i].String() < s[j].String()
-	})
-	return s
+var rendezvousTag string
+
+func computeRendezvousTag() string {
+	sum := sha256.Sum256([]byte("forwarder_network/" + os.Getenv("SOURCE_HASH")))
+	return fmt.Sprintf("forwarder_network-%x", sum[:8])
 }
 
-func addrsChanged(a, b []multiaddr.Multiaddr) bool {
-	if len(a) != len(b) {
-		return true
+func getRendezvousTag() string {
+	if rendezvousTag == "" {
+		rendezvousTag = computeRendezvousTag()
 	}
-	sa := sortAddrs(a)
-	sb := sortAddrs(b)
-	for i := range sa {
-		if !sa[i].Equal(sb[i]) {
-			return true
-		}
-	}
-	return false
-}
-
-func canonicalAddr(a multiaddr.Multiaddr) string {
-	cs := multiaddr.Split(a)
-	out := make([]multiaddr.Multiaddrer, 0, len(cs))
-	for _, c := range cs {
-		for _, p := range c.Protocols() {
-			if p.Code == multiaddr.P_P2P {
-				goto NEXT
-			}
-		}
-		out = append(out, c.Multiaddr())
-	NEXT:
-	}
-	return multiaddr.Join(out...).String()
+	return rendezvousTag
 }
 
 func ipString(a multiaddr.Multiaddr) string {
@@ -385,7 +361,7 @@ func getNode(ctx context.Context) {
 		opts = append(opts, libp2p.Identity(priv))
 		opts = append(opts, libp2p.Security(noise.ID, noise.New))
 
-		pskHash := sha256.Sum256([]byte("forwarder_network"))
+		pskHash := sha256.Sum256([]byte("forwarder_network/" + os.Getenv("SOURCE_HASH")))
 		psk := pnet.PSK(pskHash[:])
 		opts = append(opts, libp2p.PrivateNetwork(psk))
 
@@ -416,7 +392,7 @@ func getNode(ctx context.Context) {
 			log.Fatalf("failed to create pubsub: %v", err)
 		}
 
-		rendezvous := "forwarder_network"
+		rendezvous := getRendezvousTag()
 		notifee := &discoveryNotifee{h: node}
 		mdnsSer = mdns.NewMdnsService(node, rendezvous, notifee)
 		if err := mdnsSer.Start(); err != nil {
@@ -534,7 +510,7 @@ func forceRestartMDNS(reason string) {
 	if mdnsSer != nil && node != nil {
 		log.Printf("Restarting mDNS (%s)", reason)
 		old := mdnsSer
-		rendezvous := "forwarder_network"
+		rendezvous := getRendezvousTag()
 		notifee := &discoveryNotifee{h: node}
 		newMdns := mdns.NewMdnsService(node, rendezvous, notifee)
 		if err := newMdns.Start(); err != nil {

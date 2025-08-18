@@ -45,7 +45,7 @@ build: regenerate-protobufs
 
 # Build the Go forwarder binary
 build-forwarder:
-    cd networking/forwarder && go build -buildvcs=false -o ../../build/forwarder .
+    HASH=$(uv run scripts/hashdir.py) && cd networking/forwarder && go build -buildvcs=false -o ../../build/forwarder -ldflags "-X 'main.SourceHash=${HASH}'" .
 
 # Run forwarder tests
 test-forwarder:

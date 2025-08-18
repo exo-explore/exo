@@ -13,8 +13,14 @@ import (
 var nodeID = flag.String("node-id", "", "Node ID (defaults to FORWARDER_NODE_ID env var or a new UUID)")
 var eventsDBPath = flag.String("events-db", "", "Path to the worker events SQLite database")
 
+var SourceHash = "dev"
+
 func main() {
 	flag.Parse()
+
+	log.Printf("SourceHash: %s\n", SourceHash)
+
+	os.Setenv("SOURCE_HASH", SourceHash)
 
 	id := *nodeID
 	if id != "" {

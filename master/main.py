@@ -123,13 +123,13 @@ class Master:
         if len(events) == 0:
             await asyncio.sleep(0.01)
             return
-        self.logger.info(f"got events: {events}")
+        self.logger.debug(f"got events: {events}")
 
         # 3. for each event, apply it to the state
         for event_from_log in events:
-            print(f"applying event: {event_from_log}")
+            self.logger.debug(f"applying event: {event_from_log}")
             self.state = apply(self.state, event_from_log)
-        self.logger.info(f"state: {self.state.model_dump_json()}")
+        self.logger.debug(f"state: {self.state.model_dump_json()}")
 
         # TODO: This can be done in a better place. But for now, we use this to check if any running instances have been broken.
         write_events: list[Event] = []
