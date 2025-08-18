@@ -23,7 +23,7 @@ async def test_supervisor_instantiation_exception(
     model_shard_meta.immediate_exception = True
 
     with pytest.raises(RunnerError):
-        await RunnerSupervisor.create(
+        _ = await RunnerSupervisor.create(
             model_shard_meta=model_shard_meta,
             hosts=hosts(1, offset=10),
             logger=logger,
@@ -40,7 +40,7 @@ async def test_supervisor_instantiation_timeout(
     model_shard_meta.should_timeout = 10 # timeout after 10s
 
     with pytest.raises(asyncio.TimeoutError):
-        await RunnerSupervisor.create(
+        _ = await RunnerSupervisor.create(
             model_shard_meta=model_shard_meta,
             hosts=hosts(1, offset=10),
             logger=logger,
@@ -88,7 +88,7 @@ async def test_supervisor_inference_timeout(
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
     task.task_params.messages[0].content = 'EXO RUNNER MUST TIMEOUT'
-    with pytest.raises(RunnerError):
+    with pytest.raises(asyncio.TimeoutError):
         async for _ in supervisor.stream_response(task):
             pass
 

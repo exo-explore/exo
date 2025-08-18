@@ -1,9 +1,49 @@
+import asyncio
+import contextlib
 import sys
+from logging import Logger
 
-from shared.constants import LB_DISK_GBPS, LB_MEMBW_GBPS
-from shared.types.tasks import Task
+import psutil
+
+from shared.constants import LB_DISK_GBPS, LB_MEMBW_GBPS, LB_TFLOPS
 from shared.types.worker.shards import ShardMetadata
 
+
+async def kill_process_tree(runner_process: asyncio.subprocess.Process, logger: Logger) -> None:
+    """Kill the process and all its children forcefully."""
+    if runner_process.returncode is not None:
+        return  # Process already dead
+    
+    try:
+        # Get the main process
+        pid = runner_process.pid
+            
+        # Find all child processes
+        try:
+            parent = psutil.Process(pid)
+            children = parent.children(recursive=True)
+            
+            # Kill all children first (bottom-up)
+            for child in reversed(children):
+                with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                    child.kill()  # SIGKILL
+            
+            # Kill the parent
+            with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                parent.kill()  # SIGKILL
+                
+        except psutil.NoSuchProcess:
+            # Process already gone, try subprocess kill anyway
+            runner_process.kill()
+        
+        # Wait for the subprocess to exit
+        try:
+            await asyncio.wait_for(runner_process.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.error(f"Process {pid} did not exit after kill signal")
+            
+    except Exception as e:
+        logger.error(f"Error killing process tree: {e}")
 
 def get_runner_command() -> list[str]:
     python = sys.executable
@@ -19,20 +59,13 @@ def get_init_timeout(model_shard_meta: ShardMetadata) -> float:
 
     return weights_size_kb / kbps_read + 2.0
 
-def get_prefil_timeout(task: Task, model_shard_meta: ShardMetadata) -> float:    
-    def get_prompt_str(task: Task) -> str:
-        messages = [x.content for x in task.task_params.messages if x.content]
-        return ''.join(messages)
+def get_prefil_timeout(model_shard_meta: ShardMetadata) -> float:
+    weights_size_gb = get_weights_size_kb(model_shard_meta) / (1024 * 1024)
+    
+    tokens = 1000 # constant for now - the prompt is only tokenized in the device...
+    prompt_gflops = tokens * weights_size_gb * 2
 
-    # TODO: made this timeout very long
-    tokens = len(get_prompt_str(task)) // 3 + 3000 # constant for now - the prompt is only tokenized in the device...
-
-    # TODO: For now we just hack and assume we prefil at 10tok/s
-    return tokens * 0.1
-
-    # prompt_gflops = tokens * weights_size_gb * 2
-
-    # return LB_TFLOPS / (1024 * prompt_gflops) * 3 + 10.0
+    return LB_TFLOPS / (1024 * prompt_gflops) * 3 + 10.0
 
 def get_token_generate_timeout(model_shard_meta: ShardMetadata) -> float:
     weights_size_kb = get_weights_size_kb(model_shard_meta)

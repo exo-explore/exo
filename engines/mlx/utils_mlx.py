@@ -7,12 +7,14 @@ from typing import Any, Callable
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer  # type: ignore
 from mlx_lm.utils import load_model  # type: ignore
 from pydantic import RootModel
 
 from engines.mlx.auto_parallel import auto_parallel
+from shared.types.api import ChatCompletionMessage
 from shared.types.common import Host
 from shared.types.tasks import ChatCompletionTaskParams
 from shared.types.worker.shards import ShardMetadata
@@ -133,6 +135,46 @@ async def apply_chat_template(
     )
 
     return prompt
+
+async def warmup_inference(
+    mlx_executor: concurrent.futures.ThreadPoolExecutor,
+    model: nn.Module,
+    tokenizer: TokenizerWrapper,
+    sampler: Callable[[mx.array], mx.array],
+) -> int:
+    loop = asyncio.get_running_loop()
+    
+    warmup_prompt = await apply_chat_template(
+        mlx_executor=mlx_executor,
+        tokenizer=tokenizer,
+        chat_task_data=ChatCompletionTaskParams(
+            model="warmup",
+            messages=[
+                ChatCompletionMessage(
+                    role='user',
+                    content='Prompt to warm up the inference engine. Repeat this.'
+                )
+            ]
+        ),
+    )
+    
+    tokens_generated = 0
+    
+    def _generate_warmup():
+        nonlocal tokens_generated
+        for _ in stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=warmup_prompt,
+            max_tokens=50,
+            sampler=sampler,
+        ):
+            tokens_generated += 1
+    
+    await loop.run_in_executor(mlx_executor, _generate_warmup)
+    mx_barrier()
+    
+    return tokens_generated
 
 
 def mlx_force_oom(size: int = 40000) -> None:

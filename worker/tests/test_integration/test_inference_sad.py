@@ -164,7 +164,7 @@ async def test_stream_response_failed_once(
             assert isinstance(event.chunk, TokenChunk)
             response_string += event.chunk.text
 
-    assert 'elizabeth' in response_string.lower()
+    assert 'queen' in response_string.lower()
     assert seen_task_started
     assert seen_task_finished
 
@@ -206,7 +206,7 @@ async def test_stream_response_timeout(
     print(events)
     assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 3
     assert len([x for x in events if isinstance(x.event, TaskStateUpdated) and x.event.task_status == TaskStatus.FAILED]) == 3
-    assert len([x for x in events if isinstance(x.event, TaskFailed) and 'timeouterror' in x.event.error_message.lower()]) == 3
+    assert len([x for x in events if isinstance(x.event, TaskFailed) and 'timeouterror' in x.event.error_type.lower()]) == 3
 
     await global_events.append_events(
         [

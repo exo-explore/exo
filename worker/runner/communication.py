@@ -23,8 +23,6 @@ async def supervisor_write_message(
     )
 
     encoded: bytes = message.model_dump_json().encode("utf-8") + b"\n"
-    print(f"message: {message}")
-    # print(f"encoded: {encoded}")
     proc.stdin.write(encoded)
     await proc.stdin.drain()
 
@@ -63,11 +61,10 @@ async def supervisor_read_response(
         "proc.stdout should not be None when created with stdout=PIPE"
     )
     line_bytes: bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=180)
-    if not line_bytes:
-        # return None
-        raise EOFError("No more data to read when reading response from runner")
-
     line: str = line_bytes.decode("utf-8").strip()
+
+    if not line:
+        return None
 
     try:
         return RunnerResponseTypeAdapter.validate_json(line)

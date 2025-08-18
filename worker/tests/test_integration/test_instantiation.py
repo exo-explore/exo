@@ -53,7 +53,10 @@ async def test_runner_spinup_exception(
     # Ensure the correct events have been emitted
     events = await global_events.get_events_since(0)
 
-    assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 3
+    assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) \
+        and isinstance(x.event.runner_status, FailedRunnerStatus) \
+        and x.event.runner_status.error_message is not None \
+        and 'fake exception' in x.event.runner_status.error_message.lower()]) == 3
     assert any([isinstance(x.event, InstanceDeleted) for x in events])
 
 

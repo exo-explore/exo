@@ -10,7 +10,12 @@ import mlx.nn as nn
 from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from engines.mlx.utils_mlx import apply_chat_template, initialize_mlx, mlx_force_oom
+from engines.mlx.utils_mlx import (
+    apply_chat_template,
+    initialize_mlx,
+    mlx_force_oom,
+    warmup_inference,
+)
 from shared.openai_compat import FinishReason
 from shared.types.tasks import ChatCompletionTaskParams
 from shared.types.worker.commands_runner import (
@@ -122,6 +127,13 @@ async def main():
             partial(initialize_mlx, model_shard_meta=model_shard_meta, hosts=hosts),
         )
 
+        toks = await warmup_inference(
+            mlx_executor=mlx_executor,
+            model=model,
+            tokenizer=tokenizer,
+            sampler=sampler,
+        )
+        runner_print(f'Warmed up by generating {toks} tokens')
         runner_write_response(InitializedResponse(time_taken=time.time() - setup_start_time))
 
         while True:

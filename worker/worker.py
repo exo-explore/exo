@@ -171,7 +171,7 @@ class Worker:
         This op assigns the runner, and moves from Downloading -> Inactive (ready to spin) state.
         """
         assigned_runner = self._create_assigned_runner(op)
-        initial_progress = await asyncio.wait_for(self.shard_downloader.get_shard_download_status_for_shard(op.shard_metadata), timeout=15)
+        initial_progress = await self.shard_downloader.get_shard_download_status_for_shard(op.shard_metadata)
 
         if initial_progress.status == "complete":
             async for event in self._handle_already_downloaded_shard(assigned_runner):
@@ -217,8 +217,6 @@ class Worker:
             runner = assigned_runner.runner
             health_issues: list[str] = []
             
-            if not runner.running:
-                health_issues.append("runner.running is False")
             if runner.runner_process.returncode is not None:
                 health_issues.append(f"runner_process.returncode is {runner.runner_process.returncode}")
             if runner.runner_process.stdin is None:
@@ -348,6 +346,7 @@ class Worker:
     ## Operation Planner
 
     async def execute_op(self, op: RunnerOp) -> AsyncGenerator[Event, None]:
+        ## It would be great if we can get rid of this async for ... yield pattern.
         match op.op_type:
             case RunnerOpType.ASSIGN_RUNNER:
                 event_generator = self._execute_assign_op(op)
@@ -410,4 +409,3 @@ class Worker:
         assert self.worker_events is not None
         await self.worker_events.append_events([event], self.node_id)
         self.logger.info(f"published event: {event}")
-

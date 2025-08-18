@@ -72,20 +72,17 @@ async def test_supervisor_two_node_response(
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     instance_id = InstanceId()
-    create_supervisor_0 = asyncio.create_task(
-        RunnerSupervisor.create(
-            model_shard_meta=pipeline_shard_meta(2, 0),
+    
+    async def create_supervisor(shard_idx: int) -> RunnerSupervisor:
+        supervisor = await RunnerSupervisor.create(
+            model_shard_meta=pipeline_shard_meta(2, shard_idx),
             hosts=hosts(2, offset=15),
             logger=logger,
         )
-    )
-    create_supervisor_1 = asyncio.create_task(
-        RunnerSupervisor.create(
-            model_shard_meta=pipeline_shard_meta(2, 1),
-            hosts=hosts(2, offset=15),
-            logger=logger,
-        )
-    )
+        return supervisor
+    
+    create_supervisor_0 = asyncio.create_task(create_supervisor(0))
+    create_supervisor_1 = asyncio.create_task(create_supervisor(1))
     supervisor_0, supervisor_1 = await asyncio.gather(create_supervisor_0, create_supervisor_1)
 
     await asyncio.sleep(0.1)

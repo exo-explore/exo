@@ -74,7 +74,7 @@ async def test_execute_task_timeouts(
         task=task
     )
 
-    with pytest.raises(RunnerError): # At the moment this is a RunnerError that says 'TimeoutError'.
+    with pytest.raises(asyncio.TimeoutError):
         await read_events_op(worker, execute_task_op)
 
 

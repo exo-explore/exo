@@ -35,7 +35,19 @@ def user_message():
 
 @pytest.fixture
 def logger() -> Logger:
-    return getLogger("test_logger")
+    import logging
+    logger = getLogger("test_logger")
+    logger.setLevel(logging.DEBUG)
+    
+    # Add console handler if none exists
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    
+    return logger
 
 @pytest.fixture
 async def model_meta() -> ModelMetadata:
