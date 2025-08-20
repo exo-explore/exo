@@ -62,6 +62,7 @@
           flakeModules.flakeRoot
           flakeModules.justFlake
           flakeModules.goForwarder
+          ./.flake-modules/macmon.nix
         ];
         systems = [
           "x86_64-linux"
