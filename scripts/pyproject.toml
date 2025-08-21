@@ -5,26 +5,10 @@ description = "Scripts for the Exo project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "exo-shared",
+    "shared",
     "huggingface_hub>=0.33.4",
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.build]
-clean = true
-
-[tool.hatch.build.targets.wheel]
-packages = []
-include = ["*"]
-exclude = ["*.md", "pyproject.toml"]
-
-[tool.hatch.build.targets.sdist]
-packages = []
-include = ["*"]
-exclude = ["*.md", "pyproject.toml"]
+requires = ["uv_build>=0.8.9,<0.9.0"]
+build-backend = "uv_build"

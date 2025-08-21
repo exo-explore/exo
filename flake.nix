@@ -17,9 +17,6 @@
     #   1. ${lib.getExe config.flake-root.package}
     #   2. $FLAKE_ROOT environment-varible
     flake-root.url = "github:srid/flake-root";
-
-    # Provides flake integration with [Just](https://just.systems/man/en/)
-    just-flake.url = "github:juspay/just-flake";
   };
 
   outputs =
@@ -50,9 +47,6 @@
         # instantiate all the flake modules, passing custom arguments to them as needed
         flakeModules = {
           flakeRoot = importApply' ./.flake-modules/flake-root.nix { inherit (inputs) flake-root; };
-          justFlake = importApply' ./.flake-modules/just-flake.nix {
-            inherit (inputs) just-flake;
-          };
           goForwarder = importApply' ./.flake-modules/go-forwarder.nix { };
         };
       in
@@ -60,7 +54,6 @@
         imports = [
           inputs.make-shell.flakeModules.default
           flakeModules.flakeRoot
-          flakeModules.justFlake
           flakeModules.goForwarder
           ./.flake-modules/macmon.nix
         ];
@@ -120,6 +113,11 @@
                 # fixes libstdc++.so issues and libgl.so issues
                 LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
               };
+
+              shellHook = ''
+                export GO_BUILD_DIR=$(git rev-parse --show-toplevel)/build;
+                export DASHBOARD_DIR=$(git rev-parse --show-toplevel)/dashboard;
+              '';
 
               # Arbitrary mkDerivation arguments should be changed to be attributes of the `additionalArguments` option
               additionalArguments = { };

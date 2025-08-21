@@ -7,14 +7,35 @@ requires-python = ">=3.13"
 dependencies = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.12.14",
-    "exo-master",
-    "exo-worker",
     "types-aiofiles>=24.1.0.20250708",
     "typeguard>=4.4.4",
     "pydantic>=2.11.7",
     "base58>=2.1.1",
     "cryptography>=45.0.5",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "filelock>=3.18.0",
+    "aiosqlite>=0.21.0",
+    "networkx>=3.5",
+    "openai>=1.99.9",
+    "pathlib>=1.0.1",
+    "protobuf>=6.32.0",
+    "rich>=14.1.0",
+    "rustworkx>=0.17.1",
+    "sqlmodel>=0.0.24",
+    "sqlalchemy[asyncio]>=2.0.43",
+    "greenlet>=3.2.4",
+    "huggingface-hub>=0.33.4",
+    "mlx==0.26.3",
+    "mlx-lm @ https://github.com/ml-explore/mlx-lm.git",
+    "psutil>=7.0.0",
+    "transformers>=4.55.2",
 ]
+
+[project.scripts]
+exo-master = "exo.master.main:main"
+exo-worker = "exo.worker.main:main"
+#exo = "exo.main:main"
 
 # dependencies only required for development
 [dependency-groups]
@@ -36,33 +57,12 @@ darwin = [
 
 [tool.uv.workspace]
 members = [
-    "master",
-    "worker",
-    "shared",
-    "engines/*",
-    "scripts"
+    "scripts",
 ]
 
-[tool.uv.sources]
-exo-shared = { workspace = true }
-exo-master = { workspace = true }
-exo-worker = { workspace = true }
-exo-engine-mlx = { workspace = true }
-
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build]
-clean = true
-
-[tool.hatch.build.targets.wheel]
-packages = []
-only-include = ["pyproject.toml", "README.md"]
-
-[tool.hatch.build.targets.sdist]
-packages = []
-only-include = ["pyproject.toml", "README.md"]
+requires = ["uv_build>=0.8.9,<0.9.0"]
+build-backend = "uv_build"
 
 ###
 # type-checker configuration
@@ -81,14 +81,8 @@ reportInvalidCast = "error"
 reportUnnecessaryCast = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
-include = ["master", "worker", "shared", "engines/*"]
 pythonVersion = "3.13"
 pythonPlatform = "Darwin"
-
-stubPath = "shared/protobufs/types"
-ignore = [
-    "shared/protobufs/types/**/*",
-]
 
 ###
 # uv configuration

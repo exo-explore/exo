@@ -1,17 +1,5 @@
-# See flake.nix (just-flake)
-import "just-flake.just"
-
 default:
     @just --list
-
-regenerate-protobufs:
-    #!/usr/bin/env bash
-    if [ -f shared/protobufs/schemas/*.proto ]; then
-        protoc --proto_path=shared/protobufs/schemas --python_out=shared/protobufs/types --pyi_out=shared/protobufs/types shared/protobufs/schemas/*.proto
-        uv run ruff format ./shared/protobufs/types
-    else
-        echo "No .proto files found in shared/protobufs/schemas/"
-    fi
 
 fmt:
     uv run ruff format master worker shared engines/*
@@ -37,15 +25,13 @@ sync:
 sync-clean:
     uv sync --all-packages --force-reinstall --no-cache
 
-protobufs:
-    just regenerate-protobufs
-
-build: regenerate-protobufs
+build:
     uv build --all-packages
 
 # Build the Go forwarder binary
 build-forwarder:
-    HASH=$(uv run scripts/hashdir.py) && cd networking/forwarder && go build -buildvcs=false -o ../../build/forwarder -ldflags "-X 'main.SourceHash=${HASH}'" .
+    HASH=$(uv run scripts/hashdir.py) && go build -C networking/forwarder -buildvcs=false -o $GO_BUILD_DIR/forwarder -ldflags "-X 'main.SourceHash=${HASH}'" 
+    chmod 0755 $GO_BUILD_DIR/forwarder
 
 # Run forwarder tests
 test-forwarder:
