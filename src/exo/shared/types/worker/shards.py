@@ -11,7 +11,9 @@ class PartitionStrategy(str, Enum):
     pipeline = "pipeline"
 
 
-PartitionStrategyT = TypeVar("PartitionStrategyT", bound=PartitionStrategy, covariant=True)
+PartitionStrategyT = TypeVar(
+    "PartitionStrategyT", bound=PartitionStrategy, covariant=True
+)
 
 
 class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
@@ -24,7 +26,7 @@ class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
     partition_strategy: PartitionStrategyT
     device_rank: int
     world_size: int
-    
+
     # Error handling; equivalent to monkey-patch, but we can't monkey-patch runner.py
     # This is kinda annoying because it allocates memory in the ShardMetadata object. Can be rethought after Shanghai.
     immediate_exception: bool = False
@@ -34,7 +36,7 @@ class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
 class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):
     """
     Pipeline parallelism shard meta.
-    
+
     Layers are represented as a half-open interval [start_layer, end_layer),
     where start_layer is inclusive and end_layer is exclusive.
     """
@@ -49,21 +51,21 @@ class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline
     @property
     def is_first_layer(self) -> bool:
         return self.start_layer == 0
-    
+
     @property
     def is_last_layer(self) -> bool:
         return self.end_layer == self.n_layers
 
     def __hash__(self) -> int:
-        return hash((self.model_meta.model_id, self.start_layer, self.end_layer, self.n_layers))
+        return hash(
+            (self.model_meta.model_id, self.start_layer, self.end_layer, self.n_layers)
+        )
 
 
 ShardMetadata = Annotated[
     PipelineShardMetadata, Field(discriminator="partition_strategy")
 ]
-ShardMetadataParser: TypeAdapter[ShardMetadata] = TypeAdapter(
-    ShardMetadata
-)
+ShardMetadataParser: TypeAdapter[ShardMetadata] = TypeAdapter(ShardMetadata)
 
 
 class ShardPlacement(BaseModel, Generic[PartitionStrategyT]):

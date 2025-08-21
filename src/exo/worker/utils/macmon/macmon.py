@@ -1,7 +1,7 @@
 import asyncio
 import platform
-import subprocess
 import shutil
+import subprocess
 from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -27,11 +27,10 @@ def _get_binary_path() -> str:
     ):
         raise MacMonError("MacMon only supports macOS with Apple Silicon (ARM) chips")
 
-
     path = shutil.which("macmon")
 
     if path is None:
-        raise MacMonError(f"MacMon not found in PATH")
+        raise MacMonError("MacMon not found in PATH")
 
     return path
 

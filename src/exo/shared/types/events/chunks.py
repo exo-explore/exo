@@ -31,6 +31,7 @@ class ImageChunk(BaseChunk[ChunkType.image]):
     chunk_type: Literal[ChunkType.image] = Field(default=ChunkType.image, frozen=True)
     data: bytes
 
+
 GenerationChunk = Annotated[TokenChunk | ImageChunk, Field(discriminator="chunk_type")]
 GenerationChunkTypeAdapter: TypeAdapter[GenerationChunk] = TypeAdapter(GenerationChunk)
 
@@ -41,8 +42,8 @@ GenerationChunkTypeAdapter: TypeAdapter[GenerationChunk] = TypeAdapter(Generatio
 # my_chunk: dict[str, Any] = TokenChunk(
 #     task_id=TaskId('nicerid'),
 #     idx=0,
-    # text='hello',
-    # token_id=12,
+# text='hello',
+# token_id=12,
 #     chunk_type=ChunkType.token,
 #     model='llama-3.1',
 # ).model_dump()

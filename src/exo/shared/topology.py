@@ -53,7 +53,7 @@ class Topology(TopologyProto):
         rx_id = self._graph.add_node(node)
         self._node_id_to_rx_id_map[node.node_id] = rx_id
         self._rx_id_to_node_id_map[rx_id] = node.node_id
-        
+
     def set_master_node_id(self, node_id: NodeId) -> None:
         self.master_node_id = node_id
 
@@ -64,8 +64,8 @@ class Topology(TopologyProto):
         return connection in self._edge_id_to_rx_id_map
 
     def add_connection(
-            self,
-            connection: Connection,
+        self,
+        connection: Connection,
     ) -> None:
         if connection.local_node_id not in self._node_id_to_rx_id_map:
             self.add_node(Node(node_id=connection.local_node_id))
@@ -82,7 +82,7 @@ class Topology(TopologyProto):
         yield from (self._graph[i] for i in self._graph.node_indices())
 
     def list_connections(self) -> Iterable[Connection]:
-        for (_, _, connection) in self._graph.weighted_edge_list():
+        for _, _, connection in self._graph.weighted_edge_list():
             yield connection
 
     def get_node_profile(self, node_id: NodeId) -> NodePerformanceProfile | None:
@@ -91,7 +91,7 @@ class Topology(TopologyProto):
             return self._graph.get_node_data(rx_idx).node_profile
         except KeyError:
             return None
-    
+
     def get_node_multiaddr(self, node_id: NodeId) -> Multiaddr:
         for connection in self.list_connections():
             if connection.local_node_id == node_id:
@@ -99,8 +99,10 @@ class Topology(TopologyProto):
             if connection.send_back_node_id == node_id:
                 return connection.send_back_multiaddr
         raise ValueError(f"Node {node_id} is not connected to any other nodes")
-    
-    def update_node_profile(self, node_id: NodeId, node_profile: NodePerformanceProfile) -> None:
+
+    def update_node_profile(
+        self, node_id: NodeId, node_profile: NodePerformanceProfile
+    ) -> None:
         rx_idx = self._node_id_to_rx_id_map[node_id]
         self._graph[rx_idx].node_profile = node_profile
 
@@ -108,7 +110,9 @@ class Topology(TopologyProto):
         rx_idx = self._edge_id_to_rx_id_map[connection]
         self._graph.update_edge_by_index(rx_idx, connection)
 
-    def get_connection_profile(self, connection: Connection) -> ConnectionProfile | None:
+    def get_connection_profile(
+        self, connection: Connection
+    ) -> ConnectionProfile | None:
         try:
             rx_idx = self._edge_id_to_rx_id_map[connection]
             return self._graph.get_edge_data_by_index(rx_idx).connection_profile
@@ -128,14 +132,18 @@ class Topology(TopologyProto):
             # Determine the reference node from which reachability is calculated.
             # Prefer a master node if the topology knows one; otherwise fall back to
             # the local end of the connection being removed.
-            reference_node_id: NodeId = self.master_node_id if self.master_node_id is not None else connection.local_node_id
+            reference_node_id: NodeId = (
+                self.master_node_id
+                if self.master_node_id is not None
+                else connection.local_node_id
+            )
             orphan_node_ids = self._get_orphan_node_ids(reference_node_id, connection)
             for orphan_node_id in orphan_node_ids:
                 orphan_node_rx_id = self._node_id_to_rx_id_map[orphan_node_id]
                 self._graph.remove_node(orphan_node_rx_id)
                 del self._node_id_to_rx_id_map[orphan_node_id]
                 del self._rx_id_to_node_id_map[orphan_node_rx_id]
-            
+
         self._graph.remove_edge_from_index(rx_idx)
         del self._edge_id_to_rx_id_map[connection]
         if rx_idx in self._rx_id_to_node_id_map:
@@ -149,7 +157,7 @@ class Topology(TopologyProto):
             cycles.append(cycle)
 
         return cycles
-    
+
     def get_subgraph_from_nodes(self, nodes: list[Node]) -> "Topology":
         node_idxs = [node.node_id for node in nodes]
         rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
@@ -157,7 +165,10 @@ class Topology(TopologyProto):
         for rx_idx in rx_idxs:
             topology.add_node(self._graph[rx_idx])
         for connection in self.list_connections():
-            if connection.local_node_id in node_idxs and connection.send_back_node_id in node_idxs:
+            if (
+                connection.local_node_id in node_idxs
+                and connection.send_back_node_id in node_idxs
+            ):
                 topology.add_connection(connection)
         return topology
 
@@ -176,16 +187,18 @@ class Topology(TopologyProto):
                 if not has_tb:
                     return False
         return True
-    
+
     def _is_bridge(self, connection: Connection) -> bool:
         """Check if removing this connection will orphan any nodes from the master."""
         if self.master_node_id is None:
             return False
-        
+
         orphan_node_ids = self._get_orphan_node_ids(self.master_node_id, connection)
         return len(orphan_node_ids) > 0
 
-    def _get_orphan_node_ids(self, master_node_id: NodeId, connection: Connection) -> list[NodeId]:
+    def _get_orphan_node_ids(
+        self, master_node_id: NodeId, connection: Connection
+    ) -> list[NodeId]:
         """Return node_ids that become unreachable from `master_node_id` once `connection` is removed.
 
         A node is considered *orphaned* if there exists **no directed path** from
@@ -215,4 +228,8 @@ class Topology(TopologyProto):
         # Every existing node index not reachable is orphaned.
         orphan_rx_ids = set(graph_copy.node_indices()) - reachable_rx_ids
 
-        return [self._rx_id_to_node_id_map[rx_id] for rx_id in orphan_rx_ids if rx_id in self._rx_id_to_node_id_map]
+        return [
+            self._rx_id_to_node_id_map[rx_id]
+            for rx_id in orphan_rx_ids
+            if rx_id in self._rx_id_to_node_id_map
+        ]

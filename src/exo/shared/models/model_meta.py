@@ -21,7 +21,9 @@ class ConfigData(BaseModel):
     num_layers: Optional[Annotated[int, Field(ge=0)]] = None
     n_layer: Optional[Annotated[int, Field(ge=0)]] = None
     n_layers: Optional[Annotated[int, Field(ge=0)]] = None  # Sometimes used
-    num_decoder_layers: Optional[Annotated[int, Field(ge=0)]] = None  # Transformer models
+    num_decoder_layers: Optional[Annotated[int, Field(ge=0)]] = (
+        None  # Transformer models
+    )
     decoder_layers: Optional[Annotated[int, Field(ge=0)]] = None  # Some architectures
 
     @property
@@ -40,22 +42,42 @@ class ConfigData(BaseModel):
             if layer_count is not None:
                 return layer_count
 
-        raise ValueError(f"No layer count found in config.json: {self.model_dump_json()}")
+        raise ValueError(
+            f"No layer count found in config.json: {self.model_dump_json()}"
+        )
+
 
 async def get_config_data(model_id: str) -> ConfigData:
     """Downloads and parses config.json for a model."""
-    target_dir = (await ensure_models_dir())/str(model_id).replace("/", "--")
+    target_dir = (await ensure_models_dir()) / str(model_id).replace("/", "--")
     await aios.makedirs(target_dir, exist_ok=True)
-    config_path = await download_file_with_retry(model_id, "main", "config.json", target_dir, lambda curr_bytes, total_bytes: print(f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes}"))
-    async with aiofiles.open(config_path, 'r') as f:
+    config_path = await download_file_with_retry(
+        model_id,
+        "main",
+        "config.json",
+        target_dir,
+        lambda curr_bytes, total_bytes: print(
+            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes}"
+        ),
+    )
+    async with aiofiles.open(config_path, "r") as f:
         return ConfigData.model_validate_json(await f.read())
+
 
 async def get_safetensors_size(model_id: str) -> int:
     """Gets model size from safetensors index or falls back to HF API."""
-    target_dir = (await ensure_models_dir())/str(model_id).replace("/", "--")
+    target_dir = (await ensure_models_dir()) / str(model_id).replace("/", "--")
     await aios.makedirs(target_dir, exist_ok=True)
-    index_path = await download_file_with_retry(model_id, "main", "model.safetensors.index.json", target_dir, lambda curr_bytes, total_bytes: print(f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes}"))
-    async with aiofiles.open(index_path, 'r') as f:
+    index_path = await download_file_with_retry(
+        model_id,
+        "main",
+        "model.safetensors.index.json",
+        target_dir,
+        lambda curr_bytes, total_bytes: print(
+            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes}"
+        ),
+    )
+    async with aiofiles.open(index_path, "r") as f:
         index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
     metadata = index_data.metadata
@@ -67,13 +89,17 @@ async def get_safetensors_size(model_id: str) -> int:
         raise ValueError(f"No safetensors info found for {model_id}")
     return info.safetensors.total
 
+
 _model_meta_cache: Dict[str, ModelMetadata] = {}
+
+
 async def get_model_meta(model_id: str) -> ModelMetadata:
     if model_id in _model_meta_cache:
         return _model_meta_cache[model_id]
     model_meta = await _get_model_meta(model_id)
     _model_meta_cache[model_id] = model_meta
     return model_meta
+
 
 async def _get_model_meta(model_id: str) -> ModelMetadata:
     """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""

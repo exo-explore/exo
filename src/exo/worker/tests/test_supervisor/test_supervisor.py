@@ -35,7 +35,7 @@ async def test_supervisor_single_node_response(
     model_shard_meta = pipeline_shard_meta(1, 0)
     instance_id = InstanceId()
 
-    print(f'{model_shard_meta=}')
+    print(f"{model_shard_meta=}")
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
@@ -47,7 +47,9 @@ async def test_supervisor_single_node_response(
         full_response = ""
         stop_reason: FinishReason | None = None
 
-        async for chunk in supervisor.stream_response(task=chat_completion_task(instance_id, TaskId())):
+        async for chunk in supervisor.stream_response(
+            task=chat_completion_task(instance_id, TaskId())
+        ):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.text
                 if chunk.finish_reason:
@@ -72,7 +74,7 @@ async def test_supervisor_two_node_response(
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     instance_id = InstanceId()
-    
+
     async def create_supervisor(shard_idx: int) -> RunnerSupervisor:
         supervisor = await RunnerSupervisor.create(
             model_shard_meta=pipeline_shard_meta(2, shard_idx),
@@ -80,10 +82,12 @@ async def test_supervisor_two_node_response(
             logger=logger,
         )
         return supervisor
-    
+
     create_supervisor_0 = asyncio.create_task(create_supervisor(0))
     create_supervisor_1 = asyncio.create_task(create_supervisor(1))
-    supervisor_0, supervisor_1 = await asyncio.gather(create_supervisor_0, create_supervisor_1)
+    supervisor_0, supervisor_1 = await asyncio.gather(
+        create_supervisor_0, create_supervisor_1
+    )
 
     await asyncio.sleep(0.1)
 
@@ -93,13 +97,17 @@ async def test_supervisor_two_node_response(
 
         async def collect_response_0():
             nonlocal full_response_0
-            async for chunk in supervisor_0.stream_response(task=chat_completion_task(instance_id, TaskId())):
+            async for chunk in supervisor_0.stream_response(
+                task=chat_completion_task(instance_id, TaskId())
+            ):
                 if isinstance(chunk, TokenChunk):
                     full_response_0 += chunk.text
 
         async def collect_response_1():
             nonlocal full_response_1
-            async for chunk in supervisor_1.stream_response(task=chat_completion_task(instance_id, TaskId())):
+            async for chunk in supervisor_1.stream_response(
+                task=chat_completion_task(instance_id, TaskId())
+            ):
                 if isinstance(chunk, TokenChunk):
                     full_response_1 += chunk.text
 
@@ -139,11 +147,11 @@ async def test_supervisor_early_stopping(
         logger=logger,
     )
 
-    task = chat_completion_task(instance_id, TaskId())    
+    task = chat_completion_task(instance_id, TaskId())
 
     max_tokens = 50
     assert task.task_type == TaskType.CHAT_COMPLETION
-    print(f'chat_completion_task.task_params: {task.task_params}')
+    print(f"chat_completion_task.task_params: {task.task_params}")
     assert isinstance(task.task_params, ChatCompletionTaskParams)
     task_params: ChatCompletionTaskParams = task.task_params
 

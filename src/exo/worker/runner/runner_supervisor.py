@@ -76,13 +76,11 @@ class RunnerSupervisor:
         The .create() classmethod pattern is used to ensure the constructor is asynchronous.
         """
         cmd: list[str] = get_runner_command()
-        runner_process = (
-            await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+        runner_process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
         read_queue: asyncio.Queue[RunnerResponse] = asyncio.Queue()
@@ -99,11 +97,13 @@ class RunnerSupervisor:
             stderr_queue=stderr_queue,
         )
 
-        self.logger.info(f'initializing mlx instance with {model_shard_meta=}')
-        await self.write_queue.put(SetupMessage(
-            model_shard_meta=model_shard_meta,
-            hosts=hosts,
-        ))
+        self.logger.info(f"initializing mlx instance with {model_shard_meta=}")
+        await self.write_queue.put(
+            SetupMessage(
+                model_shard_meta=model_shard_meta,
+                hosts=hosts,
+            )
+        )
 
         if not initialize_timeout:
             initialize_timeout = get_init_timeout(model_shard_meta)
@@ -111,37 +111,42 @@ class RunnerSupervisor:
         response = await self._read_with_error_check(initialize_timeout)
 
         assert isinstance(response, InitializedResponse)
-        self.logger.info(f'Runner initialized in {response.time_taken} seconds')
+        self.logger.info(f"Runner initialized in {response.time_taken} seconds")
 
         return self
 
-    
     async def _read_with_error_check(self, timeout: float) -> RunnerResponse:
         """
         Read from the queue with a timeout, but also check if the read_task has failed.
         """
         queue_task = asyncio.create_task(self.read_queue.get())
-        
+
         done, pending = await asyncio.wait(
             [queue_task, self.read_task],
             timeout=timeout,
-            return_when=asyncio.FIRST_COMPLETED
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        
+
         for task in pending:
             if task is queue_task:
                 task.cancel()
-        
+
         if queue_task in done:
             response = await queue_task
             if isinstance(response, ErrorResponse):
-                raise RunnerError(response.error_type, response.error_message, response.traceback or "")
+                raise RunnerError(
+                    response.error_type,
+                    response.error_message,
+                    response.traceback or "",
+                )
             return response
-        
+
         if self.read_task in done:
             await self.read_task  # Re-raises any exception from read_task
-            self.logger.error('Unreachable code run. We should have raised an error on the read_task being done.')
-        
+            self.logger.error(
+                "Unreachable code run. We should have raised an error on the read_task being done."
+            )
+
         # if we haven't read from the queue, we have timed out.
         await self.astop()
         raise asyncio.TimeoutError()
@@ -149,7 +154,8 @@ class RunnerSupervisor:
     async def stream_response(
         self,
         task: Task,
-        request_started_callback: Callable[..., CoroutineType[Any, Any, None]] | None = None,
+        request_started_callback: Callable[..., CoroutineType[Any, Any, None]]
+        | None = None,
     ) -> AsyncGenerator[GenerationChunk]:
         """
         Streams a chat request from the model.
@@ -160,12 +166,14 @@ class RunnerSupervisor:
             raise RuntimeError("Runner process was found to be dead")
 
         task_params = task.task_params
-        assert isinstance(task_params, ChatCompletionTaskParams)  # this is messy for now.
+        assert isinstance(
+            task_params, ChatCompletionTaskParams
+        )  # this is messy for now.
         await self.write_queue.put(
             ChatTaskMessage(
                 task_data=task_params,
             ),
-        )        
+        )
 
         # This is simpler for now: we say 'request started' as soon as we've told runner to start, without waiting for an ack.
         # If we need more reliability, the runner can have a new 'ready' message type.
@@ -175,13 +183,15 @@ class RunnerSupervisor:
         prefil_timeout = get_prefil_timeout(self.model_shard_meta)
         token_timeout = get_token_generate_timeout(self.model_shard_meta)
         timeout = prefil_timeout
-        self.logger.info(f'starting chat completion with timeout {timeout}')
+        self.logger.info(f"starting chat completion with timeout {timeout}")
 
         while True:
             try:
                 response = await self._read_with_error_check(timeout)
             except asyncio.TimeoutError as e:
-                self.logger.info(f'timed out from timeout duration {timeout} - {"prefil" if timeout == prefil_timeout else "decoding stage"}')
+                self.logger.info(
+                    f"timed out from timeout duration {timeout} - {'prefil' if timeout == prefil_timeout else 'decoding stage'}"
+                )
                 raise e
 
             match response:
@@ -199,17 +209,16 @@ class RunnerSupervisor:
                     break
                 case ErrorResponse():
                     await self.astop()
-                    raise RunnerError(response.error_type, response.error_message, response.traceback)
+                    raise RunnerError(
+                        response.error_type, response.error_message, response.traceback
+                    )
                 case _:
-                    raise ValueError(f'Unexpected response type found: {response}')
+                    raise ValueError(f"Unexpected response type found: {response}")
 
     async def _write_coro(self):
         while True:
             message = await self.write_queue.get()
-            await supervisor_write_message(
-                self.runner_process,
-                message
-            )
+            await supervisor_write_message(self.runner_process, message)
 
     async def _read_coro(self):
         while True:
@@ -233,7 +242,6 @@ class RunnerSupervisor:
                 case _:
                     await self.read_queue.put(response)
 
-
     async def astop(self) -> None:
         # Cancel the stderr monitoring task
         async def await_task(task: asyncio.Task[Any]):
@@ -241,14 +249,14 @@ class RunnerSupervisor:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-        
+
         await await_task(self.stderr_task)
         await await_task(self.read_task)
         await await_task(self.write_task)
 
         # Kill the process and all its children
         await kill_process_tree(self.runner_process, self.logger)
-        
+
         # Wait to make sure that the model has been unloaded from memory
         async def wait_for_memory_release() -> None:
             required_memory_bytes = get_weights_size_kb(self.model_shard_meta) * 1024
@@ -258,7 +266,9 @@ class RunnerSupervisor:
                 if available_memory_bytes >= required_memory_bytes:
                     break
                 if asyncio.get_event_loop().time() - start_time > 30.0:
-                    self.logger.warning("Timeout waiting for memory release after 30 seconds")
+                    self.logger.warning(
+                        "Timeout waiting for memory release after 30 seconds"
+                    )
                     break
                 await asyncio.sleep(0.1)
 
@@ -276,7 +286,9 @@ class RunnerSupervisor:
                     parent = psutil.Process(pid)
                     children = parent.children(recursive=True)
                     for child in reversed(children):
-                        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+                        with contextlib.suppress(
+                            psutil.NoSuchProcess, psutil.AccessDenied
+                        ):
                             child.kill()
                     with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                         parent.kill()
@@ -301,7 +313,7 @@ class RunnerSupervisor:
         await self.astop()
 
         # Accumulate all stderr messages from the queue
-        stderr_output = ''            
+        stderr_output = ""
         while not self.stderr_queue.empty():
             try:
                 line = self.stderr_queue.get_nowait()
@@ -312,7 +324,7 @@ class RunnerSupervisor:
         # print('STDERR OUTPUT IS')
         # print(stderr_output)
 
-        self.logger.error(f'Error {self.runner_process.returncode}: {stderr_output}')
+        self.logger.error(f"Error {self.runner_process.returncode}: {stderr_output}")
         return RunnerError(
             error_type="MLXCrash",
             error_message=stderr_output,
@@ -326,7 +338,7 @@ class RunnerSupervisor:
                 line_bytes = await self.runner_process.stderr.readline()
                 if not line_bytes:
                     break
-                line = line_bytes.decode('utf-8').strip()
+                line = line_bytes.decode("utf-8").strip()
 
                 await self.stderr_queue.put(line)
                 self.logger.warning(f"Runner stderr read: {line}")

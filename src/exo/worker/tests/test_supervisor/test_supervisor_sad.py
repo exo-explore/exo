@@ -29,6 +29,7 @@ async def test_supervisor_instantiation_exception(
             logger=logger,
         )
 
+
 @pytest.mark.asyncio
 async def test_supervisor_instantiation_timeout(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
@@ -37,7 +38,7 @@ async def test_supervisor_instantiation_timeout(
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
-    model_shard_meta.should_timeout = 10 # timeout after 10s
+    model_shard_meta.should_timeout = 10  # timeout after 10s
 
     with pytest.raises(asyncio.TimeoutError):
         _ = await RunnerSupervisor.create(
@@ -45,7 +46,6 @@ async def test_supervisor_instantiation_timeout(
             hosts=hosts(1, offset=10),
             logger=logger,
         )
-
 
 
 @pytest.mark.asyncio
@@ -65,10 +65,11 @@ async def test_supervisor_inference_exception(
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    task.task_params.messages[0].content = 'EXO RUNNER MUST FAIL'
+    task.task_params.messages[0].content = "EXO RUNNER MUST FAIL"
     with pytest.raises(RunnerError):
         async for _ in supervisor.stream_response(task):
             pass
+
 
 @pytest.mark.asyncio
 async def test_supervisor_inference_timeout(
@@ -87,7 +88,7 @@ async def test_supervisor_inference_timeout(
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    task.task_params.messages[0].content = 'EXO RUNNER MUST TIMEOUT'
+    task.task_params.messages[0].content = "EXO RUNNER MUST TIMEOUT"
     with pytest.raises(asyncio.TimeoutError):
         async for _ in supervisor.stream_response(task):
             pass

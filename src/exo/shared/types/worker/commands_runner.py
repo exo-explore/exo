@@ -103,8 +103,13 @@ class ErrorResponse(BaseRunnerResponse[RunnerResponseType.ErrorResponse]):
     error_message: str
     traceback: str
 
+
 RunnerResponse = Annotated[
-    InitializedResponse | GenerationResponse | PrintResponse | FinishedResponse | ErrorResponse,
+    InitializedResponse
+    | GenerationResponse
+    | PrintResponse
+    | FinishedResponse
+    | ErrorResponse,
     Field(discriminator="type"),
 ]
 RunnerResponseTypeAdapter: TypeAdapter[RunnerResponse] = TypeAdapter(RunnerResponse)

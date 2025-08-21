@@ -28,23 +28,40 @@ class BaseRunnerStatus(BaseModel, Generic[RunnerStatusTypeT]):
 
 
 class DownloadingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Downloading]):
-    runner_status: Literal[RunnerStatusType.Downloading] = Field(default=RunnerStatusType.Downloading)
+    runner_status: Literal[RunnerStatusType.Downloading] = Field(
+        default=RunnerStatusType.Downloading
+    )
     download_progress: DownloadProgress
 
+
 class InactiveRunnerStatus(BaseRunnerStatus[RunnerStatusType.Inactive]):
-    runner_status: Literal[RunnerStatusType.Inactive] = Field(default=RunnerStatusType.Inactive)
+    runner_status: Literal[RunnerStatusType.Inactive] = Field(
+        default=RunnerStatusType.Inactive
+    )
+
 
 class StartingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Starting]):
-    runner_status: Literal[RunnerStatusType.Starting] = Field(default=RunnerStatusType.Starting)
+    runner_status: Literal[RunnerStatusType.Starting] = Field(
+        default=RunnerStatusType.Starting
+    )
+
 
 class LoadedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Loaded]):
-    runner_status: Literal[RunnerStatusType.Loaded] = Field(default=RunnerStatusType.Loaded)
+    runner_status: Literal[RunnerStatusType.Loaded] = Field(
+        default=RunnerStatusType.Loaded
+    )
+
 
 class RunningRunnerStatus(BaseRunnerStatus[RunnerStatusType.Running]):
-    runner_status: Literal[RunnerStatusType.Running] = Field(default=RunnerStatusType.Running)
+    runner_status: Literal[RunnerStatusType.Running] = Field(
+        default=RunnerStatusType.Running
+    )
+
 
 class FailedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Failed]):
-    runner_status: Literal[RunnerStatusType.Failed] = Field(default=RunnerStatusType.Failed)
+    runner_status: Literal[RunnerStatusType.Failed] = Field(
+        default=RunnerStatusType.Failed
+    )
     error_message: str | None = None
 
 
@@ -57,9 +74,7 @@ RunnerStatus = Annotated[
     | FailedRunnerStatus,
     Field,
 ]
-RunnerStatusParser: TypeAdapter[RunnerStatus] = TypeAdapter(
-    RunnerStatus
-)
+RunnerStatusParser: TypeAdapter[RunnerStatus] = TypeAdapter(RunnerStatus)
 
 
 class ShardAssignments(BaseModel):

@@ -31,7 +31,7 @@ async def runner_read_message() -> RunnerMessage:
     loop = asyncio.get_running_loop()
 
     line: bytes = await loop.run_in_executor(None, sys.stdin.buffer.readline)
-    if not line: # This seems to be what triggers when we don't clean up the runner neatly and leave the process dangling.
+    if not line:  # This seems to be what triggers when we don't clean up the runner neatly and leave the process dangling.
         raise EOFError("No more data to read when reading runner message")
     line = line.strip()
 
@@ -88,7 +88,7 @@ def runner_write_error(error: Exception) -> None:
     # Skip writing error if it's a BrokenPipeError - supervisor is already gone
     if isinstance(error, BrokenPipeError):
         sys.exit(0)
-    
+
     error_response: ErrorResponse = ErrorResponse(
         type=RunnerResponseType.ErrorResponse,
         error_type=type(error).__name__,

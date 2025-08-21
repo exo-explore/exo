@@ -27,8 +27,9 @@ _R = TypeVar("_R")
 OPENAI_API_KEY: str = "<YOUR_OPENAI_API_KEY>"
 OPENAI_API_URL: str = "http://0.0.0.0:8000/v1"
 
+
 def with_master_main(
-    func: Callable[_P, Awaitable[_R]]
+    func: Callable[_P, Awaitable[_R]],
 ) -> Callable[_P, Coroutine[Any, Any, _R]]:
     @pytest.mark.asyncio
     @functools.wraps(func)
@@ -40,11 +41,14 @@ def with_master_main(
             master_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await master_task
+
     return wrapper
+
 
 @final
 class ChatMessage:
     """Strictly-typed chat message for OpenAI API."""
+
     def __init__(self, role: str, content: str) -> None:
         self.role = role
         self.content = content
@@ -59,6 +63,7 @@ class ChatMessage:
         else:
             raise ValueError(f"Unsupported role: {self.role}")
 
+
 async def stream_chatgpt_response(
     messages: list[ChatMessage],
     model: str = "gpt-3.5-turbo",
@@ -67,7 +72,9 @@ async def stream_chatgpt_response(
         api_key=OPENAI_API_KEY,
         base_url=OPENAI_API_URL,
     )
-    openai_messages: list[ChatCompletionMessageParam] = [m.to_openai() for m in messages]
+    openai_messages: list[ChatCompletionMessageParam] = [
+        m.to_openai() for m in messages
+    ]
     stream: AsyncStream[ChatCompletionChunk] = await client.chat.completions.create(
         model=model,
         messages=openai_messages,

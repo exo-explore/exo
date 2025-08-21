@@ -33,15 +33,21 @@ class BaseDownloadProgress[DownloadStatusT: DownloadStatus](BaseModel):
 
 
 class DownloadPending(BaseDownloadProgress[DownloadStatus.Pending]):
-    download_status: Literal[DownloadStatus.Pending] = Field(default=DownloadStatus.Pending)
+    download_status: Literal[DownloadStatus.Pending] = Field(
+        default=DownloadStatus.Pending
+    )
 
 
 class DownloadCompleted(BaseDownloadProgress[DownloadStatus.Completed]):
-    download_status: Literal[DownloadStatus.Completed] = Field(default=DownloadStatus.Completed)
+    download_status: Literal[DownloadStatus.Completed] = Field(
+        default=DownloadStatus.Completed
+    )
 
 
 class DownloadFailed(BaseDownloadProgress[DownloadStatus.Failed]):
-    download_status: Literal[DownloadStatus.Failed] = Field(default=DownloadStatus.Failed)
+    download_status: Literal[DownloadStatus.Failed] = Field(
+        default=DownloadStatus.Failed
+    )
     error_message: str
 
 

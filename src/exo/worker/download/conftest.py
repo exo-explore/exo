@@ -7,7 +7,7 @@ from exo.shared.types.worker.shards import PipelineShardMetadata
 
 @pytest.fixture
 async def model_meta() -> ModelMetadata:
-    return await get_model_meta('mlx-community/Llama-3.2-1B-Instruct-4bit')
+    return await get_model_meta("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
 
 @pytest.fixture

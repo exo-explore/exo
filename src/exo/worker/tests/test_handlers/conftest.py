@@ -28,17 +28,26 @@ async def worker(logger: Logger):
     shard_downloader = NoopShardDownloader()
     await event_log_manager.initialize()
 
-    return Worker(NODE_A, logger, shard_downloader, worker_events=event_log_manager.global_events, global_events=event_log_manager.global_events)
+    return Worker(
+        NODE_A,
+        logger,
+        shard_downloader,
+        worker_events=event_log_manager.global_events,
+        global_events=event_log_manager.global_events,
+    )
+
 
 # TODO: instance_id and runner_id are selectable.
 @pytest.fixture
-async def worker_with_assigned_runner(worker: Worker, instance: Callable[[InstanceId, NodeId, RunnerId], Instance]):
+async def worker_with_assigned_runner(
+    worker: Worker, instance: Callable[[InstanceId, NodeId, RunnerId], Instance]
+):
     """Fixture that provides a worker with an already assigned runner."""
-    
+
     instance_id = INSTANCE_1_ID
     runner_id = RUNNER_1_ID
     instance_obj: Instance = instance(instance_id, worker.node_id, runner_id)
-    
+
     # Assign the runner
     assign_op = AssignRunnerOp(
         runner_id=runner_id,
@@ -46,14 +55,17 @@ async def worker_with_assigned_runner(worker: Worker, instance: Callable[[Instan
         hosts=instance_obj.hosts,
         instance_id=instance_obj.instance_id,
     )
-    
+
     async for _ in worker.execute_op(assign_op):
         pass
-    
+
     return worker, instance_obj
 
+
 @pytest.fixture
-async def worker_with_running_runner(worker_with_assigned_runner: tuple[Worker, Instance]):
+async def worker_with_running_runner(
+    worker_with_assigned_runner: tuple[Worker, Instance],
+):
     """Fixture that provides a worker with an already assigned runner."""
     worker, instance_obj = worker_with_assigned_runner
 
@@ -67,4 +79,3 @@ async def worker_with_running_runner(worker_with_assigned_runner: tuple[Worker, 
     assert supervisor.healthy
 
     return worker, instance_obj
-

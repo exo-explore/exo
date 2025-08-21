@@ -1,5 +1,3 @@
-
-
 import asyncio
 from typing import Callable, Optional, Tuple, TypeVar
 
@@ -9,10 +7,12 @@ from exo.shared.types.events.chunks import TokenChunk
 from exo.shared.types.tasks import TaskId, TaskStatus
 
 
-async def read_streaming_response(global_events: AsyncSQLiteEventStorage, filter_task: Optional[TaskId] = None) -> Tuple[bool, bool, str]:
+async def read_streaming_response(
+    global_events: AsyncSQLiteEventStorage, filter_task: Optional[TaskId] = None
+) -> Tuple[bool, bool, str]:
     # Read off all events - these should be our GenerationChunk events
     seen_task_started, seen_task_finished = 0, 0
-    response_string = ''
+    response_string = ""
     finish_reason: str | None = None
 
     if not filter_task:
@@ -22,14 +22,18 @@ async def read_streaming_response(global_events: AsyncSQLiteEventStorage, filter
         idx = 0
         while not found:
             events = await global_events.get_events_since(idx)
-            
+
             for event in events:
-                if isinstance(event.event, TaskStateUpdated) and event.event.task_status == TaskStatus.RUNNING and event.event.task_id == filter_task:
+                if (
+                    isinstance(event.event, TaskStateUpdated)
+                    and event.event.task_status == TaskStatus.RUNNING
+                    and event.event.task_id == filter_task
+                ):
                     found = True
                     idx = event.idx_in_log - 1
                     break
 
-    print(f'START IDX {idx}')
+    print(f"START IDX {idx}")
 
     while not finish_reason:
         events = await global_events.get_events_since(idx)
@@ -54,11 +58,13 @@ async def read_streaming_response(global_events: AsyncSQLiteEventStorage, filter
 
     await asyncio.sleep(0.2)
 
-    print(f'event log: {await global_events.get_events_since(0)}')
+    print(f"event log: {await global_events.get_events_since(0)}")
 
     return seen_task_started == 1, seen_task_finished == 1, response_string
 
+
 T = TypeVar("T")
+
 
 async def until_event_with_timeout(
     global_events: AsyncSQLiteEventStorage,
@@ -72,7 +78,9 @@ async def until_event_with_timeout(
         events = await global_events.get_events_since(idx)
         if events:
             for wrapped_event in events:
-                if isinstance(wrapped_event.event, event_type) and condition(wrapped_event.event):
+                if isinstance(wrapped_event.event, event_type) and condition(
+                    wrapped_event.event
+                ):
                     times_seen += 1
                     if times_seen >= multiplicity:
                         return

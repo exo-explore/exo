@@ -21,9 +21,11 @@ class ModelListModel(BaseModel):
     context_length: int = Field(default=0)
     tags: List[str] = Field(default=[])
 
+
 class ModelList(BaseModel):
     object: str = "list"
     data: List[ModelListModel]
+
 
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
@@ -86,7 +88,6 @@ class Usage(BaseModel):
     completion_tokens_details: CompletionTokensDetails | None = None
 
 
-
 class ChatCompletionResponse(BaseModel):
     id: str
     object: Literal["chat.completion"] = "chat.completion"
@@ -118,18 +119,22 @@ class ChatCompletionTaskParams(BaseModel):
     parallel_tool_calls: bool | None = None
     user: str | None = None
 
+
 class CreateInstanceTaskParams(BaseModel):
     # TODO: in future the user could specify a specific Instance, not just a model_id
     model_id: str
 
+
 class DeleteInstanceTaskParams(BaseModel):
     instance_id: str
+
 
 class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     model_meta: ModelMetadata
     instance_id: InstanceId
+
 
 class DeleteInstanceResponse(BaseModel):
     message: str

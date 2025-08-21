@@ -1,7 +1,6 @@
 ## Tests for worker state handlers
 
 
-
 from exo.shared.types.events import (
     Event,
 )

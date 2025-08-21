@@ -13,7 +13,13 @@ from exo.shared.types.events import (
     TaskCreated,
 )
 from exo.shared.types.models import ModelId
-from exo.shared.types.tasks import ChatCompletionTask, Task, TaskId, TaskStatus, TaskType
+from exo.shared.types.tasks import (
+    ChatCompletionTask,
+    Task,
+    TaskId,
+    TaskStatus,
+    TaskType,
+)
 from exo.shared.types.worker.common import InstanceId, RunnerId
 from exo.shared.types.worker.instances import (
     Instance,
@@ -39,10 +45,12 @@ from exo.worker.worker import Worker
 
 
 async def test_runner_inference(
-    worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
+    worker_running: Callable[
+        [NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]
+    ],
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-    chat_completion_task: Callable[[InstanceId, TaskId], Task]
-    ):
+    chat_completion_task: Callable[[InstanceId, TaskId], Task],
+):
     _worker, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
@@ -54,38 +62,40 @@ async def test_runner_inference(
             InstanceCreated(
                 instance=instance_value,
             ),
-            TaskCreated(
-                task_id=task.task_id,
-                task=task
-            )
-        ], 
-        origin=MASTER_NODE_ID
+            TaskCreated(task_id=task.task_id, task=task),
+        ],
+        origin=MASTER_NODE_ID,
     )
-    
+
     # TODO: This needs to get fixed - sometimes it misses the 'starting' event.
-    seen_task_started, seen_task_finished, response_string = await read_streaming_response(global_events)
+    (
+        seen_task_started,
+        seen_task_finished,
+        response_string,
+    ) = await read_streaming_response(global_events)
 
     assert seen_task_started
     assert seen_task_finished
-    assert 'tokyo' in response_string.lower()
+    assert "tokyo" in response_string.lower()
 
     await global_events.append_events(
         [
             InstanceDeleted(
                 instance_id=instance_value.instance_id,
             ),
-        ], 
-        origin=MASTER_NODE_ID
+        ],
+        origin=MASTER_NODE_ID,
     )
 
     await asyncio.sleep(0.3)
+
 
 async def test_2_runner_inference(
     logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
-    chat_completion_task: Callable[[InstanceId, TaskId], Task]
-    ):
+    chat_completion_task: Callable[[InstanceId, TaskId], Task],
+):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
     shard_downloader = NoopShardDownloader()
@@ -93,54 +103,61 @@ async def test_2_runner_inference(
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
-    worker1 = Worker(NODE_A, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+    worker1 = Worker(
+        NODE_A,
+        logger=logger,
+        shard_downloader=shard_downloader,
+        worker_events=global_events,
+        global_events=global_events,
+    )
     asyncio.create_task(run(worker1, logger))
 
-    worker2 = Worker(NODE_B, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+    worker2 = Worker(
+        NODE_B,
+        logger=logger,
+        shard_downloader=shard_downloader,
+        worker_events=global_events,
+        global_events=global_events,
+    )
     asyncio.create_task(run(worker2, logger))
 
     ## Instance
-    model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
+    model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
     shard_assignments = ShardAssignments(
         model_id=model_id,
         runner_to_shard={
             RUNNER_1_ID: pipeline_shard_meta(2, 0),
-            RUNNER_2_ID: pipeline_shard_meta(2, 1)
+            RUNNER_2_ID: pipeline_shard_meta(2, 1),
         },
-        node_to_runner={
-            NODE_A: RUNNER_1_ID,
-            NODE_B: RUNNER_2_ID
-        }
+        node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
     )
-    
+
     instance = Instance(
         instance_id=INSTANCE_1_ID,
         instance_type=InstanceStatus.ACTIVE,
         shard_assignments=shard_assignments,
-        hosts=hosts(2)
+        hosts=hosts(2),
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
     await global_events.append_events(
         [
-            InstanceCreated(
-                instance=instance
-            ),
-            TaskCreated(
-                task_id=task.task_id,
-                task=task
-            )
-        ], 
-        origin=MASTER_NODE_ID
+            InstanceCreated(instance=instance),
+            TaskCreated(task_id=task.task_id, task=task),
+        ],
+        origin=MASTER_NODE_ID,
     )
 
-    seen_task_started, seen_task_finished, response_string = await read_streaming_response(global_events)    
+    (
+        seen_task_started,
+        seen_task_finished,
+        response_string,
+    ) = await read_streaming_response(global_events)
 
     assert seen_task_started
     assert seen_task_finished
-    assert 'tokyo' in response_string.lower()
-
+    assert "tokyo" in response_string.lower()
 
     idx = await global_events.get_last_idx()
     await asyncio.sleep(1.0)
@@ -152,18 +169,19 @@ async def test_2_runner_inference(
             InstanceDeleted(
                 instance_id=instance.instance_id,
             ),
-        ], 
-        origin=MASTER_NODE_ID
+        ],
+        origin=MASTER_NODE_ID,
     )
 
     await asyncio.sleep(2.0)
+
 
 # TODO: Multi message parallel
 async def test_2_runner_multi_message(
     logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
-    ):
+):
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
     shard_downloader = NoopShardDownloader()
@@ -171,32 +189,41 @@ async def test_2_runner_multi_message(
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
-    worker1 = Worker(NODE_A, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+    worker1 = Worker(
+        NODE_A,
+        logger=logger,
+        shard_downloader=shard_downloader,
+        worker_events=global_events,
+        global_events=global_events,
+    )
     asyncio.create_task(run(worker1, logger))
 
-    worker2 = Worker(NODE_B, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+    worker2 = Worker(
+        NODE_B,
+        logger=logger,
+        shard_downloader=shard_downloader,
+        worker_events=global_events,
+        global_events=global_events,
+    )
     asyncio.create_task(run(worker2, logger))
 
     ## Instance
-    model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
+    model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
     shard_assignments = ShardAssignments(
         model_id=model_id,
         runner_to_shard={
             RUNNER_1_ID: pipeline_shard_meta(2, 0),
-            RUNNER_2_ID: pipeline_shard_meta(2, 1)
+            RUNNER_2_ID: pipeline_shard_meta(2, 1),
         },
-        node_to_runner={
-            NODE_A: RUNNER_1_ID,
-            NODE_B: RUNNER_2_ID
-        }
+        node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
     )
-    
+
     instance = Instance(
         instance_id=INSTANCE_1_ID,
         instance_type=InstanceStatus.ACTIVE,
         shard_assignments=shard_assignments,
-        hosts=hosts(2)
+        hosts=hosts(2),
     )
 
     # Task - we have three messages here, which is what the task is about
@@ -204,9 +231,16 @@ async def test_2_runner_multi_message(
     completion_create_params = ChatCompletionTaskParams(
         model="gpt-4",
         messages=[
-            ChatCompletionMessage(role="user", content='What is the capital of France?'),
-            ChatCompletionMessage(role="assistant", content='The capital of France is Paris.'),
-            ChatCompletionMessage(role="user", content='Ok great. Now write me a haiku about what you can do there.'),
+            ChatCompletionMessage(
+                role="user", content="What is the capital of France?"
+            ),
+            ChatCompletionMessage(
+                role="assistant", content="The capital of France is Paris."
+            ),
+            ChatCompletionMessage(
+                role="user",
+                content="Ok great. Now write me a haiku about what you can do there.",
+            ),
         ],
         stream=True,
     )
@@ -217,28 +251,29 @@ async def test_2_runner_multi_message(
         instance_id=INSTANCE_1_ID,
         task_type=TaskType.CHAT_COMPLETION,
         task_status=TaskStatus.PENDING,
-        task_params=completion_create_params
+        task_params=completion_create_params,
     )
 
     await global_events.append_events(
         [
-            InstanceCreated(
-                instance=instance
-            ),
-            TaskCreated(
-                task_id=task.task_id,
-                task=task
-            )
-        ], 
-        origin=MASTER_NODE_ID
+            InstanceCreated(instance=instance),
+            TaskCreated(task_id=task.task_id, task=task),
+        ],
+        origin=MASTER_NODE_ID,
     )
 
-    seen_task_started, seen_task_finished, response_string = await read_streaming_response(global_events)    
+    (
+        seen_task_started,
+        seen_task_finished,
+        response_string,
+    ) = await read_streaming_response(global_events)
 
     assert seen_task_started
     assert seen_task_finished
-    assert any(keyword in response_string.lower() for keyword in ('kiss', 'paris', 'art', 'love'))
-
+    assert any(
+        keyword in response_string.lower()
+        for keyword in ("kiss", "paris", "art", "love")
+    )
 
     idx = await global_events.get_last_idx()
     await asyncio.sleep(1.0)
@@ -250,8 +285,8 @@ async def test_2_runner_multi_message(
             InstanceDeleted(
                 instance_id=instance.instance_id,
             ),
-        ], 
-        origin=MASTER_NODE_ID
+        ],
+        origin=MASTER_NODE_ID,
     )
 
     await asyncio.sleep(2.0)

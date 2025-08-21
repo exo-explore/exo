@@ -19,8 +19,12 @@ def user_message():
 
 
 @pytest.fixture
-def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]]:
-    async def _worker_running(node_id: NodeId) -> tuple[Worker, AsyncSQLiteEventStorage]:
+def worker_running(
+    logger: Logger,
+) -> Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]]:
+    async def _worker_running(
+        node_id: NodeId,
+    ) -> tuple[Worker, AsyncSQLiteEventStorage]:
         event_log_manager = EventLogManager(EventLogConfig(), logger)
         await event_log_manager.initialize()
 
@@ -28,7 +32,13 @@ def worker_running(logger: Logger) -> Callable[[NodeId], Awaitable[tuple[Worker,
         await global_events.delete_all_events()
 
         shard_downloader = NoopShardDownloader()
-        worker = Worker(node_id, logger=logger, shard_downloader=shard_downloader, worker_events=global_events, global_events=global_events)
+        worker = Worker(
+            node_id,
+            logger=logger,
+            shard_downloader=shard_downloader,
+            worker_events=global_events,
+            global_events=global_events,
+        )
         asyncio.create_task(run(worker, logger))
 
         return worker, global_events

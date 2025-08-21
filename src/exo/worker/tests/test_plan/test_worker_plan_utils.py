@@ -27,6 +27,7 @@ from exo.worker.tests.constants import COMMAND_1_ID, INSTANCE_1_ID, MODEL_A_ID
 
 class RunnerSpecDict(TypedDict):
     """Type definition for runner specification dictionaries."""
+
     runner_id: RunnerId
     node_id: NodeId
     device_rank: int
@@ -36,6 +37,7 @@ class RunnerSpecDict(TypedDict):
 
 class MessageDict(TypedDict):
     """Type definition for message dictionaries."""
+
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: NotRequired[str | None]
     name: NotRequired[str | None]
@@ -46,12 +48,17 @@ class MessageDict(TypedDict):
 
 class TaskSpecDict(TypedDict):
     """Type definition for task specification dictionaries."""
+
     task_id: TaskId
-    instance_id: NotRequired[InstanceId]  # defaults to function parameter if not provided
-    command_id: NotRequired[CommandId]  # defaults to COMMAND_1_ID if not provided  
+    instance_id: NotRequired[
+        InstanceId
+    ]  # defaults to function parameter if not provided
+    command_id: NotRequired[CommandId]  # defaults to COMMAND_1_ID if not provided
     status: NotRequired[TaskStatus]  # defaults to TaskStatus.PENDING if not provided
     model: NotRequired[str]  # defaults to model_id if not provided
-    messages: NotRequired[list[MessageDict]]  # defaults to [{'role': 'user', 'content': 'Hello, world!'}] if not provided
+    messages: NotRequired[
+        list[MessageDict]
+    ]  # defaults to [{'role': 'user', 'content': 'Hello, world!'}] if not provided
 
 
 @dataclass(slots=True, frozen=True)
@@ -79,10 +86,12 @@ class PlanTestCase:
         return self.description.replace(" ", "_")
 
 
-def make_shard_metadata(device_rank: int, world_size: int, model_id: ModelId = MODEL_A_ID) -> PipelineShardMetadata:
+def make_shard_metadata(
+    device_rank: int, world_size: int, model_id: ModelId = MODEL_A_ID
+) -> PipelineShardMetadata:
     """Create PipelineShardMetadata with proper layer assignments based on device_rank and world_size."""
     total_layers = world_size  # For simplicity in tests, total_layers = world_size
-    
+
     if world_size == 1:
         start_layer = 0
         end_layer = 1
@@ -92,7 +101,7 @@ def make_shard_metadata(device_rank: int, world_size: int, model_id: ModelId = M
         start_layer = device_rank
         end_layer = device_rank + 1
         n_layers = total_layers
-    
+
     return PipelineShardMetadata(
         device_rank=device_rank,
         world_size=world_size,
@@ -112,9 +121,8 @@ def make_downloading_status(node_id: NodeId) -> DownloadingRunnerStatus:
         )
     )
 
-def make_model_meta(
-    model_id: str
-) -> ModelMetadata:
+
+def make_model_meta(model_id: str) -> ModelMetadata:
     model_card: ModelCard
     for card in MODEL_CARDS.values():
         if card.model_id == model_id:
@@ -126,12 +134,11 @@ def make_model_meta(
                 storage_size_kilobytes=10**6,
                 n_layers=16,
             )
-    
-    raise Exception(f'Unknown model_id passed: {model_id}')
+
+    raise Exception(f"Unknown model_id passed: {model_id}")
 
     ## Alternatively, if we are ok for this method to be async:
     # await _get_model_meta(model_id)
-
 
 
 def make_instance(
@@ -146,11 +153,7 @@ def make_instance(
     world_size = len(runner_specs)
 
     for runner_id, node_id, device_rank, _ in runner_specs:
-        shard_metadata = make_shard_metadata(
-            device_rank,
-            world_size,
-            model_id
-        )
+        shard_metadata = make_shard_metadata(device_rank, world_size, model_id)
         runner_to_shard[runner_id] = shard_metadata
         node_to_runner[node_id] = runner_id
 
@@ -167,7 +170,7 @@ def make_instance(
     )
 
     # Currently nodes are only ever idle - as if they were running we would be blocking - so we wouldn't be running plan()
-    # node_statuses = {node_id: NodeStatus.Idle for _, node_id, _, _ in runner_specs}  
+    # node_statuses = {node_id: NodeStatus.Idle for _, node_id, _, _ in runner_specs}
     node_statuses: dict[NodeId, NodeStatus] = {}
     for _runner_id, node_id, _, status in runner_specs:
         if isinstance(status, RunningRunnerStatus):
@@ -178,8 +181,11 @@ def make_instance(
 
     return instance, runner_statuses, node_statuses
 
+
 def make_state(
-    runner_specs_per_instance: dict[InstanceId, list[tuple[RunnerId, NodeId, int, RunnerStatus]]],
+    runner_specs_per_instance: dict[
+        InstanceId, list[tuple[RunnerId, NodeId, int, RunnerStatus]]
+    ],
     tasks: dict[TaskId, ChatCompletionTask] | None = None,
     model_id: ModelId = MODEL_A_ID,
     instance_status: InstanceStatus = InstanceStatus.ACTIVE,
@@ -210,6 +216,7 @@ def make_state(
         tasks=tasks,
     )
 
+
 def make_test_case(
     description: str,
     runner_specs: list[RunnerSpecDict],
@@ -225,7 +232,7 @@ def make_test_case(
         tasks = []
     # Convert runner_specs to tuple format for make_instance
     specs_tuple = [
-        (r['runner_id'], r['node_id'], r['device_rank'], r['status'])
+        (r["runner_id"], r["node_id"], r["device_rank"], r["status"])
         for r in runner_specs
     ]
 
@@ -234,16 +241,21 @@ def make_test_case(
     for t in tasks:
         task = ChatCompletionTask(
             instance_id=instance_id,
-            task_id=t['task_id'],
-            command_id=t.get('command_id', command_id),
+            task_id=t["task_id"],
+            command_id=t.get("command_id", command_id),
             task_type=TaskType.CHAT_COMPLETION,
-            task_status=t.get('status', TaskStatus.PENDING),
+            task_status=t.get("status", TaskStatus.PENDING),
             task_params=ChatCompletionTaskParams(
-                model=t.get('model', str(model_id)),
-                messages=[ChatCompletionMessage(**m) for m in t.get('messages', [{'role': 'user', 'content': 'Hello, world!'}])],
+                model=t.get("model", str(model_id)),
+                messages=[
+                    ChatCompletionMessage(**m)
+                    for m in t.get(
+                        "messages", [{"role": "user", "content": "Hello, world!"}]
+                    )
+                ],
             ),
         )
-        state_tasks[t['task_id']] = task
+        state_tasks[t["task_id"]] = task
 
     state = make_state(
         runner_specs_per_instance={instance_id: specs_tuple},
@@ -255,13 +267,14 @@ def make_test_case(
     # Build in_process_runners with downloaded (default True if missing)
     in_process_runners = [
         InProcessRunner(
-            runner_id=r['runner_id'],
+            runner_id=r["runner_id"],
             instance_id=instance_id,
             model_id=model_id,
-            status=r['status'],
-            downloaded=r.get('downloaded', True),
-            device_rank=r['device_rank'],
-        ) for r in runner_specs
+            status=r["status"],
+            downloaded=r.get("downloaded", True),
+            device_rank=r["device_rank"],
+        )
+        for r in runner_specs
     ]
 
     return PlanTestCase(

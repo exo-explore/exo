@@ -1,4 +1,4 @@
-# components.py defines the small event functions, adapters etc. 
+# components.py defines the small event functions, adapters etc.
 # this name could probably be improved.
 
 from typing import (
@@ -30,7 +30,6 @@ class EventFromEventLog[T: Event](BaseModel):
         if self.event.check_event_was_sent_by_correct_node(self.origin):
             return self
         raise ValueError("Invalid Event: Origin ID Does Not Match")
-
 
 
 type Apply = Callable[[State, Event], State]

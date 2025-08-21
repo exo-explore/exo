@@ -19,7 +19,9 @@ from exo.shared.utils import get_node_id_keypair
 NUM_CONCURRENT_PROCS = 10
 
 
-def _get_keypair_concurrent_subprocess_task(pid: int, sem: SemaphoreT, ev: EventT, queue: QueueT[bytes]) -> None:
+def _get_keypair_concurrent_subprocess_task(
+    pid: int, sem: SemaphoreT, ev: EventT, queue: QueueT[bytes]
+) -> None:
     try:
         # synchronise with parent process
         logging.info(msg=f"SUBPROCESS {pid}: Started")
@@ -45,8 +47,9 @@ def _get_keypair_concurrent(num_procs: int) -> bytes:
     logging.info(msg=f"PARENT: Starting {num_procs} subprocesses")
     ps: list[BaseProcess] = []
     for i in range(num_procs):
-        p = multiprocessing.get_context("fork").Process(target=_get_keypair_concurrent_subprocess_task,
-                                                        args=(i + 1, sem, ev, queue))
+        p = multiprocessing.get_context("fork").Process(
+            target=_get_keypair_concurrent_subprocess_task, args=(i + 1, sem, ev, queue)
+        )
         ps.append(p)
         p.start()
     for _ in range(num_procs):

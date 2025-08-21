@@ -2,6 +2,7 @@
 Comprehensive unit tests for Forwardersupervisor.
 Tests basic functionality, process management, and edge cases.
 """
+
 import asyncio
 import logging
 import os
@@ -105,6 +106,7 @@ def temp_dir() -> Generator[Path, None, None]:
     yield temp_path
     # Clean up
     import shutil
+
     shutil.rmtree(temp_path, ignore_errors=True)
 
 
@@ -122,15 +124,17 @@ def test_logger() -> logging.Logger:
     """Create a test logger."""
     logger = logging.getLogger("test_forwarder")
     logger.setLevel(logging.DEBUG)
-    
+
     # Add console handler for debugging
     if not logger.handlers:
         handler = logging.StreamHandler()
         handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-    
+
     return logger
 
 
@@ -147,69 +151,76 @@ def mock_env_vars(temp_dir: Path) -> dict[str, str]:
 async def cleanup_processes() -> AsyncGenerator[set[int], None]:
     """Track and cleanup any processes created during tests."""
     tracked_pids: set[int] = set()
-    
+
     yield tracked_pids
-    
+
     # Cleanup any remaining processes - simplified to avoid psutil dependency
     import contextlib
     import subprocess
+
     for pid in tracked_pids:
         with contextlib.suppress(Exception):
             subprocess.run(["kill", str(pid)], check=False, timeout=1)
 
 
 @pytest.fixture
-def track_subprocess(cleanup_processes: set[int]) -> Callable[[asyncio.subprocess.Process], asyncio.subprocess.Process]:
+def track_subprocess(
+    cleanup_processes: set[int],
+) -> Callable[[asyncio.subprocess.Process], asyncio.subprocess.Process]:
     """Function to track subprocess PIDs for cleanup."""
+
     def track(process: asyncio.subprocess.Process) -> asyncio.subprocess.Process:
         if process.pid:
             cleanup_processes.add(process.pid)
         return process
+
     return track
 
 
 class TestForwardersupervisorBasic:
     """Basic functionality tests for Forwardersupervisor."""
-    
+
     @pytest.mark.asyncio
     async def test_start_as_replica(
         self,
         mock_forwarder_script: Path,
         mock_env_vars: dict[str, str],
         test_logger: logging.Logger,
-        track_subprocess: Callable[[asyncio.subprocess.Process], asyncio.subprocess.Process]
+        track_subprocess: Callable[
+            [asyncio.subprocess.Process], asyncio.subprocess.Process
+        ],
     ) -> None:
         """Test starting forwarder in replica mode."""
         # Set environment
         os.environ.update(mock_env_vars)
-        
+
         supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
         await supervisor.start_as_replica()
-        
+
         # Track the process for cleanup
         if supervisor.process:
             track_subprocess(supervisor.process)
-        
+
         try:
             # Verify process is running
             assert supervisor.is_running
             assert supervisor.current_role == ForwarderRole.REPLICA
-            
+
             # Wait a bit for log file to be written
             await asyncio.sleep(0.5)
-            
+
             # Verify forwarding pairs in log
             log_content = Path(mock_env_vars["MOCK_LOG_FILE"]).read_text()
-            
+
             # Expected replica forwarding pairs
             expected_pairs = [
                 f"sqlite:{EXO_WORKER_EVENT_DB}:events|libp2p:{LIBP2P_WORKER_EVENTS_TOPIC}",
-                f"libp2p:{LIBP2P_GLOBAL_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events"
+                f"libp2p:{LIBP2P_GLOBAL_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events",
             ]
-            
+
             # Check that the forwarder received the correct arguments
             assert all(pair in log_content for pair in expected_pairs)
-            
+
         finally:
             await supervisor.stop()
             assert not supervisor.is_running
@@ -220,41 +231,43 @@ class TestForwardersupervisorBasic:
         mock_forwarder_script: Path,
         mock_env_vars: dict[str, str],
         test_logger: logging.Logger,
-        track_subprocess: Callable[[asyncio.subprocess.Process], asyncio.subprocess.Process]
+        track_subprocess: Callable[
+            [asyncio.subprocess.Process], asyncio.subprocess.Process
+        ],
     ) -> None:
         """Test changing role from replica to master."""
         os.environ.update(mock_env_vars)
-        
+
         supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
         await supervisor.start_as_replica()
-        
+
         if supervisor.process:
             track_subprocess(supervisor.process)
-        
+
         try:
             # Change to master
             await supervisor.notify_role_change(ForwarderRole.MASTER)
-            
+
             if supervisor.process:
                 track_subprocess(supervisor.process)
-            
+
             # Wait for restart
             await asyncio.sleep(0.5)
-            
+
             assert supervisor.is_running
             assert supervisor.current_role == ForwarderRole.MASTER
-            
+
             # Verify new forwarding pairs
             log_content = Path(mock_env_vars["MOCK_LOG_FILE"]).read_text()
-            
+
             # Expected master forwarding pairs
             master_pairs = [
                 f"libp2p:{LIBP2P_WORKER_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events",
-                f"sqlite:{EXO_GLOBAL_EVENT_DB}:events|libp2p:{LIBP2P_GLOBAL_EVENTS_TOPIC}"
+                f"sqlite:{EXO_GLOBAL_EVENT_DB}:events|libp2p:{LIBP2P_GLOBAL_EVENTS_TOPIC}",
             ]
-            
+
             assert all(pair in log_content for pair in master_pairs)
-            
+
         finally:
             await supervisor.stop()
 
@@ -264,25 +277,27 @@ class TestForwardersupervisorBasic:
         mock_forwarder_script: Path,
         mock_env_vars: dict[str, str],
         test_logger: logging.Logger,
-        track_subprocess: Callable[[asyncio.subprocess.Process], asyncio.subprocess.Process],
+        track_subprocess: Callable[
+            [asyncio.subprocess.Process], asyncio.subprocess.Process
+        ],
     ) -> None:
         """Test that setting the same role twice doesn't restart the process."""
         os.environ.update(mock_env_vars)
-        
+
         supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
         await supervisor.start_as_replica()
-        
+
         original_pid = supervisor.process_pid
         if supervisor.process:
             track_subprocess(supervisor.process)
-        
+
         try:
             # Try to change to the same role
             await supervisor.notify_role_change(ForwarderRole.REPLICA)
-            
+
             # Should not restart (same PID)
             assert supervisor.process_pid == original_pid
-            
+
         finally:
             await supervisor.stop()
 
@@ -292,64 +307,64 @@ class TestForwardersupervisorBasic:
         mock_forwarder_script: Path,
         mock_env_vars: dict[str, str],
         test_logger: logging.Logger,
-        track_subprocess: Callable[[asyncio.subprocess.Process], asyncio.subprocess.Process]
+        track_subprocess: Callable[
+            [asyncio.subprocess.Process], asyncio.subprocess.Process
+        ],
     ) -> None:
         """Test that Forwardersupervisor restarts the process if it crashes."""
         # Configure mock to exit after 1 second
         mock_env_vars["MOCK_EXIT_AFTER"] = "1"
         mock_env_vars["MOCK_EXIT_CODE"] = "1"
         os.environ.update(mock_env_vars)
-        
+
         supervisor = ForwarderSupervisor(
             NodeId(),
             mock_forwarder_script,
             test_logger,
-            health_check_interval=0.5  # Faster health checks for testing
+            health_check_interval=0.5,  # Faster health checks for testing
         )
         await supervisor.start_as_replica()
-        
+
         original_pid = supervisor.process_pid
         if supervisor.process:
             track_subprocess(supervisor.process)
-        
+
         try:
             # Wait for first crash
             await asyncio.sleep(1.5)
-            
+
             # Process should have crashed
             assert not supervisor.is_running or supervisor.process_pid != original_pid
-            
+
             # Clear the crash-inducing environment variables so restart works
             if "MOCK_EXIT_AFTER" in os.environ:
                 del os.environ["MOCK_EXIT_AFTER"]
             if "MOCK_EXIT_CODE" in os.environ:
                 del os.environ["MOCK_EXIT_CODE"]
-            
+
             # Wait for restart
             await asyncio.sleep(1.0)
-            
+
             # Process should have restarted with new PID
             assert supervisor.is_running
             assert supervisor.process_pid != original_pid
-            
+
             # Track new process
             if supervisor.process:
                 track_subprocess(supervisor.process)
-            
+
         finally:
             await supervisor.stop()
 
     @pytest.mark.asyncio
     async def test_nonexistent_binary(
-        self, 
-        test_logger: logging.Logger, 
-        temp_dir: Path
+        self, test_logger: logging.Logger, temp_dir: Path
     ) -> None:
         """Test behavior when forwarder binary doesn't exist."""
         nonexistent_path = temp_dir / "nonexistent_forwarder"
-        
+
         supervisor = ForwarderSupervisor(NodeId(), nonexistent_path, test_logger)
-        
+
         # Should raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
             await supervisor.start_as_replica()
@@ -357,16 +372,16 @@ class TestForwardersupervisorBasic:
 
 class TestElectionCallbacks:
     """Test suite for ElectionCallbacks."""
-    
+
     @pytest.mark.asyncio
     async def test_on_became_master(self, test_logger: logging.Logger) -> None:
         """Test callback when becoming master."""
         mock_supervisor = MagicMock(spec=ForwarderSupervisor)
         mock_supervisor.notify_role_change = AsyncMock()
-        
+
         callbacks = ElectionCallbacks(mock_supervisor, test_logger)
         await callbacks.on_became_master()
-        
+
         mock_supervisor.notify_role_change.assert_called_once_with(ForwarderRole.MASTER)  # type: ignore
 
     @pytest.mark.asyncio
@@ -374,8 +389,10 @@ class TestElectionCallbacks:
         """Test callback when becoming replica."""
         mock_supervisor = MagicMock(spec=ForwarderSupervisor)
         mock_supervisor.notify_role_change = AsyncMock()
-        
+
         callbacks = ElectionCallbacks(mock_supervisor, test_logger)
         await callbacks.on_became_replica()
-        
-        mock_supervisor.notify_role_change.assert_called_once_with(ForwarderRole.REPLICA) # type: ignore
+
+        mock_supervisor.notify_role_change.assert_called_once_with(
+            ForwarderRole.REPLICA
+        )  # type: ignore

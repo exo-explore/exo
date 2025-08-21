@@ -20,18 +20,18 @@ from exo.shared.types.worker.runners import ShardAssignments
 def topology() -> Topology:
     return Topology()
 
+
 @pytest.fixture
 def instance() -> Instance:
     return Instance(
         instance_id=InstanceId(),
         instance_type=InstanceStatus.ACTIVE,
         shard_assignments=ShardAssignments(
-            model_id="test-model",
-            runner_to_shard={},
-            node_to_runner={}
+            model_id="test-model", runner_to_shard={}, node_to_runner={}
         ),
-        hosts=[]
+        hosts=[],
     )
+
 
 @pytest.fixture
 def model_meta() -> ModelMetadata:
@@ -39,8 +39,9 @@ def model_meta() -> ModelMetadata:
         model_id="test-model",
         storage_size_kilobytes=1000,
         pretty_name="Test Model",
-        n_layers=10
+        n_layers=10,
     )
+
 
 def create_instance_command(model_meta: ModelMetadata) -> CreateInstanceCommand:
     return CreateInstanceCommand(
@@ -50,11 +51,14 @@ def create_instance_command(model_meta: ModelMetadata) -> CreateInstanceCommand:
     )
 
 
-@pytest.mark.parametrize("available_memory,total_layers,expected_layers", [
-    ((500, 500, 1000), 12, (3, 3, 6)),
-    ((500, 500, 500), 12, (4, 4, 4)),
-    ((312, 518, 1024), 12, (2, 3, 7))
-])
+@pytest.mark.parametrize(
+    "available_memory,total_layers,expected_layers",
+    [
+        ((500, 500, 1000), 12, (3, 3, 6)),
+        ((500, 500, 500), 12, (4, 4, 4)),
+        ((312, 518, 1024), 12, (2, 3, 7)),
+    ],
+)
 def test_get_instance_placements_create_instance(
     available_memory: tuple[int, int, int],
     total_layers: int,
@@ -62,12 +66,14 @@ def test_get_instance_placements_create_instance(
     topology: Topology,
     model_meta: ModelMetadata,
     create_node: Callable[[int, NodeId | None], Node],
-    create_connection: Callable[[NodeId, NodeId], Connection]
+    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     model_meta.n_layers = total_layers
-    model_meta.storage_size_kilobytes = sum(available_memory) # make it exactly fit across all nodes
-    
+    model_meta.storage_size_kilobytes = sum(
+        available_memory
+    )  # make it exactly fit across all nodes
+
     create_instance_command = CreateInstanceCommand(
         command_id=CommandId(),
         model_meta=model_meta,
@@ -76,9 +82,9 @@ def test_get_instance_placements_create_instance(
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
-    topology.add_node(create_node(available_memory[0]*1024, node_id_a))
-    topology.add_node(create_node(available_memory[1]*1024, node_id_b))
-    topology.add_node(create_node(available_memory[2]*1024, node_id_c))
+    topology.add_node(create_node(available_memory[0] * 1024, node_id_a))
+    topology.add_node(create_node(available_memory[1] * 1024, node_id_b))
+    topology.add_node(create_node(available_memory[2] * 1024, node_id_c))
     topology.add_connection(create_connection(node_id_a, node_id_b))
     topology.add_connection(create_connection(node_id_b, node_id_c))
     topology.add_connection(create_connection(node_id_c, node_id_a))
@@ -95,33 +101,34 @@ def test_get_instance_placements_create_instance(
     runner_id_a = instance.shard_assignments.node_to_runner[node_id_a]
     runner_id_b = instance.shard_assignments.node_to_runner[node_id_b]
     runner_id_c = instance.shard_assignments.node_to_runner[node_id_c]
-    
+
     shard_a = instance.shard_assignments.runner_to_shard[runner_id_a]
     shard_b = instance.shard_assignments.runner_to_shard[runner_id_b]
     shard_c = instance.shard_assignments.runner_to_shard[runner_id_c]
-    
+
     assert shard_a.end_layer - shard_a.start_layer == expected_layers[0]
     assert shard_b.end_layer - shard_b.start_layer == expected_layers[1]
     assert shard_c.end_layer - shard_c.start_layer == expected_layers[2]
-    
+
     shards = [shard_a, shard_b, shard_c]
     shards_sorted = sorted(shards, key=lambda s: s.start_layer)
     assert shards_sorted[0].start_layer == 0
     assert shards_sorted[-1].end_layer == total_layers
+
 
 def test_get_instance_placements_one_node_exact_fit(
     create_node: Callable[[int, NodeId | None], Node],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
-    topology.add_node(create_node(1000*1024, node_id))
+    topology.add_node(create_node(1000 * 1024, node_id))
     create_instance_command = CreateInstanceCommand(
         command_id=CommandId(),
         model_meta=ModelMetadata(
             model_id="test-model",
             storage_size_kilobytes=1000,
             pretty_name="Test Model",
-            n_layers=10
+            n_layers=10,
         ),
         instance_id=InstanceId(),
     )
@@ -134,20 +141,21 @@ def test_get_instance_placements_one_node_exact_fit(
     assert len(instance.shard_assignments.node_to_runner) == 1
     assert len(instance.shard_assignments.runner_to_shard) == 1
     assert len(instance.shard_assignments.runner_to_shard) == 1
+
 
 def test_get_instance_placements_one_node_fits_with_extra_memory(
     create_node: Callable[[int, NodeId | None], Node],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
-    topology.add_node(create_node(1001*1024, node_id))
+    topology.add_node(create_node(1001 * 1024, node_id))
     create_instance_command = CreateInstanceCommand(
         command_id=CommandId(),
         model_meta=ModelMetadata(
             model_id="test-model",
             storage_size_kilobytes=1000,
             pretty_name="Test Model",
-            n_layers=10
+            n_layers=10,
         ),
         instance_id=InstanceId(),
     )
@@ -161,19 +169,20 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
     assert len(instance.shard_assignments.runner_to_shard) == 1
     assert len(instance.shard_assignments.runner_to_shard) == 1
 
+
 def test_get_instance_placements_one_node_not_fit(
     create_node: Callable[[int, NodeId | None], Node],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
-    topology.add_node(create_node(1000*1024, node_id))
+    topology.add_node(create_node(1000 * 1024, node_id))
     create_instance_command = CreateInstanceCommand(
         command_id=CommandId(),
         model_meta=ModelMetadata(
             model_id="test-model",
             storage_size_kilobytes=1001,
             pretty_name="Test Model",
-            n_layers=10
+            n_layers=10,
         ),
         instance_id=InstanceId(),
     )
@@ -181,15 +190,12 @@ def test_get_instance_placements_one_node_not_fit(
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
         get_instance_placements(create_instance_command, topology, {})
 
+
 def test_get_transition_events_no_change(topology: Topology, instance: Instance):
     # arrange
     instance_id = InstanceId()
-    current_instances = {
-        instance_id: instance
-    }
-    target_instances = {
-        instance_id: instance
-    }
+    current_instances = {instance_id: instance}
+    target_instances = {instance_id: instance}
 
     # act
     events = get_transition_events(current_instances, target_instances)
@@ -202,9 +208,7 @@ def test_get_transition_events_create_instance(topology: Topology, instance: Ins
     # arrange
     instance_id = InstanceId()
     current_instances: dict[InstanceId, Instance] = {}
-    target_instances: dict[InstanceId, Instance] = {
-        instance_id: instance
-    }
+    target_instances: dict[InstanceId, Instance] = {instance_id: instance}
 
     # act
     events = get_transition_events(current_instances, target_instances)
@@ -217,9 +221,7 @@ def test_get_transition_events_create_instance(topology: Topology, instance: Ins
 def test_get_transition_events_delete_instance(topology: Topology, instance: Instance):
     # arrange
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {
-        instance_id: instance
-    }
+    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
     target_instances: dict[InstanceId, Instance] = {}
 
     # act

@@ -2,7 +2,6 @@ from typing import Protocol, cast, override
 
 import mlx.core as mx
 import mlx.nn as nn
-
 from exo.shared.types.worker.shards import PipelineShardMetadata
 
 

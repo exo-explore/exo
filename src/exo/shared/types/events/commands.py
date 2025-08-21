@@ -45,8 +45,11 @@ class TaskFinishedCommand(_BaseCommand[CommandType.TASK_FINISHED]):
 
 
 Command = Annotated[
-    ChatCompletionCommand | CreateInstanceCommand | DeleteInstanceCommand | TaskFinishedCommand, 
-    Field(discriminator="command_type")
+    ChatCompletionCommand
+    | CreateInstanceCommand
+    | DeleteInstanceCommand
+    | TaskFinishedCommand,
+    Field(discriminator="command_type"),
 ]
 
 CommandParser: TypeAdapter[Command] = TypeAdapter(Command)

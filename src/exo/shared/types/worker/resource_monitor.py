@@ -24,12 +24,16 @@ class MemoryResourceCollector(ResourceCollector):
 
 class ResourceMonitor:
     data_collectors: List[ResourceCollector]
-    effect_handlers: Set[Callable[[SystemPerformanceProfile | MemoryPerformanceProfile], None]]
+    effect_handlers: Set[
+        Callable[[SystemPerformanceProfile | MemoryPerformanceProfile], None]
+    ]
 
-    async def _collect(self) -> list[SystemPerformanceProfile | MemoryPerformanceProfile]:
-        tasks: list[Coroutine[None, None, SystemPerformanceProfile | MemoryPerformanceProfile]] = [
-            collector.collect() for collector in self.data_collectors
-        ]
+    async def _collect(
+        self,
+    ) -> list[SystemPerformanceProfile | MemoryPerformanceProfile]:
+        tasks: list[
+            Coroutine[None, None, SystemPerformanceProfile | MemoryPerformanceProfile]
+        ] = [collector.collect() for collector in self.data_collectors]
         return await asyncio.gather(*tasks)
 
     async def collect(self) -> None:

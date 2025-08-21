@@ -34,4 +34,5 @@ class ChatCompletionTask(BaseModel):
     error_type: Optional[str] = Field(default=None)
     error_message: Optional[str] = Field(default=None)
 
+
 Task = Annotated[ChatCompletionTask, Field(discriminator="task_type")]

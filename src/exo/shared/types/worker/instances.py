@@ -13,6 +13,7 @@ class InstanceStatus(str, Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
 
+
 class Instance(BaseModel):
     instance_id: InstanceId
     instance_type: InstanceStatus

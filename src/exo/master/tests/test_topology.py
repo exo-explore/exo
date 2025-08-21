@@ -22,14 +22,26 @@ def connection() -> Connection:
         send_back_node_id=NodeId(),
         local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
         send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
-        connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000))
+        connection_profile=ConnectionProfile(
+            throughput=1000, latency=1000, jitter=1000
+        ),
+    )
+
 
 @pytest.fixture
 def node_profile() -> NodePerformanceProfile:
-    memory_profile = MemoryPerformanceProfile(ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000)
+    memory_profile = MemoryPerformanceProfile(
+        ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000
+    )
     system_profile = SystemPerformanceProfile(flops_fp16=1000)
-    return NodePerformanceProfile(model_id="test", chip_id="test", friendly_name="test", memory=memory_profile, network_interfaces=[],
-                                  system=system_profile)
+    return NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=memory_profile,
+        network_interfaces=[],
+        system=system_profile,
+    )
 
 
 @pytest.fixture
@@ -49,10 +61,14 @@ def test_add_node(topology: Topology, node_profile: NodePerformanceProfile):
     assert data == node_profile
 
 
-def test_add_connection(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
+def test_add_connection(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     # arrange
     topology.add_node(Node(node_id=connection.local_node_id, node_profile=node_profile))
-    topology.add_node(Node(node_id=connection.send_back_node_id, node_profile=node_profile))
+    topology.add_node(
+        Node(node_id=connection.send_back_node_id, node_profile=node_profile)
+    )
     topology.add_connection(connection)
 
     # act
@@ -62,38 +78,57 @@ def test_add_connection(topology: Topology, node_profile: NodePerformanceProfile
     assert data == connection.connection_profile
 
 
-def test_update_node_profile(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
+def test_update_node_profile(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     # arrange
     topology.add_node(Node(node_id=connection.local_node_id, node_profile=node_profile))
-    topology.add_node(Node(node_id=connection.send_back_node_id, node_profile=node_profile))
+    topology.add_node(
+        Node(node_id=connection.send_back_node_id, node_profile=node_profile)
+    )
     topology.add_connection(connection)
 
-    new_node_profile = NodePerformanceProfile(model_id="test", chip_id="test",
-                                              friendly_name="test",
-                                              memory=MemoryPerformanceProfile(ram_total=1000, ram_available=1000,
-                                                                              swap_total=1000, swap_available=1000),
-                                              network_interfaces=[],
-                                              system=SystemPerformanceProfile(flops_fp16=1000))
+    new_node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=MemoryPerformanceProfile(
+            ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000
+        ),
+        network_interfaces=[],
+        system=SystemPerformanceProfile(flops_fp16=1000),
+    )
 
     # act
-    topology.update_node_profile(connection.local_node_id, node_profile=new_node_profile)
+    topology.update_node_profile(
+        connection.local_node_id, node_profile=new_node_profile
+    )
 
     # assert
     data = topology.get_node_profile(connection.local_node_id)
     assert data == new_node_profile
 
 
-def test_update_connection_profile(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
+def test_update_connection_profile(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     # arrange
     topology.add_node(Node(node_id=connection.local_node_id, node_profile=node_profile))
-    topology.add_node(Node(node_id=connection.send_back_node_id, node_profile=node_profile))
+    topology.add_node(
+        Node(node_id=connection.send_back_node_id, node_profile=node_profile)
+    )
     topology.add_connection(connection)
 
-    new_connection_profile = ConnectionProfile(throughput=2000, latency=2000, jitter=2000)
-    connection = Connection(local_node_id=connection.local_node_id, send_back_node_id=connection.send_back_node_id,
-                            local_multiaddr=connection.local_multiaddr,
-                            send_back_multiaddr=connection.send_back_multiaddr,
-                            connection_profile=new_connection_profile)
+    new_connection_profile = ConnectionProfile(
+        throughput=2000, latency=2000, jitter=2000
+    )
+    connection = Connection(
+        local_node_id=connection.local_node_id,
+        send_back_node_id=connection.send_back_node_id,
+        local_multiaddr=connection.local_multiaddr,
+        send_back_multiaddr=connection.send_back_multiaddr,
+        connection_profile=new_connection_profile,
+    )
 
     # act
     topology.update_connection_profile(connection)
@@ -103,11 +138,14 @@ def test_update_connection_profile(topology: Topology, node_profile: NodePerform
     assert data == new_connection_profile
 
 
-def test_remove_connection_still_connected(topology: Topology, node_profile: NodePerformanceProfile,
-                                           connection: Connection):
+def test_remove_connection_still_connected(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     # arrange
     topology.add_node(Node(node_id=connection.local_node_id, node_profile=node_profile))
-    topology.add_node(Node(node_id=connection.send_back_node_id, node_profile=node_profile))
+    topology.add_node(
+        Node(node_id=connection.send_back_node_id, node_profile=node_profile)
+    )
     topology.add_connection(connection)
 
     # act
@@ -117,7 +155,9 @@ def test_remove_connection_still_connected(topology: Topology, node_profile: Nod
     assert topology.get_connection_profile(connection) is None
 
 
-def test_remove_connection_bridge(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
+def test_remove_connection_bridge(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     """Create a bridge scenario: master -> node_a -> node_b
     and remove the bridge connection (master -> node_a)"""
     # arrange
@@ -128,15 +168,17 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
     topology.add_node(Node(node_id=master_id, node_profile=node_profile))
     topology.add_node(Node(node_id=node_a_id, node_profile=node_profile))
     topology.add_node(Node(node_id=node_b_id, node_profile=node_profile))
-    
+
     topology.set_master_node_id(master_id)
-    
+
     connection_master_to_a = Connection(
         local_node_id=master_id,
         send_back_node_id=node_a_id,
         local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
         send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
-        connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000)
+        connection_profile=ConnectionProfile(
+            throughput=1000, latency=1000, jitter=1000
+        ),
     )
 
     connection_a_to_b = Connection(
@@ -144,7 +186,9 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
         send_back_node_id=node_b_id,
         local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1236"),
         send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1237"),
-        connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000)
+        connection_profile=ConnectionProfile(
+            throughput=1000, latency=1000, jitter=1000
+        ),
     )
 
     topology.add_connection(connection_master_to_a)
@@ -162,10 +206,14 @@ def test_remove_connection_bridge(topology: Topology, node_profile: NodePerforma
     assert topology.get_node_profile(node_b_id) is None
 
 
-def test_remove_node_still_connected(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
+def test_remove_node_still_connected(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     # arrange
     topology.add_node(Node(node_id=connection.local_node_id, node_profile=node_profile))
-    topology.add_node(Node(node_id=connection.send_back_node_id, node_profile=node_profile))
+    topology.add_node(
+        Node(node_id=connection.send_back_node_id, node_profile=node_profile)
+    )
     topology.add_connection(connection)
 
     # act
@@ -175,10 +223,14 @@ def test_remove_node_still_connected(topology: Topology, node_profile: NodePerfo
     assert topology.get_node_profile(connection.local_node_id) is None
 
 
-def test_list_nodes(topology: Topology, node_profile: NodePerformanceProfile, connection: Connection):
+def test_list_nodes(
+    topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
+):
     # arrange
     topology.add_node(Node(node_id=connection.local_node_id, node_profile=node_profile))
-    topology.add_node(Node(node_id=connection.send_back_node_id, node_profile=node_profile))
+    topology.add_node(
+        Node(node_id=connection.send_back_node_id, node_profile=node_profile)
+    )
     topology.add_connection(connection)
 
     # act
@@ -187,4 +239,7 @@ def test_list_nodes(topology: Topology, node_profile: NodePerformanceProfile, co
     # assert
     assert len(nodes) == 2
     assert all(isinstance(node, Node) for node in nodes)
-    assert {node.node_id for node in nodes} == {connection.local_node_id, connection.send_back_node_id}
+    assert {node.node_id for node in nodes} == {
+        connection.local_node_id,
+        connection.send_back_node_id,
+    }

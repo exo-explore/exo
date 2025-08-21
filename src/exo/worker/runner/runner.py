@@ -93,7 +93,6 @@ async def _mlx_generate(
         if isinstance(item, Exception):
             raise item
 
-
         assert isinstance(item, GenerationResponse)  # constrain datatype
         runner_print(item.text)
         yield item
@@ -113,10 +112,10 @@ async def main():
 
         # For testing - these are fake break conditions
         if model_shard_meta.immediate_exception:
-            raise Exception('Fake exception - runner failed to spin up.')
+            raise Exception("Fake exception - runner failed to spin up.")
         if model_shard_meta.should_timeout:
             await asyncio.sleep(model_shard_meta.should_timeout)
-        
+
         setup_start_time = time.time()
 
         mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -133,8 +132,10 @@ async def main():
             tokenizer=tokenizer,
             sampler=sampler,
         )
-        runner_print(f'Warmed up by generating {toks} tokens')
-        runner_write_response(InitializedResponse(time_taken=time.time() - setup_start_time))
+        runner_print(f"Warmed up by generating {toks} tokens")
+        runner_write_response(
+            InitializedResponse(time_taken=time.time() - setup_start_time)
+        )
 
         while True:
             message: RunnerMessage = await runner_read_message()
@@ -144,12 +145,23 @@ async def main():
                     # Ensure we have a chat-completion task subtype
                     # TODO: this is a hack, why are we only looking at the first message? should have a tokenizer
                     prompt = task.messages[0]
-                    if prompt.content is not None and 'EXO RUNNER MUST FAIL' in prompt.content:
-                        runner_print('raising exception')
-                        raise Exception('Artificial runner exception - for testing purposes only.')
-                    if prompt.content is not None and 'EXO RUNNER MUST OOM' in prompt.content:
+                    if (
+                        prompt.content is not None
+                        and "EXO RUNNER MUST FAIL" in prompt.content
+                    ):
+                        runner_print("raising exception")
+                        raise Exception(
+                            "Artificial runner exception - for testing purposes only."
+                        )
+                    if (
+                        prompt.content is not None
+                        and "EXO RUNNER MUST OOM" in prompt.content
+                    ):
                         mlx_force_oom()
-                    if prompt.content is not None and 'EXO RUNNER MUST TIMEOUT' in prompt.content:
+                    if (
+                        prompt.content is not None
+                        and "EXO RUNNER MUST TIMEOUT" in prompt.content
+                    ):
                         await asyncio.sleep(100)
 
                     # Generate responses using the actual MLX generation

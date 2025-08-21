@@ -21,7 +21,9 @@ def user_message():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Must run `sudo sysctl -w iogpu.wired_limit_mb=` and `sudo sysctl -w iogpu.wired_lwm_mb=` before running this test.")
+@pytest.mark.skip(
+    reason="Must run `sudo sysctl -w iogpu.wired_limit_mb=` and `sudo sysctl -w iogpu.wired_lwm_mb=` before running this test."
+)
 async def test_supervisor_catches_oom(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
@@ -38,12 +40,12 @@ async def test_supervisor_catches_oom(
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    task.task_params.messages[0].content = 'EXO RUNNER MUST OOM'
+    task.task_params.messages[0].content = "EXO RUNNER MUST OOM"
     with pytest.raises(RunnerError) as exc_info:
         async for _ in supervisor.stream_response(task):
             pass
-    
+
     error = exc_info.value
-    assert 'memory' in error.error_message.lower()
+    assert "memory" in error.error_message.lower()
 
     await supervisor.astop()

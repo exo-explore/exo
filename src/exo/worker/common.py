@@ -27,7 +27,7 @@ class AssignedRunner(BaseModel):
     runner: Optional[RunnerSupervisor]  # set if the runner is 'up'
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     def status_update_event(self) -> RunnerStatusUpdated:
         return RunnerStatusUpdated(
             runner_id=self.runner_id,

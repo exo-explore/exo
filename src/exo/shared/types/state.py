@@ -17,6 +17,7 @@ def _encode_topology(topo: "Topology") -> dict[str, Any]:  # noqa: D401
 
     return topo.to_snapshot().model_dump()
 
+
 class State(BaseModel):
     """Global system state.
 

@@ -1,7 +1,7 @@
 import asyncio
+import os
 import time
 from collections.abc import AsyncGenerator
-import os
 from typing import Callable, List, Sequence, final
 
 import uvicorn
@@ -41,6 +41,7 @@ from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance
 
+
 def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=chunk.command_id,
@@ -49,14 +50,12 @@ def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=ChatCompletionMessage(
-                    role='assistant',
-                    content=chunk.text
-                ),
-                finish_reason=chunk.finish_reason
+                delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                finish_reason=chunk.finish_reason,
             )
-        ]
+        ],
     )
+
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
     if model_id in MODEL_CARDS:
@@ -65,9 +64,15 @@ async def resolve_model_meta(model_id: str) -> ModelMetadata:
     else:
         return await get_model_meta(model_id)
 
+
 @final
 class API:
-    def __init__(self, command_buffer: List[Command], global_events: AsyncSQLiteEventStorage, get_state: Callable[[], State]) -> None:
+    def __init__(
+        self,
+        command_buffer: List[Command],
+        global_events: AsyncSQLiteEventStorage,
+        get_state: Callable[[], State],
+    ) -> None:
         self.get_state = get_state
         self.command_buffer = command_buffer
         self.global_events = global_events
@@ -76,7 +81,11 @@ class API:
         self._setup_cors()
         self._setup_routes()
 
-        self._app.mount("/", StaticFiles(directory=os.environ["DASHBOARD_DIR"], html=True), name="dashboard")
+        self._app.mount(
+            "/",
+            StaticFiles(directory=os.environ["DASHBOARD_DIR"], html=True),
+            name="dashboard",
+        )
 
     def _setup_cors(self) -> None:
         self._app.add_middleware(
@@ -100,15 +109,17 @@ class API:
     def app(self) -> FastAPI:
         return self._app
 
-    async def create_instance(self, payload: CreateInstanceTaskParams) -> CreateInstanceResponse:
+    async def create_instance(
+        self, payload: CreateInstanceTaskParams
+    ) -> CreateInstanceResponse:
         model_meta = await resolve_model_meta(payload.model_id)
         required_memory_bytes = model_meta.storage_size_kilobytes * 1024
         available_memory_bytes = self._calculate_total_available_memory()
-        
+
         if required_memory_bytes > available_memory_bytes:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Insufficient memory to create instance. Required: {required_memory_bytes // (1024**3):.1f}GB, Available: {available_memory_bytes // (1024**3):.1f}GB"
+                status_code=400,
+                detail=f"Insufficient memory to create instance. Required: {required_memory_bytes // (1024**3):.1f}GB, Available: {available_memory_bytes // (1024**3):.1f}GB",
             )
 
         command = CreateInstanceCommand(
@@ -148,7 +159,9 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _generate_chat_stream(self, command_id: CommandId) -> AsyncGenerator[str, None]:
+    async def _generate_chat_stream(
+        self, command_id: CommandId
+    ) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
 
         events = await self.global_events.get_events_since(0)
@@ -158,7 +171,9 @@ class API:
         while not finished:
             await asyncio.sleep(0.01)
 
-            events: Sequence[EventFromEventLog[Event]] = await self.global_events.get_events_since(prev_idx)
+            events: Sequence[
+                EventFromEventLog[Event]
+            ] = await self.global_events.get_events_since(prev_idx)
             # TODO: Can do this with some better functionality to tail event log into an AsyncGenerator.
             prev_idx = events[-1].idx_in_log if events else prev_idx
 
@@ -166,17 +181,17 @@ class API:
                 event = wrapped_event.event
                 if isinstance(event, ChunkGenerated) and event.command_id == command_id:
                     assert isinstance(event.chunk, TokenChunk)
-                    chunk_response: ChatCompletionResponse = chunk_to_response(event.chunk)
+                    chunk_response: ChatCompletionResponse = chunk_to_response(
+                        event.chunk
+                    )
                     print(chunk_response)
                     yield f"data: {chunk_response.model_dump_json()}\n\n"
 
                     if event.chunk.finish_reason is not None:
                         yield "data: [DONE]"
                         finished = True
-        
-        command = TaskFinishedCommand(
-            command_id=command_id
-        )
+
+        command = TaskFinishedCommand(command_id=command_id)
         self.command_buffer.append(command)
 
         return
@@ -184,23 +199,30 @@ class API:
     async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
         print("TODO: we should send a notification to the user to download the model")
 
-    async def chat_completions(self, payload: ChatCompletionTaskParams) -> StreamingResponse:
+    async def chat_completions(
+        self, payload: ChatCompletionTaskParams
+    ) -> StreamingResponse:
         """Handle chat completions with proper streaming response."""
         model_meta = await resolve_model_meta(payload.model)
         payload.model = model_meta.model_id
-        
+
         # Preprocess messages for GPT-OSS harmony format if needed
         if "gpt-oss" in payload.model.lower():
             import re
+
             for message in payload.messages:
                 if message.content and "<|channel|>" in message.content:
                     # Parse harmony format tags
-                    thinking_pattern = r'<\|channel\|>(.*?)(?=<\|message\|>|$)'
-                    content_pattern = r'<\|message\|>(.*?)(?=<\|end\|>|$)'
-                    
-                    thinking_match = re.search(thinking_pattern, message.content, re.DOTALL)
-                    content_match = re.search(content_pattern, message.content, re.DOTALL)
-                    
+                    thinking_pattern = r"<\|channel\|>(.*?)(?=<\|message\|>|$)"
+                    content_pattern = r"<\|message\|>(.*?)(?=<\|end\|>|$)"
+
+                    thinking_match = re.search(
+                        thinking_pattern, message.content, re.DOTALL
+                    )
+                    content_match = re.search(
+                        content_pattern, message.content, re.DOTALL
+                    )
+
                     if content_match:
                         # Extract the actual content
                         message.content = content_match.group(1).strip()
@@ -213,7 +235,9 @@ class API:
                 break
         else:
             await self._trigger_notify_user_to_download_model(payload.model)
-            raise HTTPException(status_code=404, detail=f"No instance found for model {payload.model}")
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {payload.model}"
+            )
 
         command = ChatCompletionCommand(
             command_id=CommandId(),
@@ -222,29 +246,33 @@ class API:
         )
         self.command_buffer.append(command)
         return StreamingResponse(
-            self._generate_chat_stream(command.command_id),
-            media_type="text/plain"
+            self._generate_chat_stream(command.command_id), media_type="text/plain"
         )
 
     def _calculate_total_available_memory(self) -> int:
         """Calculate total available memory across all nodes in bytes."""
         state = self.get_state()
         total_available = 0
-        
+
         for node_profile in state.node_profiles.values():
             total_available += node_profile.memory.ram_available
-            
+
         return total_available
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""
-        return ModelList(data=[
-            ModelListModel(
-                id=card.short_id,
-                hugging_face_id=card.model_id,
-                name=card.name,
-                description=card.description,
-                tags=card.tags) for card in MODEL_CARDS.values()])
+        return ModelList(
+            data=[
+                ModelListModel(
+                    id=card.short_id,
+                    hugging_face_id=card.model_id,
+                    name=card.name,
+                    description=card.description,
+                    tags=card.tags,
+                )
+                for card in MODEL_CARDS.values()
+            ]
+        )
 
 
 def start_fastapi_server(

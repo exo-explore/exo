@@ -30,22 +30,21 @@ from exo.worker.tests.test_integration.integration_utils import until_event_with
 
 
 async def test_runner_spinup_exception(
-    worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
+    worker_running: Callable[
+        [NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]
+    ],
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-    ):
+):
     _, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
     instance_value.instance_type = InstanceStatus.ACTIVE
-    instance_value.shard_assignments.runner_to_shard[RUNNER_1_ID].immediate_exception = True
+    instance_value.shard_assignments.runner_to_shard[
+        RUNNER_1_ID
+    ].immediate_exception = True
 
     await global_events.append_events(
-        [
-            InstanceCreated(
-                instance=instance_value
-            )
-        ], 
-        origin=MASTER_NODE_ID
+        [InstanceCreated(instance=instance_value)], origin=MASTER_NODE_ID
     )
 
     await asyncio.sleep(5.0)
@@ -53,17 +52,28 @@ async def test_runner_spinup_exception(
     # Ensure the correct events have been emitted
     events = await global_events.get_events_since(0)
 
-    assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) \
-        and isinstance(x.event.runner_status, FailedRunnerStatus) \
-        and x.event.runner_status.error_message is not None \
-        and 'fake exception' in x.event.runner_status.error_message.lower()]) == 3
+    assert (
+        len(
+            [
+                x
+                for x in events
+                if isinstance(x.event, RunnerStatusUpdated)
+                and isinstance(x.event.runner_status, FailedRunnerStatus)
+                and x.event.runner_status.error_message is not None
+                and "fake exception" in x.event.runner_status.error_message.lower()
+            ]
+        )
+        == 3
+    )
     assert any([isinstance(x.event, InstanceDeleted) for x in events])
 
 
 async def test_runner_spinup_timeout(
-    worker_running: Callable[[NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]],
+    worker_running: Callable[
+        [NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]
+    ],
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-    ):
+):
     _, global_events = await worker_running(NODE_A)
 
     instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
@@ -71,18 +81,28 @@ async def test_runner_spinup_timeout(
     instance_value.shard_assignments.runner_to_shard[RUNNER_1_ID].should_timeout = 10
 
     await global_events.append_events(
-        [
-            InstanceCreated(
-                instance=instance_value
-            )
-        ], 
-        origin=MASTER_NODE_ID
+        [InstanceCreated(instance=instance_value)], origin=MASTER_NODE_ID
     )
 
-    await until_event_with_timeout(global_events, RunnerStatusUpdated, multiplicity=3, condition=lambda x: isinstance(x.runner_status, FailedRunnerStatus))
+    await until_event_with_timeout(
+        global_events,
+        RunnerStatusUpdated,
+        multiplicity=3,
+        condition=lambda x: isinstance(x.runner_status, FailedRunnerStatus),
+    )
 
     # Ensure the correct events have been emitted
     events = await global_events.get_events_since(0)
 
-    assert len([x for x in events if isinstance(x.event, RunnerStatusUpdated) and isinstance(x.event.runner_status, FailedRunnerStatus)]) == 3
+    assert (
+        len(
+            [
+                x
+                for x in events
+                if isinstance(x.event, RunnerStatusUpdated)
+                and isinstance(x.event.runner_status, FailedRunnerStatus)
+            ]
+        )
+        == 3
+    )
     assert any([isinstance(x.event, InstanceDeleted) for x in events])

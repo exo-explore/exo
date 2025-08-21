@@ -25,11 +25,11 @@ def create_node():
                     ram_total=1000,
                     ram_available=memory,
                     swap_total=1000,
-                    swap_available=1000
+                    swap_available=1000,
                 ),
                 network_interfaces=[],
-                system=SystemPerformanceProfile(flops_fp16=1000)
-            )
+                system=SystemPerformanceProfile(flops_fp16=1000),
+            ),
         )
 
     return _create_node
@@ -39,7 +39,10 @@ def create_node():
 @pytest.fixture
 def create_connection():
     port_counter = 1235
-    def _create_connection(source_node_id: NodeId, sink_node_id: NodeId, send_back_port: int | None = None) -> Connection:
+
+    def _create_connection(
+        source_node_id: NodeId, sink_node_id: NodeId, send_back_port: int | None = None
+    ) -> Connection:
         nonlocal port_counter
         if send_back_port is None:
             send_back_port = port_counter
@@ -48,8 +51,12 @@ def create_connection():
             local_node_id=source_node_id,
             send_back_node_id=sink_node_id,
             local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
-            send_back_multiaddr=Multiaddr(address=f"/ip4/127.0.0.1/tcp/{send_back_port}"),
-            connection_profile=ConnectionProfile(throughput=1000, latency=1000, jitter=1000)
+            send_back_multiaddr=Multiaddr(
+                address=f"/ip4/127.0.0.1/tcp/{send_back_port}"
+            ),
+            connection_profile=ConnectionProfile(
+                throughput=1000, latency=1000, jitter=1000
+            ),
         )
 
     return _create_connection

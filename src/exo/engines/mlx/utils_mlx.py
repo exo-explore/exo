@@ -24,12 +24,14 @@ from exo.worker.runner.communication import runner_print
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
+
 def mx_barrier():
-    mx.eval( # type: ignore
+    mx.eval(  # type: ignore
         mx.distributed.all_sum(
             mx.array(1.0), stream=mx.default_stream(mx.Device(mx.cpu))
         )
     )
+
 
 class HostList(RootModel[list[str]]):
     @classmethod
@@ -37,7 +39,7 @@ class HostList(RootModel[list[str]]):
         return cls(root=[str(host) for host in hosts])
 
 
-def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group: # type: ignore
+def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group:  # type: ignore
     """
     Initialize the MLX distributed (runs in thread pool)
     """
@@ -79,18 +81,20 @@ def initialize_mlx(
     return model, tokenizer, sampler
 
 
-def shard_and_load(model_shard_meta: ShardMetadata) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(model_shard_meta.model_meta.model_id)    
+def shard_and_load(
+    model_shard_meta: ShardMetadata,
+) -> tuple[nn.Module, TokenizerWrapper]:
+    model_path = build_model_path(model_shard_meta.model_meta.model_id)
 
     runner_print(f"loading model from {model_path}")
 
-    model, _ = load_model(model_path, lazy=True, strict=False) # type: ignore
+    model, _ = load_model(model_path, lazy=True, strict=False)  # type: ignore
     assert isinstance(model, nn.Module)
 
     tokenizer = load_tokenizer(model_path)
     assert isinstance(tokenizer, TokenizerWrapper)
     model = auto_parallel(model, model_shard_meta)
-    mx.eval(model.parameters()) # type: ignore
+    mx.eval(model.parameters())  # type: ignore
 
     # Synchronize processes before generation to avoid timeout
     mx_barrier()
@@ -112,22 +116,24 @@ async def apply_chat_template(
     # Filter out None values, keeping relevant keys for the model
     formatted_messages = []
     for message in messages_dicts:
-        filtered_message: dict[str, Any] = {k: v for k, v in message.items() if v is not None} # type: ignore
-        
+        filtered_message: dict[str, Any] = {
+            k: v for k, v in message.items() if v is not None
+        }  # type: ignore
+
         # Verify we have required fields
         if "role" not in filtered_message:
             raise ValueError(f"Message missing 'role' field: {filtered_message}")
         if "content" not in filtered_message and "thinking" not in filtered_message:
             # If neither content nor thinking is present, skip this message
             continue
-        
-        formatted_messages.append(filtered_message) # type: ignore
+
+        formatted_messages.append(filtered_message)  # type: ignore
 
     messages_dicts = formatted_messages
 
     prompt: str = await loop.run_in_executor(
         executor=mlx_executor,
-        func=lambda: tokenizer.apply_chat_template( # type: ignore
+        func=lambda: tokenizer.apply_chat_template(  # type: ignore
             messages_dicts,
             tokenize=False,
             add_generation_prompt=True,
@@ -136,6 +142,7 @@ async def apply_chat_template(
 
     return prompt
 
+
 async def warmup_inference(
     mlx_executor: concurrent.futures.ThreadPoolExecutor,
     model: nn.Module,
@@ -143,7 +150,7 @@ async def warmup_inference(
     sampler: Callable[[mx.array], mx.array],
 ) -> int:
     loop = asyncio.get_running_loop()
-    
+
     warmup_prompt = await apply_chat_template(
         mlx_executor=mlx_executor,
         tokenizer=tokenizer,
@@ -151,15 +158,15 @@ async def warmup_inference(
             model="warmup",
             messages=[
                 ChatCompletionMessage(
-                    role='user',
-                    content='Prompt to warm up the inference engine. Repeat this.'
+                    role="user",
+                    content="Prompt to warm up the inference engine. Repeat this.",
                 )
-            ]
+            ],
         ),
     )
-    
+
     tokens_generated = 0
-    
+
     def _generate_warmup():
         nonlocal tokens_generated
         for _ in stream_generate(
@@ -170,10 +177,10 @@ async def warmup_inference(
             sampler=sampler,
         ):
             tokens_generated += 1
-    
+
     await loop.run_in_executor(mlx_executor, _generate_warmup)
     mx_barrier()
-    
+
     return tokens_generated
 
 
@@ -181,12 +188,12 @@ def mlx_force_oom(size: int = 40000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
-    mx.set_default_device(mx.gpu) # type: ignore
-    a = mx.random.uniform(shape=(size, size), dtype=mx.float32) # type: ignore
-    b = mx.random.uniform(shape=(size, size), dtype=mx.float32) # type: ignore
-    mx.eval(a, b) # type: ignore
-    c = mx.matmul(a, b) # type: ignore
-    d = mx.matmul(a, c) # type: ignore
-    e = mx.matmul(b, c) # type: ignore
-    f = mx.sigmoid(d + e) # type: ignore
-    mx.eval(f) # type: ignore
+    mx.set_default_device(mx.gpu)  # type: ignore
+    a = mx.random.uniform(shape=(size, size), dtype=mx.float32)  # type: ignore
+    b = mx.random.uniform(shape=(size, size), dtype=mx.float32)  # type: ignore
+    mx.eval(a, b)  # type: ignore
+    c = mx.matmul(a, b)  # type: ignore
+    d = mx.matmul(a, c)  # type: ignore
+    e = mx.matmul(b, c)  # type: ignore
+    f = mx.sigmoid(d + e)  # type: ignore
+    mx.eval(f)  # type: ignore

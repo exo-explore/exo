@@ -12,9 +12,7 @@ class ID(str):
 
     @classmethod
     def __get_pydantic_core_schema__(
-            cls,
-            _source: type[Any],
-            handler: GetCoreSchemaHandler
+        cls, _source: type[Any], handler: GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
         # Re‑use the already‑defined schema for `str`
         return handler.generate_schema(str)
@@ -41,4 +39,3 @@ class Host(BaseModel):
         if not (0 <= v <= 65535):
             raise ValueError("Port must be between 0 and 65535")
         return v
-

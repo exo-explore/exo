@@ -2,19 +2,16 @@ default:
     @just --list
 
 fmt:
-    uv run ruff format master worker shared engines/*
+    uv run ruff format src
 
 lint:
-    uv run ruff check --fix master worker shared engines/*
+    uv run ruff check --fix src
 
 lint-check:
-    uv run ruff check master worker shared engines/*
+    uv run ruff check src
 
 test:
-    uv run pytest master worker shared engines/*
-
-test-fast:
-    uv run pytest master shared engines/*
+    uv run pytest src
 
 check:
     uv run basedpyright --project pyproject.toml

@@ -29,9 +29,10 @@ from exo.worker.worker import Worker
 def user_message() -> str:
     return "What is the capital of Japan?"
 
+
 @pytest.mark.skipif(
     os.environ.get("DETAILED", "").lower() != "true",
-    reason="This test only runs when ENABLE_SPINUP_TIMEOUT_TEST=true environment variable is set"
+    reason="This test only runs when ENABLE_SPINUP_TIMEOUT_TEST=true environment variable is set",
 )
 async def check_runner_connection(
     logger: Logger,
@@ -41,7 +42,7 @@ async def check_runner_connection(
     # Track all tasks and workers for cleanup
     tasks: list[asyncio.Task[None]] = []
     workers: list[Worker] = []
-    
+
     try:
         event_log_manager = EventLogManager(EventLogConfig(), logger)
         await event_log_manager.initialize()
@@ -72,49 +73,46 @@ async def check_runner_connection(
         task2 = asyncio.create_task(run(worker2, logger))
         tasks.append(task2)
 
-        model_id = ModelId('mlx-community/Llama-3.2-1B-Instruct-4bit')
+        model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
         shard_assignments = ShardAssignments(
             model_id=model_id,
             runner_to_shard={
                 RUNNER_1_ID: pipeline_shard_meta(2, 0),
-                RUNNER_2_ID: pipeline_shard_meta(2, 1)
+                RUNNER_2_ID: pipeline_shard_meta(2, 1),
             },
-            node_to_runner={
-                NODE_A: RUNNER_1_ID,
-                NODE_B: RUNNER_2_ID
-            }
+            node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         )
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
             instance_type=InstanceStatus.ACTIVE,
             shard_assignments=shard_assignments,
-            hosts=hosts(2)
+            hosts=hosts(2),
         )
 
         await global_events.append_events(
             [
-                InstanceCreated(
-                    instance=instance
-                ),
+                InstanceCreated(instance=instance),
             ],
-            origin=MASTER_NODE_ID
+            origin=MASTER_NODE_ID,
         )
 
         from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
-        async def wait_for_runner_supervisor(worker: Worker, timeout: float = 5.0) -> RunnerSupervisor | None:
+        async def wait_for_runner_supervisor(
+            worker: Worker, timeout: float = 5.0
+        ) -> RunnerSupervisor | None:
             end = asyncio.get_event_loop().time() + timeout
             while True:
                 assigned_runners = list(worker.assigned_runners.values())
                 if assigned_runners:
                     runner = assigned_runners[0].runner
                     if isinstance(runner, RunnerSupervisor):
-                        print('breaking because success')
+                        print("breaking because success")
                         return runner
                     if isinstance(assigned_runners[0].status, FailedRunnerStatus):
-                        print('breaking because failed')
+                        print("breaking because failed")
                         return runner
                 if asyncio.get_event_loop().time() > end:
                     raise TimeoutError("RunnerSupervisor was not set within timeout")
@@ -129,7 +127,7 @@ async def check_runner_connection(
                     instance_id=instance.instance_id,
                 ),
             ],
-            origin=MASTER_NODE_ID
+            origin=MASTER_NODE_ID,
         )
 
         await asyncio.sleep(0.5)
@@ -139,9 +137,10 @@ async def check_runner_connection(
         # Cancel all worker tasks
         for task in tasks:
             task.cancel()
-        
+
         # Wait for cancellation to complete
         await asyncio.gather(*tasks, return_exceptions=True)
+
 
 # Check Running status
 
@@ -165,7 +164,7 @@ async def check_runner_connection(
 # ) -> None:
 #     total_runs = 100
 #     successes = 0
-    
+
 #     for _ in range(total_runs):
 #         # Create a fresh event loop for each iteration
 #         loop = asyncio.new_event_loop()
@@ -174,7 +173,7 @@ async def check_runner_connection(
 #         # Create a fresh event loop for each iteration
 #         loop = asyncio.new_event_loop()
 #         asyncio.set_event_loop(loop)
-        
+
 #         try:
 #             result = loop.run_until_complete(check_runner_connection(
 #                 logger=logger,
@@ -203,16 +202,16 @@ async def check_runner_connection(
 #             pending = asyncio.all_tasks(loop)
 #             for task in pending:
 #                 task.cancel()
-            
+
 #             # Run the event loop briefly to allow cancellation to complete
 #             loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 #             # Run the event loop briefly to allow cancellation to complete
 #             loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            
+
 #             # Close the event loop
 #             loop.close()
 #             # Close the event loop
 #             loop.close()
-    
+
 #     print(f"Runner connection successes: {successes} / {total_runs}")
 #     print(f"Runner connection successes: {successes} / {total_runs}")

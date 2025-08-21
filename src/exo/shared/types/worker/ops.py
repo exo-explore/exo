@@ -18,36 +18,56 @@ class RunnerOpType(str, Enum):
     RUNNER_FAILED = "runner_failed"
     CHAT_COMPLETION = "chat_completion"
 
+
 RunnerOpT = TypeVar("RunnerOpT", bound=RunnerOpType)
+
 
 class BaseRunnerOp(BaseModel, Generic[RunnerOpT]):
     op_type: RunnerOpT
 
+
 class AssignRunnerOp(BaseRunnerOp[Literal[RunnerOpType.ASSIGN_RUNNER]]):
-    op_type: Literal[RunnerOpType.ASSIGN_RUNNER] = Field(default=RunnerOpType.ASSIGN_RUNNER, frozen=True)
+    op_type: Literal[RunnerOpType.ASSIGN_RUNNER] = Field(
+        default=RunnerOpType.ASSIGN_RUNNER, frozen=True
+    )
     instance_id: InstanceId
     runner_id: RunnerId
     shard_metadata: ShardMetadata
     hosts: list[Host]
 
+
 class UnassignRunnerOp(BaseRunnerOp[Literal[RunnerOpType.UNASSIGN_RUNNER]]):
-    op_type: Literal[RunnerOpType.UNASSIGN_RUNNER] = Field(default=RunnerOpType.UNASSIGN_RUNNER, frozen=True)
+    op_type: Literal[RunnerOpType.UNASSIGN_RUNNER] = Field(
+        default=RunnerOpType.UNASSIGN_RUNNER, frozen=True
+    )
     runner_id: RunnerId
+
 
 class RunnerUpOp(BaseRunnerOp[Literal[RunnerOpType.RUNNER_UP]]):
-    op_type: Literal[RunnerOpType.RUNNER_UP] = Field(default=RunnerOpType.RUNNER_UP, frozen=True)
+    op_type: Literal[RunnerOpType.RUNNER_UP] = Field(
+        default=RunnerOpType.RUNNER_UP, frozen=True
+    )
     runner_id: RunnerId
+
 
 class RunnerDownOp(BaseRunnerOp[Literal[RunnerOpType.RUNNER_DOWN]]):
-    op_type: Literal[RunnerOpType.RUNNER_DOWN] = Field(default=RunnerOpType.RUNNER_DOWN, frozen=True)
+    op_type: Literal[RunnerOpType.RUNNER_DOWN] = Field(
+        default=RunnerOpType.RUNNER_DOWN, frozen=True
+    )
     runner_id: RunnerId
+
 
 class RunnerFailedOp(BaseRunnerOp[Literal[RunnerOpType.RUNNER_FAILED]]):
-    op_type: Literal[RunnerOpType.RUNNER_FAILED] = Field(default=RunnerOpType.RUNNER_FAILED, frozen=True)
+    op_type: Literal[RunnerOpType.RUNNER_FAILED] = Field(
+        default=RunnerOpType.RUNNER_FAILED, frozen=True
+    )
     runner_id: RunnerId
 
+
 class ExecuteTaskOp(BaseRunnerOp[Literal[RunnerOpType.CHAT_COMPLETION]]):
-    op_type: Literal[RunnerOpType.CHAT_COMPLETION] = Field(default=RunnerOpType.CHAT_COMPLETION, frozen=True)
+    op_type: Literal[RunnerOpType.CHAT_COMPLETION] = Field(
+        default=RunnerOpType.CHAT_COMPLETION, frozen=True
+    )
     runner_id: RunnerId
     task: Task
 
@@ -62,5 +82,5 @@ RunnerOp = Annotated[
         RunnerFailedOp,
         ExecuteTaskOp,
     ],
-    Field(discriminator="op_type")
+    Field(discriminator="op_type"),
 ]

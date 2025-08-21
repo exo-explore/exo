@@ -14,9 +14,7 @@ from exo.master.tests.api_utils_test import (
 async def test_master_api_multiple_response_sequential() -> None:
     # TODO: This hangs at the moment it seems.
     return
-    messages = [
-        ChatMessage(role="user", content="Hello, who are you?")
-    ]
+    messages = [ChatMessage(role="user", content="Hello, who are you?")]
     token_count = 0
     text: str = ""
     async for choice in stream_chatgpt_response(messages):
@@ -30,11 +28,9 @@ async def test_master_api_multiple_response_sequential() -> None:
     assert token_count >= 3, f"Expected at least 3 tokens, got {token_count}"
     assert len(text) > 0, "Expected non-empty response text"
 
-    await asyncio.sleep(0.1)    
+    await asyncio.sleep(0.1)
 
-    messages = [
-        ChatMessage(role="user", content="What time is it in France?")
-    ]
+    messages = [ChatMessage(role="user", content="What time is it in France?")]
     token_count = 0
     text = ""  # re-initialize, do not redeclare type
     async for choice in stream_chatgpt_response(messages):

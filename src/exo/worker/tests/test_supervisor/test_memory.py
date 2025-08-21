@@ -23,9 +23,11 @@ def get_memory_mb(process: Process) -> float:
     rss_bytes: int = ps.memory_info().rss  # type: ignore[attr-defined]
     return rss_bytes / (1024 * 1024)
 
+
 @pytest.fixture
 async def model_meta() -> ModelMetadata:
-    return await get_model_meta('mlx-community/Llama-3.3-70B-Instruct-4bit')
+    return await get_model_meta("mlx-community/Llama-3.3-70B-Instruct-4bit")
+
 
 @pytest.mark.asyncio
 async def test_supervisor_inference_exception(
@@ -45,16 +47,16 @@ async def test_supervisor_inference_exception(
 
     process: Process = supervisor.runner_process
     memory = get_memory_mb(process)
-    assert memory > 30*100
+    assert memory > 30 * 100
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    task.task_params.messages[0].content = 'EXO RUNNER MUST FAIL'
+    task.task_params.messages[0].content = "EXO RUNNER MUST FAIL"
     with pytest.raises(RunnerError):
         async for _ in supervisor.stream_response(task):
             pass
 
     await supervisor.astop()
-    
+
     available_memory_bytes: int = psutil.virtual_memory().available
     print(available_memory_bytes // (2**30))
     assert available_memory_bytes > 30 * 2**30
