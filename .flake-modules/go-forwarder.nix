@@ -33,37 +33,39 @@
       ...
     }:
     let
-      flakeRoot = nixpkgs-lib.getExe config.flake-root.package;
-
-      # Build the networking/forwarder Go utility.
-      forwarder = pkgs.buildGoModule {
-        pname = "exo-forwarder";
-        version = "0.1.0";
-        src = "${flakeRoot}/networking/forwarder";
-
-        vendorHash = "sha256-BXIGg2QYqHDz2TNe8hLAGC6jVlffp9766H+WdkkuVgA=";
-
-        # Only the main package at the repository root needs building.
-        subPackages = [ "." ];
-      };
+#      flakeRoot = nixpkgs-lib.getExe config.flake-root.package;
+#
+#      # Build the networking/forwarder Go utility.
+#      forwarder = pkgs.buildGoModule {
+#        pname = "exo-forwarder";
+#        version = "0.1.0";
+#        src = "${flakeRoot}/networking/forwarder";
+#
+#        vendorHash = "sha256-BXIGg2QYqHDz2TNe8hLAGC6jVlffp9766H+WdkkuVgA=";
+#
+#        # Only the main package at the repository root needs building.
+#        subPackages = [ "." ];
+#      };
     in
     {
       packages = {
-        inherit forwarder;
+#        inherit forwarder;
       };
 
       apps = {
-        forwarder = {
-          type = "app";
-          program = "${forwarder}/bin/forwarder";
-        };
+#        forwarder = {
+#          type = "app";
+#          program = "${forwarder}/bin/forwarder";
+#        };
       };
 
       make-shells.default = {
         # Go 1.24 compiler – align with go.mod
         packages = [ pkgs.go_1_24 ];
-        shellHook = "export GOPATH=$FLAKE_ROOT/.go_cache";
+        shellHook = ''
+          GOPATH="''$(${nixpkgs-lib.getExe config.flake-root.package})"/.go_cache
+          export GOPATH
+        '';
       };
     };
 }
-

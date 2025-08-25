@@ -131,15 +131,6 @@ wheels = [
 ]
 
 [[package]]
-name = "braq"
-version = "0.0.12"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/54/3b/1b918c408e11ca33f9b9dcecc8e08eac7762887dd42b584f0efb6fe26c55/braq-0.0.12.tar.gz", hash = "sha256:51dae51b863cbba2cd37da163df06b7dc5124904d2c26b92bda54c1bde66d74b", size = 15272, upload-time = "2024-12-10T20:48:53.856Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/53/ed5082619966b1d15b5c039ac722ba99956d92d4b08a9bd5eb4c3535cc1f/braq-0.0.12-py3-none-any.whl", hash = "sha256:41b7bdd0d004faef693751615fbb11c53ac0b886c772b83aea61ea6dc2f6e518", size = 26392, upload-time = "2024-12-10T20:48:50.813Z" },
-]
-
-[[package]]
 name = "certifi"
 version = "2025.8.3"
 source = { registry = "https://pypi.org/simple" }
@@ -205,6 +196,12 @@ wheels = [
 ]
 
 [[package]]
+name = "cobs"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/ef/ea149311227a4fc3160cc885fce06da7c7d76782a308ef070b8065c69953/cobs-1.2.2.tar.gz", hash = "sha256:dbdd5e32111d72786f83d0c269215dcd6ac629b1ac1962c6878221f3b2ca98da", size = 14582, upload-time = "2025-07-20T01:08:35.434Z" }
+
+[[package]]
 name = "cryptography"
 version = "45.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -253,6 +250,7 @@ dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "base58", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "cobs", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "filelock", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -294,6 +292,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.12.14" },
     { name = "aiosqlite", specifier = ">=0.21.0" },
     { name = "base58", specifier = ">=2.1.1" },
+    { name = "cobs", specifier = ">=1.2.2" },
     { name = "cryptography", specifier = ">=45.0.5" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "filelock", specifier = ">=3.18.0" },
@@ -331,14 +330,14 @@ name = "exo-scripts"
 version = "0.1.0"
 source = { editable = "scripts" }
 dependencies = [
+    { name = "exo", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "shared", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "exo", editable = "." },
     { name = "huggingface-hub", specifier = ">=0.33.4" },
-    { name = "shared" },
 ]
 
 [[package]]
@@ -567,19 +566,6 @@ wheels = [
 ]
 
 [[package]]
-name = "kvf"
-version = "0.0.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "braq", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "paradict", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/f8/e1826c156d4f97cf4662a6110cbbcfd91b5e5570c8a88bf0a8270718621e/kvf-0.0.3.tar.gz", hash = "sha256:f4885b1bbe66c8c20fdabe5cedeb3c0e5d12a54ac495f9e5fcf6fed0e0c51b73", size = 4938, upload-time = "2024-12-10T20:49:13.171Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/db/4a8d3b1fef45cabcadf36f9a2231b2cde3dddd3a58ab1723119c7fbce34f/kvf-0.0.3-py3-none-any.whl", hash = "sha256:9d666e51cae512e3f95c55b77524e34d0095b278c81f96f7bbc7d37b5bd545c6", size = 4716, upload-time = "2024-12-10T20:49:11.815Z" },
-]
-
-[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -762,15 +748,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a1/d4/1fc4078c65507b51b96ca8f8c3ba19e6a61c8253c72794544580a7b6c24d/packaging-25.0.tar.gz", hash = "sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f", size = 165727, upload-time = "2025-04-19T11:48:59.673Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469, upload-time = "2025-04-19T11:48:57.875Z" },
-]
-
-[[package]]
-name = "paradict"
-version = "0.0.16"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/40/83/8cf8d94be55ab9ea783e1f8ece06059cd986bb482ad69f7be549839b9e07/paradict-0.0.16.tar.gz", hash = "sha256:d909d122bf47028a45334eb2280d1e1bcb401fda89986af42c39fd2fadf9de4d", size = 61471, upload-time = "2024-12-10T21:23:49.007Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/f9/a9807d307ba1837bb8799e1337f41edcdbb92ef6090668dc50f483a168bf/paradict-0.0.16-py3-none-any.whl", hash = "sha256:28df79f0dc0e68c8f8a3e9b7c75e67a85305ef7298653fc7a369a1bf4f58cb20", size = 61735, upload-time = "2024-12-10T21:23:45.408Z" },
 ]
 
 [[package]]
@@ -1070,19 +1047,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/29/473f789e4ac242593ac1656fbece6e1ecd860bb289e635e963667807afe3/safetensors-0.6.2-cp38-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:fa48268185c52bfe8771e46325a1e21d317207bcabcb72e65c6e28e9ffeb29c7", size = 747281, upload-time = "2025-08-08T13:13:54.656Z" },
     { url = "https://files.pythonhosted.org/packages/68/52/f7324aad7f2df99e05525c84d352dc217e0fa637a4f603e9f2eedfbe2c67/safetensors-0.6.2-cp38-abi3-musllinux_1_2_i686.whl", hash = "sha256:d83c20c12c2d2f465997c51b7ecb00e407e5f94d7dec3ea0cc11d86f60d3fde5", size = 692286, upload-time = "2025-08-08T13:13:55.884Z" },
     { url = "https://files.pythonhosted.org/packages/ad/fe/cad1d9762868c7c5dc70c8620074df28ebb1a8e4c17d4c0cb031889c457e/safetensors-0.6.2-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d944cea65fad0ead848b6ec2c37cc0b197194bec228f8020054742190e9312ac", size = 655957, upload-time = "2025-08-08T13:13:57.029Z" },
-]
-
-[[package]]
-name = "shared"
-version = "0.0.32"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "kvf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "paradict", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/39/f39c2560ac971efbf437f7ffa1d82a12fa77f50b0127e6e5ec5cc8d377df/shared-0.0.32.tar.gz", hash = "sha256:7308adc95c0dab14d0c99635cd8049d1f004cc7fef7396d3fe47323c34ec58c6", size = 7793, upload-time = "2024-12-10T20:49:22.469Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/03/da58e40386d8ebcdfa3617070a95ca1deb5a5e6aa3d4e15ea2045173d5ac/shared-0.0.32-py3-none-any.whl", hash = "sha256:f17962c0f0fe6a23015accc7cac029e1c24c4b14578094e1f7033a7a7ef16140", size = 29304, upload-time = "2024-12-10T20:49:19.763Z" },
 ]
 
 [[package]]

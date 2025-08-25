@@ -393,6 +393,6 @@ class TestElectionCallbacks:
         callbacks = ElectionCallbacks(mock_supervisor, test_logger)
         await callbacks.on_became_replica()
 
-        mock_supervisor.notify_role_change.assert_called_once_with(
+        mock_supervisor.notify_role_change.assert_called_once_with(  # type: ignore
             ForwarderRole.REPLICA
-        )  # type: ignore
+        )

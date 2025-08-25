@@ -12,12 +12,12 @@ hosts_*.json
 # TODO figure out how to properly solve the issue with these target directories showing up
 networking/target/
 networking/topology/target/
-
-build/
-*.xcuserstate
-
 rust/target/
 rust/Cargo.lock
+
+build/
+dist/
+*.xcuserstate
 
 .DS_Store
 */.DS_Store

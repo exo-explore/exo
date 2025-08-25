@@ -1,3 +1,5 @@
+import 'just-flake.just'
+
 default:
     @just --list
 
@@ -45,3 +47,9 @@ run n="1" clean="false":
             if [ "{{clean}}" = "true" ]; then ./run.sh -rc; else ./run.sh -r; fi; \
         done; \
     fi
+
+# remote debugging auto-runner command: TODO: find better place to put this??
+# -> this pulls from upstream and wipes .exo folder, rebuilds & restarts
+# -> TODO: maybe add a sync step for python deps ??
+autorun-master:
+    uv run scripts/watch-pull-restart.py --cmd "uv run exo-master" --restart-cmd "rm -rf ~/.exo && just build-forwarder"

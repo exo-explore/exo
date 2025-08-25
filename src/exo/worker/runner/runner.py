@@ -6,7 +6,7 @@ from functools import partial
 from typing import Callable, cast
 
 import mlx.core as mx
-import mlx.nn as nn
+import mlx.nn as nn  # pyright: ignore [reportMissingTypeStubs]
 from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 

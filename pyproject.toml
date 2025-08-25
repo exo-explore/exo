@@ -30,6 +30,7 @@ dependencies = [
     "mlx-lm @ https://github.com/ml-explore/mlx-lm.git",
     "psutil>=7.0.0",
     "transformers>=4.55.2",
+    "cobs>=1.2.2",
 ]
 
 [project.scripts]

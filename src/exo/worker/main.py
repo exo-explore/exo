@@ -3,6 +3,7 @@ import logging
 
 from exo.shared.apply import apply
 from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from exo.shared.keypair import Keypair, get_node_id_keypair
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     NodePerformanceMeasured,
@@ -12,7 +13,6 @@ from exo.shared.types.worker.ops import (
     ExecuteTaskOp,
     RunnerOp,
 )
-from exo.shared.utils import Keypair, get_node_id_keypair
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.plan import plan
 from exo.worker.utils.profile import start_polling_node_metrics

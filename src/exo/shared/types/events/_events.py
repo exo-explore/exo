@@ -297,8 +297,8 @@ def _check_event_type_consistency():
         # grab type hints and extract the right values from it
         cls_hints = get_type_hints(cls)
         assert (
-            "event_type" in cls_hints and get_origin(cls_hints["event_type"]) is Literal
-        ), (  # pyright: ignore[reportAny]
+            "event_type" in cls_hints and get_origin(cls_hints["event_type"]) is Literal  # type: ignore
+        ), (
             f"{get_error_reporting_message()}",
             f"The class {cls} is missing a {Literal}-annotated `event_type` field.",
         )

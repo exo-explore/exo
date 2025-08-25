@@ -16,6 +16,8 @@ EXO_NODE_ID_KEYPAIR = EXO_HOME / "node_id.keypair"
 EXO_WORKER_KEYRING_FILE = EXO_HOME / "worker_keyring"
 EXO_MASTER_KEYRING_FILE = EXO_HOME / "master_keyring"
 
+EXO_IPC_DIR = EXO_HOME / "ipc"
+
 # libp2p topics for event forwarding
 LIBP2P_WORKER_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"

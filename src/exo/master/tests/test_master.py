@@ -10,6 +10,7 @@ from exo.master.main import Master
 from exo.shared.db.sqlite.config import EventLogConfig
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.db.sqlite.event_log_manager import EventLogManager
+from exo.shared.keypair import Keypair
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event, EventFromEventLog, Heartbeat, TaskCreated
@@ -31,10 +32,13 @@ from exo.shared.types.profiling import (
     SystemPerformanceProfile,
 )
 from exo.shared.types.tasks import ChatCompletionTask, TaskStatus, TaskType
-from exo.shared.types.worker.common import InstanceId
-from exo.shared.types.worker.instances import Instance, InstanceStatus, ShardAssignments
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceStatus,
+    ShardAssignments,
+)
 from exo.shared.types.worker.shards import PartitionStrategy, PipelineShardMetadata
-from exo.shared.utils import Keypair
 
 
 def _create_forwarder_dummy_binary() -> Path:

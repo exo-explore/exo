@@ -14,7 +14,7 @@ from typing import Optional
 from pytest import LogCaptureFixture
 
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
-from exo.shared.utils import get_node_id_keypair
+from exo.shared.keypair import get_node_id_keypair
 
 NUM_CONCURRENT_PROCS = 10
 

@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 from exo.shared.constants import EXO_HOME
 from exo.shared.db.sqlite.config import EventLogConfig, EventLogType
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
+from exo.shared.utils.fs import ensure_directory_exists
 
 
 class EventLogManager:
@@ -25,7 +26,7 @@ class EventLogManager:
         self._connectors: Dict[EventLogType, AsyncSQLiteEventStorage] = {}
 
         # Ensure base directory exists
-        EXO_HOME.mkdir(parents=True, exist_ok=True)
+        ensure_directory_exists(EXO_HOME)
 
     # TODO: This seems like it's a pattern to avoid an async __init__ function. But as we know, there's a better pattern for this - using a create() function, like in runner_supervisor.
     async def initialize(self, max_retries: int = 3) -> None:

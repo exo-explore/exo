@@ -4,7 +4,7 @@ import hashlib
 import logging
 import os
 from pathlib import Path
-from typing import Any, Type, final
+from typing import final
 
 import base58
 from cryptography.hazmat.primitives import serialization
@@ -214,12 +214,6 @@ class Keypair:
     def public_key(self) -> ed25519.Ed25519PublicKey:
         """Access to the underlying public key for py-libp2p compatibility."""
         return self._public_key
-
-
-def ensure_type[T](obj: Any, expected_type: Type[T]) -> T:  # type: ignore
-    if not isinstance(obj, expected_type):
-        raise TypeError(f"Expected {expected_type}, got {type(obj)}")  # type: ignore
-    return obj
 
 
 def get_node_id_keypair(

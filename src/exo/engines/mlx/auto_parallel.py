@@ -1,7 +1,7 @@
 from typing import Protocol, cast, override
 
 import mlx.core as mx
-import mlx.nn as nn
+import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
 from exo.shared.types.worker.shards import PipelineShardMetadata
 
 

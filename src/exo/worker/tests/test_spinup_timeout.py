@@ -37,9 +37,9 @@ async def test_runner_up_op_timeout(
 
     # _execute_runner_up_op should throw a TimeoutError with a short timeout
     events: list[Event] = []
-    async for event in worker._execute_runner_up_op(
+    async for event in worker._execute_runner_up_op(  # type: ignore[misc]
         runner_up_op, initialize_timeout=0.2
-    ):  # type: ignore[misc]
+    ):
         events.append(event)
 
     assert isinstance(events[-1], RunnerStatusUpdated)

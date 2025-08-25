@@ -1,9 +1,10 @@
+# pyright: reportAny=false
+
 import asyncio
 import curses
 import time
 import json
 import argparse
-import textwrap
 import sys
 from logging import Logger
 from typing import List, Optional, Any, Sequence, Tuple
@@ -27,13 +28,17 @@ WORKER_EVENT_TYPES = {
     'RunnerStatusUpdated', 'RunnerDeleted'
 }
 
+
 async def init_db() -> None:
     global event_log_manager
     event_log_manager = EventLogManager(EventLogConfig(), logger)
     await event_log_manager.initialize()
 
+
 async def get_events_since(since: int) -> Sequence[EventFromEventLog[Event]]:
-    return await event_log_manager.global_events.get_events_since(since)  # type: ignore[attr-defined, return-value]
+    assert event_log_manager is not None
+    return await event_log_manager.global_events.get_events_since(since)
+
 
 async def load_all_events() -> List[EventFromEventLog[Event]]:
     events: List[EventFromEventLog[Event]] = []
@@ -46,6 +51,7 @@ async def load_all_events() -> List[EventFromEventLog[Event]]:
         since += len(new_events)
     return events
 
+
 def compute_states(events: List[EventFromEventLog[Event]]) -> List[State]:
     states: List[State] = [State()]
     state = states[0]
@@ -54,11 +60,14 @@ def compute_states(events: List[EventFromEventLog[Event]]) -> List[State]:
         states.append(state)
     return states
 
+
 def print_event(event: EventFromEventLog[Event]) -> None:
     event_type_name = type(event.event).__name__
     event_type = event_type_name.replace('_', ' ').title()
-    attributes = ', '.join(f"{key}={value!r}" for key, value in vars(event.event).items())
+    attributes = ', '.join(f"{key}={value!r}" for key,
+                           value in vars(event.event).items())
     print(f"[{event.idx_in_log}] {event_type}: {attributes}")
+
 
 async def non_tui_mode() -> None:
     await init_db()
@@ -67,7 +76,8 @@ async def non_tui_mode() -> None:
     final_state = states[-1]
 
     if worker_mode:
-        filtered_events = [e for e in events if type(e.event).__name__ in WORKER_EVENT_TYPES]
+        filtered_events = [e for e in events if type(
+            e.event).__name__ in WORKER_EVENT_TYPES]
         events = filtered_events
         # Recompute states? But states are cumulative, so perhaps just print filtered events and full state, or filter state too.
         state_dict = json.loads(final_state.model_dump_json())
@@ -88,7 +98,9 @@ async def non_tui_mode() -> None:
     for event in events:
         print_event(event)
 
-async def update_events(wrapped_events: List[EventFromEventLog[Event]], states: List[State], filtered_indices: Optional[List[int]] = None) -> bool:
+
+async def update_events(wrapped_events: List[EventFromEventLog[Event]], states: List[State],
+                        filtered_indices: Optional[List[int]] = None) -> bool:
     last_since = len(wrapped_events)
     new_wrapped = await get_events_since(last_since)
     if new_wrapped:
@@ -104,6 +116,7 @@ async def update_events(wrapped_events: List[EventFromEventLog[Event]], states: 
                     filtered_indices.append(k)
         return True
     return False
+
 
 def draw_state(win: Any, state: State, height: int, width: int, worker_mode: bool, state_scroll: int) -> int:
     win.clear()
@@ -142,11 +155,13 @@ def draw_state(win: Any, state: State, height: int, width: int, worker_mode: boo
                 value_str = stripped[end_key + 3:]
                 if value_str.startswith('"'):
                     color = 2
-                elif value_str.replace('.', '', 1).isdigit() or (value_str.startswith('-') and value_str[1:].replace('.', '', 1).isdigit()):
+                elif value_str.replace('.', '', 1).isdigit() or (
+                        value_str.startswith('-') and value_str[1:].replace('.', '', 1).isdigit()):
                     color = 4
                 elif value_str in ['true', 'false', 'null']:
                     color = 5
-                elif value_str.startswith('{') or value_str.startswith('[') or value_str.startswith('}') or value_str.startswith(']'):
+                elif value_str.startswith('{') or value_str.startswith('[') or value_str.startswith(
+                        '}') or value_str.startswith(']'):
                     color = 0
                 else:
                     color = 0
@@ -157,6 +172,7 @@ def draw_state(win: Any, state: State, height: int, width: int, worker_mode: boo
             win.addstr(y, x, stripped)
     win.refresh()
     return current_scroll
+
 
 def get_event_pairs(event: EventFromEventLog[Event]) -> List[Tuple[str, int]]:
     pairs: List[Tuple[str, int]] = []
@@ -186,6 +202,7 @@ def get_event_pairs(event: EventFromEventLog[Event]) -> List[Tuple[str, int]]:
         pairs.append((v_str, color))
     return pairs
 
+
 def calculate_event_lines(pairs: List[Tuple[str, int]], win_width: int, subsequent_indent: int) -> int:
     lines = 1
     x = 0
@@ -201,7 +218,9 @@ def calculate_event_lines(pairs: List[Tuple[str, int]], win_width: int, subseque
                 x = subsequent_indent
     return lines
 
-def render_event(win: Any, start_y: int, pairs: List[Tuple[str, int]], is_bold: bool, win_width: int, subsequent_indent: int) -> int:
+
+def render_event(win: Any, start_y: int, pairs: List[Tuple[str, int]], is_bold: bool, win_width: int,
+                 subsequent_indent: int) -> int:
     y = start_y
     x = 0
     for text, color in pairs:
@@ -226,6 +245,7 @@ def render_event(win: Any, start_y: int, pairs: List[Tuple[str, int]], is_bold: 
         y += 1
     return y
 
+
 def draw_events(win: Any, events_list: List[EventFromEventLog[Event]], current_events: int, height: int) -> None:
     win.clear()
     if len(events_list) == 0:
@@ -236,7 +256,8 @@ def draw_events(win: Any, events_list: List[EventFromEventLog[Event]], current_e
     current_event = events_list[current_events]
     current_pairs = get_event_pairs(current_event)
     subsequent_indent = len(f"[{current_event.idx_in_log}] ")
-    lines_current = calculate_event_lines(current_pairs, win_width, subsequent_indent)
+    lines_current = calculate_event_lines(
+        current_pairs, win_width, subsequent_indent)
     if lines_current > height:
         render_event(win, 0, current_pairs, True, win_width, subsequent_indent)
         win.refresh()
@@ -313,11 +334,14 @@ def draw_events(win: Any, events_list: List[EventFromEventLog[Event]], current_e
 
     win.refresh()
 
+
 def draw_status(win: Any, realtime: bool, current: int, total_events: int) -> None:
     win.clear()
     mode = "Realtime" if realtime else "Timetravel"
-    win.addstr(0, 0, f"Mode: {mode} | Current event: {current} / {total_events} | Arrows: navigate events, [/]: scroll state, g: goto, r: toggle realtime, q: quit")
+    win.addstr(0, 0,
+               f"Mode: {mode} | Current event: {current} / {total_events} | Arrows: navigate events, [/]: scroll state, g: goto, r: toggle realtime, q: quit")
     win.refresh()
+
 
 def get_input(stdscr: Any, prompt: str) -> str:
     curses.echo()
@@ -326,6 +350,7 @@ def get_input(stdscr: Any, prompt: str) -> str:
     input_str = stdscr.getstr(0, len(prompt), 20).decode('utf-8')
     curses.noecho()
     return input_str
+
 
 def get_key(win: Any) -> Any:
     ch = win.getch()
@@ -369,6 +394,7 @@ def get_key(win: Any) -> Any:
                             return 'CTRL_DOWN'
     return ch
 
+
 def tui(stdscr: Any) -> None:
     curses.start_color()
     curses.init_pair(1, curses.COLOR_BLUE, curses.COLOR_BLACK)
@@ -390,8 +416,10 @@ def tui(stdscr: Any) -> None:
     current_filtered: int = -1
     current: int = -1
     if worker_mode:
-        filtered_indices = [i for i in range(len(wrapped_events)) if type(wrapped_events[i].event).__name__ in WORKER_EVENT_TYPES]
-        current_filtered = len(filtered_indices) - 1 if filtered_indices else -1
+        filtered_indices = [i for i in range(len(wrapped_events)) if
+                            type(wrapped_events[i].event).__name__ in WORKER_EVENT_TYPES]
+        current_filtered = len(filtered_indices) - \
+            1 if filtered_indices else -1
     else:
         current = len(wrapped_events) - 1 if wrapped_events else -1
 
@@ -407,7 +435,8 @@ def tui(stdscr: Any) -> None:
         pane_width = width // 2
 
         state_win = curses.newwin(pane_height, pane_width, 0, 0)
-        events_win = curses.newwin(pane_height, width - pane_width, 0, pane_width)
+        events_win = curses.newwin(
+            pane_height, width - pane_width, 0, pane_width)
         status_win = curses.newwin(status_height, width, pane_height, 0)
 
         if worker_mode:
@@ -421,10 +450,12 @@ def tui(stdscr: Any) -> None:
             current_events = current
 
         state_idx = current_original + 1 if current_original >= 0 else 0
-        state_scroll = draw_state(state_win, states[state_idx], pane_height, pane_width, worker_mode, state_scroll)
+        state_scroll = draw_state(
+            state_win, states[state_idx], pane_height, pane_width, worker_mode, state_scroll)
         draw_events(events_win, events_list, current_events, pane_height)
         total_events = len(wrapped_events) - 1 if wrapped_events else -1
-        draw_status(status_win, realtime, current_original if worker_mode else current, total_events)
+        draw_status(status_win, realtime,
+                    current_original if worker_mode else current, total_events)
 
         key = get_key(stdscr)
         if key != -1:
@@ -439,13 +470,16 @@ def tui(stdscr: Any) -> None:
                 else:
                     current = max(0, current - 5)
             elif key == curses.KEY_DOWN:
-                if worker_mode and current_filtered < len(filtered_indices) - 1:  # type: ignore[arg-type]
+                assert filtered_indices is not None
+                if worker_mode and current_filtered < len(filtered_indices) - 1:
                     current_filtered += 1
                 elif not worker_mode and current < len(wrapped_events) - 1:
                     current += 1
             elif key == 'CTRL_DOWN':
+                assert filtered_indices is not None
                 if worker_mode:
-                    current_filtered = min(len(filtered_indices) - 1, current_filtered + 5)  # type: ignore[arg-type]
+                    current_filtered = min(
+                        len(filtered_indices) - 1, current_filtered + 5)
                 else:
                     current = min(len(wrapped_events) - 1, current + 5)
             elif key == ord('['):
@@ -457,10 +491,13 @@ def tui(stdscr: Any) -> None:
             elif key == ord('r'):
                 realtime = not realtime
                 if realtime:
+                    assert filtered_indices is not None
                     if worker_mode:
-                        current_filtered = len(filtered_indices) - 1 if filtered_indices else -1  # type: ignore[arg-type]
+                        current_filtered = len(
+                            filtered_indices) - 1 if filtered_indices else -1
                     else:
-                        current = len(wrapped_events) - 1 if wrapped_events else -1
+                        current = len(wrapped_events) - \
+                            1 if wrapped_events else -1
                     state_scroll = 0
             elif key == ord('g'):
                 stdscr.timeout(-1)  # block for input
@@ -487,18 +524,23 @@ def tui(stdscr: Any) -> None:
                 status_win.refresh()
 
         if realtime and time.time() - last_update > update_interval:
-            updated = asyncio.run(update_events(wrapped_events, states, filtered_indices if worker_mode else None))
+            updated = asyncio.run(update_events(
+                wrapped_events, states, filtered_indices if worker_mode else None))
             if updated:
+                assert filtered_indices is not None
                 if worker_mode:
-                    current_filtered = len(filtered_indices) - 1  # type: ignore[arg-type]
+                    current_filtered = len(filtered_indices) - 1
                 else:
                     current = len(wrapped_events) - 1
                 state_scroll = 0
             last_update = time.time()
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Read and display events from the event log')
-    parser.add_argument('--worker', action='store_true', help='Only show worker-related events (task, streaming, instance, runner status)')
+    parser = argparse.ArgumentParser(
+        description='Read and display events from the event log')
+    parser.add_argument('--worker', action='store_true',
+                        help='Only show worker-related events (task, streaming, instance, runner status)')
     args = parser.parse_args()
 
     worker_mode = args.worker

@@ -5,14 +5,14 @@ import resource
 from asyncio import AbstractEventLoop
 from typing import Any, Callable
 
-import mlx.core as mx
-import mlx.nn as nn
 from mlx_lm.generate import stream_generate  # type: ignore
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer  # type: ignore
 from mlx_lm.utils import load_model  # type: ignore
 from pydantic import RootModel
 
+import mlx.core as mx
+import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
 from exo.engines.mlx.auto_parallel import auto_parallel
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.common import Host
@@ -117,8 +117,10 @@ async def apply_chat_template(
     formatted_messages = []
     for message in messages_dicts:
         filtered_message: dict[str, Any] = {
-            k: v for k, v in message.items() if v is not None
-        }  # type: ignore
+            k: v
+            for k, v in message.items()  # pyright: ignore[reportAny]
+            if v is not None
+        }
 
         # Verify we have required fields
         if "role" not in filtered_message:

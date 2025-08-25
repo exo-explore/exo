@@ -113,6 +113,7 @@ class ForwarderSupervisor:
             str(self._binary_path),
             "--events-db",
             str(EXO_WORKER_EVENT_DB),
+            # pair arguments
             f"{pairs}",
             stdout=None,
             stderr=None,

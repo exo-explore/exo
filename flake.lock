@@ -51,6 +51,21 @@
         "type": "github"
       }
     },
+    "just-flake": {
+      "locked": {
+        "lastModified": 1713316411,
+        "narHash": "sha256-NkJfU6H+6vgHkPtZ2ESbZ/h2wnsDQrZvB4vbdUIBx8Q=",
+        "owner": "juspay",
+        "repo": "just-flake",
+        "rev": "0e33952a4bcd16cd54ee3aba8111606c237d4526",
+        "type": "github"
+      },
+      "original": {
+        "owner": "juspay",
+        "repo": "just-flake",
+        "type": "github"
+      }
+    },
     "make-shell": {
       "inputs": {
         "flake-compat": "flake-compat"
@@ -89,6 +104,7 @@
       "inputs": {
         "flake-parts": "flake-parts",
         "flake-root": "flake-root",
+        "just-flake": "just-flake",
         "make-shell": "make-shell",
         "nixpkgs": "nixpkgs"
       }

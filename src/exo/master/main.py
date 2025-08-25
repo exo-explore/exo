@@ -14,6 +14,7 @@ from exo.shared.apply import apply
 from exo.shared.db.sqlite.config import EventLogConfig
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.db.sqlite.event_log_manager import EventLogManager
+from exo.shared.keypair import Keypair, get_node_id_keypair
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     Event,
@@ -34,7 +35,6 @@ from exo.shared.types.events.commands import (
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
 from exo.shared.types.worker.instances import Instance
-from exo.shared.utils import Keypair, get_node_id_keypair
 
 
 class Master:
@@ -263,8 +263,8 @@ async def async_main():
         command_buffer,
         global_events,
         worker_events,
-        Path(os.environ["GO_BUILD_DIR"]) / "forwarder",
-        logger,
+        forwarder_binary_path=Path(os.environ["GO_BUILD_DIR"]) / "forwarder",
+        logger=logger,
     )
     await master.run()
 
