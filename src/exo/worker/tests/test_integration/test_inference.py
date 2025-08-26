@@ -72,6 +72,7 @@ async def test_runner_inference(
         seen_task_started,
         seen_task_finished,
         response_string,
+        _,
     ) = await read_streaming_response(global_events)
 
     assert seen_task_started
@@ -152,6 +153,7 @@ async def test_2_runner_inference(
         seen_task_started,
         seen_task_finished,
         response_string,
+        _,
     ) = await read_streaming_response(global_events)
 
     assert seen_task_started
@@ -264,6 +266,7 @@ async def test_2_runner_multi_message(
         seen_task_started,
         seen_task_finished,
         response_string,
+        _,
     ) = await read_streaming_response(global_events)
 
     assert seen_task_started

@@ -42,6 +42,19 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
         ),
     ),
+    "deepseek-v3.1": ModelCard(
+        short_id="deepseek-v3.1",
+        model_id="mlx-community/DeepSeek-V3.1-8bit",
+        name="DeepSeek V3.1 (8-bit)",
+        description="""DeepSeek V3.1 is a large language model trained on the DeepSeek V3.1 dataset.""",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id="mlx-community/DeepSeek-V3.1-8bit",
+            pretty_name="DeepSeek V3.1 (8-bit)",
+            storage_size_kilobytes=754706307,
+            n_layers=61,
+        ),
+    ),
     # deepseek r1
     "deepseek-r1-0528:4bit": ModelCard(
         short_id="deepseek-r1-0528:4bit",

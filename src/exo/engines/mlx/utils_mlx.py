@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import contextlib
 import os
 import resource
 from asyncio import AbstractEventLoop
@@ -37,6 +38,43 @@ class HostList(RootModel[list[str]]):
     @classmethod
     def from_hosts(cls, hosts: list[Host]) -> "HostList":
         return cls(root=[str(host) for host in hosts])
+
+
+def mlx_setup(
+    model_size_mb: int,
+    cache_frac_of_mrwss: float = 0.65,  # main workhorse
+    wired_frac_of_mrwss: float = 0.00,  # start with no wiring
+) -> None:
+    info = mx.metal.device_info()
+    mrwss = int(info["max_recommended_working_set_size"])  # bytes
+    memsize = int(info["memory_size"])  # bytes
+
+    runner_print(f"model size mb {model_size_mb}")
+    runner_print(f"{mrwss=}")
+    runner_print(f"{memsize=}")
+
+    model_bytes = int(model_size_mb * 1024**2)
+    kv_bytes = int(0.02 * model_bytes)
+
+    # Cache: keep most of weights+KV “on ice”, but don’t starve the OS.
+    target_cache = int(1.10 * (model_bytes + kv_bytes))  # +10% slack
+    target_cache = min(target_cache, int(cache_frac_of_mrwss * mrwss))
+    target_cache = min(target_cache, memsize)
+    runner_print(f"{target_cache=}")
+
+    mx.set_cache_limit(max(target_cache, 0))
+    return
+
+    # Optional hard cap (keeps total MLX usage under control)
+    with contextlib.suppress(Exception):
+        mx.set_memory_limit(int(0.85 * mrwss))
+
+    # Wiring: off by default; if you re‑enable, wire at most a small fraction.
+    if wired_frac_of_mrwss > 0.0:
+        target_wired = min(int(wired_frac_of_mrwss * mrwss), int(0.5 * model_bytes))
+        target_wired = min(target_wired, target_cache)  # don’t wire more than cache
+        with contextlib.suppress(Exception):  # older macOS won’t have this
+            mx.set_wired_limit(max(target_wired, 0))
 
 
 def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group:  # type: ignore

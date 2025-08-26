@@ -14,6 +14,7 @@ from exo.engines.mlx.utils_mlx import (
     apply_chat_template,
     initialize_mlx,
     mlx_force_oom,
+    mlx_setup,
     warmup_inference,
 )
 from exo.shared.openai_compat import FinishReason
@@ -34,6 +35,7 @@ from exo.worker.runner.communication import (
     runner_write_error,
     runner_write_response,
 )
+from exo.worker.runner.utils import get_weights_size_kb
 
 
 async def _mlx_generate(
@@ -109,6 +111,8 @@ async def main():
         setup_message = ensure_type(init_message, SetupMessage)
         model_shard_meta = setup_message.model_shard_meta
         hosts = setup_message.hosts
+
+        mlx_setup(int(get_weights_size_kb(model_shard_meta) // 2**10))
 
         # For testing - these are fake break conditions
         if model_shard_meta.immediate_exception:

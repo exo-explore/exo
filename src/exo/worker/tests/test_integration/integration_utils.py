@@ -9,11 +9,12 @@ from exo.shared.types.tasks import TaskId, TaskStatus
 
 async def read_streaming_response(
     global_events: AsyncSQLiteEventStorage, filter_task: Optional[TaskId] = None
-) -> Tuple[bool, bool, str]:
+) -> Tuple[bool, bool, str, int]:
     # Read off all events - these should be our GenerationChunk events
     seen_task_started, seen_task_finished = 0, 0
     response_string = ""
     finish_reason: str | None = None
+    token_count = 0
 
     if not filter_task:
         idx = await global_events.get_last_idx()
@@ -50,8 +51,9 @@ async def read_streaming_response(
                 if event.task_status == TaskStatus.COMPLETE:
                     seen_task_finished += 1
 
-            if isinstance(event, ChunkGenerated):
-                assert isinstance(event.chunk, TokenChunk)
+            if isinstance(event, ChunkGenerated) and isinstance(
+                event.chunk, TokenChunk
+            ):
                 response_string += event.chunk.text
                 if event.chunk.finish_reason:
                     finish_reason = event.chunk.finish_reason
@@ -60,7 +62,7 @@ async def read_streaming_response(
 
     print(f"event log: {await global_events.get_events_since(0)}")
 
-    return seen_task_started == 1, seen_task_finished == 1, response_string
+    return seen_task_started == 1, seen_task_finished == 1, response_string, token_count
 
 
 T = TypeVar("T")
