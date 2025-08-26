@@ -11,6 +11,7 @@ from exo.shared.db.sqlite.config import EventLogConfig
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.db.sqlite.event_log_manager import EventLogManager
 from exo.shared.keypair import Keypair
+from exo.shared.logging import logger_test_install
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event, EventFromEventLog, Heartbeat, TaskCreated
@@ -53,7 +54,8 @@ def _create_forwarder_dummy_binary() -> Path:
 @pytest.mark.asyncio
 async def test_master():
     logger = Logger(name="test_master_logger")
-    event_log_manager = EventLogManager(EventLogConfig(), logger=logger)
+    logger_test_install(logger)
+    event_log_manager = EventLogManager(EventLogConfig())
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
     await global_events.delete_all_events()
@@ -85,7 +87,6 @@ async def test_master():
         command_buffer=command_buffer,
         global_events=global_events,
         forwarder_binary_path=forwarder_binary_path,
-        logger=logger,
         worker_events=global_events,
     )
     asyncio.create_task(master.run())

@@ -6,6 +6,7 @@ from typing import Callable
 import pytest
 
 from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from exo.shared.logging import logger_test_install
 from exo.shared.types.common import Host
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.models import ModelId
@@ -39,12 +40,13 @@ async def check_runner_connection(
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
 ) -> bool:
+    logger_test_install(logger)
     # Track all tasks and workers for cleanup
     tasks: list[asyncio.Task[None]] = []
     workers: list[Worker] = []
 
     try:
-        event_log_manager = EventLogManager(EventLogConfig(), logger)
+        event_log_manager = EventLogManager(EventLogConfig())
         await event_log_manager.initialize()
         shard_downloader = NoopShardDownloader()
 
@@ -53,24 +55,22 @@ async def check_runner_connection(
 
         worker1 = Worker(
             NODE_A,
-            logger=logger,
             shard_downloader=shard_downloader,
             worker_events=global_events,
             global_events=global_events,
         )
         workers.append(worker1)
-        task1 = asyncio.create_task(run(worker1, logger))
+        task1 = asyncio.create_task(run(worker1))
         tasks.append(task1)
 
         worker2 = Worker(
             NODE_B,
-            logger=logger,
             shard_downloader=shard_downloader,
             worker_events=global_events,
             global_events=global_events,
         )
         workers.append(worker2)
-        task2 = asyncio.create_task(run(worker2, logger))
+        task2 = asyncio.create_task(run(worker2))
         tasks.append(task2)
 
         model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
@@ -162,6 +162,7 @@ async def check_runner_connection(
 #     hosts: Callable[[int], list[Host]],
 #     chat_completion_task: Callable[[InstanceId, str], Task],
 # ) -> None:
+#     logger_test_install(logger)
 #     total_runs = 100
 #     successes = 0
 
@@ -176,7 +177,6 @@ async def check_runner_connection(
 
 #         try:
 #             result = loop.run_until_complete(check_runner_connection(
-#                 logger=logger,
 #                 pipeline_shard_meta=pipeline_shard_meta,
 #                 hosts=hosts,
 #                 chat_completion_task=chat_completion_task,
@@ -190,7 +190,6 @@ async def check_runner_connection(
 #                 task.cancel()
 #         try:
 #             result = loop.run_until_complete(check_runner_connection(
-#                 logger=logger,
 #                 pipeline_shard_meta=pipeline_shard_meta,
 #                 hosts=hosts,
 #                 chat_completion_task=chat_completion_task,

@@ -3,6 +3,7 @@ import re
 import sys
 from typing import Dict, List, Optional
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from exo.shared.types.profiling import NetworkInterfaceInfo
@@ -22,7 +23,7 @@ async def get_mac_friendly_name_async() -> str | None:
     Returns the name as a string, or None if an error occurs or not on macOS.
     """
     if sys.platform != "darwin":  # 'darwin' is the platform name for macOS
-        print("This function is designed for macOS only.")
+        logger.warning("Mac friendly name is designed for macOS only.")
         return None
 
     try:
@@ -203,6 +204,14 @@ async def get_mac_system_info_async() -> SystemInfo:
     chip_id_val = "Unknown Chip"
     memory_val = 0
     network_interfaces_info_list: List[NetworkInterfaceInfo] = []
+
+    if sys.platform != "darwin":
+        return SystemInfo(
+            model_id=model_id_val,
+            chip_id=chip_id_val,
+            memory=memory_val,
+            network_interfaces=network_interfaces_info_list,
+        )
 
     try:
         process = await asyncio.create_subprocess_exec(

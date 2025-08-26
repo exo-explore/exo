@@ -4,6 +4,7 @@ from typing import Callable
 
 import pytest
 
+from exo.shared.logging import logger_test_install
 from exo.shared.types.common import Host
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.common import InstanceId, RunnerError
@@ -19,6 +20,7 @@ async def test_supervisor_instantiation_exception(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
     model_shard_meta.immediate_exception = True
 
@@ -26,7 +28,6 @@ async def test_supervisor_instantiation_exception(
         _ = await RunnerSupervisor.create(
             model_shard_meta=model_shard_meta,
             hosts=hosts(1, offset=10),
-            logger=logger,
         )
 
 
@@ -37,6 +38,7 @@ async def test_supervisor_instantiation_timeout(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
     model_shard_meta.should_timeout = 10  # timeout after 10s
 
@@ -44,7 +46,6 @@ async def test_supervisor_instantiation_timeout(
         _ = await RunnerSupervisor.create(
             model_shard_meta=model_shard_meta,
             hosts=hosts(1, offset=10),
-            logger=logger,
         )
 
 
@@ -56,12 +57,12 @@ async def test_supervisor_inference_exception(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
@@ -79,12 +80,12 @@ async def test_supervisor_inference_timeout(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)

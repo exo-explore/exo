@@ -4,10 +4,10 @@ import json
 import random
 from asyncio import Queue, Task
 from collections.abc import Sequence
-from logging import Logger, getLogger
 from pathlib import Path
 from typing import Any, cast
 
+from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
@@ -41,15 +41,12 @@ class AsyncSQLiteEventStorage:
         batch_timeout_ms: int,
         debounce_ms: int,
         max_age_ms: int,
-        logger: Logger | None = None,
     ):
         self._db_path = Path(db_path)
         self._batch_size = batch_size
         self._batch_timeout_s = batch_timeout_ms / 1000.0
         self._debounce_s = debounce_ms / 1000.0
         self._max_age_s = max_age_ms / 1000.0
-        self._logger = logger or getLogger(__name__)
-
         self._write_queue: Queue[tuple[Event, NodeId]] = Queue()
         self._batch_writer_task: Task[None] | None = None
         self._engine = None
@@ -65,7 +62,7 @@ class AsyncSQLiteEventStorage:
 
         # Start batch writer
         self._batch_writer_task = asyncio.create_task(self._batch_writer())
-        self._logger.info(f"Started SQLite event storage: {self._db_path}")
+        logger.info(f"Started SQLite event storage: {self._db_path}")
 
     async def append_events(self, events: Sequence[Event], origin: NodeId) -> None:
         """Append events to the log (fire-and-forget). The writes are batched and committed
@@ -162,7 +159,7 @@ class AsyncSQLiteEventStorage:
         if self._engine is not None:
             await self._engine.dispose()
 
-        self._logger.info("Closed SQLite event storage")
+        logger.info("Closed SQLite event storage")
 
     async def delete_all_events(self) -> None:
         """Delete all events from the database."""
@@ -239,10 +236,10 @@ class AsyncSQLiteEventStorage:
                         )
                     )
 
-                    self._logger.info("Events table and indexes created successfully")
+                    logger.info("Events table and indexes created successfully")
                 except OperationalError as e:
                     # Even with IF NOT EXISTS, log any unexpected errors
-                    self._logger.error(f"Error creating table: {e}")
+                    logger.error(f"Error creating table: {e}")
                     # Re-check if table exists now
                     result = await conn.execute(
                         text(
@@ -252,11 +249,11 @@ class AsyncSQLiteEventStorage:
                     if result.fetchone() is None:
                         raise RuntimeError(f"Failed to create events table: {e}") from e
                     else:
-                        self._logger.info(
+                        logger.info(
                             "Events table exists (likely created by another process)"
                         )
             else:
-                self._logger.debug("Events table already exists")
+                logger.debug("Events table already exists")
 
             # Enable WAL mode and other optimizations with retry logic
             await self._execute_pragma_with_retry(
@@ -338,20 +335,18 @@ class AsyncSQLiteEventStorage:
 
                 await session.commit()
             if len([ev for ev in batch if not isinstance(ev[0], Heartbeat)]) > 0:
-                self._logger.debug(f"Committed batch of {len(batch)} events")
+                logger.debug(f"Committed batch of {len(batch)} events")
 
         except OperationalError as e:
             if "database is locked" in str(e):
-                self._logger.warning(
-                    f"Database locked during batch commit, will retry: {e}"
-                )
+                logger.warning(f"Database locked during batch commit, will retry: {e}")
                 # Retry with exponential backoff
                 await self._commit_batch_with_retry(batch)
             else:
-                self._logger.error(f"Failed to commit batch: {e}")
+                logger.error(f"Failed to commit batch: {e}")
                 raise
         except Exception as e:
-            self._logger.error(f"Failed to commit batch: {e}")
+            logger.error(f"Failed to commit batch: {e}")
             raise
 
     async def _execute_pragma_with_retry(
@@ -372,13 +367,13 @@ class AsyncSQLiteEventStorage:
                             float,
                             base_delay * (2**retry_count) + random.uniform(0, 0.1),
                         )
-                        self._logger.warning(
+                        logger.warning(
                             f"Database locked on '{pragma}', retry {retry_count + 1}/{max_retries} after {delay:.2f}s"
                         )
                         await asyncio.sleep(delay)
                         retry_count += 1
                     else:
-                        self._logger.error(
+                        logger.error(
                             f"Failed to execute '{pragma}' after {retry_count + 1} attempts: {e}"
                         )
                         raise
@@ -407,7 +402,7 @@ class AsyncSQLiteEventStorage:
                     await session.commit()
 
                 if len([ev for ev in batch if not isinstance(ev[0], Heartbeat)]) > 0:
-                    self._logger.debug(
+                    logger.debug(
                         f"Committed batch of {len(batch)} events after {retry_count} retries"
                     )
                 return
@@ -417,13 +412,13 @@ class AsyncSQLiteEventStorage:
                     delay = cast(
                         float, base_delay * (2**retry_count) + random.uniform(0, 0.1)
                     )
-                    self._logger.warning(
+                    logger.warning(
                         f"Database locked on batch commit, retry {retry_count + 1}/{max_retries} after {delay:.2f}s"
                     )
                     await asyncio.sleep(delay)
                     retry_count += 1
                 else:
-                    self._logger.error(
+                    logger.error(
                         f"Failed to commit batch after {retry_count + 1} attempts: {e}"
                     )
                     raise

@@ -1,17 +1,15 @@
 import asyncio
 import contextlib
 import sys
-from logging import Logger
 
 import psutil
+from loguru import logger
 
 from exo.shared.constants import LB_DISK_GBPS, LB_MEMBW_GBPS, LB_TFLOPS
 from exo.shared.types.worker.shards import ShardMetadata
 
 
-async def kill_process_tree(
-    runner_process: asyncio.subprocess.Process, logger: Logger
-) -> None:
+async def kill_process_tree(runner_process: asyncio.subprocess.Process) -> None:
     """Kill the process and all its children forcefully."""
     if runner_process.returncode is not None:
         return  # Process already dead

@@ -3,6 +3,7 @@ from typing import Annotated, Dict, Optional
 import aiofiles
 import aiofiles.os as aios
 from huggingface_hub import model_info
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from exo.shared.types.models import ModelMetadata
@@ -56,7 +57,7 @@ async def get_config_data(model_id: str) -> ConfigData:
         "main",
         "config.json",
         target_dir,
-        lambda curr_bytes, total_bytes: print(
+        lambda curr_bytes, total_bytes: logger.info(
             f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes}"
         ),
     )
@@ -73,7 +74,7 @@ async def get_safetensors_size(model_id: str) -> int:
         "main",
         "model.safetensors.index.json",
         target_dir,
-        lambda curr_bytes, total_bytes: print(
+        lambda curr_bytes, total_bytes: logger.info(
             f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes}"
         ),
     )

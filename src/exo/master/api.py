@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.models.model_cards import MODEL_CARDS
@@ -184,7 +185,7 @@ class API:
                     chunk_response: ChatCompletionResponse = chunk_to_response(
                         event.chunk
                     )
-                    print(chunk_response)
+                    logger.debug(chunk_response)
                     yield f"data: {chunk_response.model_dump_json()}\n\n"
 
                     if event.chunk.finish_reason is not None:
@@ -197,7 +198,9 @@ class API:
         return
 
     async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
-        print("TODO: we should send a notification to the user to download the model")
+        logger.warning(
+            "TODO: we should send a notification to the user to download the model"
+        )
 
     async def chat_completions(
         self, payload: ChatCompletionTaskParams

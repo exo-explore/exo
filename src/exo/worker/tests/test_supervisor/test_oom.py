@@ -3,6 +3,7 @@ from typing import Callable
 
 import pytest
 
+from exo.shared.logging import logger_test_install
 from exo.shared.types.common import Host
 from exo.shared.types.tasks import (
     Task,
@@ -30,13 +31,13 @@ async def test_supervisor_catches_oom(
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     logger: Logger,
 ):
+    logger_test_install(logger)
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)

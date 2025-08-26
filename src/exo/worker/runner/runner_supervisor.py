@@ -2,11 +2,11 @@ import asyncio
 import contextlib
 import traceback
 from collections.abc import AsyncGenerator
-from logging import Logger
 from types import CoroutineType
 from typing import Any, Callable, Optional
 
 import psutil
+from loguru import logger
 
 from exo.shared.types.common import CommandId, Host
 from exo.shared.types.events.chunks import GenerationChunk, TokenChunk
@@ -44,13 +44,10 @@ class RunnerSupervisor:
         model_shard_meta: ShardMetadata,
         hosts: list[Host],
         runner_process: asyncio.subprocess.Process,
-        logger: Logger,
         read_queue: asyncio.Queue[RunnerResponse],
         write_queue: asyncio.Queue[RunnerMessage],
         stderr_queue: asyncio.Queue[str],
     ):
-        self.logger = logger
-
         self.model_shard_meta = model_shard_meta
         self.hosts = hosts
         self.runner_process = runner_process
@@ -68,7 +65,6 @@ class RunnerSupervisor:
         cls,
         model_shard_meta: ShardMetadata,
         hosts: list[Host],
-        logger: Logger,
         initialize_timeout: Optional[float] = None,
     ) -> "RunnerSupervisor":
         """
@@ -91,13 +87,12 @@ class RunnerSupervisor:
             model_shard_meta=model_shard_meta,
             hosts=hosts,
             runner_process=runner_process,
-            logger=logger,
             read_queue=read_queue,
             write_queue=write_queue,
             stderr_queue=stderr_queue,
         )
 
-        self.logger.info(f"initializing mlx instance with {model_shard_meta=}")
+        logger.info(f"Initializing mlx instance with {model_shard_meta=}")
         await self.write_queue.put(
             SetupMessage(
                 model_shard_meta=model_shard_meta,
@@ -111,7 +106,7 @@ class RunnerSupervisor:
         response = await self._read_with_error_check(initialize_timeout)
 
         assert isinstance(response, InitializedResponse)
-        self.logger.info(f"Runner initialized in {response.time_taken} seconds")
+        logger.info(f"Runner initialized in {response.time_taken} seconds")
 
         return self
 
@@ -143,7 +138,7 @@ class RunnerSupervisor:
 
         if self.read_task in done:
             await self.read_task  # Re-raises any exception from read_task
-            self.logger.error(
+            logger.error(
                 "Unreachable code run. We should have raised an error on the read_task being done."
             )
 
@@ -183,14 +178,16 @@ class RunnerSupervisor:
         prefil_timeout = get_prefil_timeout(self.model_shard_meta)
         token_timeout = get_token_generate_timeout(self.model_shard_meta)
         timeout = prefil_timeout
-        self.logger.info(f"starting chat completion with timeout {timeout}")
+        logger.bind(user_facing=True).info(
+            f"Starting chat completion with timeout {timeout}"
+        )
 
         while True:
             try:
                 response = await self._read_with_error_check(timeout)
             except asyncio.TimeoutError as e:
-                self.logger.info(
-                    f"timed out from timeout duration {timeout} - {'prefil' if timeout == prefil_timeout else 'decoding stage'}"
+                logger.bind(user_facing=True).info(
+                    f"Generation timed out during {'prefil' if timeout == prefil_timeout else 'decoding stage'}"
                 )
                 raise e
 
@@ -235,7 +232,8 @@ class RunnerSupervisor:
 
             match response:
                 case PrintResponse():
-                    self.logger.info(f"runner printed: {response.text}")
+                    # TODO: THIS IS A REALLY IMPORTANT LOG MESSAGE, AND SHOULD BE MADE PRETTIER
+                    logger.bind(user_facing=True).info(f"{response.text}")
                 case ErrorResponse():
                     ## Failure case #1: a crash happens Python, so it's neatly handled by passing an ErrorResponse with the details
                     await self.read_queue.put(response)
@@ -255,7 +253,7 @@ class RunnerSupervisor:
         await await_task(self.write_task)
 
         # Kill the process and all its children
-        await kill_process_tree(self.runner_process, self.logger)
+        await kill_process_tree(self.runner_process)
 
         # Wait to make sure that the model has been unloaded from memory
         async def wait_for_memory_release() -> None:
@@ -266,8 +264,8 @@ class RunnerSupervisor:
                 if available_memory_bytes >= required_memory_bytes:
                     break
                 if asyncio.get_event_loop().time() - start_time > 30.0:
-                    self.logger.warning(
-                        "Timeout waiting for memory release after 30 seconds"
+                    logger.warning(
+                        "Runner memory not released after 30 seconds - exiting"
                     )
                     break
                 await asyncio.sleep(0.1)
@@ -276,8 +274,8 @@ class RunnerSupervisor:
 
     def __del__(self) -> None:
         if self.runner_process.returncode is None:
-            print(
-                "Warning: RunnerSupervisor was not stopped cleanly before garbage collection. Force killing process tree."
+            logger.warning(
+                "RunnerSupervisor was not stopped cleanly before garbage collection. Force killing process tree."
             )
             # Can't use async in __del__, so use psutil directly
             try:
@@ -321,10 +319,9 @@ class RunnerSupervisor:
             except asyncio.QueueEmpty:
                 break
 
-        # print('STDERR OUTPUT IS')
-        # print(stderr_output)
-
-        self.logger.error(f"Error {self.runner_process.returncode}: {stderr_output}")
+        logger.bind(user_facing=True).error(
+            f"Runner Error {self.runner_process.returncode}: {stderr_output}"
+        )
         return RunnerError(
             error_type="MLXCrash",
             error_message=stderr_output,
@@ -341,7 +338,7 @@ class RunnerSupervisor:
                 line = line_bytes.decode("utf-8").strip()
 
                 await self.stderr_queue.put(line)
-                self.logger.warning(f"Runner stderr read: {line}")
+                logger.warning(f"Runner stderr read: {line}")
             except Exception as e:
-                self.logger.warning(f"Error reading runner stderr: {e}")
+                logger.warning(f"Error reading runner stderr: {e}")
                 break

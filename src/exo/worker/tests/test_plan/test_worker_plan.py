@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from exo.shared.logging import logger_test_install
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -507,13 +508,13 @@ def test_worker_plan(case: PlanTestCase) -> None:
     node_id = NODE_A
 
     logger = logging.getLogger("test_worker_plan")
+    logger_test_install(logger)
     shard_downloader = NoopShardDownloader()
     worker = Worker(
         node_id=node_id,
         shard_downloader=shard_downloader,
         worker_events=None,
         global_events=None,
-        logger=logger,
     )
 
     runner_config: InProcessRunner

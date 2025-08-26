@@ -1,20 +1,21 @@
 import asyncio
-import logging
 import os
 import threading
-import traceback
 from pathlib import Path
-from typing import List
+
+from loguru import logger
 
 from exo.master.api import start_fastapi_server
 from exo.master.election_callback import ElectionCallbacks
 from exo.master.forwarder_supervisor import ForwarderRole, ForwarderSupervisor
 from exo.master.placement import get_instance_placements, get_transition_events
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_MASTER_LOG
 from exo.shared.db.sqlite.config import EventLogConfig
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.db.sqlite.event_log_manager import EventLogManager
 from exo.shared.keypair import Keypair, get_node_id_keypair
+from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     Event,
@@ -46,7 +47,6 @@ class Master:
         global_events: AsyncSQLiteEventStorage,
         worker_events: AsyncSQLiteEventStorage,
         forwarder_binary_path: Path,
-        logger: logging.Logger,
     ):
         self.state = State()
         self.node_id_keypair = node_id_keypair
@@ -56,10 +56,10 @@ class Master:
         self.worker_events = worker_events
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.forwarder_supervisor = ForwarderSupervisor(
-            self.node_id, forwarder_binary_path=forwarder_binary_path, logger=logger
+            self.node_id,
+            forwarder_binary_path=forwarder_binary_path,
         )
-        self.election_callbacks = ElectionCallbacks(self.forwarder_supervisor, logger)
-        self.logger = logger
+        self.election_callbacks = ElectionCallbacks(self.forwarder_supervisor)
 
     @property
     def event_log_for_reads(self) -> AsyncSQLiteEventStorage:
@@ -85,7 +85,10 @@ class Master:
         ):
             # for now we do one command at a time
             next_command = self.command_buffer.pop(0)
-            self.logger.info(f"got command: {next_command}")
+
+            logger.bind(user_facing=True).info(f"Executing command: {next_command}")
+            logger.info(f"Got command: {next_command}")
+
             # TODO: validate the command
             match next_command:
                 case ChatCompletionCommand():
@@ -152,13 +155,17 @@ class Master:
         if len(events) == 0:
             await asyncio.sleep(0.01)
             return
-        self.logger.debug(f"got events: {events}")
+
+        if len(events) == 1:
+            logger.debug(f"Master received event: {events[0]}")
+        else:
+            logger.debug(f"Master received events: {events}")
 
         # 3. for each event, apply it to the state
         for event_from_log in events:
-            self.logger.debug(f"applying event: {event_from_log}")
+            logger.trace(f"Applying event: {event_from_log}")
             self.state = apply(self.state, event_from_log)
-        self.logger.debug(f"state: {self.state.model_dump_json()}")
+        logger.trace(f"State: {self.state.model_dump_json()}")
 
         # TODO: This can be done in a better place. But for now, we use this to check if any running instances have been broken.
         write_events: list[Event] = []
@@ -216,46 +223,33 @@ class Master:
             try:
                 await self._run_event_loop_body()
             except Exception as e:
-                self.logger.error(f"Error in _run_event_loop_body: {e}")
-                traceback.print_exc()
+                logger.opt(exception=e).error(f"Error in _run_event_loop_body: {e}")
                 await asyncio.sleep(0.1)
 
 
 async def async_main():
-    logger = logging.getLogger("master_logger")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
-        logger.addHandler(handler)
-
     node_id_keypair = get_node_id_keypair()
     node_id = NodeId(node_id_keypair.to_peer_id().to_base58())
 
-    event_log_manager = EventLogManager(EventLogConfig(), logger=logger)
+    event_log_manager = EventLogManager(EventLogConfig())
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
     worker_events: AsyncSQLiteEventStorage = event_log_manager.worker_events
 
-    command_buffer: List[Command] = []
+    command_buffer: list[Command] = []
 
+    logger.info("Starting EXO Master")
     logger.info(f"Starting Master with node_id: {node_id}")
+
+    api_port = int(os.environ.get("API_PORT", 8000))
 
     api_thread = threading.Thread(
         target=start_fastapi_server,
-        args=(
-            command_buffer,
-            global_events,
-            lambda: master.state,
-            "0.0.0.0",
-            int(os.environ.get("API_PORT", 8000)),
-        ),
+        args=(command_buffer, global_events, lambda: master.state, "0.0.0.0", api_port),
         daemon=True,
     )
     api_thread.start()
-    logger.info("Running FastAPI server in a separate thread. Listening on port 8000.")
+    logger.bind(user_facing=True).info(f"Dashboard started on port {api_port}.")
 
     master = Master(
         node_id_keypair,
@@ -263,13 +257,14 @@ async def async_main():
         command_buffer,
         global_events,
         worker_events,
-        forwarder_binary_path=Path(os.environ["GO_BUILD_DIR"]) / "forwarder",
-        logger=logger,
+        Path(os.environ["GO_BUILD_DIR"]) / "forwarder",
     )
     await master.run()
+    logger_cleanup()  # pyright: ignore[reportUnreachable]
 
 
-def main():
+def main(logfile: Path = EXO_MASTER_LOG, verbosity: int = 1):
+    logger_setup(logfile, verbosity)
     asyncio.run(async_main())
 
 

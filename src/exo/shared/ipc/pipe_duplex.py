@@ -69,10 +69,10 @@ class PipeDuplex:
     """
 
     def __init__(
-            self,
-            in_pipe: StrPath,
-            out_pipe: StrPath,
-            in_callback: Callable[[bytes], None],
+        self,
+        in_pipe: StrPath,
+        out_pipe: StrPath,
+        in_callback: Callable[[bytes], None],
     ):
         assert in_pipe != out_pipe  # they must be different files
 
@@ -156,7 +156,7 @@ def _ensure_fifo_exists(path: StrPath):
 
 
 def _pipe_buffer_reader(
-        path: StrPath, mq: MQueueT[bytes], started: MEventT, kill: MEventT
+    path: StrPath, mq: MQueueT[bytes], started: MEventT, kill: MEventT
 ):
     # TODO: right now the `kill` control flow is somewhat haphazard -> ensure every loop-y or blocking part always
     #       checks for kill.is_set() and returns/cleans up early if so
@@ -241,7 +241,7 @@ def _pipe_buffer_reader(
 
 
 def _binary_object_dispatcher(
-        mq: MQueueT[bytes], callback: Callable[[bytes], None], kill: TEventT
+    mq: MQueueT[bytes], callback: Callable[[bytes], None], kill: TEventT
 ):
     while not kill.is_set():
         # try to get with timeout (to allow to read the kill-flag)
@@ -255,7 +255,7 @@ def _binary_object_dispatcher(
 
 
 def _pipe_buffer_writer(
-        path: StrPath, mq: MQueueT[bytes], started: MEventT, kill: MEventT
+    path: StrPath, mq: MQueueT[bytes], started: MEventT, kill: MEventT
 ):
     # TODO: right now the `kill` control flow is somewhat haphazard -> ensure every loop-y or blocking part always
     #       checks for kill.is_set() and returns/cleans up early if so

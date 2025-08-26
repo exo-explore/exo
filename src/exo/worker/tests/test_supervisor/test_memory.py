@@ -5,6 +5,7 @@ from typing import Callable
 import psutil
 import pytest
 
+from exo.shared.logging import logger_test_install
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.common import Host
 from exo.shared.types.models import ModelMetadata
@@ -36,13 +37,12 @@ async def test_supervisor_inference_exception(
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     logger: Logger,
 ):
-    """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     process: Process = supervisor.runner_process

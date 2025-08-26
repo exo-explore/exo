@@ -4,6 +4,7 @@ from typing import Callable
 import pytest
 
 from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from exo.shared.logging import logger_test_install
 from exo.shared.types.common import NodeId
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance
@@ -24,13 +25,13 @@ def user_message():
 
 @pytest.fixture
 async def worker(logger: Logger):
-    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    logger_test_install(logger)
+    event_log_manager = EventLogManager(EventLogConfig())
     shard_downloader = NoopShardDownloader()
     await event_log_manager.initialize()
 
     return Worker(
         NODE_A,
-        logger,
         shard_downloader,
         worker_events=event_log_manager.global_events,
         global_events=event_log_manager.global_events,

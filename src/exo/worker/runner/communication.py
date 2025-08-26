@@ -2,6 +2,8 @@ import asyncio
 import sys
 import traceback
 
+from loguru import logger
+
 from exo.shared.types.worker.commands_runner import (
     ErrorResponse,
     PrintResponse,
@@ -96,3 +98,4 @@ def runner_write_error(error: Exception) -> None:
         traceback=traceback.format_exc(),
     )
     runner_write_response(error_response)
+    logger.opt(exception=error).exception("Critical Runner error")

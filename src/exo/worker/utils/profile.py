@@ -3,6 +3,8 @@ import os
 import platform
 from typing import Any, Callable, Coroutine
 
+from loguru import logger
+
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
@@ -19,10 +21,6 @@ from exo.worker.utils.system_info import (
     get_mac_system_info_async,
     get_network_interface_info_async,
 )
-
-# from exo.infra.event_log import EventLog
-# from exo.app.config import ResourceMonitorConfig
-# from exo.utils.mlx.mlx_utils import profile_flops_fp16
 
 
 async def get_metrics_async() -> Metrics:
@@ -66,7 +64,6 @@ async def start_polling_node_metrics(
             )
 
             # Run heavy FLOPs profiling only if enough time has elapsed
-
             override_memory_env = os.getenv("OVERRIDE_MEMORY")
             override_memory: int | None = (
                 int(override_memory_env) * 2**30 if override_memory_env else None
@@ -121,11 +118,11 @@ async def start_polling_node_metrics(
 
         except asyncio.TimeoutError:
             # One of the operations took too long; skip this iteration but keep the loop alive.
-            print(
+            logger.warning(
                 "[resource_monitor] Operation timed out after 30s, skipping this cycle."
             )
         except Exception as e:
             # Catch-all to ensure the monitor keeps running.
-            print(f"[resource_monitor] Encountered error: {e}")
+            logger.opt(exception=e).error("Resource Monitor encountered error")
         finally:
             await asyncio.sleep(poll_interval_s)

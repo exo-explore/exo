@@ -1,7 +1,7 @@
 import asyncio
-from logging import Logger
 from typing import Dict, Optional, cast
 
+from loguru import logger
 from sqlalchemy.exc import OperationalError
 
 from exo.shared.constants import EXO_HOME
@@ -20,9 +20,8 @@ class EventLogManager:
     - Master (replica): writes to worker_events, tails global_events
     """
 
-    def __init__(self, config: EventLogConfig, logger: Logger):
+    def __init__(self, config: EventLogConfig):
         self._config = config
-        self._logger = logger
         self._connectors: Dict[EventLogType, AsyncSQLiteEventStorage] = {}
 
         # Ensure base directory exists
@@ -45,20 +44,20 @@ class EventLogManager:
                     if "database is locked" in str(e) and retry_count < max_retries - 1:
                         retry_count += 1
                         delay = cast(float, 0.5 * (2**retry_count))
-                        self._logger.warning(
+                        logger.warning(
                             f"Database locked while initializing {log_type.value}, retry {retry_count}/{max_retries} after {delay}s"
                         )
                         await asyncio.sleep(delay)
                     else:
-                        self._logger.error(
-                            f"Failed to initialize {log_type.value} after {retry_count + 1} attempts: {e}"
+                        logger.opt(exception=e).error(
+                            f"Failed to initialize {log_type.value} after {retry_count + 1} attempts"
                         )
                         raise RuntimeError(
                             f"Could not initialize {log_type.value} database after {retry_count + 1} attempts"
                         ) from e
                 except Exception as e:
-                    self._logger.error(
-                        f"Unexpected error initializing {log_type.value}: {e}"
+                    logger.opt(exception=e).error(
+                        f"Unexpected error initializing {log_type.value}"
                     )
                     raise
 
@@ -66,8 +65,7 @@ class EventLogManager:
                 raise RuntimeError(
                     f"Could not initialize {log_type.value} database after {max_retries} attempts"
                 ) from last_error
-
-        self._logger.info("Initialized all event log connectors")
+        logger.bind(user_facing=True).info("Initialized all event log connectors")
 
     async def get_connector(self, log_type: EventLogType) -> AsyncSQLiteEventStorage:
         """Get or create a connector for the specified log type"""
@@ -81,18 +79,19 @@ class EventLogManager:
                     batch_timeout_ms=self._config.batch_timeout_ms,
                     debounce_ms=self._config.debounce_ms,
                     max_age_ms=self._config.max_age_ms,
-                    logger=self._logger,
                 )
 
                 # Start the connector (creates tables if needed)
                 await connector.start()
 
                 self._connectors[log_type] = connector
-                self._logger.info(
+                logger.bind(user_facing=True).info(
                     f"Initialized {log_type.value} connector at {db_path}"
                 )
             except Exception as e:
-                self._logger.error(f"Failed to create {log_type.value} connector: {e}")
+                logger.bind(user_facing=True).opt(exception=e).error(
+                    f"Failed to create {log_type.value} connector"
+                )
                 raise
 
         return self._connectors[log_type]
@@ -119,5 +118,5 @@ class EventLogManager:
         """Close all open connectors"""
         for log_type, connector in self._connectors.items():
             await connector.close()
-            self._logger.info(f"Closed {log_type.value} connector")
+            logger.bind(user_facing=True).info(f"Closed {log_type.value} connector")
         self._connectors.clear()

@@ -27,16 +27,17 @@ dependencies = [
     "greenlet>=3.2.4",
     "huggingface-hub>=0.33.4",
     "mlx==0.26.3",
-    "mlx-lm @ https://github.com/ml-explore/mlx-lm.git",
+    "mlx-lm==0.26.4",
     "psutil>=7.0.0",
     "transformers>=4.55.2",
     "cobs>=1.2.2",
+    "loguru>=0.7.3",
 ]
 
 [project.scripts]
 exo-master = "exo.master.main:main"
 exo-worker = "exo.worker.main:main"
-#exo = "exo.main:main"
+exo = "exo.main:main"
 
 # dependencies only required for development
 [dependency-groups]

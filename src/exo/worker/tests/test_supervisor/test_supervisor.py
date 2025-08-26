@@ -4,6 +4,7 @@ from typing import Callable
 
 import pytest
 
+from exo.shared.logging import logger_test_install
 from exo.shared.openai_compat import FinishReason
 from exo.shared.types.common import Host
 from exo.shared.types.events.chunks import TokenChunk
@@ -32,6 +33,7 @@ async def test_supervisor_single_node_response(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
     instance_id = InstanceId()
 
@@ -40,7 +42,6 @@ async def test_supervisor_single_node_response(
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     try:
@@ -73,13 +74,13 @@ async def test_supervisor_two_node_response(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     instance_id = InstanceId()
 
     async def create_supervisor(shard_idx: int) -> RunnerSupervisor:
         supervisor = await RunnerSupervisor.create(
             model_shard_meta=pipeline_shard_meta(2, shard_idx),
             hosts=hosts(2, offset=15),
-            logger=logger,
         )
         return supervisor
 
@@ -138,13 +139,13 @@ async def test_supervisor_early_stopping(
     logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
     instance_id = InstanceId()
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     task = chat_completion_task(instance_id, TaskId())
@@ -192,12 +193,12 @@ async def test_supervisor_handles_terminated_runner(
     logger: Logger,
 ):
     """Test that the supervisor handles a terminated runner"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     # Terminate the runner
@@ -217,12 +218,12 @@ async def test_supervisor_handles_killed_runner(
     logger: Logger,
 ):
     """Test that the supervisor handles a killed runner"""
+    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
         model_shard_meta=model_shard_meta,
         hosts=hosts(1, offset=10),
-        logger=logger,
     )
 
     assert supervisor.healthy

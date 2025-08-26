@@ -1,9 +1,10 @@
 import asyncio
-import logging
 import time
 from asyncio import Queue
 from functools import partial
 from typing import AsyncGenerator, Optional
+
+from loguru import logger
 
 from exo.shared.db.sqlite import AsyncSQLiteEventStorage
 from exo.shared.types.common import NodeId
@@ -52,7 +53,6 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
-        logger: logging.Logger,
         shard_downloader: ShardDownloader,
         worker_events: AsyncSQLiteEventStorage | None,
         global_events: AsyncSQLiteEventStorage | None,
@@ -64,7 +64,6 @@ class Worker:
             worker_events  # worker_events is None in some tests.
         )
         self.global_events: AsyncSQLiteEventStorage | None = global_events
-        self.logger: logging.Logger = logger
 
         self.assigned_runners: dict[RunnerId, AssignedRunner] = {}
         self._task: asyncio.Task[None] | None = None
@@ -233,7 +232,6 @@ class Worker:
         assigned_runner.runner = await RunnerSupervisor.create(
             model_shard_meta=assigned_runner.shard_metadata,
             hosts=assigned_runner.hosts,
-            logger=self.logger,
             initialize_timeout=initialize_timeout,
         )
 
@@ -255,9 +253,7 @@ class Worker:
             if runner.runner_process.stdout is None:
                 health_issues.append("runner_process.stdout is None")
 
-            self.logger.warning(
-                f"Runner status is not healthy: {', '.join(health_issues)}"
-            )
+            logger.warning(f"Runner status is not healthy: {', '.join(health_issues)}")
             assigned_runner.status = FailedRunnerStatus()
         yield self.assigned_runners[op.runner_id].status_update_event()
 
@@ -375,7 +371,7 @@ class Worker:
             try:
                 await asyncio.wait_for(task, timeout=5)
             except asyncio.TimeoutError:
-                self.logger.warning(
+                logger.warning(
                     "Timed out waiting for task cleanup after inference execution."
                 )
 
@@ -436,4 +432,4 @@ class Worker:
     async def event_publisher(self, event: Event) -> None:
         assert self.worker_events is not None
         await self.worker_events.append_events([event], self.node_id)
-        self.logger.info(f"published event: {event}")
+        logger.info(f"published event: {event}")

@@ -2,8 +2,9 @@ import asyncio
 import contextlib
 import os
 from enum import Enum
-from logging import Logger
 from pathlib import Path
+
+from loguru import logger
 
 from exo.shared.constants import (
     EXO_GLOBAL_EVENT_DB,
@@ -40,12 +41,10 @@ class ForwarderSupervisor:
         self,
         node_id: NodeId,
         forwarder_binary_path: Path,
-        logger: Logger,
         health_check_interval: float = 5.0,
     ):
         self.node_id = node_id
         self._binary_path = forwarder_binary_path
-        self._logger = logger
         self._health_check_interval = health_check_interval
         self._current_role: ForwarderRole | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -57,10 +56,11 @@ class ForwarderSupervisor:
         This is the main public interface.
         """
         if self._current_role == new_role:
-            self._logger.debug(f"Role unchanged: {new_role}")
+            logger.debug(f"Role unchanged: {new_role}")
             return
-
-        self._logger.info(f"Role changing from {self._current_role} to {new_role}")
+        logger.bind(user_facing=True).info(
+            f"Node changing from {self._current_role} to {new_role}"
+        )
         self._current_role = new_role
         await self._restart_with_role(new_role)
 
@@ -119,8 +119,7 @@ class ForwarderSupervisor:
             stderr=None,
             env=env_vars,
         )
-
-        self._logger.info(f"Starting forwarder with forwarding pairs: {pairs}")
+        logger.info(f"Starting forwarder with forwarding pairs: {pairs}")
 
         # Start health monitoring
         self._health_check_task = asyncio.create_task(self._monitor_health())
@@ -141,7 +140,9 @@ class ForwarderSupervisor:
                     self._process.terminate()
                     await asyncio.wait_for(self._process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
-                    self._logger.warning("Forwarder didn't terminate, killing")
+                    logger.bind(user_facing=True).warning(
+                        "Forwarder didn't terminate, killing"
+                    )
                     self._process.kill()
                     await self._process.wait()
                 except ProcessLookupError:
@@ -158,7 +159,9 @@ class ForwarderSupervisor:
                     self._process.wait(), timeout=self._health_check_interval
                 )
                 # Process exited
-                self._logger.error(f"Forwarder exited with code {retcode}")
+                logger.bind(user_facing=True).error(
+                    f"Forwarder died with code {retcode}"
+                )
 
                 # Auto-restart
                 await asyncio.sleep(0.2)  # Brief delay before restart

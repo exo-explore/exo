@@ -5,6 +5,7 @@ from typing import Callable, Dict, Generator, Iterable, List, Optional, TypeVar,
 
 import aiofiles
 import aiofiles.os as aios
+from loguru import logger
 
 from exo.shared.types.worker.shards import ShardMetadata
 
@@ -112,5 +113,5 @@ def get_allow_patterns(weight_map: Dict[str, str], shard: ShardMetadata) -> List
             shard_specific_patterns.add(sorted_file_names[-1])
     else:
         shard_specific_patterns = set(["*.safetensors"])
-    print(f"get_allow_patterns {shard=} {shard_specific_patterns=}")
+    logger.info(f"get_allow_patterns {shard=} {shard_specific_patterns=}")
     return list(default_patterns | shard_specific_patterns)

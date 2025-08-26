@@ -5,8 +5,8 @@ from typing import Callable
 
 import pytest
 
-# TaskStateUpdated and ChunkGenerated are used in test_worker_integration_utils.py
 from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from exo.shared.logging import logger_test_install
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.common import Host
@@ -90,7 +90,8 @@ async def test_2_runner_inference(
     hosts: Callable[[int], list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
 ):
-    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    logger_test_install(logger)
+    event_log_manager = EventLogManager(EventLogConfig())
     await event_log_manager.initialize()
     shard_downloader = NoopShardDownloader()
 
@@ -99,21 +100,19 @@ async def test_2_runner_inference(
 
     worker1 = Worker(
         NODE_A,
-        logger=logger,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker1, logger))
+    asyncio.create_task(run(worker1))
 
     worker2 = Worker(
         NODE_B,
-        logger=logger,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker2, logger))
+    asyncio.create_task(run(worker2))
 
     ## Instance
     model_id = ModelId(MODEL_ID)
@@ -199,7 +198,8 @@ async def test_parallel_inference(
     hosts: Callable[[int], list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
 ):
-    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    logger_test_install(logger)
+    event_log_manager = EventLogManager(EventLogConfig())
     await event_log_manager.initialize()
     shard_downloader = NoopShardDownloader()
 
@@ -208,21 +208,19 @@ async def test_parallel_inference(
 
     worker1 = Worker(
         NODE_A,
-        logger=logger,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker1, logger))
+    asyncio.create_task(run(worker1))
 
     worker2 = Worker(
         NODE_B,
-        logger=logger,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker2, logger))
+    asyncio.create_task(run(worker2))
 
     ## Instance
     model_id = ModelId(MODEL_ID)

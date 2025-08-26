@@ -1,5 +1,5 @@
 """
-Comprehensive unit tests for Forwardersupervisor.
+Comprehensive unit tests for ForwarderSupervisor.
 Tests basic functionality, process management, and edge cases.
 """
 
@@ -25,6 +25,7 @@ from exo.shared.constants import (
     LIBP2P_GLOBAL_EVENTS_TOPIC,
     LIBP2P_WORKER_EVENTS_TOPIC,
 )
+from exo.shared.logging import logger_test_install
 from exo.shared.types.common import NodeId
 
 # Mock forwarder script content
@@ -191,10 +192,11 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test starting forwarder in replica mode."""
+        logger_test_install(test_logger)
         # Set environment
         os.environ.update(mock_env_vars)
 
-        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script)
         await supervisor.start_as_replica()
 
         # Track the process for cleanup
@@ -236,9 +238,10 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test changing role from replica to master."""
+        logger_test_install(test_logger)
         os.environ.update(mock_env_vars)
 
-        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script)
         await supervisor.start_as_replica()
 
         if supervisor.process:
@@ -282,9 +285,10 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test that setting the same role twice doesn't restart the process."""
+        logger_test_install(test_logger)
         os.environ.update(mock_env_vars)
 
-        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script)
         await supervisor.start_as_replica()
 
         original_pid = supervisor.process_pid
@@ -312,6 +316,7 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test that Forwardersupervisor restarts the process if it crashes."""
+        logger_test_install(test_logger)
         # Configure mock to exit after 1 second
         mock_env_vars["MOCK_EXIT_AFTER"] = "1"
         mock_env_vars["MOCK_EXIT_CODE"] = "1"
@@ -320,7 +325,6 @@ class TestForwardersupervisorBasic:
         supervisor = ForwarderSupervisor(
             NodeId(),
             mock_forwarder_script,
-            test_logger,
             health_check_interval=0.5,  # Faster health checks for testing
         )
         await supervisor.start_as_replica()
@@ -361,9 +365,10 @@ class TestForwardersupervisorBasic:
         self, test_logger: logging.Logger, temp_dir: Path
     ) -> None:
         """Test behavior when forwarder binary doesn't exist."""
+        logger_test_install(test_logger)
         nonexistent_path = temp_dir / "nonexistent_forwarder"
 
-        supervisor = ForwarderSupervisor(NodeId(), nonexistent_path, test_logger)
+        supervisor = ForwarderSupervisor(NodeId(), nonexistent_path)
 
         # Should raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
@@ -376,10 +381,11 @@ class TestElectionCallbacks:
     @pytest.mark.asyncio
     async def test_on_became_master(self, test_logger: logging.Logger) -> None:
         """Test callback when becoming master."""
+        logger_test_install(test_logger)
         mock_supervisor = MagicMock(spec=ForwarderSupervisor)
         mock_supervisor.notify_role_change = AsyncMock()
 
-        callbacks = ElectionCallbacks(mock_supervisor, test_logger)
+        callbacks = ElectionCallbacks(mock_supervisor)
         await callbacks.on_became_master()
 
         mock_supervisor.notify_role_change.assert_called_once_with(ForwarderRole.MASTER)  # type: ignore
@@ -387,10 +393,11 @@ class TestElectionCallbacks:
     @pytest.mark.asyncio
     async def test_on_became_replica(self, test_logger: logging.Logger) -> None:
         """Test callback when becoming replica."""
+        logger_test_install(test_logger)
         mock_supervisor = MagicMock(spec=ForwarderSupervisor)
         mock_supervisor.notify_role_change = AsyncMock()
 
-        callbacks = ElectionCallbacks(mock_supervisor, test_logger)
+        callbacks = ElectionCallbacks(mock_supervisor)
         await callbacks.on_became_replica()
 
         mock_supervisor.notify_role_change.assert_called_once_with(  # type: ignore
