@@ -183,15 +183,15 @@ async def test_ttft(
         if not first_chunk_seen_1:
             await asyncio.sleep(0.01)
 
-    _, seen_task_finished_1, response_string_1, _ = await read_streaming_response(
+    _, seen_task_finished_1, response_string_1, token_count_1 = await read_streaming_response(
         global_events
     )
-    # # total_time_1 = time.time() - task_created_time_1
+    total_time_1 = time.time() - task_created_time_1
 
     assert seen_task_finished_1
 
     # Wait for first task to complete
-    await asyncio.sleep(3.0)
+    await asyncio.sleep(5.0)
 
     # Second inference
     task2_params = ChatCompletionTaskParams(
@@ -238,10 +238,10 @@ async def test_ttft(
         if not first_chunk_seen_2:
             await asyncio.sleep(0.01)
 
-    _, seen_task_finished_2, response_string_2, _ = await read_streaming_response(
+    _, seen_task_finished_2, response_string_2, token_count_2 = await read_streaming_response(
         global_events, filter_task=TASK_2_ID
     )
-    # # total_time_2 = time.time() - task_created_time_2
+    total_time_2 = time.time() - task_created_time_2
 
     assert seen_task_finished_2
     assert time_to_first_token_1
@@ -249,41 +249,41 @@ async def test_ttft(
 
     # Calculate TPS metrics
     # Prompt is approximately 45 tokens according to user
-    # prompt_tokens = 45
+    prompt_tokens = 45
 
-    # # Prefill TPS = prompt tokens / time to first token
-    # prefill_tps_1 = prompt_tokens / time_to_first_token_1 if time_to_first_token_1 > 0 else 0
-    # prefill_tps_2 = prompt_tokens / time_to_first_token_2 if time_to_first_token_2 > 0 else 0
+    # Prefill TPS = prompt tokens / time to first token
+    prefill_tps_1 = prompt_tokens / time_to_first_token_1 if time_to_first_token_1 > 0 else 0
+    prefill_tps_2 = prompt_tokens / time_to_first_token_2 if time_to_first_token_2 > 0 else 0
 
-    # # Generation TPS = generated tokens / generation time
-    # # Generation time = total time - time to first token
-    # generation_time_1 = total_time_1 - time_to_first_token_1
-    # generation_time_2 = total_time_2 - time_to_first_token_2
-    # generation_tps_1 = token_count_1 / generation_time_1 if generation_time_1 > 0 else 0
-    # generation_tps_2 = token_count_2 / generation_time_2 if generation_time_2 > 0 else 0
+    # Generation TPS = generated tokens / generation time
+    # Generation time = total time - time to first token
+    generation_time_1 = total_time_1 - time_to_first_token_1
+    generation_time_2 = total_time_2 - time_to_first_token_2
+    generation_tps_1 = token_count_1 / generation_time_1 if generation_time_1 > 0 else 0
+    generation_tps_2 = token_count_2 / generation_time_2 if generation_time_2 > 0 else 0
 
-    # # Display time to first token profiling results
-    # print("\n=== Time to First Token Profiling ===")
-    # print(f"First inference ('{task1.task_params.messages[0].content}'):")
-    # print(f"  Time to first token: {time_to_first_token_1:.3f}s")
-    # print(f"  Total completion time: {total_time_1:.3f}s")
-    # print(f"  Tokens generated: {token_count_1}")
-    # print(f"  Response length: {len(response_string_1)} chars")
-    # print(f"  Prefill TPS: {prefill_tps_1:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_1:.3f}s)")
-    # print(f"  Generation TPS: {generation_tps_1:.1f} tokens/sec ({token_count_1} tokens / {generation_time_1:.3f}s)")
+    # Display time to first token profiling results
+    print("\n=== Time to First Token Profiling ===")
+    print(f"First inference ('{task1.task_params.messages[0].content}'):")
+    print(f"  Time to first token: {time_to_first_token_1:.3f}s")
+    print(f"  Total completion time: {total_time_1:.3f}s")
+    print(f"  Tokens generated: {token_count_1}")
+    print(f"  Response length: {len(response_string_1)} chars")
+    print(f"  Prefill TPS: {prefill_tps_1:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_1:.3f}s)")
+    print(f"  Generation TPS: {generation_tps_1:.1f} tokens/sec ({token_count_1} tokens / {generation_time_1:.3f}s)")
 
-    # print(f"\nSecond inference ('{task2.task_params.messages[0].content}'):")
-    # print(f"  Time to first token: {time_to_first_token_2:.3f}s")
-    # print(f"  Total completion time: {total_time_2:.3f}s")
-    # print(f"  Tokens generated: {token_count_2}")
-    # print(f"  Response length: {len(response_string_2)} chars")
-    # print(f"  Prefill TPS: {prefill_tps_2:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_2:.3f}s)")
-    # print(f"  Generation TPS: {generation_tps_2:.1f} tokens/sec ({token_count_2} tokens / {generation_time_2:.3f}s)")
+    print(f"\nSecond inference ('{task2.task_params.messages[0].content}'):")
+    print(f"  Time to first token: {time_to_first_token_2:.3f}s")
+    print(f"  Total completion time: {total_time_2:.3f}s")
+    print(f"  Tokens generated: {token_count_2}")
+    print(f"  Response length: {len(response_string_2)} chars")
+    print(f"  Prefill TPS: {prefill_tps_2:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_2:.3f}s)")
+    print(f"  Generation TPS: {generation_tps_2:.1f} tokens/sec ({token_count_2} tokens / {generation_time_2:.3f}s)")
 
-    # print("\nComparison:")
-    # print(f"  Second inference time to first token: {time_to_first_token_2/time_to_first_token_1:.2f}x the first")
-    # print(f"  Second inference prefill TPS: {prefill_tps_2/prefill_tps_1:.2f}x the first")
-    # print(f"  Second inference generation TPS: {generation_tps_2/generation_tps_1:.2f}x the first")
+    print("\nComparison:")
+    print(f"  Second inference time to first token: {time_to_first_token_2/time_to_first_token_1:.2f}x the first")
+    print(f"  Second inference prefill TPS: {prefill_tps_2/prefill_tps_1:.2f}x the first")
+    print(f"  Second inference generation TPS: {generation_tps_2/generation_tps_1:.2f}x the first")
 
     # Basic assertions to ensure responses make sense
     assert len(response_string_1) > 0

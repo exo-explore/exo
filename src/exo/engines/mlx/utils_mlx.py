@@ -60,19 +60,16 @@ def mlx_setup(
     target_cache = int(1.10 * (model_bytes + kv_bytes))  # +10% slack
     target_cache = min(target_cache, int(cache_frac_of_mrwss * mrwss))
     target_cache = min(target_cache, memsize)
+
     runner_print(f"{target_cache=}")
-
     mx.set_cache_limit(max(target_cache, 0))
-    return
-
-    # Optional hard cap (keeps total MLX usage under control)
-    with contextlib.suppress(Exception):
-        mx.set_memory_limit(int(0.85 * mrwss))
 
     # Wiring: off by default; if you re‑enable, wire at most a small fraction.
     if wired_frac_of_mrwss > 0.0:
-        target_wired = min(int(wired_frac_of_mrwss * mrwss), int(0.5 * model_bytes))
+        target_wired = int(wired_frac_of_mrwss * mrwss)
         target_wired = min(target_wired, target_cache)  # don’t wire more than cache
+        
+        runner_print(f"{target_wired=}")
         with contextlib.suppress(Exception):  # older macOS won’t have this
             mx.set_wired_limit(max(target_wired, 0))
 

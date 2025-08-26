@@ -58,15 +58,16 @@ def runner_write_response(obj: RunnerResponse) -> None:
 
 async def supervisor_read_response(
     proc: asyncio.subprocess.Process,
-) -> RunnerResponse | None:
+) -> RunnerResponse:
     assert proc.stdout is not None, (
         "proc.stdout should not be None when created with stdout=PIPE"
     )
-    line_bytes: bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=180)
+    # TODO: We could put a timeout on this if we decide to send heartbeats from the runner.
+    # This lets us handle cases where the process dies at some point not during an inference.
+    line_bytes: bytes = await proc.stdout.readline()
+    if not line_bytes:
+        raise EOFError('No more data to read when reading response from runner.')
     line: str = line_bytes.decode("utf-8").strip()
-
-    if not line:
-        return None
 
     try:
         return RunnerResponseTypeAdapter.validate_json(line)

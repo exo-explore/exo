@@ -32,6 +32,7 @@ dependencies = [
     "transformers>=4.55.2",
     "cobs>=1.2.2",
     "loguru>=0.7.3",
+    "textual>=5.3.0",
 ]
 
 [project.scripts]

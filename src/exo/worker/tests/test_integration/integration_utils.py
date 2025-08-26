@@ -55,6 +55,7 @@ async def read_streaming_response(
                 event.chunk, TokenChunk
             ):
                 response_string += event.chunk.text
+                token_count += 1
                 if event.chunk.finish_reason:
                     finish_reason = event.chunk.finish_reason
 

@@ -114,6 +114,13 @@ class RunnerSupervisor:
         """
         Read from the queue with a timeout, but also check if the read_task has failed.
         """
+        try:
+            assert not self.read_task.done()        
+        except AssertionError as e_assert:
+            e = self.read_task.exception()
+            assert e is not None
+            raise e from e_assert
+
         queue_task = asyncio.create_task(self.read_queue.get())
 
         done, pending = await asyncio.wait(
@@ -137,13 +144,14 @@ class RunnerSupervisor:
             return response
 
         if self.read_task in done:
-            await self.read_task  # Re-raises any exception from read_task
-            logger.error(
-                "Unreachable code run. We should have raised an error on the read_task being done."
-            )
-
+            try:
+                await self.read_task  # Re-raises any exception from read_task
+            except Exception:
+                raise # bubble up exception
+            raise RunnerError("RunnerStopped", "Runner read loop terminated unexpectedly before any response.", "")
+        
         # if we haven't read from the queue, we have timed out.
-        await self.astop()
+        await self.astop() # TODO: This could be handled by the called or _read_with_error_check - as we don't want a false Timeout to bring the whole runner down.
         raise asyncio.TimeoutError()
 
     async def stream_response(
@@ -186,7 +194,7 @@ class RunnerSupervisor:
             try:
                 response = await self._read_with_error_check(timeout)
             except asyncio.TimeoutError as e:
-                logger.bind(user_facing=True).info(
+                logger.bind(user_facing=True).error(
                     f"Generation timed out during {'prefil' if timeout == prefil_timeout else 'decoding stage'}"
                 )
                 raise e
@@ -219,16 +227,17 @@ class RunnerSupervisor:
 
     async def _read_coro(self):
         while True:
-            response: RunnerResponse | None = await supervisor_read_response(
-                self.runner_process
-            )
-            if response is None:
-                # Runner process died unexpectedly (C++ crash)
+            try:
+                response: RunnerResponse = await supervisor_read_response(
+                    self.runner_process
+                )
+            except EOFError:
                 e = await self._raise_crashed()
                 if e:
-                    raise e from EOFError
+                    # Runner process died unexpectedly (C++ crash)
+                    raise e from EOFError # TODO: Do we just want to create an error and put it on the read_queue here?
                 else:
-                    break
+                    continue
 
             match response:
                 case PrintResponse():

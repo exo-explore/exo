@@ -68,6 +68,7 @@ def get_init_timeout(model_shard_meta: ShardMetadata) -> float:
 
 
 def get_prefil_timeout(model_shard_meta: ShardMetadata) -> float:
+    return 30.0 # TODO: Proper prefil timeout calculation, but this requires knowing the number of tokens in the prompt.
     weights_size_gb = get_weights_size_kb(model_shard_meta) / (1024 * 1024)
 
     tokens = 1000  # constant for now - the prompt is only tokenized in the device...

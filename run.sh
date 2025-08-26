@@ -33,16 +33,16 @@ fi
 # Configure MLX
 # ./configure_mlx.sh
 
-# First command (worker) - changes based on replica flag
-if [ "$REPLICA" = true ]; then
-  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export EXO_HOME=.exo; uv run exo-worker'\""
-else
-  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c uv run exo-worker\""
-fi
-
 # Second command (master) - changes based on replica flag
 if [ "$REPLICA" = true ]; then
   osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export RUST_LOG=true EXO_RUN_AS_REPLICA=1 EXO_HOME=.exo API_PORT=8001; uv run exo-master'\""
 else
   osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export RUST_LOG=true; uv run exo-master'\""
+fi
+
+# First command (worker) - changes based on replica flag
+if [ "$REPLICA" = true ]; then
+  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c bash -c 'export EXO_HOME=.exo; uv run exo-worker'\""
+else
+  osascript -e "tell app \"Terminal\" to do script \"cd '$DIR'; nix develop -c uv run exo-worker\""
 fi

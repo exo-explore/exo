@@ -20,7 +20,7 @@ def logger_setup(log_file: Path, verbosity: int = 0):
     if verbosity == 0:
         _ = logger.add(  # type: ignore
             sys.__stderr__,  # type: ignore
-            format="[ {time:hh:mmA} | <level>{level: <8}</level>] <level>{message}</level>",
+            format="[ {time:hh:mm:ss.SSSSA} | <level>{level: <8}</level>] <level>{message}</level>",
             level="INFO",
             colorize=True,
             enqueue=True,
@@ -29,7 +29,7 @@ def logger_setup(log_file: Path, verbosity: int = 0):
     elif verbosity == 1:
         _ = logger.add(  # type: ignore
             sys.__stderr__,  # type: ignore
-            format="[ {time:hh:mmA} | <level>{level: <8}</level>] <level>{message}</level>",
+            format="[ {time:hh:mm:ss.SSSSA} | <level>{level: <8}</level>] <level>{message}</level>",
             level="INFO",
             colorize=True,
             enqueue=True,

@@ -112,7 +112,7 @@ async def main():
         model_shard_meta = setup_message.model_shard_meta
         hosts = setup_message.hosts
 
-        mlx_setup(int(get_weights_size_kb(model_shard_meta) // 2**10))
+        mlx_setup(int(get_weights_size_kb(model_shard_meta) // 2**10), cache_frac_of_mrwss=0.8, wired_frac_of_mrwss=0.8)
 
         # For testing - these are fake break conditions
         if model_shard_meta.immediate_exception:

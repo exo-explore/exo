@@ -1,26 +1,36 @@
-# pyright: reportAny=false
-
 import asyncio
-import curses
-import time
 import json
 import argparse
 import sys
-from logging import Logger
+import time
+from dataclasses import is_dataclass, asdict
+from logging import getLogger
 from typing import List, Optional, Any, Sequence, Tuple
 
+# Your existing imports — unchanged
 from exo.shared.types.state import State
 from exo.shared.apply import apply
 from exo.shared.db.sqlite.event_log_manager import EventLogManager, EventLogConfig
 from exo.shared.types.events.components import EventFromEventLog
 from exo.shared.types.events import Event
 
-# Globals
-logger: Logger = Logger('helper_log')
-event_log_manager: Optional[EventLogManager] = None
-worker_mode: bool = False
+# --- Third-party UI (new) ---
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.panel import Panel
+from rich.console import RenderableType
 
-# Worker-related event types
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Static, ListView, ListItem, Input, Footer, Label
+from textual.reactive import reactive
+from textual import on
+from textual.binding import Binding
+from textual.message import Message
+
+logger = getLogger("helper_log")
+
+# Worker-related event types (same set)
 WORKER_EVENT_TYPES = {
     'TaskCreated', 'TaskStateUpdated', 'TaskFailed', 'TaskDeleted',
     'ChunkGenerated',
@@ -29,16 +39,18 @@ WORKER_EVENT_TYPES = {
 }
 
 
+# ---------- Data / DB helpers (mostly your original logic) ----------
+
+event_log_manager: Optional[EventLogManager] = None
+
 async def init_db() -> None:
     global event_log_manager
-    event_log_manager = EventLogManager(EventLogConfig(), logger)
+    event_log_manager = EventLogManager(EventLogConfig())
     await event_log_manager.initialize()
 
-
 async def get_events_since(since: int) -> Sequence[EventFromEventLog[Event]]:
-    assert event_log_manager is not None
+    # type: ignore[attr-defined, return-value]
     return await event_log_manager.global_events.get_events_since(since)
-
 
 async def load_all_events() -> List[EventFromEventLog[Event]]:
     events: List[EventFromEventLog[Event]] = []
@@ -51,7 +63,6 @@ async def load_all_events() -> List[EventFromEventLog[Event]]:
         since += len(new_events)
     return events
 
-
 def compute_states(events: List[EventFromEventLog[Event]]) -> List[State]:
     states: List[State] = [State()]
     state = states[0]
@@ -60,34 +71,95 @@ def compute_states(events: List[EventFromEventLog[Event]]) -> List[State]:
         states.append(state)
     return states
 
+def filter_worker_state(state: State) -> dict:
+    state_dict = json.loads(state.model_dump_json())
+    return {
+        'node_status': state_dict.get('node_status', {}),
+        'instances': state_dict.get('instances', {}),
+        'runners': state_dict.get('runners', {}),
+        'tasks': state_dict.get('tasks', {}),
+        'last_event_applied_idx': state_dict.get('last_event_applied_idx', 0)
+    }
 
-def print_event(event: EventFromEventLog[Event]) -> None:
-    event_type_name = type(event.event).__name__
-    event_type = event_type_name.replace('_', ' ').title()
-    attributes = ', '.join(f"{key}={value!r}" for key,
-                           value in vars(event.event).items())
-    print(f"[{event.idx_in_log}] {event_type}: {attributes}")
+def event_type_name(e: EventFromEventLog[Event]) -> str:
+    return type(e.event).__name__
+
+def is_worker_event(e: EventFromEventLog[Event]) -> bool:
+    return event_type_name(e) in WORKER_EVENT_TYPES
+
+def safe_json(obj: Any) -> str:
+    """Serialize unknown objects to JSON-ish string safely."""
+    def to_serializable(x: Any):
+        try:
+            if is_dataclass(x):
+                return asdict(x)
+        except Exception:
+            pass
+        if isinstance(x, (str, int, float, bool)) or x is None:
+            return x
+        if isinstance(x, dict):
+            return {str(k): to_serializable(v) for k, v in x.items()}
+        if isinstance(x, (list, tuple, set)):
+            return [to_serializable(v) for v in x]
+        try:
+            json.dumps(x)  # type: ignore
+            return x
+        except Exception:
+            return repr(x)
+    try:
+        return json.dumps(to_serializable(obj), indent=2, ensure_ascii=False)
+    except Exception:
+        # Last resort
+        return repr(obj)
+
+def summarize_event_line(e: EventFromEventLog[Event], max_len: int = 160) -> Text:
+    etype = event_type_name(e)
+    attrs = vars(e.event)
+    prefix = Text(f"[{e.idx_in_log}] ", style="bold dim")
+    t = Text(etype, style="bold cyan")
+    t = prefix + t + Text(": ", style="dim")
+    first = True
+    for k, v in attrs.items():
+        if not first:
+            t.append(", ", style="dim")
+        first = False
+        t.append(str(k), style="magenta")
+        t.append("=")
+        # Coarse coloring by type
+        if isinstance(v, str):
+            t.append(repr(v), style="green")
+        elif isinstance(v, (int, float)):
+            t.append(repr(v), style="yellow")
+        elif isinstance(v, bool):
+            t.append(repr(v), style="cyan")
+        else:
+            t.append(repr(v), style="")
+    if len(t.plain) > max_len:
+        t.truncate(max_len - 1)
+        t.append("…", style="dim")
+    return t
+
+def event_detail_renderable(e: EventFromEventLog[Event]) -> RenderableType:
+    payload = {
+        "idx_in_log": e.idx_in_log,
+        "event_type": event_type_name(e),
+        "attributes": vars(e.event)
+    }
+    return Syntax(safe_json(payload), "json", word_wrap=True)
 
 
-async def non_tui_mode() -> None:
+# ---------- Non-TUI (stdout) mode, like your current script ----------
+
+async def run_non_tui(worker_mode: bool) -> None:
     await init_db()
     events = await load_all_events()
     states = compute_states(events)
     final_state = states[-1]
 
     if worker_mode:
-        filtered_events = [e for e in events if type(
-            e.event).__name__ in WORKER_EVENT_TYPES]
+        filtered_events = [e for e in events if is_worker_event(e)]
         events = filtered_events
-        # Recompute states? But states are cumulative, so perhaps just print filtered events and full state, or filter state too.
-        state_dict = json.loads(final_state.model_dump_json())
-        filtered_state = {
-            'node_status': state_dict.get('node_status', {}),
-            'instances': state_dict.get('instances', {}),
-            'runners': state_dict.get('runners', {}),
-            'tasks': state_dict.get('tasks', {}),
-            'last_event_applied_idx': state_dict.get('last_event_applied_idx', 0)
-        }
+        filtered_state = filter_worker_state(final_state)
         print("Final State (filtered):")
         print(json.dumps(filtered_state, indent=2))
     else:
@@ -95,464 +167,345 @@ async def non_tui_mode() -> None:
         print(final_state.model_dump_json(indent=2))
 
     print("\nEvents:")
-    for event in events:
-        print_event(event)
+    for e in events:
+        etype = event_type_name(e)
+        attrs = ', '.join(f"{k}={value!r}" for k, value in vars(e.event).items())
+        print(f"[{e.idx_in_log}] {etype}: {attrs}")
 
 
-async def update_events(wrapped_events: List[EventFromEventLog[Event]], states: List[State],
-                        filtered_indices: Optional[List[int]] = None) -> bool:
-    last_since = len(wrapped_events)
-    new_wrapped = await get_events_since(last_since)
-    if new_wrapped:
-        last_len = len(wrapped_events)
-        for nw in new_wrapped:
-            state = states[-1]
-            new_state = apply(state, nw)
-            states.append(new_state)
-        wrapped_events.extend(new_wrapped)
-        if filtered_indices is not None:
-            for k in range(last_len, len(wrapped_events)):
-                if type(wrapped_events[k].event).__name__ in WORKER_EVENT_TYPES:
-                    filtered_indices.append(k)
-        return True
-    return False
+# ---------- Textual TUI ----------
 
-
-def draw_state(win: Any, state: State, height: int, width: int, worker_mode: bool, state_scroll: int) -> int:
-    win.clear()
-    state_dict = json.loads(state.model_dump_json())
-    if worker_mode:
-        filtered_state = {
-            'node_status': state_dict.get('node_status', {}),
-            'instances': state_dict.get('instances', {}),
-            'runners': state_dict.get('runners', {}),
-            'tasks': state_dict.get('tasks', {}),
-            'last_event_applied_idx': state_dict.get('last_event_applied_idx', 0)
-        }
-        state_pretty = json.dumps(filtered_state, indent=2)
-    else:
-        state_pretty = json.dumps(state_dict, indent=2)
-    lines = state_pretty.split('\n')
-    max_scroll = max(0, len(lines) - height)
-    current_scroll = min(state_scroll, max_scroll)
-    for i in range(height):
-        line_idx = current_scroll + i
-        if line_idx >= len(lines):
-            break
-        line = lines[line_idx]
-        y = i
-        x = 0
-        leading_spaces = len(line) - len(line.lstrip())
-        win.addstr(y, x, ' ' * leading_spaces)
-        x += leading_spaces
-        stripped = line.lstrip()
-        if stripped.startswith('"'):
-            end_key = stripped.find('": ')
-            if end_key != -1:
-                key_str = stripped[:end_key + 3]  # include ":
-                win.addstr(y, x, key_str, curses.color_pair(3))
-                x += len(key_str)
-                value_str = stripped[end_key + 3:]
-                if value_str.startswith('"'):
-                    color = 2
-                elif value_str.replace('.', '', 1).isdigit() or (
-                        value_str.startswith('-') and value_str[1:].replace('.', '', 1).isdigit()):
-                    color = 4
-                elif value_str in ['true', 'false', 'null']:
-                    color = 5
-                elif value_str.startswith('{') or value_str.startswith('[') or value_str.startswith(
-                        '}') or value_str.startswith(']'):
-                    color = 0
-                else:
-                    color = 0
-                win.addstr(y, x, value_str, curses.color_pair(color))
-            else:
-                win.addstr(y, x, stripped)
-        else:
-            win.addstr(y, x, stripped)
-    win.refresh()
-    return current_scroll
-
-
-def get_event_pairs(event: EventFromEventLog[Event]) -> List[Tuple[str, int]]:
-    pairs: List[Tuple[str, int]] = []
-    idx_str = f"[{event.idx_in_log}] "
-    pairs.append((idx_str, 5))
-    event_type_name = type(event.event).__name__
-    event_type = event_type_name.replace('_', ' ').title()
-    pairs.append((event_type, 1))
-    pairs.append((": ", 0))
-    attrs = vars(event.event)
-    first = True
-    for key, value in attrs.items():
-        if not first:
-            pairs.append((", ", 0))
-        first = False
-        pairs.append((key, 3))
-        pairs.append(("=", 0))
-        v_str = repr(value)
-        if isinstance(value, str):
-            color = 2
-        elif isinstance(value, (int, float)):
-            color = 4
-        elif isinstance(value, bool):
-            color = 5
-        else:
-            color = 6
-        pairs.append((v_str, color))
-    return pairs
-
-
-def calculate_event_lines(pairs: List[Tuple[str, int]], win_width: int, subsequent_indent: int) -> int:
-    lines = 1
-    x = 0
-    for text, _ in pairs:
-        i = 0
-        while i < len(text):
-            remaining = win_width - x
-            part_len = min(len(text) - i, remaining)
-            i += part_len
-            x += part_len
-            if i < len(text):
-                lines += 1
-                x = subsequent_indent
-    return lines
-
-
-def render_event(win: Any, start_y: int, pairs: List[Tuple[str, int]], is_bold: bool, win_width: int,
-                 subsequent_indent: int) -> int:
-    y = start_y
-    x = 0
-    for text, color in pairs:
-        attr = curses.color_pair(color) | (curses.A_BOLD if is_bold else 0)
-        i = 0
-        while i < len(text):
-            remaining = win_width - x
-            part_len = min(len(text) - i, remaining)
-            part = text[i:i + part_len]
-            try:
-                win.addstr(y, x, part, attr)
-            except curses.error:
-                pass
-            i += part_len
-            x += part_len
-            if i < len(text):
-                y += 1
-                if y >= win.getmaxyx()[0]:
-                    return y
-                x = subsequent_indent
-    if x > 0:
-        y += 1
-    return y
-
-
-def draw_events(win: Any, events_list: List[EventFromEventLog[Event]], current_events: int, height: int) -> None:
-    win.clear()
-    if len(events_list) == 0:
-        win.addstr(0, 0, "No events")
-        win.refresh()
-        return
-    win_width = win.getmaxyx()[1]
-    current_event = events_list[current_events]
-    current_pairs = get_event_pairs(current_event)
-    subsequent_indent = len(f"[{current_event.idx_in_log}] ")
-    lines_current = calculate_event_lines(
-        current_pairs, win_width, subsequent_indent)
-    if lines_current > height:
-        render_event(win, 0, current_pairs, True, win_width, subsequent_indent)
-        win.refresh()
-        return
-
-    target_above = (height - lines_current) // 2
-    target_below = height - lines_current - target_above
-
-    # Collect previous events
-    prev_events: List[int] = []
-    remaining = target_above
-    i = current_events - 1
-    while i >= 0 and remaining > 0:
-        event = events_list[i]
-        pairs = get_event_pairs(event)
-        indent = len(f"[{event.idx_in_log}] ")
-        lines = calculate_event_lines(pairs, win_width, indent)
-        if lines <= remaining:
-            remaining -= lines
-            prev_events.append(i)
-            i -= 1
-        else:
-            break
-    prev_events.reverse()
-
-    # Collect next events
-    next_events: List[int] = []
-    remaining = target_below
-    j = current_events + 1
-    while j < len(events_list) and remaining > 0:
-        event = events_list[j]
-        pairs = get_event_pairs(event)
-        indent = len(f"[{event.idx_in_log}] ")
-        lines = calculate_event_lines(pairs, win_width, indent)
-        if lines <= remaining:
-            remaining -= lines
-            next_events.append(j)
-            j += 1
-        else:
-            break
-
-    # Calculate total lines
-    total_lines = lines_current
-    for idx in prev_events:
-        event = events_list[idx]
-        pairs = get_event_pairs(event)
-        indent = len(f"[{event.idx_in_log}] ")
-        total_lines += calculate_event_lines(pairs, win_width, indent)
-    for idx in next_events:
-        event = events_list[idx]
-        pairs = get_event_pairs(event)
-        indent = len(f"[{event.idx_in_log}] ")
-        total_lines += calculate_event_lines(pairs, win_width, indent)
-
-    padding = (height - total_lines) // 2 if total_lines < height else 0
-
-    y = padding
-    # Draw prev
-    for idx in prev_events:
-        event = events_list[idx]
-        pairs = get_event_pairs(event)
-        indent = len(f"[{event.idx_in_log}] ")
-        y = render_event(win, y, pairs, False, win_width, indent)
-
-    # Draw current
-    y = render_event(win, y, current_pairs, True, win_width, subsequent_indent)
-
-    # Draw next
-    for idx in next_events:
-        event = events_list[idx]
-        pairs = get_event_pairs(event)
-        indent = len(f"[{event.idx_in_log}] ")
-        y = render_event(win, y, pairs, False, win_width, indent)
-
-    win.refresh()
-
-
-def draw_status(win: Any, realtime: bool, current: int, total_events: int) -> None:
-    win.clear()
-    mode = "Realtime" if realtime else "Timetravel"
-    win.addstr(0, 0,
-               f"Mode: {mode} | Current event: {current} / {total_events} | Arrows: navigate events, [/]: scroll state, g: goto, r: toggle realtime, q: quit")
-    win.refresh()
-
-
-def get_input(stdscr: Any, prompt: str) -> str:
-    curses.echo()
-    stdscr.addstr(0, 0, prompt)
-    stdscr.refresh()
-    input_str = stdscr.getstr(0, len(prompt), 20).decode('utf-8')
-    curses.noecho()
-    return input_str
-
-
-def get_key(win: Any) -> Any:
-    ch = win.getch()
-    if ch == -1:
-        return -1
-    if ch == 27:
-        ch2 = win.getch()
-        if ch2 == -1:
-            return 27
-        if ch2 == 91:
-            ch3 = win.getch()
-            if ch3 == -1:
-                return -1
-            if ch3 == 65:
-                return curses.KEY_UP
-            if ch3 == 66:
-                return curses.KEY_DOWN
-            if ch3 == 53:
-                ch4 = win.getch()
-                if ch4 == 126:
-                    return curses.KEY_PPAGE
-            if ch3 == 54:
-                ch4 = win.getch()
-                if ch4 == 126:
-                    return curses.KEY_NPAGE
-            if ch3 == 49:
-                ch4 = win.getch()
-                if ch4 == -1:
-                    return -1
-                if ch4 == 59:
-                    ch5 = win.getch()
-                    if ch5 == -1:
-                        return -1
-                    if ch5 == 53:
-                        ch6 = win.getch()
-                        if ch6 == -1:
-                            return -1
-                        if ch6 == 65:
-                            return 'CTRL_UP'
-                        if ch6 == 66:
-                            return 'CTRL_DOWN'
-    return ch
-
-
-def tui(stdscr: Any) -> None:
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(5, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.use_default_colors()
-    stdscr.timeout(100)
-    curses.curs_set(0)
-
-    wrapped_events: List[EventFromEventLog[Event]] = []
-    states: List[State] = [State()]
-    asyncio.run(init_db())
-    asyncio.run(update_events(wrapped_events, states))  # Initial load
-
-    filtered_indices: Optional[List[int]] = None
-    current_filtered: int = -1
-    current: int = -1
-    if worker_mode:
-        filtered_indices = [i for i in range(len(wrapped_events)) if
-                            type(wrapped_events[i].event).__name__ in WORKER_EVENT_TYPES]
-        current_filtered = len(filtered_indices) - \
-            1 if filtered_indices else -1
-    else:
-        current = len(wrapped_events) - 1 if wrapped_events else -1
-
-    realtime: bool = False
-    last_update: float = time.time()
-    update_interval: float = 1.0
-    state_scroll: int = 0
-
-    while True:
-        height, width = stdscr.getmaxyx()
-        status_height = 1
-        pane_height = height - status_height
-        pane_width = width // 2
-
-        state_win = curses.newwin(pane_height, pane_width, 0, 0)
-        events_win = curses.newwin(
-            pane_height, width - pane_width, 0, pane_width)
-        status_win = curses.newwin(status_height, width, pane_height, 0)
-
+class StateView(Static):
+    """Left pane: shows state JSON, with optional worker filter."""
+    def update_state(self, state: State, worker_mode: bool, index_in_log_for_status: Optional[int]) -> None:
         if worker_mode:
-            assert filtered_indices is not None
-            current_original = filtered_indices[current_filtered] if current_filtered >= 0 else -1
-            events_list = [wrapped_events[i] for i in filtered_indices]
-            current_events = current_filtered
+            data = filter_worker_state(state)
+            json_str = json.dumps(data, indent=2, ensure_ascii=False)
         else:
-            current_original = current
-            events_list = wrapped_events
-            current_events = current
+            json_str = state.model_dump_json(indent=2)
+        syntax = Syntax(json_str, "json", word_wrap=True)
+        title = f"State after event #{index_in_log_for_status}" if index_in_log_for_status is not None else "Initial State"
+        self.update(Panel(syntax, title=title, border_style="cyan"))
 
-        state_idx = current_original + 1 if current_original >= 0 else 0
-        state_scroll = draw_state(
-            state_win, states[state_idx], pane_height, pane_width, worker_mode, state_scroll)
-        draw_events(events_win, events_list, current_events, pane_height)
-        total_events = len(wrapped_events) - 1 if wrapped_events else -1
-        draw_status(status_win, realtime,
-                    current_original if worker_mode else current, total_events)
+class EventListItem(ListItem):
+    def __init__(self, e: EventFromEventLog[Event]) -> None:
+        super().__init__(Static(summarize_event_line(e)))
+        self._event = e
 
-        key = get_key(stdscr)
-        if key != -1:
-            if key == curses.KEY_UP:
-                if worker_mode and current_filtered > 0:
-                    current_filtered -= 1
-                elif not worker_mode and current > 0:
-                    current -= 1
-            elif key == 'CTRL_UP':
-                if worker_mode:
-                    current_filtered = max(0, current_filtered - 5)
-                else:
-                    current = max(0, current - 5)
-            elif key == curses.KEY_DOWN:
-                assert filtered_indices is not None
-                if worker_mode and current_filtered < len(filtered_indices) - 1:
-                    current_filtered += 1
-                elif not worker_mode and current < len(wrapped_events) - 1:
-                    current += 1
-            elif key == 'CTRL_DOWN':
-                assert filtered_indices is not None
-                if worker_mode:
-                    current_filtered = min(
-                        len(filtered_indices) - 1, current_filtered + 5)
-                else:
-                    current = min(len(wrapped_events) - 1, current + 5)
-            elif key == ord('['):
-                state_scroll = max(0, state_scroll - pane_height // 2)
-            elif key == ord(']'):
-                state_scroll += pane_height // 2  # clamped in draw_state
-            elif key == ord('q'):
+    @property
+    def wrapped_event(self) -> EventFromEventLog[Event]:
+        return self._event
+
+class EventDetail(Static):
+    """Right-bottom: details of the selected event."""
+    def show_event(self, e: Optional[EventFromEventLog[Event]]) -> None:
+        if e is None:
+            self.update(Panel(Text("No event selected.", style="dim"), title="Event Details"))
+        else:
+            self.update(Panel(event_detail_renderable(e), title=f"Event #{e.idx_in_log} • {event_type_name(e)}", border_style="magenta"))
+
+class StatusBar(Static):
+    def set_status(self, realtime: bool, total_events: int, current_idx_in_log: Optional[int]) -> None:
+        mode = "Realtime" if realtime else "Timetravel"
+        parts = [
+            f"[{mode}]",
+            f"Events: {total_events}",
+        ]
+        if current_idx_in_log is not None:
+            parts.append(f"Current: #{current_idx_in_log}")
+        parts.append("Keys: ↑/↓ Select • PgUp/PgDn Scroll • Ctrl+↑/↓ ±5 • [/] State PgUp/PgDn • g Goto • r Realtime • q Quit")
+        self.update(Text("  ".join(parts), style="dim"))
+
+
+class GotoPrompt(Static):
+    """Simple inline goto prompt (appears above Footer)."""
+    class Submitted(Message):
+        def __init__(self, value: Optional[int]) -> None:
+            super().__init__()
+            self.value = value
+
+    def compose(self) -> ComposeResult:
+        yield Label("Go to event id (idx_in_log):", id="goto-label")
+        yield Input(placeholder="e.g., 123", id="goto-input")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    @on(Input.Submitted)
+    def _submitted(self, event: Input.Submitted) -> None:
+        text = (event.value or "").strip()
+        try:
+            value = int(text)
+        except ValueError:
+            value = None
+        self.post_message(self.Submitted(value))
+
+
+class EventLogApp(App):
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+    #main {
+        height: 1fr;
+    }
+    #left {
+        width: 60%;
+    }
+    #right {
+        width: 40%;
+    }
+    #events {
+        height: 3fr;
+    }
+    #detail {
+        height: 2fr;
+        border: tall;
+    }
+    #status {
+        height: 1;
+        padding: 0 1;
+    }
+    #goto {
+        dock: bottom;
+        height: 3;
+        padding: 1 2;
+        background: $panel;
+        border: round $accent;
+    }
+    """
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit"),
+        Binding("r", "toggle_realtime", "Realtime"),
+        Binding("[", "state_page_up", "State PgUp"),
+        Binding("]", "state_page_down", "State PgDn"),
+        Binding("g", "prompt_goto", "Goto"),
+        Binding("ctrl+up", "jump_up", "Jump Up"),
+        Binding("ctrl+down", "jump_down", "Jump Down"),
+    ]
+
+    # Reactive state
+    realtime: reactive[bool] = reactive(False)
+    worker_mode: bool
+
+    # Data
+    wrapped_events: List[EventFromEventLog[Event]]
+    states: List[State]
+    filtered_indices: Optional[List[int]]  # maps filtered idx -> original idx
+    update_interval: float = 1.0
+    _poll_timer = None
+
+    def __init__(self, worker_mode: bool) -> None:
+        super().__init__()
+        self.worker_mode = worker_mode
+        self.wrapped_events = []
+        self.states = [State()]
+        self.filtered_indices = None
+
+    async def on_mount(self) -> None:
+        await init_db()
+        await self._initial_load()
+        # periodic polling for new events
+        self._poll_timer = self.set_interval(self.update_interval, self._tick_poll)
+        # Put list selection at end (last event) by default
+        self._select_last()
+
+    async def _initial_load(self) -> None:
+        self.wrapped_events = await load_all_events()
+        self.states = compute_states(self.wrapped_events)
+
+        # Build filtered view if needed
+        if self.worker_mode:
+            self.filtered_indices = [i for i, e in enumerate(self.wrapped_events) if is_worker_event(e)]
+        else:
+            self.filtered_indices = None
+
+        # Populate the ListView
+        lv = self.query_one("#events", ListView)
+        lv.clear()
+        events_to_show = self._view_events()
+        for e in events_to_show:
+            lv.append(EventListItem(e))
+
+        # Update left state & details
+        self._refresh_views()
+
+    def compose(self) -> ComposeResult:
+        # Layout: [Header optional] -> main Horizontal -> Status bar + Footer
+        with Horizontal(id="main"):
+            with Vertical(id="left"):
+                yield StateView(id="state")
+            with Vertical(id="right"):
+                yield ListView(id="events")
+                yield EventDetail(id="detail")
+        yield StatusBar(id="status")
+        yield Footer()
+
+    def _current_original_index(self) -> int:
+        lv = self.query_one("#events", ListView)
+        idx = lv.index
+        if idx is None or idx < 0:
+            return -1
+        if self.filtered_indices is not None:
+            if idx >= len(self.filtered_indices):
+                return -1
+            return self.filtered_indices[idx]
+        return idx
+
+    def _view_events(self) -> List[EventFromEventLog[Event]]:
+        if self.filtered_indices is not None:
+            return [self.wrapped_events[i] for i in self.filtered_indices]
+        return self.wrapped_events
+
+    def _select_last(self) -> None:
+        lv = self.query_one("#events", ListView)
+        n = len(lv.children)
+        if n:
+            lv.index = n - 1
+
+    def _refresh_views(self) -> None:
+        # Update State pane and Detail pane and Status bar
+        original_idx = self._current_original_index()
+        state_idx = (original_idx + 1) if original_idx >= 0 else 0
+        state = self.states[state_idx]
+        state_view = self.query_one("#state", StateView)
+        idx_in_log = None
+        if original_idx >= 0:
+            idx_in_log = self.wrapped_events[original_idx].idx_in_log
+        state_view.update_state(state, self.worker_mode, idx_in_log)
+
+        # Detail pane
+        detail = self.query_one("#detail", EventDetail)
+        current_event = self.wrapped_events[original_idx] if original_idx >= 0 else None
+        detail.show_event(current_event)
+
+        # Status bar
+        status = self.query_one("#status", StatusBar)
+        total_events = len(self.wrapped_events)
+        status.set_status(self.realtime, total_events, current_event.idx_in_log if current_event else None)
+
+    async def _poll_once(self) -> bool:
+        """Fetch and append new events; return True if updated."""
+        last_since = len(self.wrapped_events)
+        new_wrapped = await get_events_since(last_since)
+        if not new_wrapped:
+            return False
+
+        # Extend states incrementally (avoid recomputing all)
+        for nw in new_wrapped:
+            state = self.states[-1]
+            self.states.append(apply(state, nw))
+
+        start_len = len(self.wrapped_events)
+        self.wrapped_events.extend(new_wrapped)
+
+        # Update filtered mapping and UI list
+        lv = self.query_one("#events", ListView)
+        if self.worker_mode:
+            if self.filtered_indices is None:
+                self.filtered_indices = []
+            for k in range(start_len, len(self.wrapped_events)):
+                if is_worker_event(self.wrapped_events[k]):
+                    self.filtered_indices.append(k)
+                    lv.append(EventListItem(self.wrapped_events[k]))
+        else:
+            for k in range(start_len, len(self.wrapped_events)):
+                lv.append(EventListItem(self.wrapped_events[k]))
+
+        # Auto-follow the tail in realtime mode
+        if self.realtime:
+            self._select_last()
+
+        # Refresh panes
+        self._refresh_views()
+        return True
+
+    def _tick_poll(self) -> None:
+        # called by timer; schedule the async poll
+        asyncio.create_task(self._poll_once())
+
+    # ------ Actions / key handlers ------
+    def action_quit(self) -> None:
+        self.exit()
+
+    def action_toggle_realtime(self) -> None:
+        self.realtime = not self.realtime
+        if self.realtime:
+            self._select_last()
+        self._refresh_views()
+
+    def action_state_page_up(self) -> None:
+        state_view = self.query_one("#state", StateView)
+        state_view.scroll_page_up()
+
+    def action_state_page_down(self) -> None:
+        state_view = self.query_one("#state", StateView)
+        state_view.scroll_page_down()
+
+    def action_jump_up(self) -> None:
+        lv = self.query_one("#events", ListView)
+        if lv.children:
+            lv.index = max(0, (lv.index or 0) - 5)
+            self._refresh_views()
+
+    def action_jump_down(self) -> None:
+        lv = self.query_one("#events", ListView)
+        if lv.children:
+            lv.index = min(len(lv.children) - 1, (lv.index or 0) + 5)
+            self._refresh_views()
+
+    def action_prompt_goto(self) -> None:
+        # mount a small prompt near bottom
+        if self.query("#goto"):
+            return
+        prompt = GotoPrompt(id="goto")
+        self.mount(prompt)
+
+    @on(GotoPrompt.Submitted)
+    def _on_goto_submitted(self, msg: GotoPrompt.Submitted) -> None:
+        # Remove prompt
+        for node in self.query("#goto"):
+            node.remove()
+
+        if msg.value is None:
+            return
+
+        target = msg.value
+        # find in current view's idx_in_log
+        events_to_show = self._view_events()
+        lv = self.query_one("#events", ListView)
+        for i, e in enumerate(events_to_show):
+            if e.idx_in_log == target:
+                lv.index = i
+                self._refresh_views()
                 break
-            elif key == ord('r'):
-                realtime = not realtime
-                if realtime:
-                    assert filtered_indices is not None
-                    if worker_mode:
-                        current_filtered = len(
-                            filtered_indices) - 1 if filtered_indices else -1
-                    else:
-                        current = len(wrapped_events) - \
-                            1 if wrapped_events else -1
-                    state_scroll = 0
-            elif key == ord('g'):
-                stdscr.timeout(-1)  # block for input
-                input_str = get_input(status_win, "Go to event: ")
-                try:
-                    goto = int(input_str)
-                    if worker_mode:
-                        assert filtered_indices is not None
-                        for i, orig in enumerate(filtered_indices):
-                            if wrapped_events[orig].idx_in_log == goto:
-                                current_filtered = i
-                                state_scroll = 0
-                                break
-                    else:
-                        for i in range(len(wrapped_events)):
-                            if wrapped_events[i].idx_in_log == goto:
-                                current = i
-                                state_scroll = 0
-                                break
-                except ValueError:
-                    pass
-                stdscr.timeout(100)
-                status_win.clear()
-                status_win.refresh()
 
-        if realtime and time.time() - last_update > update_interval:
-            updated = asyncio.run(update_events(
-                wrapped_events, states, filtered_indices if worker_mode else None))
-            if updated:
-                assert filtered_indices is not None
-                if worker_mode:
-                    current_filtered = len(filtered_indices) - 1
-                else:
-                    current = len(wrapped_events) - 1
-                state_scroll = 0
-            last_update = time.time()
+    @on(ListView.Highlighted, "#events")
+    @on(ListView.Selected, "#events")
+    def _on_event_selected(self, *_: Any) -> None:
+        # Update panes when selection changes
+        self._refresh_views()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description='Read and display events from the event log')
+# ---------- Entrypoint ----------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description='Read and display events from the event log (Textual UI)')
     parser.add_argument('--worker', action='store_true',
                         help='Only show worker-related events (task, streaming, instance, runner status)')
+    parser.add_argument('--no-ui', action='store_true',
+                        help='Print to stdout (non-interactive), like the original non-TUI mode')
     args = parser.parse_args()
 
-    worker_mode = args.worker
+    # Non-interactive fallback if no TTY or user requests it
+    if args.no_ui or not sys.stdout.isatty():
+        asyncio.run(run_non_tui(worker_mode=args.worker))
+        return
 
-    if not sys.stdout.isatty():
-        asyncio.run(non_tui_mode())
-    else:
-        try:
-            curses.wrapper(tui)
-        except curses.error as e:
-            if "could not find terminal" in str(e):
-                print("Error: Could not find terminal. Falling back to non-TUI mode.")
-                asyncio.run(non_tui_mode())
-            else:
-                raise
+    # TUI mode
+    app = EventLogApp(worker_mode=args.worker)
+    app.run()
+
+if __name__ == "__main__":
+    main()
