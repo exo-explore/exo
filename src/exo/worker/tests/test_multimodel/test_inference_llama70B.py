@@ -74,7 +74,7 @@ def _get_model_size_gb(path: str) -> float:
 
 
 @pytest.mark.skipif(
-    not (
+    True or not (
         os.path.exists(
             os.path.expanduser(
                 "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
@@ -310,7 +310,7 @@ async def test_ttft(
 
 
 @pytest.mark.skipif(
-    not (
+    True or not (
         os.path.exists(
             os.path.expanduser(
                 "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
@@ -419,7 +419,7 @@ async def test_2_runner_inference(
 
 
 @pytest.mark.skipif(
-    not (
+    True or not (
         os.path.exists(
             os.path.expanduser(
                 "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"

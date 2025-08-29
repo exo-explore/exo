@@ -407,6 +407,26 @@
             background-color: #f59e0b;
             color: var(--exo-black);
         }
+        /* New runner-status aware pills */
+        .instance-status.starting {
+            background-color: #3b82f6; /* blue */
+            color: var(--exo-black);
+        }
+
+        .instance-status.loaded {
+            background-color: #2dd4bf; /* teal */
+            color: var(--exo-black);
+        }
+
+        .instance-status.running {
+            background-color: #4ade80; /* green */
+            color: var(--exo-black);
+        }
+
+        .instance-status.failed {
+            background-color: #ef4444; /* red */
+            color: white;
+        }
 
         .instance-delete-button {
             background-color: #ef4444;
@@ -984,6 +1004,39 @@
             return { isDownloading, progress, downloadingRunners: downloadingRunners.length };
         }
 
+        // Derive a display status for an instance from its runners.
+        // Priority: FAILED > DOWNLOADING > STARTING > RUNNING > LOADED > INACTIVE
+        function deriveInstanceStatus(instance, runners = {}) {
+            const runnerIds = Object.keys(instance.shard_assignments?.runner_to_shard || {});
+            const statuses = runnerIds
+                .map(rid => runners[rid]?.runner_status)
+                .filter(s => typeof s === 'string');
+
+            const has = (s) => statuses.includes(s);
+            const every = (pred) => statuses.length > 0 && statuses.every(pred);
+
+            if (statuses.length === 0) {
+                const inactive = instance.instance_type === 'INACTIVE';
+                return { statusText: inactive ? 'INACTIVE' : 'LOADED', statusClass: inactive ? 'inactive' : 'loaded' };
+            }
+
+            if (has('Failed')) return { statusText: 'FAILED', statusClass: 'failed' };
+            if (has('Downloading')) return { statusText: 'DOWNLOADING', statusClass: 'downloading' };
+            if (has('Starting')) return { statusText: 'LOADING', statusClass: 'starting' };
+            if (has('Running')) return { statusText: 'RUNNING', statusClass: 'running' };
+
+            const allInactive = every(s => s === 'Inactive');
+            const loadedOrInactiveOnly = every(s => s === 'Loaded' || s === 'Inactive');
+            const anyLoaded = statuses.some(s => s === 'Loaded');
+            if (loadedOrInactiveOnly && anyLoaded) {
+                return { statusText: 'LOADED', statusClass: 'loaded' };
+            }
+            if (allInactive) {
+                return { statusText: 'INACTIVE', statusClass: 'inactive' };
+            }
+            return { statusText: 'LOADED', statusClass: 'loaded' };
+        }
+
         function renderInstances(instances, runners = {}) {
             const instancesArray = Object.values(instances);
             
@@ -1004,10 +1057,13 @@
 
                 // Calculate download status for this instance
                 const downloadStatus = calculateInstanceDownloadStatus(instance, runners);
-                
-                // Determine status display - prioritize downloading over original status
-                const statusText = downloadStatus.isDownloading ? 'DOWNLOADING' : instance.instance_type;
-                const statusClass = downloadStatus.isDownloading ? 'downloading' : instance.instance_type.toLowerCase();
+
+                let statusText, statusClass;
+                if (downloadStatus.isDownloading) {
+                    ({ statusText, statusClass } = { statusText: 'DOWNLOADING', statusClass: 'downloading' });
+                } else {
+                    ({ statusText, statusClass } = deriveInstanceStatus(instance, runners));
+                }
 
                 // Generate download progress HTML
                 const downloadProgressHTML = downloadStatus.isDownloading 

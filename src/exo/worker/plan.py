@@ -199,7 +199,7 @@ def spin_up_runners(
                 if (
                     runner_id in state_runners
                     and state_runners[runner_id].runner_status
-                    != RunnerStatusType.Inactive
+                    not in [RunnerStatusType.Inactive, RunnerStatusType.Starting]
                 ):
                     ready_to_spin = False
 

@@ -42,6 +42,7 @@ from exo.shared.types.worker.runners import (
     InactiveRunnerStatus,
     LoadedRunnerStatus,
     RunningRunnerStatus,
+    StartingRunnerStatus,
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.common import AssignedRunner
@@ -228,6 +229,10 @@ class Worker:
         self, op: RunnerUpOp, initialize_timeout: Optional[float] = None
     ) -> AsyncGenerator[Event, None]:
         assigned_runner = self.assigned_runners[op.runner_id]
+
+        # Emit "Starting" status right away so UI can show loading state
+        assigned_runner.status = StartingRunnerStatus()
+        yield assigned_runner.status_update_event()
 
         assigned_runner.runner = await RunnerSupervisor.create(
             model_shard_meta=assigned_runner.shard_metadata,

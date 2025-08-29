@@ -2,7 +2,7 @@
 __pycache__
 *.so
 
-hosts_*.json
+hosts*.json
 
 # go cache is project local but not tracked
 .go_cache

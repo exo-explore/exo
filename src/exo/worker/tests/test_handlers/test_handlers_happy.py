@@ -25,6 +25,7 @@ from exo.shared.types.worker.runners import (
     InactiveRunnerStatus,
     LoadedRunnerStatus,
     RunningRunnerStatus,
+    StartingRunnerStatus,
 )
 from exo.worker.main import Worker
 from exo.worker.tests.constants import (
@@ -85,9 +86,11 @@ async def test_runner_up_op(
 
     events = await read_events_op(worker, runner_up_op)
 
-    assert len(events) == 1
+    assert len(events) == 2
     assert isinstance(events[0], RunnerStatusUpdated)
-    assert isinstance(events[0].runner_status, LoadedRunnerStatus)
+    assert isinstance(events[0].runner_status, StartingRunnerStatus)
+    assert isinstance(events[1], RunnerStatusUpdated)
+    assert isinstance(events[1].runner_status, LoadedRunnerStatus)
 
     # Is the runner actually running?
     supervisor = next(iter(worker.assigned_runners.values())).runner

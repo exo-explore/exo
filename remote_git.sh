@@ -53,17 +53,6 @@ run_remote () {                  # $1 host   $2 command
 }
 
 ###############################################################################
-# Run git command locally
-###############################################################################
-echo "=== Running 'git $GIT_CMD' locally ==="
-if (cd ~/exo && git $GIT_CMD); then
-  echo "✓ Local git command succeeded"
-else
-  echo "❌ Local git command failed"
-  exit 1
-fi
-
-###############################################################################
 # Run git command on remote hosts (parallel)
 ###############################################################################
 echo ""

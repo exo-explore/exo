@@ -52,7 +52,7 @@ def generate_step(
     max_kv_size: Optional[int] = None,
     prompt_cache: Optional[list[KVCache]] = None,
     prefill_step_size: int = 2048,
-) -> Generator[Tuple[mx.array, mx.array], None, None]:
+) -> Generator[Tuple[int, mx.array], None, None]:
     """
     A generator producing token ids based on the given prompt from the model.
 
@@ -70,7 +70,7 @@ def generate_step(
         prefill_step_size (int): Step size for processing the prompt.
 
     Yields:
-        Tuple[mx.array, mx.array]: One token and a vector of log probabilities.
+        Tuple[int, mx.array]: One token and a vector of log probabilities.
     """
     tokens = None
 
@@ -128,19 +128,22 @@ def generate_step(
     n = 0
     next_y: array | None = None
     next_logprobs: array | None = None
+
+    mx.async_eval(y, logprobs) # type: ignore
+    n = 0
     while True:
-        if n != max_tokens and n > 0:  # Only call _step after first iteration
+        if n != max_tokens:
+            assert y is not None
             next_y, next_logprobs = _step(y)
             mx.async_eval(next_y, next_logprobs) # type: ignore
         if n == 0:
             mx.eval(y) # type: ignore
         if n == max_tokens:
             break
-        yield y, logprobs  # y is always defined here, no need for cast
+        yield int(y.item()), logprobs # type: ignore
         if n % 256 == 0:
             mx.clear_cache()
-        if next_y is not None and next_logprobs is not None:
-            y, logprobs = next_y, next_logprobs
+        y, logprobs = next_y, next_logprobs
         n += 1
 
 
@@ -153,6 +156,7 @@ def stream_generate(
     sampler: Callable[[mx.array], mx.array],
     prompt_cache: Optional[list[KVCache]] = None,
     prefill_step_size: int = 2048,
+    warmup: bool = False,
 ) -> Generator[GenerationResponse, None, None]:
 
     # Try to infer if special tokens are needed
@@ -160,11 +164,12 @@ def stream_generate(
         tokenizer.bos_token
     )
     prompt_array: mx.array = mx.array(tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
-    runner_write_response(TokenizedResponse(prompt_tokens=len(prompt_array)))
+    if not warmup:
+        runner_write_response(TokenizedResponse(prompt_tokens=len(prompt_array)))
 
     detokenizer = tokenizer.detokenizer
 
-    token_generator: Generator[Tuple[array, array], None, None] = generate_step(
+    token_generator: Generator[Tuple[int, array], None, None] = generate_step(
         prompt_array, 
         model, 
         max_tokens=max_tokens, 
@@ -179,12 +184,12 @@ def stream_generate(
         if token in tokenizer.eos_token_ids:
             break
 
-        detokenizer.add_token(int(token))
+        detokenizer.add_token(token)
 
         # TODO: We could put more metrics on this GenerationResponse if we wish
         yield GenerationResponse(
             text=detokenizer.last_segment,
-            token=int(token),
+            token=token,
             finish_reason=None,
         )
 
@@ -192,7 +197,7 @@ def stream_generate(
     detokenizer.finalize()
     yield GenerationResponse(
         text=detokenizer.last_segment,
-        token=int(token),
+        token=token,
         finish_reason="stop" if token in tokenizer.eos_token_ids else "length",
     )
 
@@ -222,12 +227,13 @@ async def warmup_inference(
 
     def _generate_warmup():
         nonlocal tokens_generated
-        for _ in mlx_stream_generate(
+        for _ in stream_generate(
             model=model,
             tokenizer=tokenizer,
             prompt=warmup_prompt,
             max_tokens=50,
             sampler=sampler,
+            warmup=True,
         ):
             tokens_generated += 1
 
