@@ -74,9 +74,12 @@ async def until_event_with_timeout(
     event_type: type[T],
     multiplicity: int = 1,
     condition: Callable[[T], bool] = lambda x: True,
+    timeout: float = 30.0,
 ) -> None:
     idx = await global_events.get_last_idx()
     times_seen = 0
+    start_time = asyncio.get_event_loop().time()
+    
     while True:
         events = await global_events.get_events_since(idx)
         if events:
@@ -89,4 +92,11 @@ async def until_event_with_timeout(
                         return
             idx = events[-1].idx_in_log
 
+        current_time = asyncio.get_event_loop().time()
+        if current_time - start_time > timeout:
+            raise asyncio.TimeoutError(
+                f"Timeout waiting for {multiplicity} events of type {event_type.__name__} "
+                f"(found {times_seen} in {timeout}s)"
+            )
+        
         await asyncio.sleep(0.01)

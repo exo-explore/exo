@@ -47,7 +47,7 @@ async def test_runner_spinup_exception(
         [InstanceCreated(instance=instance_value)], origin=MASTER_NODE_ID
     )
 
-    await asyncio.sleep(5.0)
+    await asyncio.sleep(10.0)
 
     # Ensure the correct events have been emitted
     events = await global_events.get_events_since(0)

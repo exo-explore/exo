@@ -2,6 +2,8 @@ import asyncio
 from logging import Logger
 from typing import Awaitable, Callable
 
+import pytest
+
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from exo.shared.logging import logger_test_install
@@ -43,6 +45,11 @@ from exo.worker.tests.test_integration.integration_utils import (
 )
 from exo.worker.worker import Worker
 
+
+@pytest.fixture
+def user_message():
+    """Override this fixture in tests to customize the message"""
+    return "What's the capital of Japan?"
 
 async def test_runner_inference(
     worker_running: Callable[

@@ -1,4 +1,3 @@
-import asyncio
 from typing import Awaitable, Callable
 
 # TaskStateUpdated and ChunkGenerated are used in test_worker_integration_utils.py
@@ -27,45 +26,6 @@ from exo.worker.tests.constants import (
     RUNNER_1_ID,
 )
 from exo.worker.tests.test_integration.integration_utils import until_event_with_timeout
-
-
-async def test_runner_spinup_exception(
-    worker_running: Callable[
-        [NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]
-    ],
-    instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-):
-    _, global_events = await worker_running(NODE_A)
-
-    instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = InstanceStatus.ACTIVE
-    instance_value.shard_assignments.runner_to_shard[
-        RUNNER_1_ID
-    ].immediate_exception = True
-
-    await global_events.append_events(
-        [InstanceCreated(instance=instance_value)], origin=MASTER_NODE_ID
-    )
-
-    await asyncio.sleep(5.0)
-
-    # Ensure the correct events have been emitted
-    events = await global_events.get_events_since(0)
-
-    assert (
-        len(
-            [
-                x
-                for x in events
-                if isinstance(x.event, RunnerStatusUpdated)
-                and isinstance(x.event.runner_status, FailedRunnerStatus)
-                and x.event.runner_status.error_message is not None
-                and "fake exception" in x.event.runner_status.error_message.lower()
-            ]
-        )
-        == 3
-    )
-    assert any([isinstance(x.event, InstanceDeleted) for x in events])
 
 
 async def test_runner_spinup_timeout(

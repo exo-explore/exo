@@ -47,8 +47,8 @@ async def run(worker: Worker):
 
         # run the op, synchronously blocking for now
         if op is not None:
-            logger.info(f"Executing op {op}")
-            logger.bind(user_facing=True).debug(f"Worker executing op: {op}")
+            logger.info(f"Executing op {str(op)[:500]}")
+            logger.bind(user_facing=True).debug(f"Worker executing op: {str(op)[:500]}")
             try:
                 async for event in worker.execute_op(op):
                     await worker.event_publisher(event)

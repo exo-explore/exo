@@ -21,13 +21,14 @@ from exo.shared.types.worker.commands_runner import (
     RunnerMessage,
     RunnerResponse,
     SetupMessage,
+    TokenizedResponse,
 )
 from exo.shared.types.worker.common import RunnerError
-from exo.shared.types.worker.shards import ShardMetadata
-from exo.worker.runner.communication import (
+from exo.shared.types.worker.communication import (
     supervisor_read_response,
     supervisor_write_message,
 )
+from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.runner.utils import (
     get_init_timeout,
     get_prefil_timeout,
@@ -136,6 +137,7 @@ class RunnerSupervisor:
         if queue_task in done:
             response = await queue_task
             if isinstance(response, ErrorResponse):
+                await self.astop()
                 raise RunnerError(
                     response.error_type,
                     response.error_message,
@@ -178,12 +180,38 @@ class RunnerSupervisor:
             ),
         )
 
-        # This is simpler for now: we say 'request started' as soon as we've told runner to start, without waiting for an ack.
-        # If we need more reliability, the runner can have a new 'ready' message type.
+        while True:
+            try:
+                response = await self._read_with_error_check(5.0)
+            except asyncio.TimeoutError as e:
+                logger.bind(user_facing=True).error(
+                    "Generation timed out during tokenization"
+                )
+                raise e
+            except asyncio.LimitOverrunError as e:
+                raise RunnerError(
+                    "IPCMessageTooLarge",
+                    "The serialized prompt/response exceeded the IPC line limit. Switch to length-prefixed framing or reduce prompt size.",
+                    ""
+                ) from e
+
+
+            match response:
+                case TokenizedResponse():
+                    prompt_tokens = response.prompt_tokens
+                    break
+                case ErrorResponse():
+                    await self.astop()
+                    raise RunnerError(
+                        response.error_type, response.error_message, response.traceback
+                    )
+                case _:
+                    raise ValueError(f"Unexpected response type found: {response}")
+
         if request_started_callback is not None:
             await request_started_callback()
 
-        prefil_timeout = get_prefil_timeout(self.model_shard_meta)
+        prefil_timeout = get_prefil_timeout(self.model_shard_meta, prompt_tokens=prompt_tokens)
         token_timeout = get_token_generate_timeout(self.model_shard_meta)
         timeout = prefil_timeout
         logger.bind(user_facing=True).info(

@@ -78,7 +78,7 @@ async def test_stream_response_failed_always(
         origin=MASTER_NODE_ID,
     )
 
-    await until_event_with_timeout(global_events, InstanceDeleted)
+    await until_event_with_timeout(global_events, InstanceDeleted, timeout=10.0)
 
     events = await global_events.get_events_since(0)
 
@@ -168,6 +168,7 @@ async def test_stream_response_failed_once(
         1,
         condition=lambda x: isinstance(x.chunk, TokenChunk)
         and x.chunk.finish_reason is not None,
+        timeout=30.0,
     )
 
     # TODO: The ideal with this test is if we had some tooling to scroll through the state, and say
@@ -256,7 +257,7 @@ async def test_stream_response_timeout(
         origin=MASTER_NODE_ID,
     )
 
-    await until_event_with_timeout(global_events, TaskFailed, multiplicity=3)
+    await until_event_with_timeout(global_events, TaskFailed, multiplicity=3, timeout=30.0)
 
     events = await global_events.get_events_since(0)
     print(events)

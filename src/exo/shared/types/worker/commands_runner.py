@@ -52,6 +52,7 @@ RunnerMessageTypeAdapter: TypeAdapter[RunnerMessage] = TypeAdapter(RunnerMessage
 
 class RunnerResponseType(str, Enum):
     InitializedResponse = "initialized_response"
+    TokenizedResponse = "tokenized_response"
     GenerationResponse = "generation_response"
     FinishedResponse = "finished_response"
     PrintResponse = "print_response"
@@ -70,6 +71,13 @@ class InitializedResponse(BaseRunnerResponse[RunnerResponseType.InitializedRespo
         default=RunnerResponseType.InitializedResponse, frozen=True
     )
     time_taken: float
+
+
+class TokenizedResponse(BaseRunnerResponse[RunnerResponseType.TokenizedResponse]):
+    type: Literal[RunnerResponseType.TokenizedResponse] = Field(
+        default=RunnerResponseType.TokenizedResponse, frozen=True
+    )
+    prompt_tokens: int
 
 
 class GenerationResponse(BaseRunnerResponse[RunnerResponseType.GenerationResponse]):
@@ -106,6 +114,7 @@ class ErrorResponse(BaseRunnerResponse[RunnerResponseType.ErrorResponse]):
 
 RunnerResponse = Annotated[
     InitializedResponse
+    | TokenizedResponse
     | GenerationResponse
     | PrintResponse
     | FinishedResponse
