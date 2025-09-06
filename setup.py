@@ -35,7 +35,7 @@ install_requires = [
 extras_require = {
   "formatting": ["yapf==0.40.2",],
   "apple_silicon": [
-    "mlx==0.22.0",
+    "mlx==0.22.1",
     "mlx-lm==0.21.1",
   ],
   "windows": ["pywin32==308",],
