@@ -205,8 +205,7 @@ async def test_supervisor_handles_terminated_runner(
     supervisor.runner_process.terminate()
     await asyncio.sleep(0.1)
 
-    assert not supervisor.healthy
-    assert supervisor.runner_process.returncode is not None
+    assert not supervisor.runner_process.is_alive()
 
     del supervisor
 
@@ -226,13 +225,12 @@ async def test_supervisor_handles_killed_runner(
         hosts=hosts(1, offset=10),
     )
 
-    assert supervisor.healthy
+    assert supervisor.runner_process.is_alive()
 
     # Forcibly kill the runner
     supervisor.runner_process.kill()
     await asyncio.sleep(0.1)
 
-    assert not supervisor.healthy
-    assert supervisor.runner_process.returncode is not None
+    assert not supervisor.runner_process.is_alive()
 
     del supervisor

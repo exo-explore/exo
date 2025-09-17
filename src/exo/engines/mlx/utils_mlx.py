@@ -136,7 +136,7 @@ def initialize_mlx(
 
 
 def shard_and_load(
-    model_shard_meta: ShardMetadata,
+    model_shard_meta: ShardMetadata, 
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(model_shard_meta.model_meta.model_id)
 

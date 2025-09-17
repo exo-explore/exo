@@ -51,11 +51,12 @@ from exo.worker.tests.constants import (
 from exo.worker.tests.test_integration.integration_utils import (
     read_streaming_response,
     until_event_with_timeout,
+    worker_running,
 )
 from exo.worker.worker import Worker
 
 MODEL_ID = "mlx-community/Llama-3.3-70B-Instruct-4bit"
-
+SKIP = True
 
 @pytest.fixture
 async def model_meta() -> ModelMetadata:
@@ -72,9 +73,7 @@ def _get_model_size_gb(path: str) -> float:
                 total_size += os.path.getsize(filepath)
     return total_size / (1024**3)  # Convert bytes to GB
 
-
-@pytest.mark.skipif(
-    True or not (
+skip = SKIP or not (
         os.path.exists(
             os.path.expanduser(
                 "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
@@ -86,7 +85,10 @@ def _get_model_size_gb(path: str) -> float:
             )
         )
         > 30
-    ),
+)
+
+@pytest.mark.skipif(
+    skip,
     reason="This test only runs when model mlx-community/Llama-3.3-70B-Instruct-4bit is downloaded",
 )
 async def test_ttft(
@@ -94,235 +96,208 @@ async def test_ttft(
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
 ):
-    logger_test_install(logger)
-    event_log_manager = EventLogManager(EventLogConfig())
-    await event_log_manager.initialize()
-    shard_downloader = NoopShardDownloader()
+    async with worker_running(NODE_A, logger) as (_, global_events):
+        ## Instance
+        model_id = ModelId(MODEL_ID)
 
-    global_events = event_log_manager.global_events
-    await global_events.delete_all_events()
+        shard_assignments = ShardAssignments(
+            model_id=model_id,
+            runner_to_shard={RUNNER_1_ID: pipeline_shard_meta(1, 0)},
+            node_to_runner={NODE_A: RUNNER_1_ID},
+        )
 
-    worker1 = Worker(
-        NODE_A,
-        shard_downloader=shard_downloader,
-        worker_events=global_events,
-        global_events=global_events,
-    )
-    asyncio.create_task(run(worker1))
+        instance = Instance(
+            instance_id=INSTANCE_1_ID,
+            instance_type=InstanceStatus.ACTIVE,
+            shard_assignments=shard_assignments,
+            hosts=hosts(1),
+        )
 
-    ## Instance
-    model_id = ModelId(MODEL_ID)
+        # Create instance first
+        await global_events.append_events(
+            [InstanceCreated(instance=instance)], origin=MASTER_NODE_ID
+        )
 
-    shard_assignments = ShardAssignments(
-        model_id=model_id,
-        runner_to_shard={RUNNER_1_ID: pipeline_shard_meta(1, 0)},
-        node_to_runner={NODE_A: RUNNER_1_ID},
-    )
+        await until_event_with_timeout(
+            global_events,
+            event_type=RunnerStatusUpdated,
+            condition=lambda x: isinstance(x.runner_status, LoadedRunnerStatus),
+        )
+        logger.info("model loaded.")
 
-    instance = Instance(
-        instance_id=INSTANCE_1_ID,
-        instance_type=InstanceStatus.ACTIVE,
-        shard_assignments=shard_assignments,
-        hosts=hosts(1),
-    )
+        # First inference
+        task1_params = ChatCompletionTaskParams(
+            model="gpt-4",
+            messages=[
+                ChatCompletionMessage(
+                    role="user", content="Please write a haiku about a flower."
+                )
+            ],
+            stream=True,
+            max_tokens=100,
+        )
+        task1 = ChatCompletionTask(
+            task_id=TASK_1_ID,
+            command_id=COMMAND_1_ID,
+            instance_id=INSTANCE_1_ID,
+            task_type=TaskType.CHAT_COMPLETION,
+            task_status=TaskStatus.PENDING,
+            task_params=task1_params,
+        )
 
-    # Create instance first
-    await global_events.append_events(
-        [InstanceCreated(instance=instance)], origin=MASTER_NODE_ID
-    )
+        print("Starting first inference...")
+        # Record the current event index before creating the task
+        idx_before_task1 = await global_events.get_last_idx()
 
-    await until_event_with_timeout(
-        global_events,
-        event_type=RunnerStatusUpdated,
-        condition=lambda x: isinstance(x.runner_status, LoadedRunnerStatus),
-    )
-    logger.info("model loaded.")
+        task_created_time_1 = time.time()
+        await global_events.append_events(
+            [TaskCreated(task_id=task1.task_id, task=task1)], origin=MASTER_NODE_ID
+        )
 
-    # First inference
-    task1_params = ChatCompletionTaskParams(
-        model="gpt-4",
-        messages=[
-            ChatCompletionMessage(
-                role="user", content="Please write a haiku about a flower."
-            )
-        ],
-        stream=True,
-        max_tokens=100,
-    )
-    task1 = ChatCompletionTask(
-        task_id=TASK_1_ID,
-        command_id=COMMAND_1_ID,
-        instance_id=INSTANCE_1_ID,
-        task_type=TaskType.CHAT_COMPLETION,
-        task_status=TaskStatus.PENDING,
-        task_params=task1_params,
-    )
+        # Wait for first chunk to measure time to first token
+        first_chunk_seen_1 = False
+        time_to_first_token_1: None | float = None
+        while not first_chunk_seen_1:
+            events = await global_events.get_events_since(idx_before_task1)
+            for wrapped_event in events:
+                if isinstance(wrapped_event.event, ChunkGenerated) and hasattr(
+                    wrapped_event.event, "chunk"
+                ):
+                    first_chunk_time_1 = time.time()
+                    time_to_first_token_1 = first_chunk_time_1 - task_created_time_1
+                    first_chunk_seen_1 = True
+                    break
+            if not first_chunk_seen_1:
+                await asyncio.sleep(0.01)
 
-    print("Starting first inference...")
-    # Record the current event index before creating the task
-    idx_before_task1 = await global_events.get_last_idx()
+        _, seen_task_finished_1, response_string_1, token_count_1 = await read_streaming_response(
+            global_events
+        )
+        total_time_1 = time.time() - task_created_time_1
 
-    task_created_time_1 = time.time()
-    await global_events.append_events(
-        [TaskCreated(task_id=task1.task_id, task=task1)], origin=MASTER_NODE_ID
-    )
+        assert seen_task_finished_1
 
-    # Wait for first chunk to measure time to first token
-    first_chunk_seen_1 = False
-    time_to_first_token_1: None | float = None
-    while not first_chunk_seen_1:
-        events = await global_events.get_events_since(idx_before_task1)
-        for wrapped_event in events:
-            if isinstance(wrapped_event.event, ChunkGenerated) and hasattr(
-                wrapped_event.event, "chunk"
-            ):
-                first_chunk_time_1 = time.time()
-                time_to_first_token_1 = first_chunk_time_1 - task_created_time_1
-                first_chunk_seen_1 = True
-                break
-        if not first_chunk_seen_1:
-            await asyncio.sleep(0.01)
+        # Wait for first task to complete
+        await asyncio.sleep(5.0)
 
-    _, seen_task_finished_1, response_string_1, token_count_1 = await read_streaming_response(
-        global_events
-    )
-    total_time_1 = time.time() - task_created_time_1
+        # Second inference
+        task2_params = ChatCompletionTaskParams(
+            model="gpt-4",
+            messages=[
+                ChatCompletionMessage(
+                    role="user", content="Write me a haiku about a robot."
+                )
+            ],
+            stream=True,
+            max_tokens=150,
+        )
+        task2 = ChatCompletionTask(
+            task_id=TASK_2_ID,
+            command_id=COMMAND_2_ID,
+            instance_id=INSTANCE_1_ID,
+            task_type=TaskType.CHAT_COMPLETION,
+            task_status=TaskStatus.PENDING,
+            task_params=task2_params,
+        )
 
-    assert seen_task_finished_1
+        print("Starting second inference...")
+        # Record the current event index before creating the second task
+        idx_before_task2 = await global_events.get_last_idx()
 
-    # Wait for first task to complete
-    await asyncio.sleep(5.0)
+        task_created_time_2 = time.time()
+        await global_events.append_events(
+            [TaskCreated(task_id=task2.task_id, task=task2)], origin=MASTER_NODE_ID
+        )
 
-    # Second inference
-    task2_params = ChatCompletionTaskParams(
-        model="gpt-4",
-        messages=[
-            ChatCompletionMessage(
-                role="user", content="Write me a haiku about a robot."
-            )
-        ],
-        stream=True,
-        max_tokens=150,
-    )
-    task2 = ChatCompletionTask(
-        task_id=TASK_2_ID,
-        command_id=COMMAND_2_ID,
-        instance_id=INSTANCE_1_ID,
-        task_type=TaskType.CHAT_COMPLETION,
-        task_status=TaskStatus.PENDING,
-        task_params=task2_params,
-    )
+        # Wait for first chunk of second task to measure time to first token
+        first_chunk_seen_2 = False
+        time_to_first_token_2: float | None = None
+        while not first_chunk_seen_2:
+            events = await global_events.get_events_since(idx_before_task2)
+            for wrapped_event in events:
+                if isinstance(wrapped_event.event, ChunkGenerated) and hasattr(
+                    wrapped_event.event, "chunk"
+                ):
+                    first_chunk_time_2 = time.time()
+                    time_to_first_token_2 = first_chunk_time_2 - task_created_time_2
+                    first_chunk_seen_2 = True
+                    break
+            if not first_chunk_seen_2:
+                await asyncio.sleep(0.01)
 
-    print("Starting second inference...")
-    # Record the current event index before creating the second task
-    idx_before_task2 = await global_events.get_last_idx()
+        _, seen_task_finished_2, response_string_2, token_count_2 = await read_streaming_response(
+            global_events, filter_task=TASK_2_ID
+        )
+        total_time_2 = time.time() - task_created_time_2
 
-    task_created_time_2 = time.time()
-    await global_events.append_events(
-        [TaskCreated(task_id=task2.task_id, task=task2)], origin=MASTER_NODE_ID
-    )
+        assert seen_task_finished_2
+        assert time_to_first_token_1
+        assert time_to_first_token_2
 
-    # Wait for first chunk of second task to measure time to first token
-    first_chunk_seen_2 = False
-    time_to_first_token_2: float | None = None
-    while not first_chunk_seen_2:
-        events = await global_events.get_events_since(idx_before_task2)
-        for wrapped_event in events:
-            if isinstance(wrapped_event.event, ChunkGenerated) and hasattr(
-                wrapped_event.event, "chunk"
-            ):
-                first_chunk_time_2 = time.time()
-                time_to_first_token_2 = first_chunk_time_2 - task_created_time_2
-                first_chunk_seen_2 = True
-                break
-        if not first_chunk_seen_2:
-            await asyncio.sleep(0.01)
+        # Calculate TPS metrics
+        # Prompt is approximately 45 tokens according to user
+        prompt_tokens = 45
 
-    _, seen_task_finished_2, response_string_2, token_count_2 = await read_streaming_response(
-        global_events, filter_task=TASK_2_ID
-    )
-    total_time_2 = time.time() - task_created_time_2
+        # Prefill TPS = prompt tokens / time to first token
+        prefill_tps_1 = prompt_tokens / time_to_first_token_1 if time_to_first_token_1 > 0 else 0
+        prefill_tps_2 = prompt_tokens / time_to_first_token_2 if time_to_first_token_2 > 0 else 0
 
-    assert seen_task_finished_2
-    assert time_to_first_token_1
-    assert time_to_first_token_2
+        # Generation TPS = generated tokens / generation time
+        # Generation time = total time - time to first token
+        generation_time_1 = total_time_1 - time_to_first_token_1
+        generation_time_2 = total_time_2 - time_to_first_token_2
+        generation_tps_1 = token_count_1 / generation_time_1 if generation_time_1 > 0 else 0
+        generation_tps_2 = token_count_2 / generation_time_2 if generation_time_2 > 0 else 0
 
-    # Calculate TPS metrics
-    # Prompt is approximately 45 tokens according to user
-    prompt_tokens = 45
+        # Display time to first token profiling results
+        print("\n=== Time to First Token Profiling ===")
+        print(f"First inference ('{task1.task_params.messages[0].content}'):")
+        print(f"  Time to first token: {time_to_first_token_1:.3f}s")
+        print(f"  Total completion time: {total_time_1:.3f}s")
+        print(f"  Tokens generated: {token_count_1}")
+        print(f"  Response length: {len(response_string_1)} chars")
+        print(f"  Prefill TPS: {prefill_tps_1:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_1:.3f}s)")
+        print(f"  Generation TPS: {generation_tps_1:.1f} tokens/sec ({token_count_1} tokens / {generation_time_1:.3f}s)")
 
-    # Prefill TPS = prompt tokens / time to first token
-    prefill_tps_1 = prompt_tokens / time_to_first_token_1 if time_to_first_token_1 > 0 else 0
-    prefill_tps_2 = prompt_tokens / time_to_first_token_2 if time_to_first_token_2 > 0 else 0
+        print(f"\nSecond inference ('{task2.task_params.messages[0].content}'):")
+        print(f"  Time to first token: {time_to_first_token_2:.3f}s")
+        print(f"  Total completion time: {total_time_2:.3f}s")
+        print(f"  Tokens generated: {token_count_2}")
+        print(f"  Response length: {len(response_string_2)} chars")
+        print(f"  Prefill TPS: {prefill_tps_2:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_2:.3f}s)")
+        print(f"  Generation TPS: {generation_tps_2:.1f} tokens/sec ({token_count_2} tokens / {generation_time_2:.3f}s)")
 
-    # Generation TPS = generated tokens / generation time
-    # Generation time = total time - time to first token
-    generation_time_1 = total_time_1 - time_to_first_token_1
-    generation_time_2 = total_time_2 - time_to_first_token_2
-    generation_tps_1 = token_count_1 / generation_time_1 if generation_time_1 > 0 else 0
-    generation_tps_2 = token_count_2 / generation_time_2 if generation_time_2 > 0 else 0
+        print("\nComparison:")
+        print(f"  Second inference time to first token: {time_to_first_token_2/time_to_first_token_1:.2f}x the first")
+        print(f"  Second inference prefill TPS: {prefill_tps_2/prefill_tps_1:.2f}x the first")
+        print(f"  Second inference generation TPS: {generation_tps_2/generation_tps_1:.2f}x the first")
 
-    # Display time to first token profiling results
-    print("\n=== Time to First Token Profiling ===")
-    print(f"First inference ('{task1.task_params.messages[0].content}'):")
-    print(f"  Time to first token: {time_to_first_token_1:.3f}s")
-    print(f"  Total completion time: {total_time_1:.3f}s")
-    print(f"  Tokens generated: {token_count_1}")
-    print(f"  Response length: {len(response_string_1)} chars")
-    print(f"  Prefill TPS: {prefill_tps_1:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_1:.3f}s)")
-    print(f"  Generation TPS: {generation_tps_1:.1f} tokens/sec ({token_count_1} tokens / {generation_time_1:.3f}s)")
+        # Basic assertions to ensure responses make sense
+        assert len(response_string_1) > 0
+        assert len(response_string_2) > 0
+        assert time_to_first_token_1 and time_to_first_token_1 > 0
+        assert time_to_first_token_2 and time_to_first_token_2 > 0
 
-    print(f"\nSecond inference ('{task2.task_params.messages[0].content}'):")
-    print(f"  Time to first token: {time_to_first_token_2:.3f}s")
-    print(f"  Total completion time: {total_time_2:.3f}s")
-    print(f"  Tokens generated: {token_count_2}")
-    print(f"  Response length: {len(response_string_2)} chars")
-    print(f"  Prefill TPS: {prefill_tps_2:.1f} tokens/sec ({prompt_tokens} prompt tokens / {time_to_first_token_2:.3f}s)")
-    print(f"  Generation TPS: {generation_tps_2:.1f} tokens/sec ({token_count_2} tokens / {generation_time_2:.3f}s)")
+        # Cleanup
+        idx = await global_events.get_last_idx()
+        await asyncio.sleep(1.0)
+        events = await global_events.get_events_since(idx)
+        assert len(events) == 0
 
-    print("\nComparison:")
-    print(f"  Second inference time to first token: {time_to_first_token_2/time_to_first_token_1:.2f}x the first")
-    print(f"  Second inference prefill TPS: {prefill_tps_2/prefill_tps_1:.2f}x the first")
-    print(f"  Second inference generation TPS: {generation_tps_2/generation_tps_1:.2f}x the first")
+        await global_events.append_events(
+            [
+                InstanceDeleted(
+                    instance_id=instance.instance_id,
+                ),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    # Basic assertions to ensure responses make sense
-    assert len(response_string_1) > 0
-    assert len(response_string_2) > 0
-    assert time_to_first_token_1 and time_to_first_token_1 > 0
-    assert time_to_first_token_2 and time_to_first_token_2 > 0
-
-    # Cleanup
-    idx = await global_events.get_last_idx()
-    await asyncio.sleep(1.0)
-    events = await global_events.get_events_since(idx)
-    assert len(events) == 0
-
-    await global_events.append_events(
-        [
-            InstanceDeleted(
-                instance_id=instance.instance_id,
-            ),
-        ],
-        origin=MASTER_NODE_ID,
-    )
-
-    await asyncio.sleep(2.0)
+        await asyncio.sleep(2.0)
 
 
 @pytest.mark.skipif(
-    True or not (
-        os.path.exists(
-            os.path.expanduser(
-                "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
-            )
-        )
-        and _get_model_size_gb(
-            os.path.expanduser(
-                "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
-            )
-        )
-        > 30
-    ),
+    skip,
     reason="This test only runs when model mlx-community/Llama-3.3-70B-Instruct-4bit is downloaded",
 )
 async def test_2_runner_inference(
@@ -339,13 +314,15 @@ async def test_2_runner_inference(
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
+    tasks: list[asyncio.Task[None]] = []
+
     worker1 = Worker(
         NODE_A,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker1))
+    tasks.append(asyncio.create_task(run(worker1)))
 
     worker2 = Worker(
         NODE_B,
@@ -353,7 +330,7 @@ async def test_2_runner_inference(
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker2))
+    tasks.append(asyncio.create_task(run(worker2)))
 
     ## Instance
     model_id = ModelId(MODEL_ID)
@@ -417,21 +394,23 @@ async def test_2_runner_inference(
 
     await asyncio.sleep(2.0)
 
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # This is expected when we cancel a task
+        except Exception:
+            pass  # Suppress any other exceptions during cleanup
+
+    for worker in (worker1, worker2):
+        for assigned_runner in worker.assigned_runners.values():
+            if assigned_runner.runner:
+                await assigned_runner.runner.astop()
+
 
 @pytest.mark.skipif(
-    True or not (
-        os.path.exists(
-            os.path.expanduser(
-                "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
-            )
-        )
-        and _get_model_size_gb(
-            os.path.expanduser(
-                "~/.exo/models/mlx-community--Llama-3.3-70B-Instruct-4bit/"
-            )
-        )
-        > 30
-    ),
+    skip,
     reason="This test only runs when model mlx-community/Llama-3.3-70B-Instruct-4bit is downloaded",
 )
 async def test_parallel_inference(
@@ -448,13 +427,15 @@ async def test_parallel_inference(
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
+    tasks: list[asyncio.Task[None]] = []
+
     worker1 = Worker(
         NODE_A,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker1))
+    tasks.append(asyncio.create_task(run(worker1)))
 
     worker2 = Worker(
         NODE_B,
@@ -462,7 +443,7 @@ async def test_parallel_inference(
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker2))
+    tasks.append(asyncio.create_task(run(worker2)))
 
     ## Instance
     model_id = ModelId(MODEL_ID)
@@ -579,3 +560,17 @@ async def test_parallel_inference(
     )
 
     await asyncio.sleep(2.0)
+
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # This is expected when we cancel a task
+        except Exception:
+            pass  # Suppress any other exceptions during cleanup
+
+    for worker in (worker1, worker2):
+        for assigned_runner in worker.assigned_runners.values():
+            if assigned_runner.runner:
+                await assigned_runner.runner.astop()

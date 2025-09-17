@@ -24,3 +24,6 @@ dist/
 
 # Says this symlink should be git-ignored https://github.com/juspay/just-flake
 just-flake.just
+
+# for the gitingest enthusiasts
+digest.txt

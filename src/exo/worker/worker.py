@@ -240,25 +240,12 @@ class Worker:
             initialize_timeout=initialize_timeout,
         )
 
-        if assigned_runner.runner.healthy:
+        if assigned_runner.runner.runner_process.is_alive():
             assigned_runner.status = LoadedRunnerStatus()
         else:
-            # Log detailed reasons why the runner is not healthy
             runner = assigned_runner.runner
-            health_issues: list[str] = []
-
-            if runner.runner_process.returncode is not None:
-                health_issues.append(
-                    f"runner_process.returncode is {runner.runner_process.returncode}"
-                )
-            if runner.runner_process.stdin is None:
-                health_issues.append("runner_process.stdin is None")
-            elif runner.runner_process.stdin.is_closing():
-                health_issues.append("runner_process.stdin is closing")
-            if runner.runner_process.stdout is None:
-                health_issues.append("runner_process.stdout is None")
-
-            logger.warning(f"Runner status is not healthy: {', '.join(health_issues)}")
+            logger.warning(f"Runner status is not runner_process.is_alive(): exit code {runner.runner_process.exitcode}")
+                
             assigned_runner.status = FailedRunnerStatus()
         yield self.assigned_runners[op.runner_id].status_update_event()
 
@@ -318,7 +305,7 @@ class Worker:
                     )
 
             assert assigned_runner.runner is not None
-            assert assigned_runner.runner.healthy
+            assert assigned_runner.runner.runner_process.is_alive()
 
             async for chunk in assigned_runner.runner.stream_response(
                 task=op.task, request_started_callback=partial(running_callback, queue)
@@ -407,7 +394,9 @@ class Worker:
         if runner_id in self.assigned_runners:
             assigned_runner = self.assigned_runners[runner_id]
 
-            assigned_runner.runner = None
+            if assigned_runner.runner is not None:
+                await assigned_runner.runner.astop()
+                assigned_runner.runner = None
             assigned_runner.status = FailedRunnerStatus(error_message=str(e))
             assigned_runner.failures.append((time.time(), e))
 

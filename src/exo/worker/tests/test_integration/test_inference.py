@@ -1,10 +1,9 @@
 import asyncio
 from logging import Logger
-from typing import Awaitable, Callable
+from typing import Callable
 
 import pytest
 
-from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
 from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
 from exo.shared.logging import logger_test_install
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
@@ -42,6 +41,7 @@ from exo.worker.tests.constants import (
 )
 from exo.worker.tests.test_integration.integration_utils import (
     read_streaming_response,
+    worker_running,
 )
 from exo.worker.worker import Worker
 
@@ -52,50 +52,47 @@ def user_message():
     return "What's the capital of Japan?"
 
 async def test_runner_inference(
-    worker_running: Callable[
-        [NodeId], Awaitable[tuple[Worker, AsyncSQLiteEventStorage]]
-    ],
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
+    logger: Logger,
 ):
-    _worker, global_events = await worker_running(NODE_A)
+    async with worker_running(NODE_A, logger) as (_, global_events):
+        instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
+        instance_value.instance_type = InstanceStatus.ACTIVE
 
-    instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-    instance_value.instance_type = InstanceStatus.ACTIVE
+        task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
+        await global_events.append_events(
+            [
+                InstanceCreated(
+                    instance=instance_value,
+                ),
+                TaskCreated(task_id=task.task_id, task=task),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    await global_events.append_events(
-        [
-            InstanceCreated(
-                instance=instance_value,
-            ),
-            TaskCreated(task_id=task.task_id, task=task),
-        ],
-        origin=MASTER_NODE_ID,
-    )
+        # TODO: This needs to get fixed - sometimes it misses the 'starting' event.
+        (
+            seen_task_started,
+            seen_task_finished,
+            response_string,
+            _,
+        ) = await read_streaming_response(global_events)
 
-    # TODO: This needs to get fixed - sometimes it misses the 'starting' event.
-    (
-        seen_task_started,
-        seen_task_finished,
-        response_string,
-        _,
-    ) = await read_streaming_response(global_events)
+        assert seen_task_started
+        assert seen_task_finished
+        assert "tokyo" in response_string.lower()
 
-    assert seen_task_started
-    assert seen_task_finished
-    assert "tokyo" in response_string.lower()
+        await global_events.append_events(
+            [
+                InstanceDeleted(
+                    instance_id=instance_value.instance_id,
+                ),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    await global_events.append_events(
-        [
-            InstanceDeleted(
-                instance_id=instance_value.instance_id,
-            ),
-        ],
-        origin=MASTER_NODE_ID,
-    )
-
-    await asyncio.sleep(0.3)
+        await asyncio.sleep(0.3)
 
 
 async def test_2_runner_inference(
@@ -112,13 +109,15 @@ async def test_2_runner_inference(
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
+    tasks: list[asyncio.Task[None]] = []
+
     worker1 = Worker(
         NODE_A,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker1))
+    tasks.append(asyncio.create_task(run(worker1)))
 
     worker2 = Worker(
         NODE_B,
@@ -126,7 +125,7 @@ async def test_2_runner_inference(
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker2))
+    tasks.append(asyncio.create_task(run(worker2)))
 
     ## Instance
     model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
@@ -183,6 +182,21 @@ async def test_2_runner_inference(
 
     await asyncio.sleep(2.0)
 
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # This is expected when we cancel a task
+        except Exception:
+            pass  # Suppress any other exceptions during cleanup
+
+
+    for worker in (worker1, worker2):
+        for assigned_runner in worker.assigned_runners.values():
+            if assigned_runner.runner:
+                await assigned_runner.runner.astop()
+
 
 # TODO: Multi message parallel
 async def test_2_runner_multi_message(
@@ -198,13 +212,15 @@ async def test_2_runner_multi_message(
     global_events = event_log_manager.global_events
     await global_events.delete_all_events()
 
+    tasks: list[asyncio.Task[None]] = []
+
     worker1 = Worker(
         NODE_A,
         shard_downloader=shard_downloader,
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker1))
+    tasks.append(asyncio.create_task(run(worker1)))
 
     worker2 = Worker(
         NODE_B,
@@ -212,7 +228,7 @@ async def test_2_runner_multi_message(
         worker_events=global_events,
         global_events=global_events,
     )
-    asyncio.create_task(run(worker2))
+    tasks.append(asyncio.create_task(run(worker2)))
 
     ## Instance
     model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
@@ -296,5 +312,19 @@ async def test_2_runner_multi_message(
         ],
         origin=MASTER_NODE_ID,
     )
+
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # This is expected when we cancel a task
+        except Exception:
+            pass  # Suppress any other exceptions during cleanup
+
+    for worker in (worker1, worker2):
+        for assigned_runner in worker.assigned_runners.values():
+            if assigned_runner.runner:
+                await assigned_runner.runner.astop()
 
     await asyncio.sleep(2.0)

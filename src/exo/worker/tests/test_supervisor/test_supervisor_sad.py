@@ -24,6 +24,11 @@ async def test_supervisor_instantiation_exception(
     model_shard_meta = pipeline_shard_meta(1, 0)
     model_shard_meta.immediate_exception = True
 
+    # _ = await RunnerSupervisor.create(
+    #     model_shard_meta=model_shard_meta,
+    #     hosts=hosts(1, offset=10),
+    # )
+
     with pytest.raises(RunnerError):
         _ = await RunnerSupervisor.create(
             model_shard_meta=model_shard_meta,

@@ -58,7 +58,7 @@ def failed_runners(
     for runner_id, assigned_runner in assigned_runners.items():
         if (
             assigned_runner.runner is not None
-            and not assigned_runner.runner.healthy
+            and not assigned_runner.runner.runner_process.is_alive()
             and not isinstance(assigned_runner.status, FailedRunnerStatus)
         ):
             return RunnerFailedOp(runner_id=runner_id)

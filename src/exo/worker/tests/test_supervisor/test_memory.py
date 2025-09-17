@@ -1,5 +1,5 @@
-from asyncio.subprocess import Process
 from logging import Logger
+from multiprocessing import Process
 from typing import Callable
 
 import psutil

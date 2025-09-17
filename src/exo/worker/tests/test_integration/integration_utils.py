@@ -1,11 +1,54 @@
 import asyncio
+import contextlib
+from contextlib import asynccontextmanager
+from logging import Logger
 from typing import Callable, Optional, Tuple, TypeVar
 
 from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
+from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
+from exo.shared.logging import logger_test_install
+from exo.shared.types.common import NodeId
 from exo.shared.types.events import ChunkGenerated, TaskStateUpdated
 from exo.shared.types.events.chunks import TokenChunk
 from exo.shared.types.tasks import TaskId, TaskStatus
+from exo.worker.download.shard_downloader import NoopShardDownloader
+from exo.worker.main import run
+from exo.worker.worker import Worker
 
+
+@asynccontextmanager
+async def worker_running(node_id: NodeId, logger: Logger):
+    """Context manager that provides a running worker and cleans up after."""
+    logger_test_install(logger)
+    event_log_manager = EventLogManager(EventLogConfig())
+    await event_log_manager.initialize()
+    
+    global_events = event_log_manager.global_events
+    await global_events.delete_all_events()
+    
+    shard_downloader = NoopShardDownloader()
+    worker = Worker(
+        node_id,
+        shard_downloader=shard_downloader,
+        worker_events=global_events,
+        global_events=global_events,
+    )
+    
+    # Start the worker task
+    task = asyncio.create_task(run(worker))
+    
+    try:
+        yield worker, global_events
+    finally:
+        # Cleanup
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=1.0)
+        
+        # Clean up any runners
+        for assigned_runner in worker.assigned_runners.values():
+            if assigned_runner.runner:
+                await assigned_runner.runner.astop()
 
 async def read_streaming_response(
     global_events: AsyncSQLiteEventStorage, filter_task: Optional[TaskId] = None

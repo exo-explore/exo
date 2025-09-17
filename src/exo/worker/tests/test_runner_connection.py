@@ -119,7 +119,7 @@ async def check_runner_connection(
                 await asyncio.sleep(0.001)
 
         runner_supervisor = await wait_for_runner_supervisor(worker1, timeout=6.0)
-        ret = runner_supervisor is not None and runner_supervisor.healthy
+        ret = runner_supervisor is not None and runner_supervisor.runner_process.is_alive()
 
         await global_events.append_events(
             [

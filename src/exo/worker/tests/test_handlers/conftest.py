@@ -77,6 +77,6 @@ async def worker_with_running_runner(
     # Is the runner actually running?
     supervisor = next(iter(worker.assigned_runners.values())).runner
     assert supervisor is not None
-    assert supervisor.healthy
+    assert supervisor.runner_process.is_alive()
 
     return worker, instance_obj
