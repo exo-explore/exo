@@ -21,8 +21,10 @@ EXO_MASTER_KEYRING_FILE = EXO_HOME / "master_keyring"
 EXO_IPC_DIR = EXO_HOME / "ipc"
 
 # libp2p topics for event forwarding
-LIBP2P_WORKER_EVENTS_TOPIC = "worker_events"
+LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
+LIBP2P_ELECTION_MESSAGES_TOPIC = "election_message"
+LIBP2P_COMMANDS_TOPIC = "commands"
 
 # lower bounds define timeouts for flops and memory bandwidth - these are the values for the M1 chip.
 LB_TFLOPS = 2.3

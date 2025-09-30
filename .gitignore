@@ -12,8 +12,6 @@ hosts*.json
 # TODO figure out how to properly solve the issue with these target directories showing up
 networking/target/
 networking/topology/target/
-rust/target/
-rust/Cargo.lock
 
 build/
 dist/

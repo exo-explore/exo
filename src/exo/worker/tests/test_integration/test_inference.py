@@ -1,11 +1,9 @@
 import asyncio
-from logging import Logger
 from typing import Callable
 
 import pytest
+from anyio import create_task_group
 
-from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from exo.shared.logging import logger_test_install
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.common import CommandId, Host, NodeId
 from exo.shared.types.events import (
@@ -28,8 +26,7 @@ from exo.shared.types.worker.instances import (
     ShardAssignments,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.download.shard_downloader import NoopShardDownloader
-from exo.worker.main import run
+from exo.worker.main import Worker
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MASTER_NODE_ID,
@@ -39,11 +36,10 @@ from exo.worker.tests.constants import (
     RUNNER_2_ID,
     TASK_1_ID,
 )
-from exo.worker.tests.test_integration.integration_utils import (
+from exo.worker.tests.worker_management import (
+    WorkerMailbox,
     read_streaming_response,
-    worker_running,
 )
-from exo.worker.worker import Worker
 
 
 @pytest.fixture
@@ -51,12 +47,15 @@ def user_message():
     """Override this fixture in tests to customize the message"""
     return "What's the capital of Japan?"
 
+
 async def test_runner_inference(
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    logger: Logger,
+    worker_and_mailbox: tuple[Worker, WorkerMailbox],
 ):
-    async with worker_running(NODE_A, logger) as (_, global_events):
+    worker, global_events = worker_and_mailbox
+    async with create_task_group() as tg:
+        tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
         instance_value.instance_type = InstanceStatus.ACTIVE
 
@@ -93,238 +92,173 @@ async def test_runner_inference(
         )
 
         await asyncio.sleep(0.3)
+        worker.shutdown()
+        # TODO: Ensure this is sufficient, or add mechanism to fail the test gracefully if workers do not shutdown properly.
 
 
 async def test_2_runner_inference(
-    logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
+    two_workers_with_shared_mailbox: tuple[Worker, Worker, WorkerMailbox],
 ):
-    logger_test_install(logger)
-    event_log_manager = EventLogManager(EventLogConfig())
-    await event_log_manager.initialize()
-    shard_downloader = NoopShardDownloader()
+    worker1, worker2, global_events = two_workers_with_shared_mailbox
+    async with create_task_group() as tg:
+        tg.start_soon(worker1.run)
+        tg.start_soon(worker2.run)
+        ## Instance
+        model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
-    global_events = event_log_manager.global_events
-    await global_events.delete_all_events()
+        shard_assignments = ShardAssignments(
+            model_id=model_id,
+            runner_to_shard={
+                RUNNER_1_ID: pipeline_shard_meta(2, 0),
+                RUNNER_2_ID: pipeline_shard_meta(2, 1),
+            },
+            node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
+        )
 
-    tasks: list[asyncio.Task[None]] = []
+        instance = Instance(
+            instance_id=INSTANCE_1_ID,
+            instance_type=InstanceStatus.ACTIVE,
+            shard_assignments=shard_assignments,
+            hosts=hosts(2),
+        )
 
-    worker1 = Worker(
-        NODE_A,
-        shard_downloader=shard_downloader,
-        worker_events=global_events,
-        global_events=global_events,
-    )
-    tasks.append(asyncio.create_task(run(worker1)))
+        task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
+        await global_events.append_events(
+            [
+                InstanceCreated(instance=instance),
+                TaskCreated(task_id=task.task_id, task=task),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    worker2 = Worker(
-        NODE_B,
-        shard_downloader=shard_downloader,
-        worker_events=global_events,
-        global_events=global_events,
-    )
-    tasks.append(asyncio.create_task(run(worker2)))
+        (
+            seen_task_started,
+            seen_task_finished,
+            response_string,
+            _,
+        ) = await read_streaming_response(global_events)
 
-    ## Instance
-    model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
+        assert seen_task_started
+        assert seen_task_finished
+        assert "tokyo" in response_string.lower()
 
-    shard_assignments = ShardAssignments(
-        model_id=model_id,
-        runner_to_shard={
-            RUNNER_1_ID: pipeline_shard_meta(2, 0),
-            RUNNER_2_ID: pipeline_shard_meta(2, 1),
-        },
-        node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
-    )
+        _ = global_events.collect()
+        await asyncio.sleep(1.0)
+        events = global_events.collect()
+        assert len(events) == 0
 
-    instance = Instance(
-        instance_id=INSTANCE_1_ID,
-        instance_type=InstanceStatus.ACTIVE,
-        shard_assignments=shard_assignments,
-        hosts=hosts(2),
-    )
+        await global_events.append_events(
+            [
+                InstanceDeleted(
+                    instance_id=instance.instance_id,
+                ),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
-    await global_events.append_events(
-        [
-            InstanceCreated(instance=instance),
-            TaskCreated(task_id=task.task_id, task=task),
-        ],
-        origin=MASTER_NODE_ID,
-    )
-
-    (
-        seen_task_started,
-        seen_task_finished,
-        response_string,
-        _,
-    ) = await read_streaming_response(global_events)
-
-    assert seen_task_started
-    assert seen_task_finished
-    assert "tokyo" in response_string.lower()
-
-    idx = await global_events.get_last_idx()
-    await asyncio.sleep(1.0)
-    events = await global_events.get_events_since(idx)
-    assert len(events) == 0
-
-    await global_events.append_events(
-        [
-            InstanceDeleted(
-                instance_id=instance.instance_id,
-            ),
-        ],
-        origin=MASTER_NODE_ID,
-    )
-
-    await asyncio.sleep(2.0)
-
-    for task in tasks:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass  # This is expected when we cancel a task
-        except Exception:
-            pass  # Suppress any other exceptions during cleanup
-
-
-    for worker in (worker1, worker2):
-        for assigned_runner in worker.assigned_runners.values():
-            if assigned_runner.runner:
-                await assigned_runner.runner.astop()
+        await asyncio.sleep(2.0)
+        worker1.shutdown()
+        worker2.shutdown()
+        # TODO: Ensure this is sufficient, or add mechanism to fail the test gracefully if workers do not shutdown properly.
 
 
 # TODO: Multi message parallel
 async def test_2_runner_multi_message(
-    logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
+    two_workers_with_shared_mailbox: tuple[Worker, Worker, WorkerMailbox],
 ):
-    logger_test_install(logger)
-    event_log_manager = EventLogManager(EventLogConfig())
-    await event_log_manager.initialize()
-    shard_downloader = NoopShardDownloader()
+    worker1, worker2, global_events = two_workers_with_shared_mailbox
+    async with create_task_group() as tg:
+        tg.start_soon(worker1.run)
+        tg.start_soon(worker2.run)
 
-    global_events = event_log_manager.global_events
-    await global_events.delete_all_events()
+        ## Instance
+        model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
-    tasks: list[asyncio.Task[None]] = []
+        shard_assignments = ShardAssignments(
+            model_id=model_id,
+            runner_to_shard={
+                RUNNER_1_ID: pipeline_shard_meta(2, 0),
+                RUNNER_2_ID: pipeline_shard_meta(2, 1),
+            },
+            node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
+        )
 
-    worker1 = Worker(
-        NODE_A,
-        shard_downloader=shard_downloader,
-        worker_events=global_events,
-        global_events=global_events,
-    )
-    tasks.append(asyncio.create_task(run(worker1)))
+        instance = Instance(
+            instance_id=INSTANCE_1_ID,
+            instance_type=InstanceStatus.ACTIVE,
+            shard_assignments=shard_assignments,
+            hosts=hosts(2),
+        )
 
-    worker2 = Worker(
-        NODE_B,
-        shard_downloader=shard_downloader,
-        worker_events=global_events,
-        global_events=global_events,
-    )
-    tasks.append(asyncio.create_task(run(worker2)))
+        # Task - we have three messages here, which is what the task is about
 
-    ## Instance
-    model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
+        completion_create_params = ChatCompletionTaskParams(
+            model="gpt-4",
+            messages=[
+                ChatCompletionMessage(
+                    role="user", content="What is the capital of France?"
+                ),
+                ChatCompletionMessage(
+                    role="assistant", content="The capital of France is Paris."
+                ),
+                ChatCompletionMessage(
+                    role="user",
+                    content="Ok great. Now write me a haiku about what you can do there.",
+                ),
+            ],
+            stream=True,
+        )
 
-    shard_assignments = ShardAssignments(
-        model_id=model_id,
-        runner_to_shard={
-            RUNNER_1_ID: pipeline_shard_meta(2, 0),
-            RUNNER_2_ID: pipeline_shard_meta(2, 1),
-        },
-        node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
-    )
+        task = ChatCompletionTask(
+            task_id=TASK_1_ID,
+            command_id=CommandId(),
+            instance_id=INSTANCE_1_ID,
+            task_type=TaskType.CHAT_COMPLETION,
+            task_status=TaskStatus.PENDING,
+            task_params=completion_create_params,
+        )
 
-    instance = Instance(
-        instance_id=INSTANCE_1_ID,
-        instance_type=InstanceStatus.ACTIVE,
-        shard_assignments=shard_assignments,
-        hosts=hosts(2),
-    )
+        await global_events.append_events(
+            [
+                InstanceCreated(instance=instance),
+                TaskCreated(task_id=task.task_id, task=task),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    # Task - we have three messages here, which is what the task is about
+        (
+            seen_task_started,
+            seen_task_finished,
+            response_string,
+            _,
+        ) = await read_streaming_response(global_events)
 
-    completion_create_params = ChatCompletionTaskParams(
-        model="gpt-4",
-        messages=[
-            ChatCompletionMessage(
-                role="user", content="What is the capital of France?"
-            ),
-            ChatCompletionMessage(
-                role="assistant", content="The capital of France is Paris."
-            ),
-            ChatCompletionMessage(
-                role="user",
-                content="Ok great. Now write me a haiku about what you can do there.",
-            ),
-        ],
-        stream=True,
-    )
+        assert seen_task_started
+        assert seen_task_finished
+        assert any(
+            keyword in response_string.lower()
+            for keyword in ("kiss", "paris", "art", "love")
+        )
 
-    task = ChatCompletionTask(
-        task_id=TASK_1_ID,
-        command_id=CommandId(),
-        instance_id=INSTANCE_1_ID,
-        task_type=TaskType.CHAT_COMPLETION,
-        task_status=TaskStatus.PENDING,
-        task_params=completion_create_params,
-    )
+        _ = global_events.collect()
+        await asyncio.sleep(1.0)
+        events = global_events.collect()
+        assert len(events) == 0
 
-    await global_events.append_events(
-        [
-            InstanceCreated(instance=instance),
-            TaskCreated(task_id=task.task_id, task=task),
-        ],
-        origin=MASTER_NODE_ID,
-    )
+        await global_events.append_events(
+            [
+                InstanceDeleted(
+                    instance_id=instance.instance_id,
+                ),
+            ],
+            origin=MASTER_NODE_ID,
+        )
 
-    (
-        seen_task_started,
-        seen_task_finished,
-        response_string,
-        _,
-    ) = await read_streaming_response(global_events)
-
-    assert seen_task_started
-    assert seen_task_finished
-    assert any(
-        keyword in response_string.lower()
-        for keyword in ("kiss", "paris", "art", "love")
-    )
-
-    idx = await global_events.get_last_idx()
-    await asyncio.sleep(1.0)
-    events = await global_events.get_events_since(idx)
-    assert len(events) == 0
-
-    await global_events.append_events(
-        [
-            InstanceDeleted(
-                instance_id=instance.instance_id,
-            ),
-        ],
-        origin=MASTER_NODE_ID,
-    )
-
-    for task in tasks:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass  # This is expected when we cancel a task
-        except Exception:
-            pass  # Suppress any other exceptions during cleanup
-
-    for worker in (worker1, worker2):
-        for assigned_runner in worker.assigned_runners.values():
-            if assigned_runner.runner:
-                await assigned_runner.runner.astop()
-
-    await asyncio.sleep(2.0)
+        worker1.shutdown()
+        worker2.shutdown()
+        # TODO: Ensure this is sufficient, or add mechanism to fail the test gracefully if workers do not shutdown properly.

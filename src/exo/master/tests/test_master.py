@@ -1,30 +1,29 @@
 import asyncio
 import tempfile
-from logging import Logger
 from pathlib import Path
 from typing import List, Sequence
 
 import pytest
 
 from exo.master.main import Master
-from exo.shared.db.sqlite.config import EventLogConfig
-from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
-from exo.shared.db.sqlite.event_log_manager import EventLogManager
+from exo.shared.db.config import EventLogConfig
+from exo.shared.db.connector import AsyncSQLiteEventStorage
+from exo.shared.db.event_log_manager import EventLogManager
 from exo.shared.keypair import Keypair
-from exo.shared.logging import logger_test_install
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
-from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, EventFromEventLog, Heartbeat, TaskCreated
-from exo.shared.types.events._events import (
-    InstanceCreated,
-    NodePerformanceMeasured,
-    TopologyNodeCreated,
-)
-from exo.shared.types.events.commands import (
-    ChatCompletionCommand,
+from exo.shared.types.commands import (
+    ChatCompletion,
     Command,
     CommandId,
-    CreateInstanceCommand,
+    CreateInstance,
+)
+from exo.shared.types.common import NodeId
+from exo.shared.types.events import (
+    IndexedEvent,
+    InstanceCreated,
+    NodePerformanceMeasured,
+    TaskCreated,
+    TopologyNodeCreated,
 )
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import (
@@ -35,7 +34,6 @@ from exo.shared.types.profiling import (
 from exo.shared.types.tasks import ChatCompletionTask, TaskStatus, TaskType
 from exo.shared.types.worker.instances import (
     Instance,
-    InstanceId,
     InstanceStatus,
     ShardAssignments,
 )
@@ -43,7 +41,7 @@ from exo.shared.types.worker.shards import PartitionStrategy, PipelineShardMetad
 
 
 def _create_forwarder_dummy_binary() -> Path:
-    path = Path(tempfile.mktemp()) / "forwarder.bin"
+    path = Path(tempfile.mkstemp()[1]) / "forwarder.bin"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"#!/bin/sh\necho dummy forwarder && sleep 1000000\n")
@@ -53,23 +51,20 @@ def _create_forwarder_dummy_binary() -> Path:
 
 @pytest.mark.asyncio
 async def test_master():
-    logger = Logger(name="test_master_logger")
-    logger_test_install(logger)
     event_log_manager = EventLogManager(EventLogConfig())
     await event_log_manager.initialize()
     global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
     await global_events.delete_all_events()
 
-    async def _get_events() -> Sequence[EventFromEventLog[Event]]:
+    async def _get_events() -> Sequence[IndexedEvent]:
         orig_events = await global_events.get_events_since(0)
         override_idx_in_log = 1
-        events: List[EventFromEventLog[Event]] = []
+        events: List[IndexedEvent] = []
         for e in orig_events:
-            if isinstance(e.event, Heartbeat):
-                continue
             events.append(
-                EventFromEventLog(
-                    event=e.event, origin=e.origin, idx_in_log=override_idx_in_log
+                IndexedEvent(
+                    event=e.event,
+                    idx=override_idx_in_log,  # origin=e.origin,
                 )
             )
             override_idx_in_log += 1
@@ -120,9 +115,8 @@ async def test_master():
         await asyncio.sleep(0.001)
 
     command_buffer.append(
-        CreateInstanceCommand(
+        CreateInstance(
             command_id=CommandId(),
-            instance_id=InstanceId(),
             model_meta=ModelMetadata(
                 model_id="llama-3.2-1b",
                 pretty_name="Llama 3.2 1B",
@@ -134,7 +128,7 @@ async def test_master():
     while len(master.state.instances.keys()) == 0:
         await asyncio.sleep(0.001)
     command_buffer.append(
-        ChatCompletionCommand(
+        ChatCompletion(
             command_id=CommandId(),
             request_params=ChatCompletionTaskParams(
                 model="llama-3.2-1b",
@@ -150,7 +144,7 @@ async def test_master():
     events = await _get_events()
     print(events)
     assert len(events) == 4
-    assert events[0].idx_in_log == 1
+    assert events[0].idx == 1
     assert isinstance(events[0].event, TopologyNodeCreated)
     assert isinstance(events[1].event, NodePerformanceMeasured)
     assert isinstance(events[2].event, InstanceCreated)

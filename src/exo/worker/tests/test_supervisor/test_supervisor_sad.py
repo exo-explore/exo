@@ -1,10 +1,8 @@
 import asyncio
-from logging import Logger
 from typing import Callable
 
 import pytest
 
-from exo.shared.logging import logger_test_install
 from exo.shared.types.common import Host
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.common import InstanceId, RunnerError
@@ -17,10 +15,8 @@ from exo.worker.tests.constants import INSTANCE_1_ID, TASK_1_ID
 async def test_supervisor_instantiation_exception(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
-    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
     model_shard_meta.immediate_exception = True
 
@@ -40,10 +36,8 @@ async def test_supervisor_instantiation_exception(
 async def test_supervisor_instantiation_timeout(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
-    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
-    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
     model_shard_meta.should_timeout = 10  # timeout after 10s
 
@@ -59,10 +53,8 @@ async def test_supervisor_inference_exception(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
-    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(
@@ -82,10 +74,8 @@ async def test_supervisor_inference_timeout(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
-    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(

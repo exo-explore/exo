@@ -12,7 +12,7 @@ import time
 from enum import Enum
 from typing import Optional
 
-from exo.shared.utils.fs import StrPath, ensure_parent_directory_exists
+from exo.utils.fs import StrPath, ensure_parent_directory_exists
 
 # open in read-write mode, creates file if it doesn't exist already,
 # closes this file descriptor in any children processes (prevents FD leaking),

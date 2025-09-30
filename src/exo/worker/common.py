@@ -1,5 +1,4 @@
 from copy import deepcopy
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -24,7 +23,7 @@ class AssignedRunner(BaseModel):
 
     status: RunnerStatus
     failures: list[tuple[float, Exception]] = []
-    runner: Optional[RunnerSupervisor]  # set if the runner is 'up'
+    runner: RunnerSupervisor | None  # set if the runner is 'up'
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

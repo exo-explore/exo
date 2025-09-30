@@ -33,7 +33,7 @@ from typing import Callable
 from cobs import cobs  # pyright: ignore[reportMissingTypeStubs]
 from pytest import LogCaptureFixture
 
-from exo.shared.utils.fs import (
+from exo.utils.fs import (
     StrPath,
     delete_if_exists,
     ensure_parent_directory_exists,

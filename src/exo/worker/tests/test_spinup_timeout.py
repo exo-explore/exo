@@ -7,8 +7,8 @@ import pytest
 
 from exo.shared.types.events import (
     Event,
+    RunnerStatusUpdated,
 )
-from exo.shared.types.events._events import RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.ops import (

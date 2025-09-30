@@ -6,7 +6,8 @@ from huggingface_hub import model_info
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from exo.shared.types.models import ModelMetadata
+from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId, ModelMetadata
 from exo.worker.download.download_utils import (
     ModelSafetensorsIndex,
     download_file_with_retry,
@@ -65,7 +66,7 @@ async def get_config_data(model_id: str) -> ConfigData:
         return ConfigData.model_validate_json(await f.read())
 
 
-async def get_safetensors_size(model_id: str) -> int:
+async def get_safetensors_size(model_id: str) -> Memory:
     """Gets model size from safetensors index or falls back to HF API."""
     target_dir = (await ensure_models_dir()) / str(model_id).replace("/", "--")
     await aios.makedirs(target_dir, exist_ok=True)
@@ -83,12 +84,12 @@ async def get_safetensors_size(model_id: str) -> int:
 
     metadata = index_data.metadata
     if metadata is not None:
-        return metadata.total_size
+        return Memory.from_bytes(metadata.total_size)
 
     info = model_info(model_id)
     if info.safetensors is None:
         raise ValueError(f"No safetensors info found for {model_id}")
-    return info.safetensors.total
+    return Memory.from_bytes(info.safetensors.total)
 
 
 _model_meta_cache: Dict[str, ModelMetadata] = {}
@@ -109,8 +110,8 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
     mem_size_bytes = await get_safetensors_size(model_id)
 
     return ModelMetadata(
-        model_id=model_id,
+        model_id=ModelId(model_id),
         pretty_name=model_id,
-        storage_size_kilobytes=mem_size_bytes // 1024,
+        storage_size=mem_size_bytes,
         n_layers=num_layers,
     )

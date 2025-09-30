@@ -1,272 +1,240 @@
-import asyncio
-import os
-import threading
-from pathlib import Path
-
+from anyio import create_task_group
+from anyio.abc import TaskGroup
 from loguru import logger
 
-from exo.master.api import start_fastapi_server
-from exo.master.election_callback import ElectionCallbacks
-from exo.master.forwarder_supervisor import ForwarderRole, ForwarderSupervisor
-from exo.master.placement import get_instance_placements, get_transition_events
+from exo.master.placement import (
+    get_instance_placements_after_create,
+    get_instance_placements_after_delete,
+    get_transition_events,
+)
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_MASTER_LOG
-from exo.shared.db.sqlite.config import EventLogConfig
-from exo.shared.db.sqlite.connector import AsyncSQLiteEventStorage
-from exo.shared.db.sqlite.event_log_manager import EventLogManager
-from exo.shared.keypair import Keypair, get_node_id_keypair
-from exo.shared.logging import logger_cleanup, logger_setup
+from exo.shared.types.commands import (
+    ChatCompletion,
+    CreateInstance,
+    DeleteInstance,
+    ForwarderCommand,
+    RequestEventLog,
+    SpinUpInstance,
+    TaskFinished,
+)
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     Event,
-    Heartbeat,
+    ForwarderEvent,
+    IndexedEvent,
     InstanceDeleted,
+    TaggedEvent,
     TaskCreated,
     TaskDeleted,
     TopologyEdgeDeleted,
-    TopologyNodeCreated,
-)
-from exo.shared.types.events.commands import (
-    ChatCompletionCommand,
-    Command,
-    CreateInstanceCommand,
-    DeleteInstanceCommand,
-    TaskFinishedCommand,
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
-from exo.shared.types.worker.instances import Instance
+from exo.shared.types.worker.common import InstanceId
+from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.event_buffer import MultiSourceBuffer
 
 
 class Master:
     def __init__(
         self,
-        node_id_keypair: Keypair,
         node_id: NodeId,
-        command_buffer: list[Command],
-        global_events: AsyncSQLiteEventStorage,
-        worker_events: AsyncSQLiteEventStorage,
-        forwarder_binary_path: Path,
+        *,
+        command_receiver: Receiver[ForwarderCommand],
+        # Receiving indexed events from the forwarder to be applied to state
+        # Ideally these would be WorkerForwarderEvents but type system says no :(
+        local_event_receiver: Receiver[ForwarderEvent],
+        # Send events to the forwarder to be indexed (usually from command processing)
+        # Ideally these would be MasterForwarderEvents but type system says no :(
+        global_event_sender: Sender[ForwarderEvent],
+        tb_only: bool = False,
     ):
         self.state = State()
-        self.node_id_keypair = node_id_keypair
+        self._tg: TaskGroup | None = None
         self.node_id = node_id
-        self.command_buffer = command_buffer
-        self.global_events = global_events
-        self.worker_events = worker_events
         self.command_task_mapping: dict[CommandId, TaskId] = {}
-        self.forwarder_supervisor = ForwarderSupervisor(
-            self.node_id,
-            forwarder_binary_path=forwarder_binary_path,
+        self.command_receiver = command_receiver
+        self.local_event_receiver = local_event_receiver
+        self.global_event_sender = global_event_sender
+        send, recv = channel[Event]()
+        self.event_sender: Sender[Event] = send
+        self._loopback_event_receiver: Receiver[Event] = recv
+        self._loopback_event_sender: Sender[ForwarderEvent] = (
+            local_event_receiver.clone_sender()
         )
-        self.election_callbacks = ElectionCallbacks(self.forwarder_supervisor)
-
-    @property
-    def event_log_for_reads(self) -> AsyncSQLiteEventStorage:
-        return self.global_events
-
-    @property
-    def event_log_for_writes(self) -> AsyncSQLiteEventStorage:
-        if self.forwarder_supervisor.current_role == ForwarderRole.MASTER:
-            return self.global_events
-        else:
-            return self.worker_events
-
-    async def _get_state_snapshot(self) -> State:
-        # TODO: for now start from scratch every time, but we can optimize this by keeping a snapshot on disk so we don't have to re-apply all events
-        return State()
-
-    async def _run_event_loop_body(self) -> None:
-        next_events: list[Event] = []
-        # 1. process commands
-        if (
-            self.forwarder_supervisor.current_role == ForwarderRole.MASTER
-            and len(self.command_buffer) > 0
-        ):
-            # for now we do one command at a time
-            next_command = self.command_buffer.pop(0)
-
-            logger.bind(user_facing=True).info(f"Executing command: {next_command}")
-            logger.info(f"Got command: {next_command}")
-
-            # TODO: validate the command
-            match next_command:
-                case ChatCompletionCommand():
-                    matching_instance: Instance | None = None
-                    for instance in self.state.instances.values():
-                        if (
-                            instance.shard_assignments.model_id
-                            == next_command.request_params.model
-                        ):
-                            matching_instance = instance
-                            break
-                    if not matching_instance:
-                        raise ValueError(
-                            f"No instance found for model {next_command.request_params.model}"
-                        )
-
-                    task_id = TaskId()
-                    next_events.append(
-                        TaskCreated(
-                            task_id=task_id,
-                            task=ChatCompletionTask(
-                                task_type=TaskType.CHAT_COMPLETION,
-                                task_id=task_id,
-                                command_id=next_command.command_id,
-                                instance_id=matching_instance.instance_id,
-                                task_status=TaskStatus.PENDING,
-                                task_params=next_command.request_params,
-                            ),
-                        )
-                    )
-
-                    self.command_task_mapping[next_command.command_id] = task_id
-                case DeleteInstanceCommand():
-                    placement = get_instance_placements(
-                        next_command, self.state.topology, self.state.instances
-                    )
-                    transition_events = get_transition_events(
-                        self.state.instances, placement
-                    )
-                    next_events.extend(transition_events)
-                case CreateInstanceCommand():
-                    placement = get_instance_placements(
-                        next_command, self.state.topology, self.state.instances
-                    )
-                    transition_events = get_transition_events(
-                        self.state.instances, placement
-                    )
-                    next_events.extend(transition_events)
-                case TaskFinishedCommand():
-                    next_events.append(
-                        TaskDeleted(
-                            task_id=self.command_task_mapping[next_command.command_id]
-                        )
-                    )
-                    del self.command_task_mapping[next_command.command_id]
-
-            await self.event_log_for_writes.append_events(
-                next_events, origin=self.node_id
-            )
-        # 2. get latest events
-        events = await self.event_log_for_reads.get_events_since(
-            self.state.last_event_applied_idx, ignore_no_op_events=True
-        )
-        if len(events) == 0:
-            await asyncio.sleep(0.01)
-            return
-
-        if len(events) == 1:
-            logger.debug(f"Master received event: {events[0]}")
-        else:
-            logger.debug(f"Master received events: {events}")
-
-        # 3. for each event, apply it to the state
-        for event_from_log in events:
-            logger.trace(f"Applying event: {event_from_log}")
-            self.state = apply(self.state, event_from_log)
-        logger.trace(f"State: {self.state.model_dump_json()}")
-
-        # TODO: This can be done in a better place. But for now, we use this to check if any running instances have been broken.
-        write_events: list[Event] = []
-        if any(
-            [
-                isinstance(event_from_log.event, TopologyEdgeDeleted)
-                for event_from_log in events
-            ]
-        ):
-            connected_node_ids = set(
-                [x.node_id for x in self.state.topology.list_nodes()]
-            )
-            for instance_id, instance in self.state.instances.items():
-                delete = False
-                for node_id in instance.shard_assignments.node_to_runner:
-                    if node_id not in connected_node_ids:
-                        delete = True
-                        break
-                if delete:
-                    write_events.append(InstanceDeleted(instance_id=instance_id))
-
-        if write_events:
-            await self.event_log_for_writes.append_events(
-                events=write_events, origin=self.node_id
-            )
+        self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
+        # TODO: not have this
+        self._event_log: list[Event] = []
+        self.tb_only = tb_only
 
     async def run(self):
-        self.state = await self._get_state_snapshot()
+        logger.info("Starting Master")
 
-        async def heartbeat_task():
-            while True:
-                await self.event_log_for_writes.append_events(
-                    [Heartbeat(node_id=self.node_id)], origin=self.node_id
+        async with create_task_group() as tg:
+            self._tg = tg
+            tg.start_soon(self._event_processor)
+            tg.start_soon(self._command_processor)
+            tg.start_soon(self._loopback_processor)
+        self.global_event_sender.close()
+        self.local_event_receiver.close()
+        self.command_receiver.close()
+        self._loopback_event_sender.close()
+        self._loopback_event_receiver.close()
+
+    async def shutdown(self):
+        if self._tg:
+            logger.info("Stopping Master")
+            self._tg.cancel_scope.cancel()
+
+    async def _command_processor(self) -> None:
+        with self.command_receiver as commands:
+            async for forwarder_command in commands:
+                try:
+                    logger.info(
+                        f"Executing command: {forwarder_command.tagged_command.c}"
+                    )
+                    generated_events: list[Event] = []
+                    command = forwarder_command.tagged_command.c
+                    match command:
+                        case ChatCompletion():
+                            instance_task_counts: dict[InstanceId, int] = {}
+                            for instance in self.state.instances.values():
+                                if (
+                                    instance.shard_assignments.model_id
+                                    == command.request_params.model
+                                ):
+                                    task_count = sum(
+                                        1
+                                        for task in self.state.tasks.values()
+                                        if task.instance_id == instance.instance_id
+                                    )
+                                    instance_task_counts[instance.instance_id] = (
+                                        task_count
+                                    )
+
+                            if not instance_task_counts:
+                                logger.warning(
+                                    f"No instance found for model {command.request_params.model}"
+                                )
+                                continue
+
+                            available_instance_ids = sorted(
+                                instance_task_counts.keys(),
+                                key=lambda instance_id: instance_task_counts[
+                                    instance_id
+                                ],
+                            )
+
+                            task_id = TaskId()
+                            generated_events.append(
+                                TaskCreated(
+                                    task_id=task_id,
+                                    task=ChatCompletionTask(
+                                        task_type=TaskType.CHAT_COMPLETION,
+                                        task_id=task_id,
+                                        command_id=command.command_id,
+                                        instance_id=available_instance_ids[0],
+                                        task_status=TaskStatus.PENDING,
+                                        task_params=command.request_params,
+                                    ),
+                                )
+                            )
+
+                            self.command_task_mapping[command.command_id] = task_id
+                        case DeleteInstance():
+                            placement = get_instance_placements_after_delete(
+                                command, self.state.instances
+                            )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case CreateInstance():
+                            placement = get_instance_placements_after_create(
+                                command,
+                                self.state.topology,
+                                self.state.instances,
+                                tb_only=self.tb_only,
+                            )
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case TaskFinished():
+                            generated_events.append(
+                                TaskDeleted(
+                                    task_id=self.command_task_mapping[
+                                        command.finished_command_id
+                                    ]
+                                )
+                            )
+                            if command.finished_command_id in self.command_task_mapping:
+                                del self.command_task_mapping[
+                                    command.finished_command_id
+                                ]
+                        case SpinUpInstance():
+                            raise NotImplementedError
+                        case RequestEventLog():
+                            # We should just be able to send everything, since other buffers will ignore old messages
+                            for i in range(command.since_idx, len(self._event_log)):
+                                await self._send_event(
+                                    IndexedEvent(idx=i, event=self._event_log[i])
+                                )
+                    for event in generated_events:
+                        await self.event_sender.send(event)
+                except Exception as e:
+                    logger.opt(exception=e).warning("Error in command processor")
+
+    async def _event_processor(self) -> None:
+        with self.local_event_receiver as local_events:
+            async for local_event in local_events:
+                self._multi_buffer.ingest(
+                    local_event.origin_idx,
+                    local_event.tagged_event.c,
+                    local_event.origin,
                 )
-                await asyncio.sleep(5)
+                for event in self._multi_buffer.drain():
+                    logger.debug(f"Master indexing event: {str(event)[:100]}")
+                    indexed = IndexedEvent(event=event, idx=len(self._event_log))
+                    self.state = apply(self.state, indexed)
+                    # TODO: SQL
+                    self._event_log.append(event)
+                    await self._send_event(indexed)
 
-        asyncio.create_task(heartbeat_task())
+                    # TODO: This can be done in a better place. But for now, we use this to check if any running instances have been broken.
+                    if isinstance(event, TopologyEdgeDeleted):
+                        connected_node_ids = set(
+                            [x.node_id for x in self.state.topology.list_nodes()]
+                        )
+                        for instance_id, instance in self.state.instances.items():
+                            for node_id in instance.shard_assignments.node_to_runner:
+                                if node_id not in connected_node_ids:
+                                    await self.event_sender.send(
+                                        InstanceDeleted(instance_id=instance_id)
+                                    )
+                                    break
 
-        # TODO: we should clean these up on shutdown
-        await self.forwarder_supervisor.start_as_replica()
-        if os.getenv("EXO_RUN_AS_REPLICA") in set(["TRUE", "true", "1"]):
-            await self.election_callbacks.on_became_replica()
-        else:
-            await self.election_callbacks.on_became_master()
+    async def _loopback_processor(self) -> None:
+        # this would ideally not be necessary.
+        # this is WAY less hacky than how I was working around this before
+        local_index = 0
+        with self._loopback_event_receiver as events:
+            async for event in events:
+                await self._loopback_event_sender.send(
+                    ForwarderEvent(
+                        origin=NodeId(f"master_{self.node_id}"),
+                        origin_idx=local_index,
+                        tagged_event=TaggedEvent.from_(event),
+                    )
+                )
+                local_index += 1
 
-        role = (
-            "MASTER"
-            if self.forwarder_supervisor.current_role == ForwarderRole.MASTER
-            else "REPLICA"
+    async def _send_event(self, event: IndexedEvent):
+        # Convenience method since this line is ugly
+        await self.global_event_sender.send(
+            ForwarderEvent(
+                origin=self.node_id,
+                origin_idx=event.idx,
+                tagged_event=TaggedEvent.from_(event.event),
+            )
         )
-        await self.event_log_for_writes.append_events(
-            [TopologyNodeCreated(node_id=self.node_id, role=role)], origin=self.node_id
-        )
-        while True:
-            try:
-                await self._run_event_loop_body()
-            except Exception as e:
-                logger.opt(exception=e).error(f"Error in _run_event_loop_body: {e}")
-                await asyncio.sleep(0.1)
-
-
-async def async_main():
-    node_id_keypair = get_node_id_keypair()
-    node_id = NodeId(node_id_keypair.to_peer_id().to_base58())
-
-    event_log_manager = EventLogManager(EventLogConfig())
-    await event_log_manager.initialize()
-    global_events: AsyncSQLiteEventStorage = event_log_manager.global_events
-    worker_events: AsyncSQLiteEventStorage = event_log_manager.worker_events
-
-    command_buffer: list[Command] = []
-
-    logger.info("Starting EXO Master")
-    logger.info(f"Starting Master with node_id: {node_id}")
-
-    api_port = int(os.environ.get("API_PORT", 8000))
-
-    api_thread = threading.Thread(
-        target=start_fastapi_server,
-        args=(command_buffer, global_events, lambda: master.state, "0.0.0.0", api_port),
-        daemon=True,
-    )
-    api_thread.start()
-    logger.bind(user_facing=True).info(f"Dashboard started on port {api_port}.")
-
-    master = Master(
-        node_id_keypair,
-        node_id,
-        command_buffer,
-        global_events,
-        worker_events,
-        Path(os.environ["GO_BUILD_DIR"]) / "forwarder",
-    )
-    await master.run()
-    logger_cleanup()  # pyright: ignore[reportUnreachable]
-
-
-def main(logfile: Path = EXO_MASTER_LOG, verbosity: int = 1):
-    logger_setup(logfile, verbosity)
-    asyncio.run(async_main())
-
-
-if __name__ == "__main__":
-    main()

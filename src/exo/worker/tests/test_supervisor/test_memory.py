@@ -1,11 +1,9 @@
-from logging import Logger
 from multiprocessing import Process
 from typing import Callable
 
 import psutil
 import pytest
 
-from exo.shared.logging import logger_test_install
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.common import Host
 from exo.shared.types.models import ModelMetadata
@@ -35,9 +33,7 @@ async def test_supervisor_inference_exception(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    logger: Logger,
 ):
-    logger_test_install(logger)
     model_shard_meta = pipeline_shard_meta(1, 0)
 
     supervisor = await RunnerSupervisor.create(

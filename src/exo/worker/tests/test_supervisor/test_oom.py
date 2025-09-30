@@ -1,9 +1,7 @@
-from logging import Logger
 from typing import Callable
 
 import pytest
 
-from exo.shared.logging import logger_test_install
 from exo.shared.types.common import Host
 from exo.shared.types.tasks import (
     Task,
@@ -29,9 +27,7 @@ async def test_supervisor_catches_oom(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
-    logger: Logger,
 ):
-    logger_test_install(logger)
     """Test that asking for the capital of France returns 'Paris' in the response"""
     model_shard_meta = pipeline_shard_meta(1, 0)
 

@@ -1,5 +1,6 @@
-from logging import Logger
 from typing import Callable
+
+from anyio import create_task_group
 
 # TaskStateUpdated and ChunkGenerated are used in test_worker_integration_utils.py
 from exo.shared.types.common import NodeId
@@ -18,26 +19,28 @@ from exo.shared.types.worker.instances import (
 from exo.shared.types.worker.runners import (
     FailedRunnerStatus,
 )
+from exo.worker.main import Worker
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MASTER_NODE_ID,
     NODE_A,
     RUNNER_1_ID,
 )
-from exo.worker.tests.test_integration.integration_utils import (
-    until_event_with_timeout,
-    worker_running,
-)
+from exo.worker.tests.worker_management import WorkerMailbox, until_event_with_timeout
 
 
 async def test_runner_spinup_timeout(
     instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
-    logger: Logger,
+    worker_and_mailbox: tuple[Worker, WorkerMailbox],
 ):
-    async with worker_running(NODE_A, logger) as (_, global_events):
+    worker, global_events = worker_and_mailbox
+    async with create_task_group() as tg:
+        tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
         instance_value.instance_type = InstanceStatus.ACTIVE
-        instance_value.shard_assignments.runner_to_shard[RUNNER_1_ID].should_timeout = 10
+        instance_value.shard_assignments.runner_to_shard[
+            RUNNER_1_ID
+        ].should_timeout = 10
 
         await global_events.append_events(
             [InstanceCreated(instance=instance_value)], origin=MASTER_NODE_ID
@@ -51,17 +54,18 @@ async def test_runner_spinup_timeout(
         )
 
         # Ensure the correct events have been emitted
-        events = await global_events.get_events_since(0)
+        events = global_events.collect()
 
         assert (
             len(
                 [
                     x
                     for x in events
-                    if isinstance(x.event, RunnerStatusUpdated)
-                    and isinstance(x.event.runner_status, FailedRunnerStatus)
+                    if isinstance(x.tagged_event.c, RunnerStatusUpdated)
+                    and isinstance(x.tagged_event.c.runner_status, FailedRunnerStatus)
                 ]
             )
             == 3
         )
-        assert any([isinstance(x.event, InstanceDeleted) for x in events])
+        assert any([isinstance(x.tagged_event.c, InstanceDeleted) for x in events])
+        worker.shutdown()

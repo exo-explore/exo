@@ -1,20 +1,18 @@
 import asyncio
 import os
-from logging import Logger
 from typing import Callable
 
 import pytest
+from anyio import create_task_group, move_on_after
 
-from exo.shared.db.sqlite.event_log_manager import EventLogConfig, EventLogManager
-from exo.shared.logging import logger_test_install
 from exo.shared.types.common import Host
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.models import ModelId
 from exo.shared.types.worker.instances import Instance, InstanceStatus, ShardAssignments
 from exo.shared.types.worker.runners import FailedRunnerStatus
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.download.shard_downloader import NoopShardDownloader
-from exo.worker.main import run
+from exo.worker.main import Worker
+from exo.worker.runner.runner_supervisor import RunnerSupervisor
 from exo.worker.tests.constants import (
     INSTANCE_1_ID,
     MASTER_NODE_ID,
@@ -23,7 +21,7 @@ from exo.worker.tests.constants import (
     RUNNER_1_ID,
     RUNNER_2_ID,
 )
-from exo.worker.worker import Worker
+from exo.worker.tests.worker_management import WorkerMailbox
 
 
 @pytest.fixture
@@ -36,43 +34,31 @@ def user_message() -> str:
     reason="This test only runs when ENABLE_SPINUP_TIMEOUT_TEST=true environment variable is set",
 )
 async def check_runner_connection(
-    logger: Logger,
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
+    two_workers_with_shared_mailbox: tuple[Worker, Worker, WorkerMailbox],
 ) -> bool:
-    logger_test_install(logger)
+    async def wait_for_runner_supervisor(
+        worker: Worker, timeout: float = 5.0
+    ) -> RunnerSupervisor | None:
+        with move_on_after(timeout):
+            while True:
+                assigned_runners = list(worker.assigned_runners.values())
+                if assigned_runners:
+                    runner = assigned_runners[0].runner
+                    if isinstance(runner, RunnerSupervisor):
+                        print("breaking because success")
+                        return runner
+                    if isinstance(assigned_runners[0].status, FailedRunnerStatus):
+                        print("breaking because failed")
+                        return runner
+                await asyncio.sleep(0.001)
+
+    worker1, worker2, global_events = two_workers_with_shared_mailbox
     # Track all tasks and workers for cleanup
-    tasks: list[asyncio.Task[None]] = []
-    workers: list[Worker] = []
-
-    try:
-        event_log_manager = EventLogManager(EventLogConfig())
-        await event_log_manager.initialize()
-        shard_downloader = NoopShardDownloader()
-
-        global_events = event_log_manager.global_events
-        await global_events.delete_all_events()
-
-        worker1 = Worker(
-            NODE_A,
-            shard_downloader=shard_downloader,
-            worker_events=global_events,
-            global_events=global_events,
-        )
-        workers.append(worker1)
-        task1 = asyncio.create_task(run(worker1))
-        tasks.append(task1)
-
-        worker2 = Worker(
-            NODE_B,
-            shard_downloader=shard_downloader,
-            worker_events=global_events,
-            global_events=global_events,
-        )
-        workers.append(worker2)
-        task2 = asyncio.create_task(run(worker2))
-        tasks.append(task2)
-
+    async with create_task_group() as tg:
+        tg.start_soon(worker1.run)
+        tg.start_soon(worker2.run)
         model_id = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
 
         shard_assignments = ShardAssignments(
@@ -98,28 +84,11 @@ async def check_runner_connection(
             origin=MASTER_NODE_ID,
         )
 
-        from exo.worker.runner.runner_supervisor import RunnerSupervisor
-
-        async def wait_for_runner_supervisor(
-            worker: Worker, timeout: float = 5.0
-        ) -> RunnerSupervisor | None:
-            end = asyncio.get_event_loop().time() + timeout
-            while True:
-                assigned_runners = list(worker.assigned_runners.values())
-                if assigned_runners:
-                    runner = assigned_runners[0].runner
-                    if isinstance(runner, RunnerSupervisor):
-                        print("breaking because success")
-                        return runner
-                    if isinstance(assigned_runners[0].status, FailedRunnerStatus):
-                        print("breaking because failed")
-                        return runner
-                if asyncio.get_event_loop().time() > end:
-                    raise TimeoutError("RunnerSupervisor was not set within timeout")
-                await asyncio.sleep(0.001)
-
         runner_supervisor = await wait_for_runner_supervisor(worker1, timeout=6.0)
-        ret = runner_supervisor is not None and runner_supervisor.runner_process.is_alive()
+        ret = (
+            runner_supervisor is not None
+            and runner_supervisor.runner_process.is_alive()
+        )
 
         await global_events.append_events(
             [
@@ -132,14 +101,13 @@ async def check_runner_connection(
 
         await asyncio.sleep(0.5)
 
-        return ret
-    finally:
-        # Cancel all worker tasks
-        for task in tasks:
-            task.cancel()
+        worker1.shutdown()
+        worker2.shutdown()
+        tg.cancel_scope.cancel()
 
-        # Wait for cancellation to complete
-        await asyncio.gather(*tasks, return_exceptions=True)
+        return ret
+    # should be unreachable
+    raise
 
 
 # Check Running status
@@ -147,7 +115,6 @@ async def check_runner_connection(
 # # not now.
 
 # def test_runner_connection_stress(
-#     logger: Logger,
 #     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
 #     hosts: Callable[[int], list[Host]],
 #     chat_completion_task: Callable[[InstanceId, str], Task],
@@ -157,12 +124,10 @@ async def check_runner_connection(
 # # not now.
 
 # def test_runner_connection_stress(
-#     logger: Logger,
 #     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
 #     hosts: Callable[[int], list[Host]],
 #     chat_completion_task: Callable[[InstanceId, str], Task],
 # ) -> None:
-#     logger_test_install(logger)
 #     total_runs = 100
 #     successes = 0
 

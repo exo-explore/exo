@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import List, NotRequired, Optional, TypedDict
 
@@ -8,10 +6,11 @@ from typing_extensions import Literal
 from exo.shared.models.model_cards import MODEL_CARDS, ModelCard
 from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
-from exo.shared.types.worker.common import InstanceId, NodeStatus, RunnerId
+from exo.shared.types.worker.common import InstanceId, RunnerId, WorkerStatus
 from exo.shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 from exo.shared.types.worker.ops import RunnerOp
@@ -117,7 +116,9 @@ def make_downloading_status(node_id: NodeId) -> DownloadingRunnerStatus:
     return DownloadingRunnerStatus(
         download_progress=DownloadOngoing(
             node_id=node_id,
-            download_progress=DownloadProgressData(total_bytes=1, downloaded_bytes=0),
+            download_progress=DownloadProgressData(
+                total_bytes=Memory.from_bytes(1), downloaded_bytes=Memory.from_bytes(0)
+            ),
         )
     )
 
@@ -129,9 +130,9 @@ def make_model_meta(model_id: str) -> ModelMetadata:
             model_card = card
 
             return ModelMetadata(
-                model_id=model_id,
+                model_id=ModelId(model_id),
                 pretty_name=model_card.model_id,
-                storage_size_kilobytes=10**6,
+                storage_size=Memory.from_kb(10**6),
                 n_layers=16,
             )
 
@@ -146,7 +147,7 @@ def make_instance(
     runner_specs: list[tuple[RunnerId, NodeId, int, RunnerStatus]],
     model_id: ModelId = MODEL_A_ID,
     instance_status: InstanceStatus = InstanceStatus.ACTIVE,
-) -> tuple[Instance, dict[RunnerId, RunnerStatus], dict[NodeId, NodeStatus]]:
+) -> tuple[Instance, dict[RunnerId, RunnerStatus], dict[NodeId, WorkerStatus]]:
     """Creates an instance with one or more runners."""
     runner_to_shard: dict[RunnerId, PipelineShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
@@ -170,13 +171,13 @@ def make_instance(
     )
 
     # Currently nodes are only ever idle - as if they were running we would be blocking - so we wouldn't be running plan()
-    # node_statuses = {node_id: NodeStatus.Idle for _, node_id, _, _ in runner_specs}
-    node_statuses: dict[NodeId, NodeStatus] = {}
+    # node_statuses = {node_id: WorkerStatus.Idle for _, node_id, _, _ in runner_specs}
+    node_statuses: dict[NodeId, WorkerStatus] = {}
     for _runner_id, node_id, _, status in runner_specs:
         if isinstance(status, RunningRunnerStatus):
-            node_statuses[node_id] = NodeStatus.Running
+            node_statuses[node_id] = WorkerStatus.Running
         else:
-            node_statuses[node_id] = NodeStatus.Idle
+            node_statuses[node_id] = WorkerStatus.Idle
     runner_statuses = {runner_id: status for runner_id, _, _, status in runner_specs}
 
     return instance, runner_statuses, node_statuses
@@ -195,7 +196,7 @@ def make_state(
         tasks = {}
     instances: dict[InstanceId, Instance] = {}
     all_runner_statuses: dict[RunnerId, RunnerStatus] = {}
-    all_node_statuses: dict[NodeId, NodeStatus] = {}
+    all_node_statuses: dict[NodeId, WorkerStatus] = {}
 
     for inst_id, specs in runner_specs_per_instance.items():
         # Build per-instance data using make_instance

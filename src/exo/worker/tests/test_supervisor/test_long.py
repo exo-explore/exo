@@ -1,14 +1,12 @@
 import asyncio
-from logging import Logger
 from typing import Callable
 
 import pytest
 
-from exo.shared.logging import logger_test_install
 from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.openai_compat import FinishReason
+from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import Host
-from exo.shared.types.events.chunks import TokenChunk
 from exo.shared.types.tasks import (
     Task,
     TaskId,
@@ -22,6 +20,7 @@ from exo.worker.runner.runner_supervisor import RunnerSupervisor
 def user_message():
     """Override the default message to ask about France's capital"""
     return "What is the capital of France?"
+
 
 @pytest.fixture
 def lorem_ipsum() -> str:
@@ -48,18 +47,17 @@ Curabitur non vehicula purus. Cras et justo risus. Duis et rutrum urna. Aliquam 
 Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae; Praesent porttitor tempor ligula. Quisque mollis arcu in metus ornare pellentesque. Aenean ultrices mollis quam quis sodales. Maecenas a cursus elit, id gravida tortor. Donec vel purus magna. Aliquam elementum est sed convallis fermentum. Nam nec eros arcu. Pellentesque sed eros a lacus sagittis maximus. Integer et tellus id libero dapibus convallis. Maecenas viverra, purus facilisis porttitor tincidunt, tellus lacus elementum dui, sed porttitor sem justo a lorem. Curabitur ipsum odio, efficitur quis efficitur at, tempus aliquet nisi. Aliquam ultrices tortor in arcu vulputate, vel iaculis lorem facilisis. Cras eleifend laoreet feugiat. Integer placerat blandit sem, mattis elementum purus pellentesque quis. Etiam vel arcu ut mi commodo placerat non id tortor.
 """
 
+
 @pytest.mark.asyncio
 async def test_supervisor_long_prompt_response(
     pipeline_shard_meta: Callable[..., PipelineShardMetadata],
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     lorem_ipsum: str,
-    logger: Logger,
 ):
     """Test that asking for the capital of France returns 'Paris' in the response"""
-    logger_test_install(logger)
 
-    model_meta = MODEL_CARDS['llama-3.2-1b'].metadata
+    model_meta = MODEL_CARDS["llama-3.2-1b"].metadata
     model_shard_meta = PipelineShardMetadata(
         model_meta=model_meta,
         device_rank=0,
@@ -83,10 +81,7 @@ async def test_supervisor_long_prompt_response(
         task = chat_completion_task(instance_id, TaskId())
         task.task_params.messages[0].content = lorem_ipsum * 3
 
-
-        async for chunk in supervisor.stream_response(
-            task=task
-        ):
+        async for chunk in supervisor.stream_response(task=task):
             if isinstance(chunk, TokenChunk):
                 full_response += chunk.text
 
@@ -102,21 +97,21 @@ async def test_supervisor_two_node_long_prompt_response(
     hosts: Callable[..., list[Host]],
     chat_completion_task: Callable[[InstanceId, TaskId], Task],
     lorem_ipsum: str,
-    logger: Logger,
 ):
     """Test two-node long prompt inference"""
-    logger_test_install(logger)
     instance_id = InstanceId()
 
     async def create_supervisor(shard_idx: int) -> RunnerSupervisor:
-        model_meta = MODEL_CARDS['llama-3.2-1b'].metadata
+        model_meta = MODEL_CARDS["llama-3.2-1b"].metadata
         model_shard_meta = PipelineShardMetadata(
             model_meta=model_meta,
             device_rank=shard_idx,
             world_size=2,
             n_layers=model_meta.n_layers,
             start_layer=0 if shard_idx == 0 else model_meta.n_layers // 2,
-            end_layer=model_meta.n_layers // 2 if shard_idx == 0 else model_meta.n_layers,
+            end_layer=model_meta.n_layers // 2
+            if shard_idx == 0
+            else model_meta.n_layers,
         )
         supervisor = await RunnerSupervisor.create(
             model_shard_meta=model_shard_meta,
@@ -166,4 +161,3 @@ async def test_supervisor_two_node_long_prompt_response(
     finally:
         await supervisor_0.astop()
         await supervisor_1.astop()
-

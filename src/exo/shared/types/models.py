@@ -1,12 +1,16 @@
-from typing import Annotated, TypeAlias
+from pydantic import PositiveInt
 
-from pydantic import BaseModel, PositiveInt
+from exo.shared.types.common import ID
+from exo.shared.types.memory import Memory
+from exo.utils.pydantic_ext import CamelCaseModel
 
-ModelId: TypeAlias = str
+
+class ModelId(ID):
+    pass
 
 
-class ModelMetadata(BaseModel):
+class ModelMetadata(CamelCaseModel):
     model_id: ModelId
     pretty_name: str
-    storage_size_kilobytes: Annotated[int, PositiveInt]
-    n_layers: Annotated[int, PositiveInt]
+    storage_size: Memory
+    n_layers: PositiveInt

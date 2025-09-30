@@ -1,3 +1,5 @@
+from typing import Callable
+
 import pytest
 
 from exo.shared.types.common import NodeId
@@ -7,21 +9,21 @@ from exo.shared.types.profiling import (
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
-from exo.shared.types.topology import Connection, ConnectionProfile, Node
+from exo.shared.types.topology import Connection, ConnectionProfile, NodeInfo
 
 
 @pytest.fixture
 def create_node():
-    def _create_node(memory: int, node_id: NodeId | None = None) -> Node:
+    def _create_node(memory: int, node_id: NodeId | None = None) -> NodeInfo:
         if node_id is None:
             node_id = NodeId()
-        return Node(
+        return NodeInfo(
             node_id=node_id,
             node_profile=NodePerformanceProfile(
                 model_id="test",
                 chip_id="test",
                 friendly_name="test",
-                memory=MemoryPerformanceProfile(
+                memory=MemoryPerformanceProfile.from_bytes(
                     ram_total=1000,
                     ram_available=memory,
                     swap_total=1000,
@@ -37,7 +39,7 @@ def create_node():
 
 # TODO: this is a hack to get the port for the send_back_multiaddr
 @pytest.fixture
-def create_connection():
+def create_connection() -> Callable[[NodeId, NodeId, int | None], Connection]:
     port_counter = 1235
 
     def _create_connection(
@@ -50,7 +52,6 @@ def create_connection():
         return Connection(
             local_node_id=source_node_id,
             send_back_node_id=sink_node_id,
-            local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1234"),
             send_back_multiaddr=Multiaddr(
                 address=f"/ip4/127.0.0.1/tcp/{send_back_port}"
             ),

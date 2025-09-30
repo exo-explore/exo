@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -8,19 +8,15 @@ from exo.shared.types.common import Host
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.shards import ShardMetadata
 
+
 ## Messages passed TO the runner
-
-
 class MessageType(str, Enum):
     Setup = "setup"
     ChatTask = "chat_task"
     Exit = "exit"
 
 
-MT = TypeVar(name="MT", bound=MessageType)
-
-
-class BaseRunnerMessage(BaseModel, Generic[MT]):
+class BaseRunnerMessage[MT: MessageType](BaseModel):
     pass
 
 
@@ -47,9 +43,8 @@ RunnerMessage = Annotated[
 ]
 RunnerMessageTypeAdapter: TypeAdapter[RunnerMessage] = TypeAdapter(RunnerMessage)
 
+
 ## Responses passed FROM the runner
-
-
 class RunnerResponseType(str, Enum):
     InitializedResponse = "initialized_response"
     TokenizedResponse = "tokenized_response"
@@ -59,10 +54,7 @@ class RunnerResponseType(str, Enum):
     ErrorResponse = "error_response"
 
 
-RRT = TypeVar(name="RRT", bound=RunnerResponseType)
-
-
-class BaseRunnerResponse(BaseModel, Generic[RRT]):
+class BaseRunnerResponse[RRT: RunnerResponseType](BaseModel):
     pass
 
 

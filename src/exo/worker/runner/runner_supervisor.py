@@ -12,8 +12,11 @@ from typing import Any, AsyncGenerator, Callable, Coroutine, Optional
 import psutil
 from loguru import logger
 
+from exo.shared.global_conn import (
+    AsyncConnection,
+)
+from exo.shared.types.chunks import GenerationChunk, TokenChunk
 from exo.shared.types.common import CommandId, Host
-from exo.shared.types.events.chunks import GenerationChunk, TokenChunk
 from exo.shared.types.tasks import ChatCompletionTaskParams, Task
 from exo.shared.types.worker.commands_runner import (
     ChatTaskMessage,
@@ -28,16 +31,13 @@ from exo.shared.types.worker.commands_runner import (
     TokenizedResponse,
 )
 from exo.shared.types.worker.common import RunnerError
-from exo.shared.types.worker.communication import (
-    AsyncConnection,
-)
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.runner.bootstrap import entrypoint
 from exo.worker.runner.utils import (
     get_init_timeout,
     get_prefil_timeout,
     get_token_generate_timeout,
-    get_weights_size_kb,
+    get_weights_size,
 )
 
 
@@ -74,16 +74,16 @@ class RunnerSupervisor:
         Create and initialize a RunnerSupervisor instance.
         The .create() classmethod pattern is used to ensure the constructor is asynchronous.
         """
-        ctx = mp.get_context('spawn')
+        ctx = mp.get_context("spawn")
         parent_conn, child_conn = ctx.Pipe(duplex=True)
-        
-        with tempfile.NamedTemporaryFile(prefix="child_stderr_", suffix=".log", delete=False) as tmp:
+
+        with tempfile.NamedTemporaryFile(
+            prefix="child_stderr_", suffix=".log", delete=False
+        ) as tmp:
             err_path = tmp.name
 
         runner_process = Process(
-            target=entrypoint, 
-            args=(child_conn, err_path), 
-            daemon=False
+            target=entrypoint, args=(child_conn, err_path), daemon=False
         )
         runner_process.start()
         child_conn.close()
@@ -96,7 +96,7 @@ class RunnerSupervisor:
             runner_process=runner_process,
             read_queue=read_queue,
             conn=parent_conn,
-            err_path=err_path
+            err_path=err_path,
         )
 
         logger.info(f"Initializing mlx instance with {model_shard_meta=}")
@@ -124,7 +124,7 @@ class RunnerSupervisor:
         if self.read_task.done():
             e = self.read_task.exception()
             await self.astop()
-            if e is not None: 
+            if e is not None:
                 raise e
             else:
                 return None
@@ -149,10 +149,14 @@ class RunnerSupervisor:
             await self.read_task  # Re-raises any exception from read_task
 
             # This should never get hit.
-            raise RunnerError("RunnerStopped", "Runner read loop terminated unexpectedly before any response.", "")
-        
+            raise RunnerError(
+                "RunnerStopped",
+                "Runner read loop terminated unexpectedly before any response.",
+                "",
+            )
+
         # if we haven't read from the queue, we have timed out.
-        await self.astop() # TODO: This could be handled by the called or _read_with_error_check - as we don't want a false Timeout to bring the whole runner down.
+        await self.astop()  # TODO: This could be handled by the called or _read_with_error_check - as we don't want a false Timeout to bring the whole runner down.
         raise asyncio.TimeoutError()
 
     async def _read_coro(self):
@@ -168,9 +172,11 @@ class RunnerSupervisor:
             match response:
                 case PrintResponse():
                     # TODO: THIS IS A REALLY IMPORTANT LOG MESSAGE, AND SHOULD BE MADE PRETTIER
-                    logger.bind(user_facing=True).info(f"{response.text}")
+                    logger.info(f"{response.text}")
                 case ErrorResponse():
-                    raise RunnerError(response.error_type, response.error_message, response.traceback)
+                    raise RunnerError(
+                        response.error_type, response.error_message, response.traceback
+                    )
                 case _:
                     await self.read_queue.put(response)
 
@@ -205,7 +211,9 @@ class RunnerSupervisor:
         if request_started_callback is not None:
             await request_started_callback()
 
-        prefil_timeout = get_prefil_timeout(self.model_shard_meta, prompt_tokens=prompt_tokens)
+        prefil_timeout = get_prefil_timeout(
+            self.model_shard_meta, prompt_tokens=prompt_tokens
+        )
         token_timeout = get_token_generate_timeout(self.model_shard_meta)
         timeout = prefil_timeout
         logger.bind(user_facing=True).info(
@@ -237,7 +245,6 @@ class RunnerSupervisor:
                 case _:
                     raise ValueError(f"Unexpected response type found: {response}")
 
-
     async def astop(self) -> None:
         # Cancel the stderr monitoring task
         async def await_task(task: asyncio.Task[Any]):
@@ -255,7 +262,7 @@ class RunnerSupervisor:
 
         # Wait to make sure that the model has been unloaded from memory
         async def wait_for_memory_release() -> None:
-            required_memory_bytes = get_weights_size_kb(self.model_shard_meta) * 1024
+            required_memory_bytes = get_weights_size(self.model_shard_meta).in_bytes
             start_time = asyncio.get_event_loop().time()
             while True:
                 available_memory_bytes = psutil.virtual_memory().available
@@ -315,12 +322,10 @@ class RunnerSupervisor:
             except Exception:
                 cause = f"signal={sig}"
 
-        logger.bind(user_facing=True).error(
-            f"Runner terminated ({cause}).\n{captured}"
-        )
+        logger.bind(user_facing=True).error(f"Runner terminated ({cause}).\n{captured}")
 
         return RunnerError(
-            error_type='RunnerCrash',
+            error_type="RunnerCrash",
             error_message=f"Runner terminated ({cause}).\n{captured}",
             traceback=traceback.format_exc(),
         )

@@ -1,4 +1,4 @@
-from typing import Callable, TypeVar
+from typing import Callable
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -12,10 +12,8 @@ from exo.shared.types.worker.commands_runner import (
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.shards import PipelineShardMetadata
 
-T = TypeVar("T", bound=BaseModel)
 
-
-def assert_equal_serdes(obj: T, typeadapter: TypeAdapter[T]):
+def assert_equal_serdes[T: BaseModel](obj: T, typeadapter: TypeAdapter[T]):
     encoded: bytes = obj.model_dump_json().encode("utf-8") + b"\n"
     decoded: T = typeadapter.validate_json(encoded)
 

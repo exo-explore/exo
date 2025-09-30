@@ -3,7 +3,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
-from exo.shared.types.models import ModelMetadata
+from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.shards import (
     PartitionStrategy,
     PipelineShardMetadata,
@@ -51,9 +52,9 @@ class ShardDownloader(ABC):
                 repo_revision="noop",
                 shard=PipelineShardMetadata(
                     model_meta=ModelMetadata(
-                        model_id="noop",
+                        model_id=ModelId("noop"),
                         pretty_name="noope",
-                        storage_size_kilobytes=0,
+                        storage_size=Memory.from_bytes(0),
                         n_layers=1,
                     ),
                     partition_strategy=PartitionStrategy.pipeline,
@@ -101,9 +102,9 @@ class NoopShardDownloader(ShardDownloader):
                 repo_revision="noop",
                 shard=PipelineShardMetadata(
                     model_meta=ModelMetadata(
-                        model_id="noop",
+                        model_id=ModelId("noop"),
                         pretty_name="noope",
-                        storage_size_kilobytes=0,
+                        storage_size=Memory.from_bytes(0),
                         n_layers=1,
                     ),
                     partition_strategy=PartitionStrategy.pipeline,

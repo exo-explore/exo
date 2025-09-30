@@ -11,7 +11,7 @@ class RunnerId(ID):
     pass
 
 
-class NodeStatus(str, Enum):
+class WorkerStatus(str, Enum):
     Idle = "Idle"
     Running = "Running"
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
@@ -16,13 +14,11 @@ def test_state_serialization_roundtrip() -> None:
     connection = Connection(
         local_node_id=node_a,
         send_back_node_id=node_b,
-        local_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10000"),
         send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10001"),
     )
 
     state = State()
     state.topology.add_connection(connection)
-    state.topology.master_node_id = node_a
 
     json_repr = state.model_dump_json()
     restored_state = State.model_validate_json(json_repr)

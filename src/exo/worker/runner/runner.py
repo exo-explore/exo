@@ -25,14 +25,12 @@ from exo.shared.types.worker.communication import (
     runner_write_error,
 )
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.shared.utils import ensure_type
+from exo.utils import ensure_type
 from exo.worker.runner.generate import mlx_generate, warmup_inference
-from exo.worker.runner.utils import get_weights_size_kb
+from exo.worker.runner.utils import get_weights_size
 
 
-async def main(
-    raw_conn: Connection
-):
+async def main(raw_conn: Connection):
     conn = AsyncConnection[RunnerResponse, RunnerMessage](raw_conn)
     set_conn(conn)
 
@@ -49,9 +47,9 @@ async def main(
             await asyncio.sleep(timeout)
 
         mlx_setup(
-            int(get_weights_size_kb(model_shard_meta) // 2**10),
+            int(get_weights_size(model_shard_meta).in_kb // 2**10),
             cache_frac_of_mrwss=0.8,
-            wired_frac_of_mrwss=0.8
+            wired_frac_of_mrwss=0.8,
         )
 
         setup_start_time = time.time()
@@ -71,9 +69,7 @@ async def main(
             sampler=sampler,
         )
         runner_print(f"Warmed up by generating {toks} tokens")
-        await conn.send(
-            InitializedResponse(time_taken=time.time() - setup_start_time)
-        )
+        await conn.send(InitializedResponse(time_taken=time.time() - setup_start_time))
 
         while True:
             message = await conn.recv()
@@ -121,4 +117,3 @@ async def main(
 
     except Exception as e:
         runner_write_error(e)
-

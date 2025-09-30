@@ -32,6 +32,7 @@ from exo.shared.types.worker.communication import (
 
 generation_stream = mx.new_stream(mx.default_device())
 
+
 def generate_step(
     prompt: mx.array,
     model: Model,
@@ -90,14 +91,13 @@ def generate_step(
         prompt_processed_tokens = 0
 
         while total_prompt_tokens - prompt_processed_tokens > prefill_step_size:
-            runner_print(f'Prefilling {min(prefill_step_size, len(prompt))} tokens. Remaining tokens: {len(prompt)}. Peak memory: {mx.get_peak_memory() // 2**30} GB')
-            logits = model(
-                prompt[:prefill_step_size][None],
-                cache=prompt_cache
+            runner_print(
+                f"Prefilling {min(prefill_step_size, len(prompt))} tokens. Remaining tokens: {len(prompt)}. Peak memory: {mx.get_peak_memory() // 2**30} GB"
             )
+            logits = model(prompt[:prefill_step_size][None], cache=prompt_cache)
 
             start_time = time.time()
-            mx.eval([c.state for c in prompt_cache] + [logits]) # type: ignore
+            mx.eval([c.state for c in prompt_cache] + [logits])  # type: ignore
             eval_time = time.time() - start_time
             prompt_processed_tokens += prefill_step_size
 
@@ -109,32 +109,34 @@ def generate_step(
             prefill_step_size = broadcast_from_zero(prefill_step_size)
             prefill_step_size = max(1, prefill_step_size)
 
+        if prompt_processed_tokens > 0:
+            runner_print("finished prefil stage.")
 
-        runner_print('finished prefil.')
         y, logprobs = _step(input_tokens=prompt)
 
-    mx.async_eval(y, logprobs) # type: ignore
+    # TODO: Why on earth is this async_eval called twice?
+    # Also why is it async_eval not eval ?
+    mx.async_eval(y, logprobs)  # type: ignore
     n = 0
     next_y: array | None = None
     next_logprobs: array | None = None
 
-    mx.async_eval(y, logprobs) # type: ignore
+    mx.async_eval(y, logprobs)  # type: ignore
     n = 0
     while True:
         if n != max_tokens:
             assert y is not None
             next_y, next_logprobs = _step(y)
-            mx.async_eval(next_y, next_logprobs) # type: ignore
+            mx.async_eval(next_y, next_logprobs)  # type: ignore
         if n == 0:
-            mx.eval(y) # type: ignore
+            mx.eval(y)  # type: ignore
         if n == max_tokens:
             break
-        yield int(y.item()), logprobs # type: ignore
+        yield int(y.item()), logprobs  # type: ignore
         if n % 256 == 0:
             mx.clear_cache()
         y, logprobs = next_y, next_logprobs
         n += 1
-
 
 
 def stream_generate(
@@ -147,21 +149,22 @@ def stream_generate(
     prompt_cache: Optional[list[KVCache]] = None,
     prefill_step_size: int = 2048,
 ) -> Generator[GenerationResponse, None, None]:
-
     # Try to infer if special tokens are needed
     add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
         tokenizer.bos_token
     )
-    prompt_array: mx.array = mx.array(tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
+    prompt_array: mx.array = mx.array(
+        tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+    )
     if conn is not None:
         conn.send_sync(TokenizedResponse(prompt_tokens=len(prompt_array)))
 
     detokenizer = tokenizer.detokenizer
 
     token_generator: Generator[Tuple[int, array], None, None] = generate_step(
-        prompt_array, 
-        model, 
-        max_tokens=max_tokens, 
+        prompt_array,
+        model,
+        max_tokens=max_tokens,
         sampler=sampler,
         prompt_cache=prompt_cache,
         prefill_step_size=prefill_step_size,
@@ -189,6 +192,7 @@ def stream_generate(
         token=token,
         finish_reason="stop" if token in tokenizer.eos_token_ids else "length",
     )
+
 
 async def warmup_inference(
     mlx_executor: concurrent.futures.ThreadPoolExecutor,
@@ -222,7 +226,7 @@ async def warmup_inference(
             prompt=warmup_prompt,
             max_tokens=50,
             sampler=sampler,
-            conn=None
+            conn=None,
         ):
             tokens_generated += 1
 
@@ -230,6 +234,7 @@ async def warmup_inference(
     mx_barrier()
 
     return tokens_generated
+
 
 async def mlx_generate(
     mlx_executor: concurrent.futures.ThreadPoolExecutor,
@@ -272,9 +277,11 @@ async def mlx_generate(
 
     cache_future = loop.run_in_executor(
         mlx_executor,
-        lambda: asyncio.run(make_kv_cache(
-            model=model,
-        ))
+        lambda: asyncio.run(
+            make_kv_cache(
+                model=model,
+            )
+        ),
     )
     cache = await cache_future
 

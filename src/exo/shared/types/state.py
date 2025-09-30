@@ -3,11 +3,11 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from exo.shared.topology import Topology
+from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.common import InstanceId, NodeStatus
+from exo.shared.types.worker.common import InstanceId, WorkerStatus
 from exo.shared.types.worker.instances import Instance
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 
@@ -32,14 +32,14 @@ class State(BaseModel):
             Topology: _encode_topology,
         },
     )
-    node_status: Mapping[NodeId, NodeStatus] = {}
+    node_status: Mapping[NodeId, WorkerStatus] = {}
     instances: Mapping[InstanceId, Instance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
     tasks: Mapping[TaskId, Task] = {}
     node_profiles: Mapping[NodeId, NodePerformanceProfile] = {}
     topology: Topology = Topology()
     history: Sequence[Topology] = []
-    last_event_applied_idx: int = Field(default=0, ge=0)
+    last_event_applied_idx: int = Field(default=-1, ge=-1)
 
     @field_validator("topology", mode="before")
     @classmethod
@@ -53,12 +53,8 @@ class State(BaseModel):
         if isinstance(value, Topology):
             return value
 
-        # Lazy import to avoid circular dependencies.
-        from exo.shared.topology import Topology as _Topology
-        from exo.shared.topology import TopologySnapshot
-
         if isinstance(value, Mapping):  # likely a snapshot-dict coming from JSON
             snapshot = TopologySnapshot(**cast(dict[str, Any], value))  # type: ignore[arg-type]
-            return _Topology.from_snapshot(snapshot)
+            return Topology.from_snapshot(snapshot)
 
         raise TypeError("Invalid representation for Topology field in State")

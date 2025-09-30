@@ -4,47 +4,49 @@ set -euo pipefail
 ###############################################################################
 # Args & prerequisites
 ###############################################################################
-if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <PASSWORD> <git_command> [git_args...]" >&2
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <git_command> [git_args...]" >&2
   echo "Examples:" >&2
-  echo "  $0 mypassword pull" >&2
-  echo "  $0 mypassword checkout main" >&2
-  echo "  $0 mypassword status" >&2
-  echo "  $0 mypassword fetch --all" >&2
+  echo "  $0 pull" >&2
+  echo "  $0 checkout main" >&2
+  echo "  $0 status" >&2
+  echo "  $0 fetch --all" >&2
   exit 1
 fi
 
-PASSWORD=$1
-shift  # Remove password from args
-GIT_CMD="$*"  # Remaining args form the git command
-HOSTS_FILE=${HOSTS_FILE:-hosts.json}
-
-for prog in jq sshpass; do
-  command -v "$prog" >/dev/null ||
-    { echo "Error: $prog not installed."; exit 1; }
-done
+GIT_CMD="$*" # All args form the git command
+HOSTS_FILE=${HOSTS_FILE:-hosts.txt}
 
 ###############################################################################
-# Load hosts.json (works on macOS Bash 3.2 and Bash 4+)
+# Load hosts.txt (works on macOS Bash 3.2 and Bash 4+)
 ###############################################################################
+if [[ ! -f "$HOSTS_FILE" ]]; then
+  echo "Error: $HOSTS_FILE not found"
+  exit 1
+fi
+
 if builtin command -v mapfile >/dev/null 2>&1; then
-  mapfile -t HOSTS < <(jq -r '.[]' "$HOSTS_FILE")
+  mapfile -t HOSTS <"$HOSTS_FILE"
 else
   HOSTS=()
-  while IFS= read -r h; do HOSTS+=("$h"); done < <(jq -r '.[]' "$HOSTS_FILE")
+  while IFS= read -r h; do
+    [[ -n "$h" ]] && HOSTS+=("$h")
+  done <"$HOSTS_FILE"
 fi
-[[ ${#HOSTS[@]} -gt 0 ]] || { echo "No hosts found in $HOSTS_FILE"; exit 1; }
+[[ ${#HOSTS[@]} -gt 0 ]] || {
+  echo "No hosts found in $HOSTS_FILE"
+  exit 1
+}
 
 ###############################################################################
 # Helper – run a remote command and capture rc/stderr/stdout
 ###############################################################################
 ssh_opts=(-o StrictHostKeyChecking=no
-          -o NumberOfPasswordPrompts=1   # allow sshpass to answer exactly once
-          -o LogLevel=ERROR)
+  -o LogLevel=ERROR)
 
-run_remote () {                  # $1 host   $2 command
+run_remote() { # $1 host   $2 command
   local host=$1 cmd=$2 rc
-  if sshpass -p "$PASSWORD" ssh "${ssh_opts[@]}" "$host" "$cmd"; then
+  if ssh "${ssh_opts[@]}" "$host" "$cmd"; then
     rc=0
   else
     rc=$?
@@ -72,7 +74,7 @@ done
 wait
 
 echo ""
-if (( fail == 0 )); then
+if ((fail == 0)); then
   echo "🎉 Git command executed successfully on all hosts!"
 else
   echo "⚠️  Some hosts failed—see above."

@@ -10,7 +10,7 @@ from exo.shared.constants import (
     EXO_GLOBAL_EVENT_DB,
     EXO_WORKER_EVENT_DB,
     LIBP2P_GLOBAL_EVENTS_TOPIC,
-    LIBP2P_WORKER_EVENTS_TOPIC,
+    LIBP2P_LOCAL_EVENTS_TOPIC,
 )
 from exo.shared.types.common import NodeId
 
@@ -58,9 +58,7 @@ class ForwarderSupervisor:
         if self._current_role == new_role:
             logger.debug(f"Role unchanged: {new_role}")
             return
-        logger.bind(user_facing=True).info(
-            f"Node changing from {self._current_role} to {new_role}"
-        )
+        logger.info(f"Node changing from {self._current_role} to {new_role}")
         self._current_role = new_role
         await self._restart_with_role(new_role)
 
@@ -82,13 +80,13 @@ class ForwarderSupervisor:
 
         # Both master and replica forward local worker events to network
         pairs.append(
-            f"sqlite:{EXO_WORKER_EVENT_DB}:events|libp2p:{LIBP2P_WORKER_EVENTS_TOPIC}"
+            f"sqlite:{EXO_WORKER_EVENT_DB}:events|libp2p:{LIBP2P_LOCAL_EVENTS_TOPIC}"
         )
 
         if role == ForwarderRole.MASTER:
             # Master: collect worker events from network into global log
             pairs.append(
-                f"libp2p:{LIBP2P_WORKER_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events"
+                f"libp2p:{LIBP2P_LOCAL_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events"
             )
             # Master: broadcast global events to network
             pairs.append(

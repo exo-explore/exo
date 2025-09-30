@@ -2,6 +2,7 @@ from typing import Callable
 
 import pytest
 
+from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -9,7 +10,6 @@ from exo.shared.types.events import (
     RunnerStatusUpdated,
     TaskStateUpdated,
 )
-from exo.shared.types.events.chunks import TokenChunk
 from exo.shared.types.tasks import ChatCompletionTask, TaskStatus
 from exo.shared.types.worker.common import RunnerId
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -36,8 +36,10 @@ from exo.worker.tests.test_handlers.utils import read_events_op
 
 @pytest.mark.asyncio
 async def test_assign_op(
-    worker: Worker, instance: Callable[[InstanceId, NodeId, RunnerId], Instance]
+    worker_void_mailbox: Worker,
+    instance: Callable[[InstanceId, NodeId, RunnerId], Instance],
 ):
+    worker = worker_void_mailbox
     instance_obj: Instance = instance(InstanceId(), worker.node_id, RUNNER_1_ID)
 
     assign_op = AssignRunnerOp(

@@ -16,8 +16,8 @@ RUNNER_2_ID: Final[RunnerId] = RunnerId("33333333-3333-4333-8333-333333333333")
 INSTANCE_1_ID: Final[InstanceId] = InstanceId("22222222-2222-4222-8222-222222222222")
 INSTANCE_2_ID: Final[InstanceId] = InstanceId("44444444-4444-4444-8444-444444444444")
 
-MODEL_A_ID: Final[ModelId] = "mlx-community/Llama-3.2-1B-Instruct-4bit"
-MODEL_B_ID: Final[ModelId] = "mlx-community/TinyLlama-1.1B-Chat-v1.0"
+MODEL_A_ID: Final[ModelId] = ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit")
+MODEL_B_ID: Final[ModelId] = ModelId("mlx-community/TinyLlama-1.1B-Chat-v1.0")
 
 TASK_1_ID: Final[TaskId] = TaskId("55555555-5555-4555-8555-555555555555")
 TASK_2_ID: Final[TaskId] = TaskId("66666666-6666-4666-8666-666666666666")

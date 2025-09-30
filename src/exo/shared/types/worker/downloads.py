@@ -1,23 +1,20 @@
 from enum import Enum
 from typing import (
     Annotated,
-    Callable,
     Literal,
-    NewType,
-    Sequence,
     Union,
 )
 
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import Field
 
 from exo.shared.types.common import NodeId
-from exo.shared.types.models import ModelId
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.memory import Memory
+from exo.utils.pydantic_ext import CamelCaseModel
 
 
-class DownloadProgressData(BaseModel):
-    total_bytes: Annotated[int, PositiveInt]
-    downloaded_bytes: Annotated[int, PositiveInt]
+class DownloadProgressData(CamelCaseModel):
+    total_bytes: Memory
+    downloaded_bytes: Memory
 
 
 class DownloadStatus(str, Enum):
@@ -27,7 +24,7 @@ class DownloadStatus(str, Enum):
     Failed = "Failed"
 
 
-class BaseDownloadProgress[DownloadStatusT: DownloadStatus](BaseModel):
+class BaseDownloadProgress[DownloadStatusT: DownloadStatus](CamelCaseModel):
     node_id: NodeId
     download_status: DownloadStatusT
 
@@ -67,18 +64,3 @@ DownloadProgress = Annotated[
     ],
     Field(discriminator="download_status"),
 ]
-
-
-BytesToDownload = NewType("BytesToDownload", int)
-BytesDownloaded = NewType("BytesDownloaded", int)
-
-DownloadEffectHandler = Callable[
-    [ModelId, DownloadStatus, BytesToDownload, BytesDownloaded], None
-]
-
-
-def download_shard(
-    model_id: ModelId,
-    shard_metadata: ShardMetadata,
-    effect_handlers: Sequence[DownloadEffectHandler],
-) -> None: ...

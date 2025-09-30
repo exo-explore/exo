@@ -33,6 +33,9 @@ dependencies = [
     "cobs>=1.2.2",
     "loguru>=0.7.3",
     "textual>=5.3.0",
+    "exo_pyo3_bindings", # rust bindings
+    "anyio>=4.10.0",
+    "bidict>=0.23.1",
 ]
 
 [project.scripts]
@@ -61,7 +64,11 @@ darwin = [
 [tool.uv.workspace]
 members = [
     "scripts",
+    "rust/exo_pyo3_bindings",
 ]
+
+[tool.uv.sources]
+exo_pyo3_bindings = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]
@@ -87,7 +94,7 @@ reportUnnecessaryTypeIgnoreComment = "error"
 pythonVersion = "3.13"
 pythonPlatform = "Darwin"
 
-exclude = ["**/.venv", "**/venv", "**/__pycache__", "**/exo_scripts"]
+exclude = ["**/.venv", "**/venv", "**/__pycache__", "**/exo_scripts", "**/.direnv", "**/rust"]
 stubPath = "typings"
 
 [[tool.basedpyright.executionEnvironments]]

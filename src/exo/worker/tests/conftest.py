@@ -1,5 +1,3 @@
-from ipaddress import IPv4Address
-from logging import Logger, getLogger
 from typing import Callable, Optional
 
 import pytest
@@ -18,38 +16,46 @@ from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.main import Worker
 from exo.worker.tests.constants import (
     COMMAND_1_ID,
     INSTANCE_1_ID,
     MODEL_A_ID,
     NODE_A,
+    NODE_B,
     RUNNER_1_ID,
     TASK_1_ID,
 )
 
+from .worker_management import (
+    WorkerMailbox,
+    create_worker_and_mailbox,
+    create_worker_void_mailbox,
+    create_worker_with_old_mailbox,
+)
+
 
 @pytest.fixture
-def user_message():
+def worker_void_mailbox() -> Worker:
+    return create_worker_void_mailbox(NODE_A)
+
+
+@pytest.fixture
+def worker_and_mailbox() -> tuple[Worker, WorkerMailbox]:
+    return create_worker_and_mailbox(NODE_A)
+
+
+@pytest.fixture
+def two_workers_with_shared_mailbox() -> tuple[Worker, Worker, WorkerMailbox]:
+    worker1, mailbox = create_worker_and_mailbox(NODE_A)
+    worker2 = create_worker_with_old_mailbox(NODE_B, mailbox)
+    return worker1, worker2, mailbox
+
+
+@pytest.fixture
+def user_message() -> str:
     """Override this fixture in tests to customize the message"""
     return "Hello, how are you?"
-
-
-@pytest.fixture
-def logger() -> Logger:
-    import logging
-
-    logger = getLogger("test_logger")
-    logger.setLevel(logging.DEBUG)
-
-    # Add console handler if none exists
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    return logger
 
 
 @pytest.fixture
@@ -62,7 +68,7 @@ def hosts():
     def _hosts(count: int, offset: int = 0) -> list[Host]:
         return [
             Host(
-                ip=IPv4Address("127.0.0.1"),
+                ip="127.0.0.1",
                 port=5000 + offset + i,
             )
             for i in range(count)

@@ -3,6 +3,7 @@ import os
 import platform
 from typing import Any, Callable, Coroutine
 
+import anyio
 from loguru import logger
 
 from exo.shared.types.profiling import (
@@ -75,7 +76,7 @@ async def start_polling_node_metrics(
                     chip_id=system_info.chip_id,
                     friendly_name=mac_friendly_name or "Unknown",
                     network_interfaces=network_interfaces,
-                    memory=MemoryPerformanceProfile(
+                    memory=MemoryPerformanceProfile.from_bytes(
                         ram_total=total_mem,
                         ram_available=override_memory
                         if override_memory
@@ -125,4 +126,4 @@ async def start_polling_node_metrics(
             # Catch-all to ensure the monitor keeps running.
             logger.opt(exception=e).error("Resource Monitor encountered error")
         finally:
-            await asyncio.sleep(poll_interval_s)
+            await anyio.sleep(poll_interval_s)

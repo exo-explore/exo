@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import contextlib
 import logging
 import multiprocessing
@@ -13,8 +11,8 @@ from typing import Optional
 
 from pytest import LogCaptureFixture
 
+from exo.routing.router import get_node_id_keypair
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
-from exo.shared.keypair import get_node_id_keypair
 
 NUM_CONCURRENT_PROCS = 10
 

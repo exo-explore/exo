@@ -13,6 +13,7 @@ def _redirect_stderr_to_file(path: str) -> None:
     # Rebind sys.stderr so Python's own writes go to the new fd as well (line-buffered)
     sys.stderr = os.fdopen(2, "w", buffering=1, closefd=False)
 
+
 def entrypoint(raw_conn: Connection, err_path: str) -> None:
     """
     Minimal entrypoint for the spawned child process.
@@ -25,4 +26,5 @@ def entrypoint(raw_conn: Connection, err_path: str) -> None:
 
     # Import the heavy runner only after stderr is redirected
     from exo.worker.runner.runner import main
+
     asyncio.run(main(raw_conn))

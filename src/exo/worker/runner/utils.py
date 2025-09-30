@@ -6,6 +6,7 @@ import psutil
 from loguru import logger
 
 from exo.shared.constants import LB_DISK_GBPS, LB_MEMBW_GBPS, LB_TFLOPS
+from exo.shared.types.memory import Memory
 from exo.shared.types.worker.shards import ShardMetadata
 
 
@@ -51,28 +52,28 @@ def get_runner_command() -> list[str]:
     return [python, "-m", "exo.worker.runner.runner"]
 
 
-def get_weights_size_kb(model_shard_meta: ShardMetadata) -> float:
-    return (
+def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
+    return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
-        * model_shard_meta.model_meta.storage_size_kilobytes
+        * model_shard_meta.model_meta.storage_size.in_kb
     )
 
 
 def get_init_timeout(model_shard_meta: ShardMetadata) -> float:
-    weights_size_kb = get_weights_size_kb(model_shard_meta)
+    weights_size = get_weights_size(model_shard_meta)
 
     kbps_read = 1024 * 1024 * LB_DISK_GBPS / 3
 
-    return weights_size_kb / kbps_read + 2.0
-
+    return weights_size.in_kb / kbps_read + 2.0
 
 
 def _prefill_flops_for_shard(model_shard_meta: ShardMetadata, s: int) -> float:
-    p = get_weights_size_kb(model_shard_meta) * 1024
+    p = get_weights_size(model_shard_meta).in_bytes
     flops = 2.0 * p * s  # parameter-dependent GEMMs
     # flops += _attention_flops(meta, S)  # optional S^2 term
     return flops
+
 
 def get_prefil_timeout(
     model_shard_meta: ShardMetadata,
@@ -80,7 +81,7 @@ def get_prefil_timeout(
     *,
     effective_tflops: float = LB_TFLOPS,
     safety_mult: float = 1.6,
-    base_pad_s: float = 5.0
+    base_pad_s: float = 5.0,
 ) -> float:
     """
     Returns a conservative timeout (seconds) for the prefill stage.
@@ -95,10 +96,9 @@ def get_prefil_timeout(
     return base_pad_s + safety_mult * time_seconds
 
 
-
 def get_token_generate_timeout(model_shard_meta: ShardMetadata) -> float:
-    weights_size_kb = get_weights_size_kb(model_shard_meta)
+    weights_size = get_weights_size(model_shard_meta)
 
     kbps_read = 1024 * 1024 * LB_MEMBW_GBPS / 3
 
-    return weights_size_kb / kbps_read + 2.0
+    return weights_size.in_kb / kbps_read + 2.0

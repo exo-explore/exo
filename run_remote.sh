@@ -4,38 +4,42 @@ set -euo pipefail
 ###############################################################################
 # Args & prerequisites
 ###############################################################################
-if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "Usage: $0 <PASSWORD> [hosts_file]" >&2 ; exit 1
+if [[ $# -gt 1 ]]; then
+  echo "Usage: $0 [hosts_file]" >&2
+  exit 1
 fi
-PASSWORD=$1
-HOSTS_FILE=${2:-hosts.json}
-
-for prog in jq sshpass; do
-  command -v "$prog" >/dev/null ||
-    { echo "Error: $prog not installed."; exit 1; }
-done
+HOSTS_FILE=${1:-hosts.txt}
 
 ###############################################################################
-# Load hosts.json (works on macOS Bash 3.2 and Bash 4+)
+# Load hosts.txt (works on macOS Bash 3.2 and Bash 4+)
 ###############################################################################
+if [[ ! -f "$HOSTS_FILE" ]]; then
+  echo "Error: $HOSTS_FILE not found"
+  exit 1
+fi
+
 if builtin command -v mapfile >/dev/null 2>&1; then
-  mapfile -t HOSTS < <(jq -r '.[]' "$HOSTS_FILE")
+  mapfile -t HOSTS <"$HOSTS_FILE"
 else
   HOSTS=()
-  while IFS= read -r h; do HOSTS+=("$h"); done < <(jq -r '.[]' "$HOSTS_FILE")
+  while IFS= read -r h; do
+    [[ -n "$h" ]] && HOSTS+=("$h")
+  done <"$HOSTS_FILE"
 fi
-[[ ${#HOSTS[@]} -gt 0 ]] || { echo "No hosts found in $HOSTS_FILE"; exit 1; }
+[[ ${#HOSTS[@]} -gt 0 ]] || {
+  echo "No hosts found in $HOSTS_FILE"
+  exit 1
+}
 
 ###############################################################################
 # Helper – run a remote command and capture rc/stderr/stdout
 ###############################################################################
 ssh_opts=(-o StrictHostKeyChecking=no
-          -o NumberOfPasswordPrompts=1   # allow sshpass to answer exactly once
-          -o LogLevel=ERROR)
+  -o LogLevel=ERROR)
 
-run_remote () {                  # $1 host   $2 command
+run_remote() { # $1 host   $2 command
   local host=$1 cmd=$2 rc
-  if sshpass -p "$PASSWORD" ssh "${ssh_opts[@]}" "$host" "$cmd"; then
+  if ssh "${ssh_opts[@]}" "$host" "$cmd"; then
     rc=0
   else
     rc=$?
@@ -54,26 +58,42 @@ for h in "${HOSTS[@]}"; do
   ) || fail=1 &
 done
 wait
-(( fail == 0 )) || { echo "❌ Some hosts could not be reached—check password or SSH access."; exit 1; }
+((fail == 0)) || {
+  echo "❌ Some hosts could not be reached—check SSH access."
+  exit 1
+}
 echo "✓ exo processes killed on all reachable hosts."
-
+#
 ###############################################################################
-# Phase 2 – start new exo processes (parallel, with sudo -S)
+# Phase 2 – cleanup database files (parallel)
 ###############################################################################
-echo "=== Stage 2: starting new exo processes ==="
+echo "=== Stage 2: cleaning up database files ==="
 fail=0
-for i in "${!HOSTS[@]}"; do
-  h=${HOSTS[$i]}
-
-  # one liner that pre-caches sudo and then runs the script
-  if [[ $i -eq 0 ]]; then
-    remote_cmd="cd ~/exo && ./run.sh -c"
-  else
-    remote_cmd="cd ~/exo && ./run.sh -rc"
-  fi
-
-  ( run_remote "$h" "$remote_cmd" ) || fail=1 &
+for h in "${HOSTS[@]}"; do
+  (
+    run_remote "$h" 'rm -f ~/.exo/*db* || true'
+  ) || fail=1 &
 done
 wait
-(( fail == 0 )) && echo "🎉 Deployment finished!" || \
-  { echo "⚠️  Some starts failed—see above."; exit 1; }
+((fail == 0)) || {
+  echo "❌ Some hosts failed database cleanup."
+  exit 1
+}
+echo "✓ Database files cleaned on all hosts."
+
+###############################################################################
+# Phase 3 – start new exo processes in Terminal windows (parallel)
+###############################################################################
+echo "=== Stage 3: starting new exo processes ==="
+fail=0
+for h in "${HOSTS[@]}"; do
+  # Use osascript to open Terminal windows on remote Mac
+  remote_cmd="osascript -e \"tell app \\\"Terminal\\\" to do script \\\"cd ~/exo; nix develop --command uv run exo\\\"\""
+
+  (run_remote "$h" "$remote_cmd") || fail=1 &
+done
+wait
+((fail == 0)) && echo "🎉 Deployment finished!" || {
+  echo "⚠️  Some starts failed—see above."
+  exit 1
+}

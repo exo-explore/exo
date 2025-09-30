@@ -23,9 +23,8 @@ from exo.shared.constants import (
     EXO_GLOBAL_EVENT_DB,
     EXO_WORKER_EVENT_DB,
     LIBP2P_GLOBAL_EVENTS_TOPIC,
-    LIBP2P_WORKER_EVENTS_TOPIC,
+    LIBP2P_LOCAL_EVENTS_TOPIC,
 )
-from exo.shared.logging import logger_test_install
 from exo.shared.types.common import NodeId
 
 # Mock forwarder script content
@@ -192,7 +191,6 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test starting forwarder in replica mode."""
-        logger_test_install(test_logger)
         # Set environment
         os.environ.update(mock_env_vars)
 
@@ -216,7 +214,7 @@ class TestForwardersupervisorBasic:
 
             # Expected replica forwarding pairs
             expected_pairs = [
-                f"sqlite:{EXO_WORKER_EVENT_DB}:events|libp2p:{LIBP2P_WORKER_EVENTS_TOPIC}",
+                f"sqlite:{EXO_WORKER_EVENT_DB}:events|libp2p:{LIBP2P_LOCAL_EVENTS_TOPIC}",
                 f"libp2p:{LIBP2P_GLOBAL_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events",
             ]
 
@@ -238,7 +236,6 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test changing role from replica to master."""
-        logger_test_install(test_logger)
         os.environ.update(mock_env_vars)
 
         supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script)
@@ -265,7 +262,7 @@ class TestForwardersupervisorBasic:
 
             # Expected master forwarding pairs
             master_pairs = [
-                f"libp2p:{LIBP2P_WORKER_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events",
+                f"libp2p:{LIBP2P_LOCAL_EVENTS_TOPIC}|sqlite:{EXO_GLOBAL_EVENT_DB}:events",
                 f"sqlite:{EXO_GLOBAL_EVENT_DB}:events|libp2p:{LIBP2P_GLOBAL_EVENTS_TOPIC}",
             ]
 
@@ -285,7 +282,6 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test that setting the same role twice doesn't restart the process."""
-        logger_test_install(test_logger)
         os.environ.update(mock_env_vars)
 
         supervisor = ForwarderSupervisor(NodeId(), mock_forwarder_script)
@@ -316,7 +312,6 @@ class TestForwardersupervisorBasic:
         ],
     ) -> None:
         """Test that Forwardersupervisor restarts the process if it crashes."""
-        logger_test_install(test_logger)
         # Configure mock to exit after 1 second
         mock_env_vars["MOCK_EXIT_AFTER"] = "1"
         mock_env_vars["MOCK_EXIT_CODE"] = "1"
@@ -365,7 +360,6 @@ class TestForwardersupervisorBasic:
         self, test_logger: logging.Logger, temp_dir: Path
     ) -> None:
         """Test behavior when forwarder binary doesn't exist."""
-        logger_test_install(test_logger)
         nonexistent_path = temp_dir / "nonexistent_forwarder"
 
         supervisor = ForwarderSupervisor(NodeId(), nonexistent_path)
@@ -381,7 +375,6 @@ class TestElectionCallbacks:
     @pytest.mark.asyncio
     async def test_on_became_master(self, test_logger: logging.Logger) -> None:
         """Test callback when becoming master."""
-        logger_test_install(test_logger)
         mock_supervisor = MagicMock(spec=ForwarderSupervisor)
         mock_supervisor.notify_role_change = AsyncMock()
 
@@ -393,7 +386,6 @@ class TestElectionCallbacks:
     @pytest.mark.asyncio
     async def test_on_became_replica(self, test_logger: logging.Logger) -> None:
         """Test callback when becoming replica."""
-        logger_test_install(test_logger)
         mock_supervisor = MagicMock(spec=ForwarderSupervisor)
         mock_supervisor.notify_role_change = AsyncMock()
 

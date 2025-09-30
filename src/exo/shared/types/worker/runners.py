@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from enum import Enum
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
@@ -20,11 +20,8 @@ class RunnerStatusType(str, Enum):
     Failed = "Failed"
 
 
-RunnerStatusTypeT = TypeVar("RunnerStatusTypeT", bound=RunnerStatusType, covariant=True)
-
-
-class BaseRunnerStatus(BaseModel, Generic[RunnerStatusTypeT]):
-    runner_status: RunnerStatusTypeT
+class BaseRunnerStatus[T: RunnerStatusType](BaseModel):
+    runner_status: T
 
 
 class DownloadingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Downloading]):

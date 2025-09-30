@@ -1,7 +1,7 @@
 import pytest
 
 from exo.shared.ipc.file_mutex.flock_mutex import FlockMutex, LockType
-from exo.shared.utils.fs import delete_if_exists, make_temp_path
+from exo.utils.fs import delete_if_exists, make_temp_path
 
 
 def test_lock_held():

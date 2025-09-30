@@ -18,6 +18,7 @@ class AsyncConnection[SendT, RecvT]:
       - await send(...) from asyncio code
       - send_sync(...) from executor/background threads
     """
+
     def __init__(self, conn: Connection):
         self._conn = conn
         self._send_lock = threading.Lock()
@@ -44,7 +45,7 @@ class AsyncConnection[SendT, RecvT]:
     def _recv_blocking(self) -> RecvT:
         # Not strictly needed in your parent, but safe if misused elsewhere
         with self._recv_lock:
-            return self._conn.recv() # type: ignore[no-any-return]
+            return self._conn.recv()  # type: ignore[no-any-return]
 
     async def poll(self, timeout: float | None = None) -> bool:
         return await asyncio.to_thread(self._conn.poll, timeout)
@@ -52,11 +53,14 @@ class AsyncConnection[SendT, RecvT]:
     def close(self) -> None:
         self._conn.close()
 
+
 _conn: Optional[AsyncConnection[RunnerResponse, RunnerMessage]] = None
+
 
 def set_conn(c: AsyncConnection[RunnerResponse, RunnerMessage]) -> None:
     global _conn
     _conn = c
+
 
 def get_conn() -> AsyncConnection[RunnerResponse, RunnerMessage]:
     if _conn is None:

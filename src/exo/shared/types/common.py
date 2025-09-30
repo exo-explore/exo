@@ -1,5 +1,4 @@
-from ipaddress import IPv4Address, IPv6Address
-from typing import Any, Self
+from typing import Self
 from uuid import uuid4
 
 from pydantic import BaseModel, GetCoreSchemaHandler, field_validator
@@ -12,10 +11,10 @@ class ID(str):
 
     @classmethod
     def __get_pydantic_core_schema__(
-        cls, _source: type[Any], handler: GetCoreSchemaHandler
+        cls, _source: type, handler: GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
-        # Re‑use the already‑defined schema for `str`
-        return handler.generate_schema(str)
+        # Just use a plain string schema
+        return core_schema.str_schema()
 
 
 class NodeId(ID):
@@ -27,7 +26,7 @@ class CommandId(ID):
 
 
 class Host(BaseModel):
-    ip: IPv4Address | IPv6Address
+    ip: str
     port: int
 
     def __str__(self) -> str:

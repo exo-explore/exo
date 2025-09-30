@@ -38,7 +38,6 @@ def runner_write_error(error: Exception) -> None:
     logger.opt(exception=error).exception("Critical Runner error")
 
 
-
 ## TODO: To make this cleaner, it seems like we should have only one writer.
 # This is fine in runner_supervisor but there's a risk in runner.py that we overlap things
 # We can guarantee this by enqueueing messages and have a writing thread.

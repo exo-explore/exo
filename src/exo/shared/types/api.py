@@ -133,7 +133,6 @@ class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     model_meta: ModelMetadata
-    instance_id: InstanceId
 
 
 class DeleteInstanceResponse(BaseModel):

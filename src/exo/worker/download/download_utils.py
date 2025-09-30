@@ -6,13 +6,13 @@ import time
 import traceback
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 from urllib.parse import urljoin
 
 import aiofiles
 import aiofiles.os as aios
 import aiohttp
-from pydantic import BaseModel, DirectoryPath, Field, TypeAdapter
+from pydantic import BaseModel, DirectoryPath, Field, PositiveInt, TypeAdapter
 
 from exo.shared.constants import EXO_HOME
 from exo.shared.types.worker.shards import ShardMetadata
@@ -25,7 +25,7 @@ from exo.worker.download.huggingface_utils import (
 
 
 class ModelSafetensorsIndexMetadata(BaseModel):
-    total_size: Annotated[int, Field(ge=0)]
+    total_size: PositiveInt
 
 
 class ModelSafetensorsIndex(BaseModel):

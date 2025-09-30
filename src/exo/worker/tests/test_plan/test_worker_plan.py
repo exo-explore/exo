@@ -1,10 +1,5 @@
-from __future__ import annotations
-
-import logging
-
 import pytest
 
-from exo.shared.logging import logger_test_install
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -13,7 +8,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TaskType,
 )
-from exo.shared.types.worker.common import NodeStatus
+from exo.shared.types.worker.common import WorkerStatus
 from exo.shared.types.worker.downloads import (
     DownloadPending,
 )
@@ -34,7 +29,6 @@ from exo.shared.types.worker.runners import (
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.common import AssignedRunner
-from exo.worker.download.shard_downloader import NoopShardDownloader
 from exo.worker.main import Worker
 from exo.worker.plan import plan
 from exo.worker.tests.constants import (
@@ -74,7 +68,7 @@ def _get_test_cases() -> list[PlanTestCase]:
             description="no runners -> no-op",
             in_process_runners=[],
             state=State(
-                node_status={NODE_A: NodeStatus.Idle}, instances={}, runners={}
+                node_status={NODE_A: WorkerStatus.Idle}, instances={}, runners={}
             ),
             expected_op=None,
         ),
@@ -144,7 +138,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                 )
             ],
             state=State(
-                node_status={NODE_A: NodeStatus.Idle}, instances={}, runners={}
+                node_status={NODE_A: WorkerStatus.Idle}, instances={}, runners={}
             ),
             expected_op=UnassignRunnerOp(runner_id=RUNNER_1_ID),
         ),
@@ -496,7 +490,7 @@ def _get_test_cases() -> list[PlanTestCase]:
     # We use a factory to delay test case generation until tmp_path is available.
     [pytest.param(c, id=c.id()) for c in _get_test_cases()],
 )
-def test_worker_plan(case: PlanTestCase) -> None:
+def test_worker_plan(case: PlanTestCase, worker_void_mailbox: Worker) -> None:
     """Exercise Worker.plan across declarative scenarios."""
 
     print(f"----- case: {case.description}")
@@ -505,17 +499,7 @@ def test_worker_plan(case: PlanTestCase) -> None:
     test_cases = {c.description: c for c in _get_test_cases()}
     case = test_cases[case.description]
 
-    node_id = NODE_A
-
-    logger = logging.getLogger("test_worker_plan")
-    logger_test_install(logger)
-    shard_downloader = NoopShardDownloader()
-    worker = Worker(
-        node_id=node_id,
-        shard_downloader=shard_downloader,
-        worker_events=None,
-        global_events=None,
-    )
+    worker = worker_void_mailbox
 
     runner_config: InProcessRunner
     for runner_config in case.in_process_runners:
@@ -532,7 +516,7 @@ def test_worker_plan(case: PlanTestCase) -> None:
                     runner_node = node
                     break
 
-            if runner_node != node_id:
+            if runner_node != worker.node_id:
                 # This runner belongs to a different node, skip it
                 continue
 

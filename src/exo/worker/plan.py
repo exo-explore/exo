@@ -6,6 +6,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.common import RunnerId
+from exo.shared.types.worker.downloads import DownloadStatus
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 from exo.shared.types.worker.ops import (
     AssignRunnerOp,
@@ -44,8 +45,12 @@ def unassign_runners(
 
     # If our instance is in 'downloading' or 'assigned' state, then we know the runner is stale. These are part of AssignRunnerOp and should be blocking.
     for assigned_runner_id in assigned_runners:
-        if assigned_runner_id in state_runners and isinstance(
-            state_runners[assigned_runner_id], DownloadingRunnerStatus
+        if (
+            assigned_runner_id in state_runners
+            and isinstance(state_runners[assigned_runner_id], DownloadingRunnerStatus)
+            # Not sure about this type ignore, i don't think it should be necessary
+            and state_runners[assigned_runner_id].download_progress.download_status  # type: ignore
+            != DownloadStatus.Completed
         ):
             return UnassignRunnerOp(runner_id=assigned_runner_id)
 
@@ -196,11 +201,12 @@ def spin_up_runners(
             # Need to assert all other runners are ready before we can spin up.
             ready_to_spin = True
             for runner_id in instance.shard_assignments.node_to_runner.values():
-                if (
-                    runner_id in state_runners
-                    and state_runners[runner_id].runner_status
-                    not in [RunnerStatusType.Inactive, RunnerStatusType.Starting]
-                ):
+                if runner_id in state_runners and state_runners[
+                    runner_id
+                ].runner_status not in [
+                    RunnerStatusType.Inactive,
+                    RunnerStatusType.Starting,
+                ]:
                     ready_to_spin = False
 
             if ready_to_spin:

@@ -29,12 +29,14 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 mlx_rank: None | int = None
 mlx_world_size: None | int = None
 
+
 def mx_barrier():
     mx.eval(  # type: ignore
         mx.distributed.all_sum(
             mx.array(1.0), stream=mx.default_stream(mx.Device(mx.cpu))
         )
     )
+
 
 def broadcast_from_zero(value: int) -> int:
     if mlx_rank is None:
@@ -46,8 +48,9 @@ def broadcast_from_zero(value: int) -> int:
         a = mx.array([0], dtype=mx.int32)
 
     m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu))
-    mx.eval(m) # type: ignore
-    return int(m.item()) # type: ignore
+    mx.eval(m)  # type: ignore
+    return int(m.item())  # type: ignore
+
 
 class HostList(RootModel[list[str]]):
     @classmethod
@@ -83,7 +86,7 @@ def mlx_setup(
     if wired_frac_of_mrwss > 0.0:
         target_wired = int(wired_frac_of_mrwss * mrwss)
         target_wired = min(target_wired, target_cache)  # don’t wire more than cache
-        
+
         runner_print(f"{target_wired=}")
         with contextlib.suppress(Exception):  # older macOS won’t have this
             mx.set_wired_limit(max(target_wired, 0))
@@ -136,14 +139,14 @@ def initialize_mlx(
 
 
 def shard_and_load(
-    model_shard_meta: ShardMetadata, 
+    model_shard_meta: ShardMetadata,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(model_shard_meta.model_meta.model_id)
 
     runner_print(f"loading model from {model_path}")
 
     model, config = load_model(model_path, lazy=True, strict=False)  # type: ignore
-    runner_print(f'{config=}')
+    runner_print(f"{config=}")
     assert isinstance(model, nn.Module)
 
     tokenizer = load_tokenizer(model_path)
@@ -154,7 +157,7 @@ def shard_and_load(
     # Synchronize processes before generation to avoid timeout
     mx_barrier()
 
-    return model, tokenizer # type: ignore
+    return model, tokenizer  # type: ignore
 
 
 async def apply_chat_template(
@@ -199,11 +202,13 @@ async def apply_chat_template(
 
     return prompt
 
+
 class NullKVCache(KVCache):
     """
     A KVCache that pretends to exist but holds zero tokens.
     It satisfies .state/.meta_state and never allocates real keys/values.
     """
+
     def __init__(self, dtype: mx.Dtype = mx.float16):
         super().__init__()
         # zero-length K/V so shapes/dtypes are defined but empty
@@ -218,18 +223,20 @@ class NullKVCache(KVCache):
 
     @state.setter
     def state(self, v: tuple[mx.array, mx.array]) -> None:
-        raise NotImplementedError('We should not be setting a NullKVCache.')
+        raise NotImplementedError("We should not be setting a NullKVCache.")
+
 
 async def make_kv_cache(
     model: Model,
     max_kv_size: Optional[int] = None,
 ) -> list[KVCache]:
-    assert hasattr(model, 'layers')
-    
+    assert hasattr(model, "layers")
+
     return [
         NullKVCache() if isinstance(layer, IdentityLayer) else KVCache()
         for layer in model.layers
     ]
+
 
 def mlx_force_oom(size: int = 40000) -> None:
     """

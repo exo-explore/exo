@@ -2,15 +2,17 @@ from typing import Callable
 
 import pytest
 
-from exo.master.placement import get_instance_placements, get_transition_events
-from exo.shared.topology import Topology
-from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events._events import (
-    _EventType,  # pyright: ignore[reportPrivateUsage]
+from exo.master.placement import (
+    get_instance_placements_after_create,
+    get_transition_events,
 )
-from exo.shared.types.events.commands import CreateInstanceCommand
-from exo.shared.types.models import ModelMetadata
-from exo.shared.types.topology import Connection, Node
+from exo.shared.topology import Topology
+from exo.shared.types.commands import CreateInstance
+from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.events import InstanceCreated, InstanceDeleted
+from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.topology import Connection, NodeInfo
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 from exo.shared.types.worker.runners import ShardAssignments
@@ -27,7 +29,7 @@ def instance() -> Instance:
         instance_id=InstanceId(),
         instance_type=InstanceStatus.ACTIVE,
         shard_assignments=ShardAssignments(
-            model_id="test-model", runner_to_shard={}, node_to_runner={}
+            model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
         ),
         hosts=[],
     )
@@ -36,18 +38,17 @@ def instance() -> Instance:
 @pytest.fixture
 def model_meta() -> ModelMetadata:
     return ModelMetadata(
-        model_id="test-model",
-        storage_size_kilobytes=1000,
+        model_id=ModelId("test-model"),
+        storage_size=Memory.from_kb(1000),
         pretty_name="Test Model",
         n_layers=10,
     )
 
 
-def create_instance_command(model_meta: ModelMetadata) -> CreateInstanceCommand:
-    return CreateInstanceCommand(
+def create_instance_command(model_meta: ModelMetadata) -> CreateInstance:
+    return CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
-        instance_id=InstanceId(),
     )
 
 
@@ -65,32 +66,33 @@ def test_get_instance_placements_create_instance(
     expected_layers: tuple[int, int, int],
     topology: Topology,
     model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], Node],
+    create_node: Callable[[Memory, NodeId | None], NodeInfo],
     create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     model_meta.n_layers = total_layers
-    model_meta.storage_size_kilobytes = sum(
+    model_meta.storage_size.in_bytes = sum(
         available_memory
     )  # make it exactly fit across all nodes
 
-    create_instance_command = CreateInstanceCommand(
+    create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
-        instance_id=InstanceId(),
     )
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
-    topology.add_node(create_node(available_memory[0] * 1024, node_id_a))
-    topology.add_node(create_node(available_memory[1] * 1024, node_id_b))
-    topology.add_node(create_node(available_memory[2] * 1024, node_id_c))
+    topology.add_node(create_node(Memory.from_bytes(available_memory[0]), node_id_a))
+    topology.add_node(create_node(Memory.from_bytes(available_memory[1]), node_id_b))
+    topology.add_node(create_node(Memory.from_bytes(available_memory[2]), node_id_c))
     topology.add_connection(create_connection(node_id_a, node_id_b))
     topology.add_connection(create_connection(node_id_b, node_id_c))
     topology.add_connection(create_connection(node_id_c, node_id_a))
 
     # act
-    placements = get_instance_placements(create_instance_command, topology, {})
+    placements = get_instance_placements_after_create(
+        create_instance_command, topology, {}
+    )
 
     # assert
     assert len(placements) == 1
@@ -117,22 +119,23 @@ def test_get_instance_placements_create_instance(
 
 
 def test_get_instance_placements_one_node_exact_fit(
-    create_node: Callable[[int, NodeId | None], Node],
+    create_node: Callable[[int, NodeId | None], NodeInfo],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
-    create_instance_command = CreateInstanceCommand(
+    create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=ModelMetadata(
-            model_id="test-model",
-            storage_size_kilobytes=1000,
+            model_id=ModelId("test-model"),
+            storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
         ),
-        instance_id=InstanceId(),
     )
-    placements = get_instance_placements(create_instance_command, topology, {})
+    placements = get_instance_placements_after_create(
+        create_instance_command, topology, {}
+    )
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -144,22 +147,23 @@ def test_get_instance_placements_one_node_exact_fit(
 
 
 def test_get_instance_placements_one_node_fits_with_extra_memory(
-    create_node: Callable[[int, NodeId | None], Node],
+    create_node: Callable[[int, NodeId | None], NodeInfo],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1001 * 1024, node_id))
-    create_instance_command = CreateInstanceCommand(
+    create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=ModelMetadata(
-            model_id="test-model",
-            storage_size_kilobytes=1000,
+            model_id=ModelId("test-model"),
+            storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
         ),
-        instance_id=InstanceId(),
     )
-    placements = get_instance_placements(create_instance_command, topology, {})
+    placements = get_instance_placements_after_create(
+        create_instance_command, topology, {}
+    )
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -171,27 +175,26 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
 
 
 def test_get_instance_placements_one_node_not_fit(
-    create_node: Callable[[int, NodeId | None], Node],
+    create_node: Callable[[int, NodeId | None], NodeInfo],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
-    create_instance_command = CreateInstanceCommand(
+    create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=ModelMetadata(
-            model_id="test-model",
-            storage_size_kilobytes=1001,
+            model_id=ModelId("test-model"),
+            storage_size=Memory.from_kb(1001),
             pretty_name="Test Model",
             n_layers=10,
         ),
-        instance_id=InstanceId(),
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        get_instance_placements(create_instance_command, topology, {})
+        get_instance_placements_after_create(create_instance_command, topology, {})
 
 
-def test_get_transition_events_no_change(topology: Topology, instance: Instance):
+def test_get_transition_events_no_change(instance: Instance):
     # arrange
     instance_id = InstanceId()
     current_instances = {instance_id: instance}
@@ -204,7 +207,7 @@ def test_get_transition_events_no_change(topology: Topology, instance: Instance)
     assert len(events) == 0
 
 
-def test_get_transition_events_create_instance(topology: Topology, instance: Instance):
+def test_get_transition_events_create_instance(instance: Instance):
     # arrange
     instance_id = InstanceId()
     current_instances: dict[InstanceId, Instance] = {}
@@ -215,10 +218,10 @@ def test_get_transition_events_create_instance(topology: Topology, instance: Ins
 
     # assert
     assert len(events) == 1
-    assert events[0].event_type == _EventType.InstanceCreated
+    assert isinstance(events[0], InstanceCreated)
 
 
-def test_get_transition_events_delete_instance(topology: Topology, instance: Instance):
+def test_get_transition_events_delete_instance(instance: Instance):
     # arrange
     instance_id = InstanceId()
     current_instances: dict[InstanceId, Instance] = {instance_id: instance}
@@ -229,5 +232,5 @@ def test_get_transition_events_delete_instance(topology: Topology, instance: Ins
 
     # assert
     assert len(events) == 1
-    assert events[0].event_type == _EventType.InstanceDeleted
+    assert isinstance(events[0], InstanceDeleted)
     assert events[0].instance_id == instance_id
