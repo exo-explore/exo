@@ -3,24 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    # Use flake-parts for modular configs
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-      inputs.nixpkgs-lib.follows = "nixpkgs";
-    };
-
-    # Flake-parts wrapper for mkShell
-    make-shell.url = "github:nicknovitski/make-shell";
-
-    # Provides path to project root with:
-    #   1. ${lib.getExe config.flake-root.package}
-    #   2. $FLAKE_ROOT environment-varible
-    flake-root.url = "github:srid/flake-root";
-
-    # Provides flake integration with [Just](https://just.systems/man/en/)
-    just-flake.url = "github:juspay/just-flake";
-
+    flake-utils.url = "github:numtide/flake-utils";
     # Provides Rust dev-env integration:
     fenix = {
       url = "github:nix-community/fenix";
@@ -36,70 +19,61 @@
   # };
 
   outputs =
-    inputs@{
-      flake-parts,
-      ...
-    }:
-    flake-parts.lib.mkFlake { inherit inputs; } (
-      { flake-parts-lib, self, ... }:
+    inputs:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
+    in
+    inputs.flake-utils.lib.eachSystem systems (
+      system:
+      let
+        pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [ inputs.fenix.overlays.default ];
+        };
+      in
       {
-        imports = [
-          inputs.make-shell.flakeModules.default
+        devShells.default = pkgs.mkShell {
+          packages =
+            with pkgs;
+            [
+              # PYTHON
+              python313
+              uv
+              ruff
+              basedpyright
 
-          ./nix/modules/pkgs-init.nix # nixpkgs overlays manager
-          ./nix/modules/flake-root.nix
-          ./nix/modules/just-flake.nix
-          ./nix/modules/macmon.nix
-          ./nix/modules/python.nix
-          ./nix/modules/rust.nix
-          ./nix/modules/go-forwarder.nix
-        ];
-        systems = [
-          "x86_64-linux"
-          "aarch64-darwin"
-        ];
-        perSystem =
-          {
-            config,
-            self',
-            inputs',
-            pkgs,
-            system,
-            ...
-          }:
-          {
-            # Per-system attributes can be defined here. The self' and inputs'
-            # module parameters provide easy access to attributes of the same
-            # system.
-            # NOTE: pkgs is equivalent to inputs'.nixpkgs.legacyPackages.hello;
-            apps = { };
+              # RUST
+              (fenix.complete.withComponents [
+                "cargo"
+                "rustc"
+                "clippy"
+                "rustfmt"
+                "rust-src"
+              ])
+              rustup # Just here to make RustRover happy
 
-            make-shells.default = {
-              packages = [
-                pkgs.protobuf
-              ];
+              # NIX
+              nixpkgs-fmt
+            ]
+            ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              # MACMON
+              macmon
 
-              nativeBuildInputs = with pkgs; [
-                nixpkgs-fmt
-              ];
+              # JUST
+              just
+            ]);
 
-              shellHook = ''
-                export GO_BUILD_DIR=$(git rev-parse --show-toplevel)/build;
-                export DASHBOARD_DIR=$(git rev-parse --show-toplevel)/dashboard;
-              '';
-
-              # Arguments which are intended to be environment variables in the shell environment
-              # should be changed to attributes of the `env` option
-              env = { };
-
-              # Arbitrary mkDerivation arguments should be changed to be attributes of the `additionalArguments` option
-              additionalArguments = { };
-            };
-          };
-        flake = {
-          # The usual flake attributes can be defined here, including system-
-          # agnostic ones like nixosModule and system-enumerating ones, although
-          # those are more easily expressed in perSystem.
+          shellHook = ''
+            # PYTHON
+            export DASHBOARD_DIR=$(git rev-parse --show-toplevel)/dashboard;
+            export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${pkgs.python313}/lib
+            echo
+            echo "🍎🍎 Run 'just <recipe>' to get started"
+            just --list
+          '';
 
         };
       }
