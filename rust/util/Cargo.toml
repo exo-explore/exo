@@ -1,0 +1,25 @@
+[package]
+name = "util"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+doctest = false
+name = "util"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# macro dependencies
+extend = { workspace = true }
+
+# utility dependencies
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+internment = { workspace = true }
+derive_more = { workspace = true }
+bon = { workspace = true }
+recursion = { workspace = true }

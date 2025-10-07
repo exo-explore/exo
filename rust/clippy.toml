@@ -1,0 +1,2 @@
+# we can manually exclude false-positive lint errors for dual packages (if in dependencies)
+#allowed-duplicate-crates = ["hashbrown"]

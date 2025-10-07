@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "exo_pyo3_bindings"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Andrei Cravtov", email = "the.andrei.cravtov@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "exo_pyo3_bindings",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.maturin]
+#purelib = true
+#python-source = "python"
+module-name = "exo_pyo3_bindings"
+features = ["pyo3/extension-module", "pyo3/experimental-async"]
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+asyncio_mode = "auto"

@@ -1,3 +1,24 @@
+*/__pycache__
+__pycache__
+*.so
+
+hosts.json
+hosts*.json
+nodes.json
+
+# hide direnv stuff
+.direnv/
+
+build/
+dist/
+
+*.xcuserstate
+.DS_Store
+*/.DS_Store
+
+# for the gitingest enthusiasts
+digest.txt
+
 __pycache__/
 .venv*
 test_weights.npz
