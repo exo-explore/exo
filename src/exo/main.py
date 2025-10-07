@@ -252,6 +252,7 @@ class Args(CamelCaseModel):
             "--with-chainlit",
             action="store_true",
             dest="with_chainlit",
+            default=True,
         )
         parser.add_argument(
             "--chainlit-port",
