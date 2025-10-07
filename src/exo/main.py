@@ -1,4 +1,5 @@
 import argparse
+import os
 from dataclasses import dataclass
 from typing import Self
 
@@ -19,6 +20,12 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
+from exo.utils.chainlit_ui import (
+    ChainlitConfig,
+    ChainlitLaunchError,
+    launch_chainlit,
+    terminate_process,
+)
 
 
 # TODO: Entrypoint refactor
@@ -162,8 +169,29 @@ def main():
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
 
+    ui_proc = None
+    if args.with_chainlit:
+        cfg = ChainlitConfig(
+            port=args.chainlit_port,
+            host=args.chainlit_host,
+            ui_dir=os.path.abspath(os.path.join(os.path.dirname(__file__), "ui")),
+        )
+        try:
+            ui_proc = launch_chainlit(cfg)
+            logger.info(
+                f"Chainlit running at http://{cfg.host}:{cfg.port} (UI -> API http://localhost:8000/v1)"
+            )
+        except ChainlitLaunchError as e:
+            logger.error(str(e))
+            logger_cleanup()
+            raise
+
     node = anyio.run(Node.create, args)
-    anyio.run(node.run)
+    try:
+        anyio.run(node.run)
+    finally:
+        if ui_proc is not None:
+            terminate_process(ui_proc)
 
     logger_cleanup()
 
@@ -174,6 +202,10 @@ class Args(CamelCaseModel):
     spawn_api: bool = False
     api_port: PositiveInt = 8000
     tb_only: bool = False
+    # Chainlit options
+    with_chainlit: bool = False
+    chainlit_port: PositiveInt = 8001
+    chainlit_host: str = "127.0.0.1"
 
     @classmethod
     def parse(cls) -> Self:
@@ -215,6 +247,23 @@ class Args(CamelCaseModel):
             "--tb-only",
             action="store_true",
             dest="tb_only",
+        )
+        parser.add_argument(
+            "--with-chainlit",
+            action="store_true",
+            dest="with_chainlit",
+        )
+        parser.add_argument(
+            "--chainlit-port",
+            type=int,
+            dest="chainlit_port",
+            default=8001,
+        )
+        parser.add_argument(
+            "--chainlit-host",
+            type=str,
+            dest="chainlit_host",
+            default="127.0.0.1",
         )
 
         args = parser.parse_args()

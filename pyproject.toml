@@ -36,6 +36,7 @@ dependencies = [
     "exo_pyo3_bindings", # rust bindings
     "anyio>=4.10.0",
     "bidict>=0.23.1",
+    "chainlit>=2.8.3",
 ]
 
 [project.scripts]
