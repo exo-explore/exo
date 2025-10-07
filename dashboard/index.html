@@ -1931,6 +1931,11 @@
                 return fallback;
             };
 
+            // Helper: detect API placeholders like "unknown" (case-insensitive)
+            const isUnknown = (value) => {
+                return typeof value === 'string' && value.trim().toLowerCase() === 'unknown';
+            };
+
             // Process nodes from topology or fallback to node_profiles directly
             let nodesToProcess = {};
             if (clusterState.topology && Array.isArray(clusterState.topology.nodes)) {
@@ -1961,10 +1966,15 @@
                 memBytesAvailable = getBytes(ramAvailVal);
                 const memBytesUsed = Math.max(memBytesTotal - memBytesAvailable, 0);
 
-                // Extract model information
-                const modelId = pick(nodeProfile, 'model_id', 'modelId', 'Unknown');
-                const chipId = pick(nodeProfile, 'chip_id', 'chipId', '');
-                const friendlyName = pick(nodeProfile, 'friendly_name', 'friendlyName', `${nodeId.substring(0, 8)}...`);
+                // Extract model information with graceful placeholders while node is loading
+                const rawModelId = pick(nodeProfile, 'model_id', 'modelId', 'Unknown');
+                const rawChipId = pick(nodeProfile, 'chip_id', 'chipId', '');
+                const rawFriendlyName = pick(nodeProfile, 'friendly_name', 'friendlyName', `${nodeId.substring(0, 8)}...`);
+
+                // When API has not fully loaded (reports "unknown"), present a nice default
+                const modelId = isUnknown(rawModelId) ? 'Mac Studio' : rawModelId;
+                const chipId = isUnknown(rawChipId) ? '' : rawChipId;
+                const friendlyName = (!rawFriendlyName || isUnknown(rawFriendlyName)) ? 'Mac' : rawFriendlyName;
 
                 // Extract network addresses (support snake_case and camelCase)
                 const addrList = [];

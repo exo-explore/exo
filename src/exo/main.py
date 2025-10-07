@@ -26,6 +26,7 @@ from exo.utils.chainlit_ui import (
     launch_chainlit,
     terminate_process,
 )
+from exo.utils.browser import open_url_in_browser_when_ready
 
 
 # TODO: Entrypoint refactor
@@ -168,7 +169,9 @@ def main():
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
-
+    
+    node = anyio.run(Node.create, args)
+    
     ui_proc = None
     if args.with_chainlit:
         cfg = ChainlitConfig(
@@ -177,16 +180,16 @@ def main():
             ui_dir=os.path.abspath(os.path.join(os.path.dirname(__file__), "ui")),
         )
         try:
-            ui_proc = launch_chainlit(cfg)
+            ui_proc = launch_chainlit(cfg, wait_ready=False)
             logger.info(
-                f"Chainlit running at http://{cfg.host}:{cfg.port} (UI -> API http://localhost:8000/v1)"
+                f"Launching Chainlit (non-blocking) at http://{cfg.host}:{cfg.port} (UI -> API http://localhost:8000/v1)"
             )
         except ChainlitLaunchError as e:
-            logger.error(str(e))
-            logger_cleanup()
-            raise
-
-    node = anyio.run(Node.create, args)
+            logger.warning(f"Chainlit not started: {e}")
+    
+    # Open the dashboard once the API is reachable.
+    if args.spawn_api:
+        open_url_in_browser_when_ready(f"http://localhost:{args.api_port}")
     try:
         anyio.run(node.run)
     finally:
