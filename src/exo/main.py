@@ -203,7 +203,7 @@ class Args(CamelCaseModel):
     api_port: PositiveInt = 8000
     tb_only: bool = False
     # Chainlit options
-    with_chainlit: bool = False
+    with_chainlit: bool = True
     chainlit_port: PositiveInt = 8001
     chainlit_host: str = "127.0.0.1"
 
