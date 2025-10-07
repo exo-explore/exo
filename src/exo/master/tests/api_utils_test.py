@@ -19,7 +19,7 @@ from openai.types.chat import (
 )
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
 
-from exo.master.main import async_main as master_main
+from exo.main import main
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -34,7 +34,8 @@ def with_master_main(
     @pytest.mark.asyncio
     @functools.wraps(func)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        master_task = asyncio.create_task(master_main())
+        loop = asyncio.get_running_loop()
+        master_task = loop.run_in_executor(None, main)
         try:
             return await func(*args, **kwargs)
         finally:

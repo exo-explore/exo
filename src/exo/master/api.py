@@ -260,7 +260,8 @@ class API:
         )
         await self._send(command)
         return StreamingResponse(
-            self._generate_chat_stream(command.command_id), media_type="text/event-stream"
+            self._generate_chat_stream(command.command_id),
+            media_type="text/event-stream",
         )
 
     def _calculate_total_available_memory(self) -> int:

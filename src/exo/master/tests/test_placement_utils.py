@@ -252,9 +252,9 @@ def test_get_hosts_from_subgraph(
     # assert
     assert len(hosts) == 3
     expected_hosts = [
-        Host(ip=("127.0.0.1"), port=5001),
-        Host(ip=("127.0.0.1"), port=5002),
-        Host(ip=("127.0.0.1"), port=5003),
+        Host(ip=("169.254.0.1"), port=5001),
+        Host(ip=("169.254.0.1"), port=5002),
+        Host(ip=("169.254.0.1"), port=5003),
     ]
     for expected_host in expected_hosts:
         assert expected_host in hosts

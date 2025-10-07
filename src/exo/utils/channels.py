@@ -14,7 +14,7 @@ from anyio.streams.memory import (
 
 class Sender[T](AnyioSender[T]):
     def clone_receiver(self) -> "Receiver[T]":
-        """Constructs a Sender using a Receivers shared state - similar to calling Receiver.clone() without needing the receiver"""
+        """Constructs a Receiver using a Senders shared state - similar to calling Receiver.clone() without needing the receiver"""
         if self._closed:
             raise ClosedResourceError
         return Receiver(_state=self._state)

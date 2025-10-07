@@ -66,7 +66,7 @@ def test_get_instance_placements_create_instance(
     expected_layers: tuple[int, int, int],
     topology: Topology,
     model_meta: ModelMetadata,
-    create_node: Callable[[Memory, NodeId | None], NodeInfo],
+    create_node: Callable[[int, NodeId | None], NodeInfo],
     create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
@@ -82,9 +82,9 @@ def test_get_instance_placements_create_instance(
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
-    topology.add_node(create_node(Memory.from_bytes(available_memory[0]), node_id_a))
-    topology.add_node(create_node(Memory.from_bytes(available_memory[1]), node_id_b))
-    topology.add_node(create_node(Memory.from_bytes(available_memory[2]), node_id_c))
+    topology.add_node(create_node(available_memory[0], node_id_a))
+    topology.add_node(create_node(available_memory[1], node_id_b))
+    topology.add_node(create_node(available_memory[2], node_id_c))
     topology.add_connection(create_connection(node_id_a, node_id_b))
     topology.add_connection(create_connection(node_id_b, node_id_c))
     topology.add_connection(create_connection(node_id_c, node_id_a))

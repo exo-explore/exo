@@ -53,7 +53,7 @@ def create_connection() -> Callable[[NodeId, NodeId, int | None], Connection]:
             local_node_id=source_node_id,
             send_back_node_id=sink_node_id,
             send_back_multiaddr=Multiaddr(
-                address=f"/ip4/127.0.0.1/tcp/{send_back_port}"
+                address=f"/ip4/169.254.0.1/tcp/{send_back_port}"
             ),
             connection_profile=ConnectionProfile(
                 throughput=1000, latency=1000, jitter=1000
