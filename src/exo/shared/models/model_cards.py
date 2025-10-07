@@ -95,6 +95,19 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
         ),
     ),
+    "kimi-k2-instruct-4bit": ModelCard(
+        short_id="kimi-k2-instruct-4bit",
+        model_id="mlx-community/Kimi-K2-Instruct-4bit",
+        name="Kimi K2 Instruct (4-bit)",
+        description="""Kimi K2 is a large language model trained on the Kimi K2 dataset.""",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
+            pretty_name="Kimi K2 Instruct (4-bit)",
+            storage_size=Memory.from_bytes(577597603840),
+            n_layers=61,
+        ),
+    ),
     # llama-3.1
     "llama-3.1-8b": ModelCard(
         short_id="llama-3.1-8b",
