@@ -1,154 +1,154 @@
-name: Build and Release Exo macOS App
+# name: Build and Release Exo macOS App
 
-on:
-  push:
-    tags:
-      - 'v*' # Trigger on version tags
-    branches:
-      - main # Also build on main branch for testing
-      - staging
-      - python-modules # Add app-staging for testing
-  pull_request:
-    branches:
-      - staging # Test builds on PRs to staging
-      - main # Build on PRs to main
+# on:
+#   push:
+#     tags:
+#       - 'v*' # Trigger on version tags
+#     branches:
+#       - main # Also build on main branch for testing
+#       - staging
+#       - python-modules # Add app-staging for testing
+#   pull_request:
+#     branches:
+#       - staging # Test builds on PRs to staging
+#       - main # Build on PRs to main
 
-jobs:
-  build-exov2-macos:
-    runs-on: macos-15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+# jobs:
+#   build-exov2-macos:
+#     runs-on: macos-15
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
 
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
+#       - name: Install Go
+#         uses: actions/setup-go@v5
+#         with:
+#           go-version: '1.21'
 
-      - name: Install Just
-        run: |
-          brew install just
+#       - name: Install Just
+#         run: |
+#           brew install just
 
-      - name: Install UV
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+#       - name: Install UV
+#         uses: astral-sh/setup-uv@v6
+#         with:
+#           enable-cache: true
+#           cache-dependency-glob: uv.lock
 
-      - name: Setup Python Environment
-        run: |
-          uv python install
-          uv sync --locked --all-extras
+#       - name: Setup Python Environment
+#         run: |
+#           uv python install
+#           uv sync --locked --all-extras
 
-      - name: Verify Python Environment
-        run: |
-          uv run python -c "import master.main; print('Master module available')"
-          uv run python -c "import worker.main; print('Worker module available')"
+#       - name: Verify Python Environment
+#         run: |
+#           uv run python -c "import master.main; print('Master module available')"
+#           uv run python -c "import worker.main; print('Worker module available')"
 
-      - name: Prepare Code Signing Keychain
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
-        run: |
-          security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
-          security default-keychain -s exov2.keychain
-          security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
+#       - name: Prepare Code Signing Keychain
+#         env:
+#           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+#           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+#           PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+#         run: |
+#           security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
+#           security default-keychain -s exov2.keychain
+#           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
 
-          echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/exov2-certificate.p12
-          security import /tmp/exov2-certificate.p12 -k exov2.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          rm /tmp/exov2-certificate.p12
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
+#           echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/exov2-certificate.p12
+#           security import /tmp/exov2-certificate.p12 -k exov2.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+#           rm /tmp/exov2-certificate.p12
+#           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
 
-          PROFILES_HOME="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-          mkdir -p "$PROFILES_HOME"
-          PROFILE_PATH="$(mktemp "$PROFILES_HOME"/EXOV2_PP.provisionprofile)"
-          echo "$PROVISIONING_PROFILE" | base64 --decode > "$PROFILE_PATH"
+#           PROFILES_HOME="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+#           mkdir -p "$PROFILES_HOME"
+#           PROFILE_PATH="$(mktemp "$PROFILES_HOME"/EXOV2_PP.provisionprofile)"
+#           echo "$PROVISIONING_PROFILE" | base64 --decode > "$PROFILE_PATH"
 
-      - name: Build Exo Swift App
-        env:
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          cd app/exov2
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+#       - name: Build Exo Swift App
+#         env:
+#           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+#         run: |
+#           cd app/exov2
+#           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           
-          # Release build with code signing
-          security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
-          SIGNING_IDENTITY=$(security find-identity -v -p codesigning | awk -F '"' '{print $2}')
+#           # Release build with code signing
+#           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
+#           SIGNING_IDENTITY=$(security find-identity -v -p codesigning | awk -F '"' '{print $2}')
           
-          xcodebuild clean build \
-            -project exov2.xcodeproj \
-            -scheme exov2 \
-            -configuration Release \
-            -derivedDataPath build \
-            CODE_SIGNING_IDENTITY="$SIGNING_IDENTITY" \
-            PROVISIONING_PROFILE_SPECIFIER="Exo Provisioning Profile" \
-            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
-            OTHER_CODE_SIGN_FLAGS="--timestamp"
+#           xcodebuild clean build \
+#             -project exov2.xcodeproj \
+#             -scheme exov2 \
+#             -configuration Release \
+#             -derivedDataPath build \
+#             CODE_SIGNING_IDENTITY="$SIGNING_IDENTITY" \
+#             PROVISIONING_PROFILE_SPECIFIER="Exo Provisioning Profile" \
+#             CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
+#             OTHER_CODE_SIGN_FLAGS="--timestamp"
 
-          mv build/Build/Products/*/EXO.app ../../
+#           mv build/Build/Products/*/EXO.app ../../
 
-      - name: Sign, Notarize, and Create DMG
-        env:
-          APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
-          APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
-          APPLE_NOTARIZATION_TEAM: ${{ secrets.APPLE_NOTARIZATION_TEAM }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
-          SIGNING_IDENTITY=$(security find-identity -v -p codesigning | awk -F '"' '{print $2}')
+#       - name: Sign, Notarize, and Create DMG
+#         env:
+#           APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
+#           APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+#           APPLE_NOTARIZATION_TEAM: ${{ secrets.APPLE_NOTARIZATION_TEAM }}
+#           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+#         run: |
+#           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" exov2.keychain
+#           SIGNING_IDENTITY=$(security find-identity -v -p codesigning | awk -F '"' '{print $2}')
           
-          # Sign the app
-          /usr/bin/codesign --deep --force --timestamp --options runtime \
-            --sign "$SIGNING_IDENTITY" EXO.app
+#           # Sign the app
+#           /usr/bin/codesign --deep --force --timestamp --options runtime \
+#             --sign "$SIGNING_IDENTITY" EXO.app
           
-          # Verify the signing
-          codesign -dvv EXO.app
+#           # Verify the signing
+#           codesign -dvv EXO.app
           
-          # Create DMG
-          mkdir -p tmp/dmg-contents
-          cp -r ./EXO.app tmp/dmg-contents/
-          ln -s /Applications tmp/dmg-contents/Applications
-          DMG_NAME="exo.dmg"
+#           # Create DMG
+#           mkdir -p tmp/dmg-contents
+#           cp -r ./EXO.app tmp/dmg-contents/
+#           ln -s /Applications tmp/dmg-contents/Applications
+#           DMG_NAME="exo.dmg"
           
-          # Create and sign DMG
-          hdiutil create -volname "Exo" -srcfolder tmp/dmg-contents -ov -format UDZO "$DMG_NAME"
-          /usr/bin/codesign --deep --force --timestamp --options runtime \
-            --sign "$SIGNING_IDENTITY" "$DMG_NAME"
+#           # Create and sign DMG
+#           hdiutil create -volname "Exo" -srcfolder tmp/dmg-contents -ov -format UDZO "$DMG_NAME"
+#           /usr/bin/codesign --deep --force --timestamp --options runtime \
+#             --sign "$SIGNING_IDENTITY" "$DMG_NAME"
 
-          # Setup notarization credentials (optional - comment out if no notarization secrets)
-          if [[ -n "$APPLE_NOTARIZATION_USERNAME" ]]; then
-            xcrun notarytool store-credentials notary_pass \
-              --apple-id "$APPLE_NOTARIZATION_USERNAME" \
-              --password "$APPLE_NOTARIZATION_PASSWORD" \
-              --team-id "$APPLE_NOTARIZATION_TEAM"
+#           # Setup notarization credentials (optional - comment out if no notarization secrets)
+#           if [[ -n "$APPLE_NOTARIZATION_USERNAME" ]]; then
+#             xcrun notarytool store-credentials notary_pass \
+#               --apple-id "$APPLE_NOTARIZATION_USERNAME" \
+#               --password "$APPLE_NOTARIZATION_PASSWORD" \
+#               --team-id "$APPLE_NOTARIZATION_TEAM"
 
-            # Submit for notarization
-            xcrun notarytool submit --wait \
-              --team-id "$APPLE_NOTARIZATION_TEAM" \
-              --keychain-profile notary_pass \
-              "$DMG_NAME"
+#             # Submit for notarization
+#             xcrun notarytool submit --wait \
+#               --team-id "$APPLE_NOTARIZATION_TEAM" \
+#               --keychain-profile notary_pass \
+#               "$DMG_NAME"
 
-            # Staple the notarization
-            xcrun stapler staple "$DMG_NAME"
-          fi
+#             # Staple the notarization
+#             xcrun stapler staple "$DMG_NAME"
+#           fi
 
-      - name: Cleanup Keychain
-        if: always()
-        run: |
-          security default-keychain -s login.keychain
-          security delete-keychain exov2.keychain
+#       - name: Cleanup Keychain
+#         if: always()
+#         run: |
+#           security default-keychain -s login.keychain
+#           security delete-keychain exov2.keychain
 
-      - name: Upload DMG file
-        uses: actions/upload-artifact@v4
-        with:
-          name: exo-dmg
-          path: exo.dmg
+#       - name: Upload DMG file
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: exo-dmg
+#           path: exo.dmg
 
-      - name: Upload App Bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: exov2-app
-          path: EXO.app/ 
+#       - name: Upload App Bundle
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: exov2-app
+#           path: EXO.app/ 
