@@ -6,6 +6,7 @@ from pydantic import Field
 from exo.shared.topology import Connection, NodePerformanceProfile
 from exo.shared.types.chunks import CommandId, GenerationChunk
 from exo.shared.types.common import ID, NodeId
+from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.common import InstanceId, WorkerStatus
 from exo.shared.types.worker.instances import Instance
@@ -51,6 +52,7 @@ class EventType(str, Enum):
     # Node Performance Events
     WorkerStatusUpdated = "WorkerStatusUpdated"
     NodePerformanceMeasured = "NodePerformanceMeasured"
+    NodeMemoryMeasured = "NodeMemoryMeasured"
 
     # Topology Events
     TopologyNodeCreated = "TopologyNodeCreated"
@@ -116,6 +118,11 @@ class NodePerformanceMeasured(BaseEvent):
     node_profile: NodePerformanceProfile
 
 
+class NodeMemoryMeasured(BaseEvent):
+    node_id: NodeId
+    memory: MemoryPerformanceProfile
+
+
 class WorkerStatusUpdated(BaseEvent):
     node_id: NodeId
     node_state: WorkerStatus
@@ -151,6 +158,7 @@ Event = Union[
     RunnerStatusUpdated,
     RunnerDeleted,
     NodePerformanceMeasured,
+    NodeMemoryMeasured,
     WorkerStatusUpdated,
     ChunkGenerated,
     TopologyNodeCreated,
@@ -173,6 +181,7 @@ Event = Union[
         EventType.RunnerStatusUpdated: RunnerStatusUpdated,
         EventType.RunnerDeleted: RunnerDeleted,
         EventType.NodePerformanceMeasured: NodePerformanceMeasured,
+        EventType.NodeMemoryMeasured: NodeMemoryMeasured,
         EventType.WorkerStatusUpdated: WorkerStatusUpdated,
         EventType.ChunkGenerated: ChunkGenerated,
         EventType.TopologyNodeCreated: TopologyNodeCreated,

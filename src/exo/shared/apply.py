@@ -12,6 +12,7 @@ from exo.shared.types.events import (
     InstanceCreated,
     InstanceDeactivated,
     InstanceDeleted,
+    NodeMemoryMeasured,
     NodePerformanceMeasured,
     RunnerDeleted,
     RunnerStatusUpdated,
@@ -25,7 +26,7 @@ from exo.shared.types.events import (
     TopologyNodeCreated,
     WorkerStatusUpdated,
 )
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import NodePerformanceProfile, SystemPerformanceProfile
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import NodeInfo
@@ -49,6 +50,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_deleted(event, state)
         case NodePerformanceMeasured():
             return apply_node_performance_measured(event, state)
+        case NodeMemoryMeasured():
+            return apply_node_memory_measured(event, state)
         case RunnerDeleted():
             return apply_runner_deleted(event, state)
         case RunnerStatusUpdated():
@@ -195,6 +198,51 @@ def apply_node_performance_measured(
         topology.add_node(NodeInfo(node_id=event.node_id))
     topology.update_node_profile(event.node_id, event.node_profile)
     return state.model_copy(update={"topology": topology})
+
+
+def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State:
+    existing = state.node_profiles.get(event.node_id)
+    topology = copy.copy(state.topology)
+
+    if existing is None:
+        created = NodePerformanceProfile(
+            model_id="unknown",
+            chip_id="unknown",
+            friendly_name="Unknown",
+            memory=event.memory,
+            network_interfaces=[],
+            system=SystemPerformanceProfile(
+                flops_fp16=0.0,
+                gpu_usage=0.0,
+                temp=0.0,
+                sys_power=0.0,
+                pcpu_usage=0.0,
+                ecpu_usage=0.0,
+                ane_power=0.0,
+            ),
+        )
+        created_profiles: Mapping[NodeId, NodePerformanceProfile] = {
+            **state.node_profiles,
+            event.node_id: created,
+        }
+        if not topology.contains_node(event.node_id):
+            topology.add_node(NodeInfo(node_id=event.node_id))
+        topology.update_node_profile(event.node_id, created)
+        return state.model_copy(
+            update={"node_profiles": created_profiles, "topology": topology}
+        )
+
+    updated = existing.model_copy(update={"memory": event.memory})
+    updated_profiles: Mapping[NodeId, NodePerformanceProfile] = {
+        **state.node_profiles,
+        event.node_id: updated,
+    }
+    if not topology.contains_node(event.node_id):
+        topology.add_node(NodeInfo(node_id=event.node_id))
+    topology.update_node_profile(event.node_id, updated)
+    return state.model_copy(
+        update={"node_profiles": updated_profiles, "topology": topology}
+    )
 
 
 def apply_worker_status_updated(event: WorkerStatusUpdated, state: State) -> State:

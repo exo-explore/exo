@@ -21,6 +21,7 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceDeleted,
+    NodeMemoryMeasured,
     NodePerformanceMeasured,
     RunnerDeleted,
     RunnerStatusUpdated,
@@ -32,7 +33,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
 from exo.shared.types.tasks import TaskId, TaskStatus
 from exo.shared.types.topology import Connection
@@ -68,7 +69,7 @@ from exo.worker.common import AssignedRunner
 from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDownloader
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
-from exo.worker.utils import start_polling_node_metrics
+from exo.worker.utils import start_polling_memory_metrics, start_polling_node_metrics
 
 
 class Worker:
@@ -124,6 +125,15 @@ class Worker:
         async with create_task_group() as tg:
             self._tg = tg
             tg.start_soon(start_polling_node_metrics, resource_monitor_callback)
+
+            async def memory_monitor_callback(
+                memory_profile: MemoryPerformanceProfile,
+            ) -> None:
+                await self.event_publisher(
+                    NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
+                )
+
+            tg.start_soon(start_polling_memory_metrics, memory_monitor_callback)
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)

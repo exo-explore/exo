@@ -1913,18 +1913,33 @@
             const result = {};
             if (!clusterState) return result;
 
+            // Helper: get numeric bytes from various shapes (number | {in_bytes}|{inBytes})
+            function getBytes(value) {
+                if (typeof value === 'number') return value;
+                if (value && typeof value === 'object') {
+                    if (typeof value.in_bytes === 'number') return value.in_bytes;
+                    if (typeof value.inBytes === 'number') return value.inBytes;
+                }
+                return 0;
+            }
+
+            // Helper: pick from snake_case or camelCase
+            const pick = (obj, snake, camel, fallback = undefined) => {
+                if (!obj) return fallback;
+                if (obj[snake] !== undefined) return obj[snake];
+                if (obj[camel] !== undefined) return obj[camel];
+                return fallback;
+            };
+
             // Process nodes from topology or fallback to node_profiles directly
             let nodesToProcess = {};
-            
-            if (clusterState.topology && clusterState.topology.nodes) {
-                // Use topology.nodes array
+            if (clusterState.topology && Array.isArray(clusterState.topology.nodes)) {
                 clusterState.topology.nodes.forEach(node => {
                     if (node.node_id && node.node_profile) {
                         nodesToProcess[node.node_id] = node.node_profile;
                     }
                 });
             } else if (clusterState.node_profiles) {
-                // Fallback to node_profiles directly
                 nodesToProcess = clusterState.node_profiles;
             }
 
@@ -1933,53 +1948,64 @@
                 const nodeProfile = nodesToProcess[nodeId];
                 if (!nodeProfile) continue;
 
-                // Extract memory information
+                // Extract memory information (supports new nested schema and old flat numbers)
                 let memBytesTotal = 0;
-                let memBytesUsed = 0;
-                
-                if (nodeProfile.memory) {
-                    memBytesTotal = nodeProfile.memory.ram_total || 0;
-                    const ramAvailable = nodeProfile.memory.ram_available || 0;
-                    memBytesUsed = Math.max(memBytesTotal - ramAvailable, 0);
-                }
+                let memBytesAvailable = 0;
+                const memory = nodeProfile.memory || {};
+                const ramTotalVal = pick(memory, 'ram_total', 'ramTotal');
+                const ramAvailVal = pick(memory, 'ram_available', 'ramAvailable');
+                const swapTotalVal = pick(memory, 'swap_total', 'swapTotal');
+                const swapAvailVal = pick(memory, 'swap_available', 'swapAvailable');
+
+                memBytesTotal = getBytes(ramTotalVal);
+                memBytesAvailable = getBytes(ramAvailVal);
+                const memBytesUsed = Math.max(memBytesTotal - memBytesAvailable, 0);
 
                 // Extract model information
-                const modelId = nodeProfile.model_id || 'Unknown';
-                const chipId = nodeProfile.chip_id || '';
-                const friendlyName = nodeProfile.friendly_name || `${nodeId.substring(0, 8)}...`;
+                const modelId = pick(nodeProfile, 'model_id', 'modelId', 'Unknown');
+                const chipId = pick(nodeProfile, 'chip_id', 'chipId', '');
+                const friendlyName = pick(nodeProfile, 'friendly_name', 'friendlyName', `${nodeId.substring(0, 8)}...`);
 
-                // Extract network addresses
+                // Extract network addresses (support snake_case and camelCase)
                 const addrList = [];
-                if (nodeProfile.network_interfaces) {
-                    nodeProfile.network_interfaces.forEach(intf => {
-                        if (intf.ip_address && !intf.ip_address.startsWith('fe80::')) {
-                            // Filter out link-local IPv6 addresses
-                            addrList.push(intf.ip_address);
-                        }
-                    });
-                }
+                const netIfacesSnake = nodeProfile.network_interfaces;
+                const netIfacesCamel = nodeProfile.networkInterfaces;
+                const interfaces = Array.isArray(netIfacesSnake) ? netIfacesSnake : (Array.isArray(netIfacesCamel) ? netIfacesCamel : []);
+                interfaces.forEach(intf => {
+                    const ip = intf.ip_address ?? intf.ipAddress;
+                    if (ip && !String(ip).startsWith('fe80::')) {
+                        addrList.push(ip);
+                    }
+                });
 
-                // Transform system metrics to macmon_info format for compatibility
+                // Transform system metrics to macmon_info format (support snake_case and camelCase)
                 const systemInfo = nodeProfile.system || {};
+                const gpuUsage = pick(systemInfo, 'gpu_usage', 'gpuUsage', 0);
+                const temp = pick(systemInfo, 'temp', 'temp', null);
+                const sysPower = pick(systemInfo, 'sys_power', 'sysPower', null);
+                const pcpuUsage = pick(systemInfo, 'pcpu_usage', 'pcpuUsage', 0);
+                const ecpuUsage = pick(systemInfo, 'ecpu_usage', 'ecpuUsage', 0);
+                const anePower = pick(systemInfo, 'ane_power', 'anePower', 0);
+                const flopsFp16 = pick(systemInfo, 'flops_fp16', 'flopsFp16', 0);
+
                 const macmonInfo = {
                     memory: {
                         ram_total: memBytesTotal,
                         ram_usage: memBytesUsed,
-                        ram_available: nodeProfile.memory?.ram_available || 0,
-                        swap_total: nodeProfile.memory?.swap_total || 0,
-                        swap_usage: (nodeProfile.memory?.swap_total || 0) - (nodeProfile.memory?.swap_available || 0)
+                        ram_available: memBytesAvailable,
+                        swap_total: getBytes(swapTotalVal),
+                        swap_usage: Math.max(getBytes(swapTotalVal) - getBytes(swapAvailVal), 0)
                     },
-                    // Convert new format to old format
-                    gpu_usage: systemInfo.gpu_usage ? [0, systemInfo.gpu_usage] : [0, 0],
+                    gpu_usage: [0, typeof gpuUsage === 'number' ? gpuUsage : 0],
                     temp: {
-                        cpu_temp_avg: systemInfo.temp || null,
-                        gpu_temp_avg: systemInfo.temp || null // Using same temp for both in new format
+                        cpu_temp_avg: typeof temp === 'number' ? temp : null,
+                        gpu_temp_avg: typeof temp === 'number' ? temp : null
                     },
-                    sys_power: systemInfo.sys_power || null,
-                    pcpu_usage: systemInfo.pcpu_usage ? [0, systemInfo.pcpu_usage] : [0, 0],
-                    ecpu_usage: systemInfo.ecpu_usage ? [0, systemInfo.ecpu_usage] : [0, 0],
-                    ane_power: systemInfo.ane_power || 0,
-                    flops_fp16: systemInfo.flops_fp16 || 0,
+                    sys_power: typeof sysPower === 'number' ? sysPower : null,
+                    pcpu_usage: [0, typeof pcpuUsage === 'number' ? pcpuUsage : 0],
+                    ecpu_usage: [0, typeof ecpuUsage === 'number' ? ecpuUsage : 0],
+                    ane_power: typeof anePower === 'number' ? anePower : 0,
+                    flops_fp16: typeof flopsFp16 === 'number' ? flopsFp16 : 0,
                     timestamp: new Date().toISOString()
                 };
 
@@ -1987,7 +2013,7 @@
                     mem: memBytesTotal,
                     addrs: addrList,
                     last_addr_update: Date.now() / 1000,
-                    system_info: { 
+                    system_info: {
                         model_id: modelId,
                         chip_id: chipId
                     },
