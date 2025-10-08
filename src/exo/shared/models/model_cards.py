@@ -25,7 +25,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
             pretty_name="Kimi K2 (4-bit)",
-            storage_size=Memory.from_kb(1073741824),
+            storage_size=Memory.from_kb(536870912),
             n_layers=61,
         ),
     ),
