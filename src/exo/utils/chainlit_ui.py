@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+
 import os
 import shutil
 import socket
@@ -10,6 +11,9 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from typing import final
+
+from loguru import logger
+from pydantic import PositiveInt
 
 
 @final
@@ -24,6 +28,22 @@ class ChainlitConfig:
     app_path: str | None = None
     ui_dir: str | None = None
 
+def start_chainlit(port: PositiveInt, host: str, headless: bool = False) -> subprocess.Popen[bytes] | None:
+    cfg = ChainlitConfig(
+        port=port,
+        host=host,
+        ui_dir=os.path.abspath(os.path.join(os.path.dirname(__file__), "ui")),
+    )
+    try:
+        return launch_chainlit(cfg, wait_ready=False, headless=headless)
+    except ChainlitLaunchError as e:
+        logger.warning(f"Chainlit not started: {e}")
+    return None
+
+def chainlit_cleanup(chainlit_proc: subprocess.Popen[bytes] | None) -> None:
+    if chainlit_proc is None:
+        return
+    terminate_process(chainlit_proc)
 
 def _is_port_open(host: str, port: int, timeout_s: float = 0.5) -> bool:
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
@@ -53,16 +73,16 @@ def _find_chainlit_executable() -> list[str]:
 def _default_app_path() -> str:
     # Resolve the packaged chainlit app location
     here = os.path.dirname(__file__)
-    app = os.path.abspath(os.path.join(here, "../ui/chainlit_app.py"))
+    app = os.path.abspath(os.path.join(here, "../../ui/chainlit_app.py"))
     return app
 
 
 def launch_chainlit(
     cfg: ChainlitConfig,
     *,
-    foreground: bool = False,
     wait_ready: bool = True,
     ready_timeout_s: float = 20.0,
+    headless: bool = False,
 ) -> subprocess.Popen[bytes]:
     if _is_port_open(cfg.host, cfg.port):
         raise ChainlitLaunchError(f"Port {cfg.port} already in use on {cfg.host}")
@@ -72,76 +92,12 @@ def launch_chainlit(
         raise ChainlitLaunchError(f"Chainlit app not found at {app_path}")
 
     env = os.environ.copy()
-    # Resolve APP_ROOT (directory of the Chainlit app) and ensure assets there
-    try:
-        app_dir = os.path.dirname(app_path)
-        # Also prepare public/ under optional ui_dir for convenience
-        target_dirs = [os.path.join(app_dir, "public")]
-        if cfg.ui_dir:
-            target_dirs.append(os.path.join(cfg.ui_dir, "public"))
-
-        # Resolve the repo root from this file to locate dashboard/exo-logo.png
-        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-        src_logo_png = os.path.join(repo_root, "dashboard", "exo-logo-hq-square-black-bg.png")
-        src_logo_jpg = os.path.join(repo_root, "dashboard", "exo-logo-hq-square-black-bg.jpg")
-        src_logo_favicon = os.path.join(repo_root, "dashboard", "favicon.ico")
-        src_logo_webp = os.path.join(repo_root, "dashboard", "exo-logo-hq-square-black-bg.webp")
-
-        def _ensure(src: str, dst: str) -> None:
-            # if os.path.exists(src) and not os.path.exists(dst):
-            try:
-                os.symlink(src, dst)
-            except Exception:
-                import shutil as _shutil
-                _shutil.copyfile(src, dst)
-
-        def _ensure_local_copy(src: str, dst: str) -> None:
-            # if not os.path.exists(src):
-            #     return
-            try:
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                # Replace existing symlink or file with a local copy
-                if os.path.islink(dst) or os.path.exists(dst):
-                    try:
-                        os.unlink(dst)
-                    except Exception:
-                        pass
-                import shutil as _shutil
-                _shutil.copyfile(src, dst)
-            except Exception:
-                pass
-
-        for pub_dir in target_dirs:
-            os.makedirs(pub_dir, exist_ok=True)
-            # Logos per docs
-            _ensure(src_logo_png, os.path.join(pub_dir, "logo_dark.png"))
-            _ensure(src_logo_png, os.path.join(pub_dir, "logo_light.png"))
-            # Favicon (serve a real local file; avoid symlinks for server path checks)
-            _ensure_local_copy(src_logo_png, os.path.join(pub_dir, "favicon.png"))
-            # Provide a .ico fallback
-            _ensure_local_copy(src_logo_favicon, os.path.join(pub_dir, "favicon.ico"))
-            # Avatars
-            avatars_dir = os.path.join(pub_dir, "avatars")
-            os.makedirs(avatars_dir, exist_ok=True)
-            # Always local copies for avatars to satisfy is_path_inside checks
-            _ensure_local_copy(src_logo_png, os.path.join(avatars_dir, "assistant.png"))
-            _ensure_local_copy(src_logo_png, os.path.join(avatars_dir, "default.png"))
-            # Extra avatar formats as fallback
-            _ensure_local_copy(src_logo_jpg, os.path.join(avatars_dir, "assistant.jpg"))
-            _ensure_local_copy(src_logo_webp, os.path.join(avatars_dir, "assistant.webp"))
-    except Exception:
-        # Non-fatal; logo absence shouldn't block UI
-        pass
     cmd = [*_find_chainlit_executable(), "run", app_path, "--host", cfg.host, "--port", str(cfg.port)]
+    if headless:
+        cmd.append("--headless")
     cwd = None
     if cfg.ui_dir:
         cwd = cfg.ui_dir
-
-    if foreground:
-        if cwd is not None:
-            os.chdir(cwd)
-        os.execvpe(cmd[0], cmd, env)
-        raise AssertionError("os.execvpe should not return")
 
     proc = subprocess.Popen(
         cmd,
@@ -180,5 +136,3 @@ def terminate_process(proc: subprocess.Popen[bytes], *, timeout_s: float = 5.0) 
             proc.kill()
     except Exception:
         return
-
-

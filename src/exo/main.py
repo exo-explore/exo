@@ -1,5 +1,4 @@
 import argparse
-import os
 from dataclasses import dataclass
 from typing import Self
 
@@ -20,14 +19,8 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
-from exo.utils.chainlit_ui import (
-    ChainlitConfig,
-    ChainlitLaunchError,
-    launch_chainlit,
-    terminate_process,
-)
 from exo.utils.browser import open_url_in_browser_when_ready
-
+from exo.utils.chainlit_ui import start_chainlit, chainlit_cleanup
 
 # TODO: Entrypoint refactor
 # I marked this as a dataclass as I want trivial constructors.
@@ -163,7 +156,6 @@ class Node:
                     if self.api:
                         self.api.reset()
 
-
 def main():
     args = Args.parse()
     # TODO: Refactor the current verbosity system
@@ -172,31 +164,19 @@ def main():
     
     node = anyio.run(Node.create, args)
     
-    ui_proc = None
-    if args.with_chainlit:
-        cfg = ChainlitConfig(
-            port=args.chainlit_port,
-            host=args.chainlit_host,
-            ui_dir=os.path.abspath(os.path.join(os.path.dirname(__file__), "ui")),
-        )
-        try:
-            ui_proc = launch_chainlit(cfg, wait_ready=False)
-            logger.info(
-                f"Launching Chainlit (non-blocking) at http://{cfg.host}:{cfg.port} (UI -> API http://localhost:8000/v1)"
-            )
-        except ChainlitLaunchError as e:
-            logger.warning(f"Chainlit not started: {e}")
-    
-    # Open the dashboard once the API is reachable.
-    if args.spawn_api:
+    chainlit_proc = (
+        start_chainlit(args.chainlit_port, args.chainlit_host, args.headless)
+        if args.with_chainlit
+        else None
+    )
+    if args.spawn_api and not args.headless:
         open_url_in_browser_when_ready(f"http://localhost:{args.api_port}")
+
     try:
         anyio.run(node.run)
     finally:
-        if ui_proc is not None:
-            terminate_process(ui_proc)
-
-    logger_cleanup()
+        chainlit_cleanup(chainlit_proc)
+        logger_cleanup()
 
 
 class Args(CamelCaseModel):
@@ -209,6 +189,7 @@ class Args(CamelCaseModel):
     with_chainlit: bool = True
     chainlit_port: PositiveInt = 8001
     chainlit_host: str = "127.0.0.1"
+    headless: bool = False
 
     @classmethod
     def parse(cls) -> Self:
@@ -268,6 +249,12 @@ class Args(CamelCaseModel):
             type=str,
             dest="chainlit_host",
             default="127.0.0.1",
+        )
+        parser.add_argument(
+            "--headless",
+            action="store_true",
+            dest="headless",
+            help="Prevents the app from opening in the browser."
         )
 
         args = parser.parse_args()
