@@ -25,14 +25,13 @@ class ChainlitLaunchError(RuntimeError):
 class ChainlitConfig:
     port: int = 8001
     host: str = "127.0.0.1"
-    app_path: str | None = None
     ui_dir: str | None = None
 
 def start_chainlit(port: PositiveInt, host: str, headless: bool = False) -> subprocess.Popen[bytes] | None:
     cfg = ChainlitConfig(
         port=port,
         host=host,
-        ui_dir=os.path.abspath(os.path.join(os.path.dirname(__file__), "ui")),
+        ui_dir=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ui")),
     )
     try:
         return launch_chainlit(cfg, wait_ready=False, headless=headless)
@@ -73,7 +72,7 @@ def _find_chainlit_executable() -> list[str]:
 def _default_app_path() -> str:
     # Resolve the packaged chainlit app location
     here = os.path.dirname(__file__)
-    app = os.path.abspath(os.path.join(here, "../../ui/chainlit_app.py"))
+    app = os.path.abspath(os.path.join(here, "..", "ui", "chainlit_app.py"))
     return app
 
 
@@ -87,7 +86,7 @@ def launch_chainlit(
     if _is_port_open(cfg.host, cfg.port):
         raise ChainlitLaunchError(f"Port {cfg.port} already in use on {cfg.host}")
 
-    app_path = cfg.app_path or _default_app_path()
+    app_path = _default_app_path()
     if not os.path.exists(app_path):
         raise ChainlitLaunchError(f"Chainlit app not found at {app_path}")
 
