@@ -36,7 +36,7 @@ def get_instance_placements_after_create(
     from loguru import logger
 
     logger.info("finding cycles:")
-    cycles = topology.get_cycles_tb()
+    cycles = topology.get_cycles()
     logger.info(f"{cycles=}")
     # we can also always just have a node on its own
     singleton_cycles = [[node] for node in all_nodes]
