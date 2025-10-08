@@ -989,11 +989,28 @@
                 const runner = runners[runnerId];
                 if (runner && runner.runner_status === 'Downloading' && runner.download_progress) {
                     downloadingRunners.push(runner);
-                    
                     // Aggregate download progress across all downloading runners
-                    if (runner.download_progress.download_status === 'Downloading' && runner.download_progress.download_progress) {
-                        totalBytes += runner.download_progress.download_progress.total_bytes || 0;
-                        downloadedBytes += runner.download_progress.download_progress.downloaded_bytes || 0;
+                    const dp = runner.download_progress;
+                    const isDownloading = (dp.download_status === 'Downloading') || (dp.downloadStatus === 'Downloading');
+                    if (isDownloading) {
+                        const prog = dp.download_progress || dp.downloadProgress;
+                        if (prog) {
+                            // Support both snake_case and camelCase, and nested Memory objects
+                            const total =
+                                (prog.total_bytes && typeof prog.total_bytes === 'object' && typeof prog.total_bytes.in_bytes === 'number') ? prog.total_bytes.in_bytes :
+                                (prog.totalBytes && typeof prog.totalBytes === 'object' && typeof prog.totalBytes.inBytes === 'number') ? prog.totalBytes.inBytes :
+                                (typeof prog.total_bytes === 'number' ? prog.total_bytes : 0) ||
+                                (typeof prog.totalBytes === 'number' ? prog.totalBytes : 0);
+
+                            const downloaded =
+                                (prog.downloaded_bytes && typeof prog.downloaded_bytes === 'object' && typeof prog.downloaded_bytes.in_bytes === 'number') ? prog.downloaded_bytes.in_bytes :
+                                (prog.downloadedBytes && typeof prog.downloadedBytes === 'object' && typeof prog.downloadedBytes.inBytes === 'number') ? prog.downloadedBytes.inBytes :
+                                (typeof prog.downloaded_bytes === 'number' ? prog.downloaded_bytes : 0) ||
+                                (typeof prog.downloadedBytes === 'number' ? prog.downloadedBytes : 0);
+
+                            totalBytes += total || 0;
+                            downloadedBytes += downloaded || 0;
+                        }
                     }
                 }
             }
