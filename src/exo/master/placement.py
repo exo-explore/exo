@@ -17,6 +17,7 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
+from exo.shared.types.topology import NodeInfo
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 
@@ -58,33 +59,25 @@ def get_instance_placements_after_create(
 
     if tb_only and smallest_tb_cycles == []:
         raise ValueError("No cycles found with sufficient memory")
-
     elif smallest_tb_cycles != []:
         smallest_cycles = smallest_tb_cycles
 
-    selected_cycle = None
-    for cycle in smallest_cycles:
-        for node in cycle:
-            if topology.node_is_leaf(node.node_id):
-                selected_cycle = cycle
-                break
-        else:
-            continue
-        break
+    cycles_with_leaf_nodes: list[list[NodeInfo]] = [
+        cycle for cycle in smallest_cycles
+        if any(topology.node_is_leaf(node.node_id) for node in cycle)
+    ]
 
-
-    if not selected_cycle:
-        selected_cycle = max(
-            smallest_cycles,
-            key=lambda cycle: sum(
-                (
-                    node.node_profile.memory.ram_available
-                    for node in cycle
-                    if node.node_profile is not None
-                ),
-                start=Memory(),
+    selected_cycle = max(
+        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
+        key=lambda cycle: sum(
+            (
+                node.node_profile.memory.ram_available
+                for node in cycle
+                if node.node_profile is not None
             ),
-        )
+            start=Memory(),
+        ),
+    )
 
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)
 
