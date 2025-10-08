@@ -62,17 +62,29 @@ def get_instance_placements_after_create(
     elif smallest_tb_cycles != []:
         smallest_cycles = smallest_tb_cycles
 
-    selected_cycle = max(
-        smallest_cycles,
-        key=lambda cycle: sum(
-            (
-                node.node_profile.memory.ram_available
-                for node in cycle
-                if node.node_profile is not None
+    selected_cycle = None
+    for cycle in smallest_cycles:
+        for node in cycle:
+            if topology.node_is_leaf(node.node_id):
+                selected_cycle = cycle
+                break
+        else:
+            continue
+        break
+
+
+    if not selected_cycle:
+        selected_cycle = max(
+            smallest_cycles,
+            key=lambda cycle: sum(
+                (
+                    node.node_profile.memory.ram_available
+                    for node in cycle
+                    if node.node_profile is not None
+                ),
+                start=Memory(),
             ),
-            start=Memory(),
-        ),
-    )
+        )
 
     shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)
 
