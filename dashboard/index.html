@@ -1195,19 +1195,21 @@
             marker.setAttribute('viewBox', '0 0 10 10');
             marker.setAttribute('refX', '10');
             marker.setAttribute('refY', '5');
-            marker.setAttribute('markerWidth', '14');
-            marker.setAttribute('markerHeight', '14');
+            marker.setAttribute('markerWidth', '11');
+            marker.setAttribute('markerHeight', '11');
             marker.setAttribute('orient', 'auto-start-reverse');
-            const markerPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            markerPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-            markerPath.setAttribute('fill', 'var(--exo-light-gray)');
-            markerPath.setAttribute('stroke', '#FFFFFF');
-            markerPath.setAttribute('stroke-width', '2');
-            markerPath.setAttribute('stroke-linejoin', 'round');
-            markerPath.setAttribute('stroke-dasharray', 'none');
-            markerPath.setAttribute('stroke-dashoffset', '0');
-            markerPath.setAttribute('style', 'animation: none;');
-            marker.appendChild(markerPath);
+            // Draw a subtle V-tip (no filled body)
+            const markerTip = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            markerTip.setAttribute('d', 'M 0 0 L 10 5 L 0 10');
+            markerTip.setAttribute('fill', 'none');
+            markerTip.setAttribute('stroke', 'var(--exo-light-gray)');
+            markerTip.setAttribute('stroke-width', '1.6');
+            markerTip.setAttribute('stroke-linecap', 'round');
+            markerTip.setAttribute('stroke-linejoin', 'round');
+            markerTip.setAttribute('stroke-dasharray', 'none');
+            markerTip.setAttribute('stroke-dashoffset', '0');
+            markerTip.setAttribute('style', 'animation: none; pointer-events: none;');
+            marker.appendChild(markerTip);
             defs.appendChild(marker);
             topologyGraphContainer.appendChild(defs);
 
@@ -1243,20 +1245,11 @@
                 const posB = positionById[entry.b];
                 if (!posA || !posB) return;
 
-                // Compute shortened endpoints so arrows are not hidden behind node icons
-                const dx = posB.x - posA.x;
-                const dy = posB.y - posA.y;
-                const len = Math.hypot(dx, dy) || 1;
-                const ux = dx / len;
-                const uy = dy / len;
-                const baseMargin = nodeRadius * 0.9; // approximate icon half-extent
-                const maxMargin = Math.max(0, (len / 2) - 6); // avoid crossing for very short links
-                const margin = Math.min(baseMargin, maxMargin);
-
-                const x1 = posA.x + ux * margin;
-                const y1 = posA.y + uy * margin;
-                const x2 = posB.x - ux * margin;
-                const y2 = posB.y - uy * margin;
+                // Full-length center-to-center lines
+                const x1 = posA.x;
+                const y1 = posA.y;
+                const x2 = posB.x;
+                const y2 = posB.y;
 
                 // Base animated dashed line (no markers)
                 const baseLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -1267,20 +1260,56 @@
                 baseLine.setAttribute('class', 'graph-link');
                 linksGroup.appendChild(baseLine);
 
-                // Separate arrow carrier line (no stroke, only markers so it doesn't animate)
-                const arrowLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                arrowLine.setAttribute('x1', x1);
-                arrowLine.setAttribute('y1', y1);
-                arrowLine.setAttribute('x2', x2);
-                arrowLine.setAttribute('y2', y2);
-                arrowLine.setAttribute('stroke', 'none');
-                arrowLine.setAttribute('fill', 'none');
-                if (entry.aToB) arrowLine.setAttribute('marker-end', 'url(#arrowhead)');
-                if (entry.bToA) arrowLine.setAttribute('marker-start', 'url(#arrowhead)');
-                arrowsGroup.appendChild(arrowLine);
-            });
-            topologyGraphContainer.appendChild(linksGroup);
+                // Arrowheads centered on the line (tip lies exactly on the line),
+                // offset along the tangent so opposite directions straddle the center.
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const len = Math.hypot(dx, dy) || 1;
+                const ux = dx / len;
+                const uy = dy / len;
+                const mx = (x1 + x2) / 2;
+                const my = (y1 + y2) / 2;
+                const tipOffset = 16; // shift arrow tips away from the exact center along the line
+                const carrier = 2; // short carrier segment length to define orientation
 
+                if (entry.aToB) {
+                    // Arrow pointing A -> B: place tip slightly before center along +tangent
+                    const tipX = mx - ux * tipOffset;
+                    const tipY = my - uy * tipOffset;
+                    const sx = tipX - ux * carrier;
+                    const sy = tipY - uy * carrier;
+                    const ex = tipX;
+                    const ey = tipY;
+                    const arrowSeg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    arrowSeg.setAttribute('x1', sx);
+                    arrowSeg.setAttribute('y1', sy);
+                    arrowSeg.setAttribute('x2', ex);
+                    arrowSeg.setAttribute('y2', ey);
+                    arrowSeg.setAttribute('stroke', 'none');
+                    arrowSeg.setAttribute('fill', 'none');
+                    arrowSeg.setAttribute('marker-end', 'url(#arrowhead)');
+                    arrowsGroup.appendChild(arrowSeg);
+                }
+
+                if (entry.bToA) {
+                    // Arrow pointing B -> A: place tip slightly after center along -tangent
+                    const tipX = mx + ux * tipOffset;
+                    const tipY = my + uy * tipOffset;
+                    const sx = tipX + ux * carrier; // start ahead so the segment points toward tip
+                    const sy = tipY + uy * carrier;
+                    const ex = tipX;
+                    const ey = tipY;
+                    const arrowSeg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    arrowSeg.setAttribute('x1', sx);
+                    arrowSeg.setAttribute('y1', sy);
+                    arrowSeg.setAttribute('x2', ex);
+                    arrowSeg.setAttribute('y2', ey);
+                    arrowSeg.setAttribute('stroke', 'none');
+                    arrowSeg.setAttribute('fill', 'none');
+                    arrowSeg.setAttribute('marker-end', 'url(#arrowhead)');
+                    arrowsGroup.appendChild(arrowSeg);
+                }
+            });
             // Create group for nodes
             const nodesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             nodesGroup.setAttribute('class', 'nodes-group');
@@ -1788,9 +1817,9 @@
 
                 nodesGroup.appendChild(nodeG);
             });
-            topologyGraphContainer.appendChild(nodesGroup);
-            // Bring edges then arrows to the very front
+            // Draw order: lines at the very back, then nodes, then mid-line arrows on top
             topologyGraphContainer.appendChild(linksGroup);
+            topologyGraphContainer.appendChild(nodesGroup);
             topologyGraphContainer.appendChild(arrowsGroup);
         }
 
