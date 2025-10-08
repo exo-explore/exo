@@ -41,3 +41,11 @@ else
   sysctl -w iogpu.wired_lwm_mb=$WIRED_LWM_MB 2>/dev/null || \
     sudo sysctl -w iogpu.wired_lwm_mb=$WIRED_LWM_MB
 fi
+
+if ifconfig bridge0 >/dev/null 2>&1; then
+  echo "Thunderbolt bridge found"
+  if ifconfig bridge0 | grep -q "status: active"; then
+    sudo ifconfig bridge0 down
+    echo "Thunderbolt bridge disabled"
+  fi
+fi
