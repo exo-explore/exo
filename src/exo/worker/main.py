@@ -12,6 +12,7 @@ from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
+from exo.worker.download.download_utils import map_repo_download_progress_to_download_progress_data
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog, TaggedCommand
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
@@ -31,7 +32,6 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
-from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
@@ -42,7 +42,6 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
     DownloadPending,
-    DownloadProgressData,
 )
 from exo.shared.types.worker.ops import (
     AssignRunnerOp,
@@ -322,13 +321,8 @@ class Worker:
         assigned_runner.status = DownloadingRunnerStatus(
             download_progress=DownloadOngoing(
                 node_id=self.node_id,
-                download_progress=DownloadProgressData(
-                    total_bytes=Memory.from_bytes(initial_progress.total_bytes),
-                    downloaded_bytes=Memory.from_bytes(
-                        initial_progress.downloaded_bytes
-                    ),
-                ),
-            )
+                download_progress=map_repo_download_progress_to_download_progress_data(initial_progress),
+            ),
         )
         yield assigned_runner.status_update_event()
 
@@ -344,6 +338,7 @@ class Worker:
         download_task = asyncio.create_task(
             self.shard_downloader.ensure_shard(op.shard_metadata)
         )
+        logger.info(f"Started download for {op.shard_metadata.model_meta.model_id}")
 
         try:
             async for event in self._monitor_download_progress(
@@ -381,12 +376,7 @@ class Worker:
                     assigned_runner.status = DownloadingRunnerStatus(
                         download_progress=DownloadOngoing(
                             node_id=self.node_id,
-                            download_progress=DownloadProgressData(
-                                total_bytes=Memory.from_bytes(progress.total_bytes),
-                                downloaded_bytes=Memory.from_bytes(
-                                    progress.downloaded_bytes
-                                ),
-                            ),
+                            download_progress=map_repo_download_progress_to_download_progress_data(progress),
                         )
                     )
                     yield assigned_runner.status_update_event()

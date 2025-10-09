@@ -492,6 +492,133 @@
             transition: width 0.3s ease;
         }
 
+        /* Detailed download info */
+        .download-details {
+            margin-top: 8px;
+            padding: 12px;
+            background-color: #1a1a1a;
+            border: 1px solid var(--exo-medium-gray);
+            border-radius: 6px;
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+            overflow: visible;
+        }
+        .download-runner-header {
+            font-size: 11px;
+            color: var(--exo-light-gray);
+            opacity: 0.85;
+            margin-bottom: 4px;
+        }
+        .download-overview-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .download-overview-item strong {
+            color: #E0E0E0;
+            font-weight: 600;
+            margin-right: 4px;
+        }
+        .progress-with-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .progress-with-label .progress-bar-container {
+            flex: 1 1 auto;
+        }
+        .progress-percent {
+            font-size: 12px;
+            color: var(--exo-light-gray);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .download-overview-combined {
+            font-size: 12px;
+            color: var(--exo-light-gray);
+            opacity: 0.9;
+        }
+        .instance-download-summary {
+            font-size: 11px;
+            color: var(--exo-light-gray);
+            margin-top: 6px;
+            opacity: 0.95;
+        }
+        .download-files-list {
+            display: grid;
+            gap: 8px;
+        }
+        .download-file {
+            padding: 8px;
+            background-color: var(--exo-dark-gray);
+            border: 1px solid var(--exo-medium-gray);
+            border-radius: 6px;
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+        }
+        .download-file-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+            margin-bottom: 6px;
+            width: 100%;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .download-file-name {
+            color: #E0E0E0;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .download-file-stats {
+            color: var(--exo-light-gray);
+            text-align: right;
+            white-space: nowrap;
+        }
+        .download-file-percent {
+            color: var(--exo-light-gray);
+            white-space: nowrap;
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            flex: 0 0 auto;
+        }
+        .download-file-subtext {
+            color: var(--exo-light-gray);
+            font-size: 10px;
+            opacity: 0.85;
+            margin-bottom: 6px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+        .download-details, .download-files-list {
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+        }
+        .download-files-list {
+            overflow: visible;
+            padding-right: 2px; /* avoid edge clipping */
+        }
+        .download-file .progress-bar-container {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            height: 5px;
+        }
+
         /* Launch instance section styles */
         .launch-instance-section {
             display: flex;
@@ -750,6 +877,7 @@
 
         const USE_MOCK_DATA = false; // <<< FLAG TO TOGGLE MOCK DATA
         let currentlySelectedNodeId = null; // To store the ID of the currently selected node
+        let nodeIdToFriendlyName = {}; // Map nodeId -> friendly name for download sections
 
         const API_ENDPOINT = window.location.origin + window.location.pathname.replace(/\/$/, "") + '/state';
         const REFRESH_INTERVAL = 1000; // 1 second
@@ -853,6 +981,36 @@
             }
             const days = Math.floor(secondsPast / 86400);
             return days + (days === 1 ? ' day ago' : ' days ago');
+        }
+
+        // --- Download formatting helpers ---
+        function bytesFromValue(value) {
+            if (typeof value === 'number') return value;
+            if (!value || typeof value !== 'object') return 0;
+            if (typeof value.in_bytes === 'number') return value.in_bytes;
+            if (typeof value.inBytes === 'number') return value.inBytes;
+            return 0;
+        }
+
+        function formatDurationMs(ms) {
+            if (ms == null || isNaN(ms) || ms < 0) return '—';
+            const totalSeconds = Math.round(ms / 1000);
+            const s = totalSeconds % 60;
+            const m = Math.floor(totalSeconds / 60) % 60;
+            const h = Math.floor(totalSeconds / 3600);
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function formatPercent(value, digits = 2) {
+            if (value == null || isNaN(value)) return '0.00%';
+            return `${value.toFixed(digits)}%`;
+        }
+
+        function formatBytesPerSecond(bps) {
+            if (bps == null || isNaN(bps) || bps < 0) return '0 B/s';
+            return `${formatBytes(bps)}/s`;
         }
 
         // Sidebar toggle functionality
@@ -974,51 +1132,108 @@
             }
         }
 
-        // Calculate download status for an instance based on its runners
+        // Calculate download status for an instance based on its runners, with detailed per-file info
         function calculateInstanceDownloadStatus(instance, runners) {
             if (!instance.shard_assignments?.runner_to_shard || !runners) {
-                return { isDownloading: false, progress: 0 };
+                return { isDownloading: false, progress: 0, details: [] };
+            }
+
+            const pick = (obj, snake, camel, fallback = undefined) => {
+                if (!obj) return fallback;
+                if (obj[snake] !== undefined) return obj[snake];
+                if (obj[camel] !== undefined) return obj[camel];
+                return fallback;
+            };
+
+            function normalizeProgress(progressRaw) {
+                if (!progressRaw) return null;
+                const totalBytes = bytesFromValue(pick(progressRaw, 'total_bytes', 'totalBytes', 0));
+                const downloadedBytes = bytesFromValue(pick(progressRaw, 'downloaded_bytes', 'downloadedBytes', 0));
+                const downloadedBytesThisSession = bytesFromValue(pick(progressRaw, 'downloaded_bytes_this_session', 'downloadedBytesThisSession', 0));
+                const completedFiles = Number(pick(progressRaw, 'completed_files', 'completedFiles', 0)) || 0;
+                const totalFiles = Number(pick(progressRaw, 'total_files', 'totalFiles', 0)) || 0;
+                const speed = Number(pick(progressRaw, 'speed', 'speed', 0)) || 0;
+                const etaMs = Number(pick(progressRaw, 'eta_ms', 'etaMs', 0)) || 0;
+                const filesObj = pick(progressRaw, 'files', 'files', {}) || {};
+                const files = [];
+                Object.keys(filesObj).forEach(name => {
+                    const f = filesObj[name];
+                    if (!f || typeof f !== 'object') return;
+                    const fTotal = bytesFromValue(pick(f, 'total_bytes', 'totalBytes', 0));
+                    const fDownloaded = bytesFromValue(pick(f, 'downloaded_bytes', 'downloadedBytes', 0));
+                    const fSpeed = Number(pick(f, 'speed', 'speed', 0)) || 0;
+                    const fEta = Number(pick(f, 'eta_ms', 'etaMs', 0)) || 0;
+                    const fPct = fTotal > 0 ? (fDownloaded / fTotal) * 100 : 0;
+                    files.push({ name, totalBytes: fTotal, downloadedBytes: fDownloaded, speed: fSpeed, etaMs: fEta, percentage: fPct });
+                });
+                const percentage = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
+                return { totalBytes, downloadedBytes, downloadedBytesThisSession, completedFiles, totalFiles, speed, etaMs, files, percentage };
             }
 
             const runnerIds = Object.keys(instance.shard_assignments.runner_to_shard);
-            const downloadingRunners = [];
+            const details = [];
             let totalBytes = 0;
             let downloadedBytes = 0;
 
             for (const runnerId of runnerIds) {
                 const runner = runners[runnerId];
-                if (runner && runner.runner_status === 'Downloading' && runner.download_progress) {
-                    downloadingRunners.push(runner);
-                    // Aggregate download progress across all downloading runners
-                    const dp = runner.download_progress;
-                    const isDownloading = (dp.download_status === 'Downloading') || (dp.downloadStatus === 'Downloading');
-                    if (isDownloading) {
-                        const prog = dp.download_progress || dp.downloadProgress;
-                        if (prog) {
-                            // Support both snake_case and camelCase, and nested Memory objects
-                            const total =
-                                (prog.total_bytes && typeof prog.total_bytes === 'object' && typeof prog.total_bytes.in_bytes === 'number') ? prog.total_bytes.in_bytes :
-                                (prog.totalBytes && typeof prog.totalBytes === 'object' && typeof prog.totalBytes.inBytes === 'number') ? prog.totalBytes.inBytes :
-                                (typeof prog.total_bytes === 'number' ? prog.total_bytes : 0) ||
-                                (typeof prog.totalBytes === 'number' ? prog.totalBytes : 0);
-
-                            const downloaded =
-                                (prog.downloaded_bytes && typeof prog.downloaded_bytes === 'object' && typeof prog.downloaded_bytes.in_bytes === 'number') ? prog.downloaded_bytes.in_bytes :
-                                (prog.downloadedBytes && typeof prog.downloadedBytes === 'object' && typeof prog.downloadedBytes.inBytes === 'number') ? prog.downloadedBytes.inBytes :
-                                (typeof prog.downloaded_bytes === 'number' ? prog.downloaded_bytes : 0) ||
-                                (typeof prog.downloadedBytes === 'number' ? prog.downloadedBytes : 0);
-
-                            totalBytes += total || 0;
-                            downloadedBytes += downloaded || 0;
-                        }
-                    }
-                }
+                if (!runner || runner.runner_status !== 'Downloading' || !runner.download_progress) continue;
+                const dp = runner.download_progress;
+                const isDownloading = (dp.download_status === 'Downloading') || (dp.downloadStatus === 'Downloading');
+                if (!isDownloading) continue;
+                const nodeId = (dp && (dp.node_id || dp.nodeId)) || undefined;
+                const rawProg = pick(dp, 'download_progress', 'downloadProgress', null);
+                const normalized = normalizeProgress(rawProg);
+                if (!normalized) continue;
+                details.push({ runnerId, nodeId, progress: normalized });
+                totalBytes += normalized.totalBytes || 0;
+                downloadedBytes += normalized.downloadedBytes || 0;
             }
 
-            const isDownloading = downloadingRunners.length > 0;
-            const progress = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+            const isDownloadingAny = details.length > 0;
+            const progress = totalBytes > 0 ? ((downloadedBytes / totalBytes) * 100) : 0;
+            return { isDownloading: isDownloadingAny, progress, details };
+        }
 
-            return { isDownloading, progress, downloadingRunners: downloadingRunners.length };
+        function buildDownloadDetailsHTML(details) {
+            if (!details || details.length === 0) return '';
+            function shortId(id) { return (id && id.length > 8) ? id.slice(0, 8) + '…' : (id || ''); }
+            return details.map(({ runnerId, nodeId, progress }) => {
+                const etaStr = formatDurationMs(progress.etaMs);
+                const pctStr = formatPercent(progress.percentage || 0, 2);
+                const bytesStr = `${formatBytes(progress.downloadedBytes)} / ${formatBytes(progress.totalBytes)}`;
+                const speedStr = formatBytesPerSecond(progress.speed);
+                const filesSummary = `${progress.completedFiles}/${progress.totalFiles}`;
+
+                const filesHTML = (progress.files || []).map(f => {
+                    const fPct = f.percentage || 0;
+                    const fBytes = `${formatBytes(f.downloadedBytes)} / ${formatBytes(f.totalBytes)}`;
+                    const fEta = formatDurationMs(f.etaMs);
+                    const fSpeed = formatBytesPerSecond(f.speed);
+                    const pctText = formatPercent(fPct, 2);
+                    return `
+                        <div class="download-file">
+                            <div class="download-file-header">
+                                <span class="download-file-name" title="${f.name}">${f.name}</span>
+                                <span class="download-file-percent">${pctText}</span>
+                            </div>
+                            <div class="download-file-subtext">${fBytes} • ETA ${fEta} • ${fSpeed}</div>
+                            <div class="progress-bar-container"><div class="progress-bar" style="width: ${Math.max(0, Math.min(100, fPct)).toFixed(2)}%;"></div></div>
+                        </div>
+                    `;
+                }).join('');
+
+                const runnerName = (nodeId && nodeIdToFriendlyName[nodeId]) ? nodeIdToFriendlyName[nodeId] : '?';
+                const headerText = `${runnerName} (${shortId(nodeId || '')})`;
+                return `
+                    <div class="download-details">
+                        <div class="download-runner-header">${headerText}</div>
+                        <div class="download-files-list">
+                            ${filesHTML}
+                        </div>
+                    </div>
+                `;
+            }).join('');
         }
 
         // Derive a display status for an instance from its runners.
@@ -1083,15 +1298,31 @@
                 }
 
                 // Generate download progress HTML
-                const downloadProgressHTML = downloadStatus.isDownloading 
-                    ? `<div class="download-progress">
-                        <span>${downloadStatus.progress}% downloaded</span>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" style="width: ${downloadStatus.progress}%;"></div>
-                        </div>
-                       </div>` 
-                    : '';
+                let downloadProgressHTML = '';
+                let instanceDownloadSummary = '';
+                if (downloadStatus.isDownloading) {
+                    const detailsHTML = buildDownloadDetailsHTML(downloadStatus.details || []);
+                    const pctText = (downloadStatus.progress || 0).toFixed(2);
+                    // Aggregate a compact summary from the first runner (they should be consistent in aggregate)
+                    const first = (downloadStatus.details || [])[0]?.progress;
+                    const etaStr = first ? formatDurationMs(first.etaMs) : '—';
+                    const bytesStr = first ? `${formatBytes(first.downloadedBytes)} / ${formatBytes(first.totalBytes)}` : '';
+                    const speedStr = first ? formatBytesPerSecond(first.speed) : '';
+                    const filesSummary = first ? `${first.completedFiles}/${first.totalFiles}` : '';
+                    instanceDownloadSummary = `${etaStr} · ${bytesStr} · ${speedStr} · ${filesSummary} files`;
 
+                    downloadProgressHTML = `
+                        <div class="download-progress">
+                            <span>${pctText}%</span>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar" style="width: ${pctText}%;"></div>
+                            </div>
+                        </div>
+                        ${detailsHTML}
+                    `;
+                }
+
+                const shardCount = Object.keys(instance.shard_assignments?.runner_to_shard || {}).length;
                 return `
                     <div class="instance-item">
                         <div class="instance-header">
@@ -1105,10 +1336,9 @@
                                 </button>
                             </div>
                         </div>
-                        <div class="instance-model">${modelId}</div>
-                        <div class="instance-details">
-                            Shards: ${Object.keys(instance.shard_assignments?.runner_to_shard || {}).length}
-                        </div>
+                        <div class="instance-model">${modelId} <span style="color: var(--exo-light-gray); opacity: 0.8;">(${shardCount})</span></div>
+                        ${instanceDownloadSummary ? `<div class="instance-download-summary">${instanceDownloadSummary}</div>` : ''}
+                        
                         ${downloadProgressHTML}
                         ${hostsHTML ? `<div class="instance-hosts">${hostsHTML}</div>` : ''}
                     </div>
@@ -1986,6 +2216,15 @@
                 }
                 const clusterState = await response.json();
                 const topologyData = transformClusterStateToTopology(clusterState);
+                // Build nodeId -> friendly name map
+                nodeIdToFriendlyName = {};
+                if (topologyData && topologyData.nodes) {
+                    Object.keys(topologyData.nodes).forEach(nid => {
+                        const n = topologyData.nodes[nid];
+                        const name = (n && (n.friendly_name || (n.system_info && n.system_info.model_id))) || null;
+                        if (name) nodeIdToFriendlyName[nid] = name;
+                    });
+                }
                 renderNodes(topologyData);
 
                 // If a node was selected, and it still exists, refresh its details

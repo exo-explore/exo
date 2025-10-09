@@ -8,6 +8,7 @@ from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.common import InstanceId, WorkerStatus
+from exo.shared.types.worker.downloads import DownloadProgressData
 from exo.shared.types.worker.instances import Instance
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 
@@ -39,6 +40,8 @@ class State(BaseModel):
     node_profiles: Mapping[NodeId, NodePerformanceProfile] = {}
     topology: Topology = Topology()
     history: Sequence[Topology] = []
+    # TODO: we want information about every model that is downloaded on each node
+    node_downloads: Mapping[NodeId, Mapping[str, DownloadProgressData]] = {}
     last_event_applied_idx: int = Field(default=-1, ge=-1)
 
     @field_validator("topology", mode="before")

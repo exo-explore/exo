@@ -15,6 +15,8 @@ import aiohttp
 from pydantic import BaseModel, DirectoryPath, Field, PositiveInt, TypeAdapter
 
 from exo.shared.constants import EXO_HOME
+from exo.shared.types.memory import Memory
+from exo.shared.types.worker.downloads import DownloadProgressData
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.download.huggingface_utils import (
     filter_repo_objects,
@@ -91,6 +93,28 @@ class RepoDownloadProgress(BaseModel):
     class Config:
         frozen = True  # allow use as dict keys if desired
 
+def map_repo_file_download_progress_to_download_progress_data(repo_file_download_progress: RepoFileDownloadProgress) -> DownloadProgressData:
+    return DownloadProgressData(
+        downloaded_bytes=Memory.from_bytes(repo_file_download_progress.downloaded),
+        downloaded_bytes_this_session=Memory.from_bytes(repo_file_download_progress.downloaded_this_session),
+        total_bytes=Memory.from_bytes(repo_file_download_progress.total),
+        completed_files=1 if repo_file_download_progress.status == "complete" else 0,
+        total_files=1,
+        speed=repo_file_download_progress.speed,
+        eta_ms=int(repo_file_download_progress.eta.total_seconds() * 1000),
+        files={},
+    )
+def map_repo_download_progress_to_download_progress_data(repo_download_progress: RepoDownloadProgress) -> DownloadProgressData:
+    return DownloadProgressData(
+        total_bytes=Memory.from_bytes(repo_download_progress.total_bytes),
+        downloaded_bytes=Memory.from_bytes(repo_download_progress.downloaded_bytes),
+        downloaded_bytes_this_session=Memory.from_bytes(repo_download_progress.downloaded_bytes_this_session),
+        completed_files=repo_download_progress.completed_files,
+        total_files=repo_download_progress.total_files,
+        speed=repo_download_progress.overall_speed,
+        eta_ms=int(repo_download_progress.overall_eta.total_seconds() * 1000),
+        files={file_path: map_repo_file_download_progress_to_download_progress_data(file_progress) for file_path, file_progress in repo_download_progress.file_progress.items()},
+    )
 
 def build_model_path(model_id: str) -> DirectoryPath:
     return EXO_HOME / "models" / model_id.replace("/", "--")
@@ -237,9 +261,13 @@ async def file_meta(
         if redirected_location is None
         else f"{get_hf_endpoint()}{redirected_location}"
     )
-    headers = await get_auth_headers()
+    # Ensure identity transfer to keep Content-Length and byte accounting
+    # consistent with on-disk sizes and progress totals.
+    headers = {**(await get_auth_headers()), "Accept-Encoding": "identity"}
     async with (
         aiohttp.ClientSession(
+            # Disable transparent decompression; we want raw bytes as served.
+            auto_decompress=False,
             timeout=aiohttp.ClientTimeout(
                 total=1800, connect=60, sock_read=1800, sock_connect=60
             )
@@ -247,22 +275,18 @@ async def file_meta(
         session.head(url, headers=headers) as r,
     ):
         if r.status == 307:
-            # Try to extract from X-Linked headers first (common for HF redirects)
-            content_length = int(
-                r.headers.get("x-linked-size") or r.headers.get("content-length") or 0
-            )
-            etag = (
-                r.headers.get("X-Linked-ETag")
-                or r.headers.get("ETag")
-                or r.headers.get("Etag")
-            )
-            if content_length > 0 and etag is not None:
+            # On redirect, only trust Hugging Face's x-linked-* headers.
+            x_linked_size = r.headers.get("x-linked-size")
+            x_linked_etag = r.headers.get("X-Linked-ETag")
+            if x_linked_size and x_linked_etag:
+                content_length = int(x_linked_size)
+                etag = x_linked_etag
                 if (etag[0] == '"' and etag[-1] == '"') or (
                     etag[0] == "'" and etag[-1] == "'"
                 ):
                     etag = etag[1:-1]
                 return content_length, etag
-            # If not available, recurse with the redirect
+            # Otherwise, follow the redirect to get authoritative size/hash
             redirected_location = r.headers.get("Location")
             return await file_meta(repo_id, revision, path, redirected_location)
         content_length = int(
@@ -326,12 +350,15 @@ async def _download_file(
     )
     if resume_byte_pos != length:
         url = urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
-        headers = await get_auth_headers()
+        # Request identity encoding so received byte counts match on-disk size
+        headers = {**(await get_auth_headers()), "Accept-Encoding": "identity"}
         if resume_byte_pos:
             headers["Range"] = f"bytes={resume_byte_pos}-"
         n_read = resume_byte_pos or 0
         async with (
             aiohttp.ClientSession(
+                # Keep raw transfer semantics (no transparent decompression)
+                auto_decompress=False,
                 timeout=aiohttp.ClientTimeout(
                     total=1800, connect=60, sock_read=1800, sock_connect=60
                 )

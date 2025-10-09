@@ -234,3 +234,83 @@ def test_get_transition_events_delete_instance(instance: Instance):
     assert len(events) == 1
     assert isinstance(events[0], InstanceDeleted)
     assert events[0].instance_id == instance_id
+
+
+def test_placement_prioritizes_leaf_cycle_with_less_memory(
+    topology: Topology,
+    model_meta: ModelMetadata,
+    create_node: Callable[[int, NodeId | None], NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    # Arrange two 3-node cycles. The A-B-C cycle has a leaf node (only one outgoing
+    # neighbor per node). The D-E-F cycle has extra outgoing edges making its nodes
+    # non-leaves. Ensure both cycles have sufficient total memory, with the A-B-C
+    # cycle having LESS total memory than D-E-F. The algorithm should still choose
+    # the cycle that contains a leaf node.
+
+    # Model requires more than any single node but fits within a 3-node cycle
+    model_meta.storage_size.in_bytes = 1500
+    model_meta.n_layers = 12
+
+    # Create node ids
+    node_id_a = NodeId()
+    node_id_b = NodeId()
+    node_id_c = NodeId()
+    node_id_d = NodeId()
+    node_id_e = NodeId()
+    node_id_f = NodeId()
+
+    # Extra sink nodes to make D/E/F non-leaf via additional outgoing edges
+    node_id_x = NodeId()
+    node_id_y = NodeId()
+    node_id_z = NodeId()
+
+    # A-B-C cycle total memory = 1600 (< D-E-F total)
+    topology.add_node(create_node(400, node_id_a))
+    topology.add_node(create_node(400, node_id_b))
+    topology.add_node(create_node(800, node_id_c))
+
+    # D-E-F cycle total memory = 1800 (> A-B-C total)
+    topology.add_node(create_node(600, node_id_d))
+    topology.add_node(create_node(600, node_id_e))
+    topology.add_node(create_node(600, node_id_f))
+
+    # Extra nodes with tiny memory so they can't form singleton placements
+    topology.add_node(create_node(10, node_id_x))
+    topology.add_node(create_node(10, node_id_y))
+    topology.add_node(create_node(10, node_id_z))
+
+    # Build directed cycles
+    topology.add_connection(create_connection(node_id_a, node_id_b))
+    topology.add_connection(create_connection(node_id_b, node_id_c))
+    topology.add_connection(create_connection(node_id_c, node_id_a))
+
+    topology.add_connection(create_connection(node_id_d, node_id_e))
+    topology.add_connection(create_connection(node_id_e, node_id_f))
+    topology.add_connection(create_connection(node_id_f, node_id_d))
+
+    # Add extra outgoing edges from D/E/F so none of them are leaves
+    topology.add_connection(create_connection(node_id_d, node_id_x))
+    topology.add_connection(create_connection(node_id_e, node_id_y))
+    topology.add_connection(create_connection(node_id_f, node_id_z))
+
+    create_instance_command = CreateInstance(
+        command_id=CommandId(),
+        model_meta=model_meta,
+    )
+
+    # Act
+    placements = get_instance_placements_after_create(create_instance_command, topology, {})
+
+    # Assert the chosen cycle is A-B-C (contains at least one leaf node), even though
+    # D-E-F has more total memory.
+    assert len(placements) == 1
+    instance_id = list(placements.keys())[0]
+    instance = placements[instance_id]
+
+    assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
+    expected_leaf_cycle_nodes = {node_id_a, node_id_b, node_id_c}
+    non_leaf_cycle_nodes = {node_id_d, node_id_e, node_id_f}
+
+    assert expected_leaf_cycle_nodes.issubset(assigned_nodes)
+    assert assigned_nodes.isdisjoint(non_leaf_cycle_nodes)
