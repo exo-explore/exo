@@ -652,9 +652,6 @@ class Worker:
         )
         await self.local_event_sender.send(fe)
         self.out_for_delivery[event.event_id] = fe
-        logger.info(
-            f"Worker published event {self.local_event_index}: {str(event)[:100]}...{str(event)[-100:]}"
-        )
         self.local_event_index += 1
 
 

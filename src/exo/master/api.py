@@ -306,6 +306,8 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for event in events:
+                if isinstance(event, ChunkGenerated):
+                    logger.info(f"API received ChunkGenerated: {str(event)[:100]}")
                 self.event_buffer.ingest(event.origin_idx, event.tagged_event.c)
                 for idx, event in self.event_buffer.drain_indexed():
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
