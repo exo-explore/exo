@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 import time
 from asyncio import Queue
 from functools import partial
@@ -200,6 +201,8 @@ class Worker:
                 async for event in self.execute_op(op):
                     await self.event_publisher(event)
             except Exception as e:
+                logger.error(f"Error executing op: {str(op)[:100]}")
+                logger.error(traceback.format_exc())
                 if isinstance(op, ExecuteTaskOp):
                     generator = self.fail_task(
                         e, runner_id=op.runner_id, task_id=op.task.task_id
@@ -364,6 +367,10 @@ class Worker:
             # in case the download needs to finish up, wait up to 60 secs for it to finish
             # this fixes a bug where the download gets cancelled before it can rename .partial file on finish
             await asyncio.wait_for(download_task, timeout=15)
+        except Exception as e:
+            logger.error(f"Error monitoring download progress: {e}")
+            logger.error(traceback.format_exc())
+            raise e
         finally:
             if not download_task.done():
                 download_task.cancel()
@@ -417,9 +424,11 @@ class Worker:
         )
 
         if initial_progress.status == "complete":
+            logger.info(f"Shard {op.shard_metadata.model_meta.model_id} already downloaded")
             async for event in self._handle_already_downloaded_shard(assigned_runner):
                 yield event
         else:
+            logger.info(f"Shard {op.shard_metadata.model_meta.model_id} not downloaded, starting download.")
             async for event in self._handle_shard_download_process(
                 assigned_runner, op, initial_progress
             ):
