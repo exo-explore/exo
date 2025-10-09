@@ -136,6 +136,8 @@ class Worker:
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)
+            # Proactively request a global event sync at startup to backfill any missed events.
+            tg.start_soon(self._request_full_event_log_once)
             # TODO: This is a little gross, but not too bad
             for msg in self._initial_connection_messages:
                 await self.event_publisher(
@@ -222,6 +224,7 @@ class Worker:
     def _convert_connection_message_to_event(self, msg: ConnectionMessage):
         match msg.connection_type:
             case ConnectionMessageType.Connected:
+                logger.warning(f"!!! Node {self.node_id} connected to {msg.node_id}")
                 return TopologyEdgeCreated(
                     edge=Connection(
                         local_node_id=self.node_id,
@@ -233,6 +236,7 @@ class Worker:
                 )
 
             case ConnectionMessageType.Disconnected:
+                logger.warning(f"!!! Node {self.node_id} disconnected from {msg.node_id}")
                 return TopologyEdgeDeleted(
                     edge=Connection(
                         local_node_id=self.node_id,
@@ -256,13 +260,25 @@ class Worker:
                     ForwarderCommand(
                         origin=self.node_id,
                         tagged_command=TaggedCommand.from_(
-                            RequestEventLog(since_idx=0)
+                            RequestEventLog(since_idx=self.event_buffer.next_idx_to_release)
                         ),
                     )
                 )
             finally:
                 if self._nack_cancel_scope is scope:
                     self._nack_cancel_scope = None
+
+    async def _request_full_event_log_once(self) -> None:
+        # Fire-and-forget one-time sync shortly after startup.
+        await anyio.sleep(0.1)
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self.node_id,
+                tagged_command=TaggedCommand.from_(
+                    RequestEventLog(since_idx=self.event_buffer.next_idx_to_release)
+                ),
+            )
+        )
 
     async def _resend_out_for_delivery(self) -> None:
         # This can also be massively tightened, we should check events are at least a certain age before resending.
@@ -345,9 +361,13 @@ class Worker:
                 assigned_runner, download_progress_queue
             ):
                 yield event
+            # in case the download needs to finish up, wait up to 60 secs for it to finish
+            # this fixes a bug where the download gets cancelled before it can rename .partial file on finish
+            await asyncio.wait_for(download_task, timeout=15)
         finally:
             if not download_task.done():
                 download_task.cancel()
+            
 
     async def _monitor_download_progress(
         self,
@@ -632,8 +652,8 @@ class Worker:
         )
         await self.local_event_sender.send(fe)
         self.out_for_delivery[event.event_id] = fe
-        logger.debug(
-            f"Worker published event {self.local_event_index}: {str(event)[:100]}"
+        logger.info(
+            f"Worker published event {self.local_event_index}: {str(event)[:100]}...{str(event)[-100:]}"
         )
         self.local_event_index += 1
 

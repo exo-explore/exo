@@ -12,6 +12,7 @@ from urllib.parse import urljoin
 import aiofiles
 import aiofiles.os as aios
 import aiohttp
+from loguru import logger
 from pydantic import BaseModel, DirectoryPath, Field, PositiveInt, TypeAdapter
 
 from exo.shared.constants import EXO_HOME
@@ -165,13 +166,13 @@ async def seed_models(seed_dir: Union[str, Path]):
         if path.is_dir() and path.name.startswith("models--"):
             dest_path = dest_dir / path.name
             if await aios.path.exists(dest_path):
-                print("Skipping moving model to .cache directory")
+                logger.info("Skipping moving model to .cache directory")
             else:
                 try:
                     await aios.rename(str(path), str(dest_path))
                 except Exception:
-                    print(f"Error seeding model {path} to {dest_path}")
-                    traceback.print_exc()
+                    logger.error(f"Error seeding model {path} to {dest_path}")
+                    logger.error(traceback.format_exc())
 
 
 async def fetch_file_list_with_cache(
@@ -320,10 +321,10 @@ async def download_file_with_retry(
         except Exception as e:
             if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
                 raise e
-            print(
+            logger.error(
                 f"Download error on attempt {attempt}/{n_attempts} for {repo_id=} {revision=} {path=} {target_dir=}"
             )
-            traceback.print_exc()
+            logger.error(traceback.format_exc())
             await asyncio.sleep(min(8, 0.1 * (2.0**attempt)))
     raise Exception(
         f"Failed to download file {repo_id=} {revision=} {path=} {target_dir=}"
@@ -391,7 +392,7 @@ async def _download_file(
         try:
             await aios.remove(partial_path)
         except Exception as e:
-            print(f"Error removing partial file {partial_path}: {e}")
+            logger.error(f"Error removing partial file {partial_path}: {e}")
         raise Exception(
             f"Downloaded file {target_dir / path} has hash {final_hash} but remote hash is {remote_hash}"
         )
@@ -461,8 +462,8 @@ async def resolve_allow_patterns(shard: ShardMetadata) -> List[str]:
         weight_map = await get_weight_map(str(shard.model_meta.model_id))
         return get_allow_patterns(weight_map, shard)
     except Exception:
-        print(f"Error getting weight map for {shard.model_meta.model_id=}")
-        traceback.print_exc()
+        logger.error(f"Error getting weight map for {shard.model_meta.model_id=}")
+        logger.error(traceback.format_exc())
         return ["*"]
 
 
@@ -532,11 +533,11 @@ async def download_shard(
     allow_patterns: List[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
-        print(f"Downloading {shard.model_meta.model_id=}")
+        logger.info(f"Downloading {shard.model_meta.model_id=}")
 
     # Handle local paths
     if await aios.path.exists(str(shard.model_meta.model_id)):
-        print(f"Using local model path {shard.model_meta.model_id}")
+        logger.info(f"Using local model path {shard.model_meta.model_id}")
         local_path = Path(str(shard.model_meta.model_id))
         return local_path, await download_progress_for_local_path(
             str(shard.model_meta.model_id), shard, local_path
@@ -552,7 +553,7 @@ async def download_shard(
     if not allow_patterns:
         allow_patterns = await resolve_allow_patterns(shard)
 
-    print(f"Downloading {shard.model_meta.model_id=} with {allow_patterns=}")
+    logger.info(f"Downloading {shard.model_meta.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
     # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.

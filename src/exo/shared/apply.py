@@ -254,18 +254,21 @@ def apply_worker_status_updated(event: WorkerStatusUpdated, state: State) -> Sta
 
 
 def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> State:
+    logger.warning(f"~~~ APPLY Node {event.node_id} created")
     topology = copy.copy(state.topology)
     topology.add_node(NodeInfo(node_id=event.node_id))
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
+    logger.warning(f"~~~ APPLY Edge {event.edge.local_node_id} -> {event.edge.send_back_node_id} created")
     topology = copy.copy(state.topology)
     topology.add_connection(event.edge)
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
+    logger.warning(f"~~~ APPLY Edge {event.edge.local_node_id} -> {event.edge.send_back_node_id} deleted")
     topology = copy.copy(state.topology)
     if not topology.contains_connection(event.edge):
         return state
