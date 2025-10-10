@@ -58,7 +58,7 @@ async def test_stream_response_failed_always(
     async with create_task_group() as tg:
         tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-        instance_value.instance_type = InstanceStatus.ACTIVE
+        instance_value.instance_type = InstanceStatus.Active
 
         async def mock_stream_response(
             self: RunnerSupervisor,
@@ -88,8 +88,8 @@ async def test_stream_response_failed_always(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, RunnerStatusUpdated)
-                    and isinstance(x.tagged_event.c.runner_status, FailedRunnerStatus)
+                    if isinstance(x.event, RunnerStatusUpdated)
+                    and isinstance(x.event.runner_status, FailedRunnerStatus)
                 ]
             )
             == 3
@@ -99,13 +99,13 @@ async def test_stream_response_failed_always(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, TaskStateUpdated)
-                    and x.tagged_event.c.task_status == TaskStatus.FAILED
+                    if isinstance(x.event, TaskStateUpdated)
+                    and x.event.task_status == TaskStatus.Failed
                 ]
             )
             == 3
         )
-        assert any([isinstance(x.tagged_event.c, InstanceDeleted) for x in events])
+        assert any([isinstance(x.event, InstanceDeleted) for x in events])
 
         await global_events.append_events(
             [
@@ -152,7 +152,7 @@ async def test_stream_response_failed_once(
     async with create_task_group() as tg:
         tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-        instance_value.instance_type = InstanceStatus.ACTIVE
+        instance_value.instance_type = InstanceStatus.Active
 
         task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
         await global_events.append_events(
@@ -186,8 +186,8 @@ async def test_stream_response_failed_once(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, RunnerStatusUpdated)
-                    and isinstance(x.tagged_event.c.runner_status, FailedRunnerStatus)
+                    if isinstance(x.event, RunnerStatusUpdated)
+                    and isinstance(x.event.runner_status, FailedRunnerStatus)
                 ]
             )
             == 1
@@ -197,8 +197,8 @@ async def test_stream_response_failed_once(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, TaskStateUpdated)
-                    and x.tagged_event.c.task_status == TaskStatus.FAILED
+                    if isinstance(x.event, TaskStateUpdated)
+                    and x.event.task_status == TaskStatus.Failed
                 ]
             )
             == 1
@@ -209,11 +209,11 @@ async def test_stream_response_failed_once(
 
         seen_task_started, seen_task_finished = False, False
         for wrapped_event in events:
-            event = wrapped_event.tagged_event.c
+            event = wrapped_event.event
             if isinstance(event, TaskStateUpdated):
-                if event.task_status == TaskStatus.RUNNING:
+                if event.task_status == TaskStatus.Running:
                     seen_task_started = True
-                if event.task_status == TaskStatus.COMPLETE:
+                if event.task_status == TaskStatus.Complete:
                     seen_task_finished = True
 
             if isinstance(event, ChunkGenerated):
@@ -246,7 +246,7 @@ async def test_stream_response_timeout(
     async with create_task_group() as tg:
         tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-        instance_value.instance_type = InstanceStatus.ACTIVE
+        instance_value.instance_type = InstanceStatus.Active
 
         task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
         task.task_params.messages[0].content = "EXO RUNNER MUST TIMEOUT"
@@ -269,8 +269,8 @@ async def test_stream_response_timeout(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, RunnerStatusUpdated)
-                    and isinstance(x.tagged_event.c.runner_status, FailedRunnerStatus)
+                    if isinstance(x.event, RunnerStatusUpdated)
+                    and isinstance(x.event.runner_status, FailedRunnerStatus)
                 ]
             )
             == 3
@@ -280,8 +280,8 @@ async def test_stream_response_timeout(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, TaskStateUpdated)
-                    and x.tagged_event.c.task_status == TaskStatus.FAILED
+                    if isinstance(x.event, TaskStateUpdated)
+                    and x.event.task_status == TaskStatus.Failed
                 ]
             )
             == 3
@@ -291,8 +291,8 @@ async def test_stream_response_timeout(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, TaskFailed)
-                    and "timeouterror" in x.tagged_event.c.error_type.lower()
+                    if isinstance(x.event, TaskFailed)
+                    and "timeouterror" in x.event.error_type.lower()
                 ]
             )
             == 3

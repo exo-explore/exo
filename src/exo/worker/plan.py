@@ -6,7 +6,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.common import RunnerId
-from exo.shared.types.worker.downloads import DownloadStatus
+from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 from exo.shared.types.worker.ops import (
     AssignRunnerOp,
@@ -23,8 +23,8 @@ from exo.shared.types.worker.runners import (
     InactiveRunnerStatus,
     LoadedRunnerStatus,
     RunnerStatus,
-    RunnerStatusType,
     RunningRunnerStatus,
+    StartingRunnerStatus,
 )
 from exo.worker.common import AssignedRunner
 
@@ -45,14 +45,12 @@ def unassign_runners(
 
     # If our instance is in 'downloading' or 'assigned' state, then we know the runner is stale. These are part of AssignRunnerOp and should be blocking.
     for assigned_runner_id in assigned_runners:
-        if (
-            assigned_runner_id in state_runners
-            and isinstance(state_runners[assigned_runner_id], DownloadingRunnerStatus)
-            # Not sure about this type ignore, i don't think it should be necessary
-            and state_runners[assigned_runner_id].download_progress.download_status  # type: ignore
-            != DownloadStatus.Completed
-        ):
-            return UnassignRunnerOp(runner_id=assigned_runner_id)
+        if assigned_runner_id in state_runners:
+            status = state_runners[assigned_runner_id]
+            if isinstance(status, DownloadingRunnerStatus) and not isinstance(
+                status.download_progress, DownloadCompleted
+            ):
+                return UnassignRunnerOp(runner_id=assigned_runner_id)
 
     return None
 
@@ -85,7 +83,7 @@ def spin_down_runners(
             if (
                 runner_id in assigned_runners
                 and isinstance(assigned_runners[runner_id].status, LoadedRunnerStatus)
-                and instance.instance_type == InstanceStatus.INACTIVE
+                and instance.instance_type == InstanceStatus.Inactive
             ):
                 return RunnerDownOp(runner_id=runner_id)
 
@@ -195,18 +193,19 @@ def spin_up_runners(
                 instance.shard_assignments.node_to_runner[worker_node_id]
             ].runner
             is None
-            and instance.instance_type == InstanceStatus.ACTIVE
+            and instance.instance_type == InstanceStatus.Active
         ):
             # We are part of this instance, we want it up but it hasn't been spun up yet.
             # Need to assert all other runners are ready before we can spin up.
             ready_to_spin = True
             for runner_id in instance.shard_assignments.node_to_runner.values():
-                if runner_id in state_runners and state_runners[
-                    runner_id
-                ].runner_status not in [
-                    RunnerStatusType.Inactive,
-                    RunnerStatusType.Starting,
-                ]:
+                if runner_id in state_runners and isinstance(
+                    state_runners[runner_id],
+                    (
+                        InactiveRunnerStatus,
+                        StartingRunnerStatus,
+                    ),
+                ):
                     ready_to_spin = False
 
             if ready_to_spin:
@@ -229,13 +228,12 @@ def execute_task_op(
                 continue
             assert runner_id in assigned_runners
             runner = assigned_runners[runner_id]
-            if runner.status.runner_status != RunnerStatusType.Loaded:
+            if not isinstance(runner.status, LoadedRunnerStatus):
                 continue  # The only previous state to get to Running is from Loaded
 
             for _, task in tasks.items():
                 if task.instance_id == instance_id and (
-                    task.task_status == TaskStatus.PENDING
-                    or task.task_status == TaskStatus.FAILED
+                    task.task_status in (TaskStatus.Pending, TaskStatus.Failed)
                 ):
                     if (
                         runner.shard_metadata.device_rank >= 1

@@ -1,21 +1,19 @@
 from enum import Enum
-from typing import Union
 
 from pydantic import Field
 
 from exo.shared.topology import Connection, NodePerformanceProfile
 from exo.shared.types.chunks import CommandId, GenerationChunk
-from exo.shared.types.common import ID, NodeId
+from exo.shared.types.common import Id, NodeId
 from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.common import InstanceId, WorkerStatus
 from exo.shared.types.worker.instances import Instance
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.utils.pydantic_ext import CamelCaseModel
-from exo.utils.pydantic_tagged import Tagged, tagged_union
+from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
-class EventId(ID):
+class EventId(Id):
     """
     Newtype around `ID`
     """
@@ -60,7 +58,7 @@ class EventType(str, Enum):
     TopologyEdgeDeleted = "TopologyEdgeDeleted"
 
 
-class BaseEvent(CamelCaseModel):
+class BaseEvent(TaggedModel):
     event_id: EventId = Field(default_factory=EventId)
 
 
@@ -145,52 +143,26 @@ class TopologyEdgeDeleted(BaseEvent):
     edge: Connection
 
 
-Event = Union[
-    TestEvent,
-    TaskCreated,
-    TaskStateUpdated,
-    TaskFailed,
-    TaskDeleted,
-    InstanceCreated,
-    InstanceActivated,
-    InstanceDeactivated,
-    InstanceDeleted,
-    RunnerStatusUpdated,
-    RunnerDeleted,
-    NodePerformanceMeasured,
-    NodeMemoryMeasured,
-    WorkerStatusUpdated,
-    ChunkGenerated,
-    TopologyNodeCreated,
-    TopologyEdgeCreated,
-    TopologyEdgeDeleted,
-]
-
-
-@tagged_union(
-    {
-        EventType.TestEvent: TestEvent,
-        EventType.TaskCreated: TaskCreated,
-        EventType.TaskStateUpdated: TaskStateUpdated,
-        EventType.TaskFailed: TaskFailed,
-        EventType.TaskDeleted: TaskDeleted,
-        EventType.InstanceCreated: InstanceCreated,
-        EventType.InstanceActivated: InstanceActivated,
-        EventType.InstanceDeactivated: InstanceDeactivated,
-        EventType.InstanceDeleted: InstanceDeleted,
-        EventType.RunnerStatusUpdated: RunnerStatusUpdated,
-        EventType.RunnerDeleted: RunnerDeleted,
-        EventType.NodePerformanceMeasured: NodePerformanceMeasured,
-        EventType.NodeMemoryMeasured: NodeMemoryMeasured,
-        EventType.WorkerStatusUpdated: WorkerStatusUpdated,
-        EventType.ChunkGenerated: ChunkGenerated,
-        EventType.TopologyNodeCreated: TopologyNodeCreated,
-        EventType.TopologyEdgeCreated: TopologyEdgeCreated,
-        EventType.TopologyEdgeDeleted: TopologyEdgeDeleted,
-    }
+Event = (
+    TestEvent
+    | TaskCreated
+    | TaskStateUpdated
+    | TaskFailed
+    | TaskDeleted
+    | InstanceCreated
+    | InstanceActivated
+    | InstanceDeactivated
+    | InstanceDeleted
+    | RunnerStatusUpdated
+    | RunnerDeleted
+    | NodePerformanceMeasured
+    | NodeMemoryMeasured
+    | WorkerStatusUpdated
+    | ChunkGenerated
+    | TopologyNodeCreated
+    | TopologyEdgeCreated
+    | TopologyEdgeDeleted
 )
-class TaggedEvent(Tagged[Event]):
-    pass
 
 
 class IndexedEvent(CamelCaseModel):
@@ -205,4 +177,4 @@ class ForwarderEvent(CamelCaseModel):
 
     origin_idx: int = Field(ge=0)
     origin: NodeId
-    tagged_event: TaggedEvent
+    event: Event

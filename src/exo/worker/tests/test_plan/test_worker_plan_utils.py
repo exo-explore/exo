@@ -9,7 +9,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
-from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
+from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus
 from exo.shared.types.worker.common import InstanceId, RunnerId, WorkerStatus
 from exo.shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
 from exo.shared.types.worker.instances import Instance, InstanceStatus
@@ -146,7 +146,7 @@ def make_instance(
     instance_id: InstanceId,
     runner_specs: list[tuple[RunnerId, NodeId, int, RunnerStatus]],
     model_id: ModelId = MODEL_A_ID,
-    instance_status: InstanceStatus = InstanceStatus.ACTIVE,
+    instance_status: InstanceStatus = InstanceStatus.Active,
 ) -> tuple[Instance, dict[RunnerId, RunnerStatus], dict[NodeId, WorkerStatus]]:
     """Creates an instance with one or more runners."""
     runner_to_shard: dict[RunnerId, PipelineShardMetadata] = {}
@@ -189,7 +189,7 @@ def make_state(
     ],
     tasks: dict[TaskId, ChatCompletionTask] | None = None,
     model_id: ModelId = MODEL_A_ID,
-    instance_status: InstanceStatus = InstanceStatus.ACTIVE,
+    instance_status: InstanceStatus = InstanceStatus.Active,
 ) -> State:
     """Builds a full State from runner specs per instance, tasks, and defaults."""
     if tasks is None:
@@ -224,7 +224,7 @@ def make_test_case(
     tasks: list[TaskSpecDict] | None = None,
     expected_op: Optional[RunnerOp] = None,
     instance_id: InstanceId = INSTANCE_1_ID,
-    instance_status: InstanceStatus = InstanceStatus.ACTIVE,
+    instance_status: InstanceStatus = InstanceStatus.Active,
     model_id: ModelId = MODEL_A_ID,
     command_id: CommandId = COMMAND_1_ID,  # Default for tasks
 ) -> PlanTestCase:
@@ -244,8 +244,7 @@ def make_test_case(
             instance_id=instance_id,
             task_id=t["task_id"],
             command_id=t.get("command_id", command_id),
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=t.get("status", TaskStatus.PENDING),
+            task_status=t.get("status", TaskStatus.Pending),
             task_params=ChatCompletionTaskParams(
                 model=t.get("model", str(model_id)),
                 messages=[

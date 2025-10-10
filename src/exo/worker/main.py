@@ -12,7 +12,7 @@ from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
-from exo.shared.types.commands import ForwarderCommand, RequestEventLog, TaggedCommand
+from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -25,7 +25,6 @@ from exo.shared.types.events import (
     NodePerformanceMeasured,
     RunnerDeleted,
     RunnerStatusUpdated,
-    TaggedEvent,
     TaskFailed,
     TaskStateUpdated,
     TopologyEdgeCreated,
@@ -50,7 +49,6 @@ from exo.shared.types.worker.ops import (
     RunnerDownOp,
     RunnerFailedOp,
     RunnerOp,
-    RunnerOpType,
     RunnerUpOp,
     UnassignRunnerOp,
 )
@@ -120,18 +118,18 @@ class Worker:
                 ),
             )
 
+        async def memory_monitor_callback(
+            memory_profile: MemoryPerformanceProfile,
+        ) -> None:
+            await self.event_publisher(
+                NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
+            )
+
         # END CLEANUP
 
         async with create_task_group() as tg:
             self._tg = tg
             tg.start_soon(start_polling_node_metrics, resource_monitor_callback)
-
-            async def memory_monitor_callback(
-                memory_profile: MemoryPerformanceProfile,
-            ) -> None:
-                await self.event_publisher(
-                    NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
-                )
 
             tg.start_soon(start_polling_memory_metrics, memory_monitor_callback)
             tg.start_soon(self._connection_message_event_writer)
@@ -154,8 +152,8 @@ class Worker:
     async def _event_applier(self):
         with self.global_event_receiver as events:
             async for event in events:
-                self.event_buffer.ingest(event.origin_idx, event.tagged_event.c)
-                event_id = event.tagged_event.c.event_id
+                self.event_buffer.ingest(event.origin_idx, event.event)
+                event_id = event.event.event_id
                 if event_id in self.out_for_delivery:
                     del self.out_for_delivery[event_id]
 
@@ -256,9 +254,7 @@ class Worker:
                 await self.command_sender.send(
                     ForwarderCommand(
                         origin=self.node_id,
-                        tagged_command=TaggedCommand.from_(
-                            RequestEventLog(since_idx=0)
-                        ),
+                        command=RequestEventLog(since_idx=0),
                     )
                 )
             finally:
@@ -507,7 +503,7 @@ class Worker:
                     await queue.put(
                         TaskStateUpdated(
                             task_id=op.task.task_id,
-                            task_status=TaskStatus.RUNNING,
+                            task_status=TaskStatus.Running,
                         )
                     )
 
@@ -528,14 +524,14 @@ class Worker:
                     )
 
             if op.task.task_id in self.state.tasks:
-                self.state.tasks[op.task.task_id].task_status = TaskStatus.COMPLETE
+                self.state.tasks[op.task.task_id].task_status = TaskStatus.Complete
 
             if assigned_runner.shard_metadata.device_rank == 0:
                 # kind of hack - we don't want to wait for the round trip for this to complete
                 await queue.put(
                     TaskStateUpdated(
                         task_id=op.task.task_id,
-                        task_status=TaskStatus.COMPLETE,
+                        task_status=TaskStatus.Complete,
                     )
                 )
 
@@ -582,18 +578,18 @@ class Worker:
 
     async def execute_op(self, op: RunnerOp) -> AsyncGenerator[Event, None]:
         ## It would be great if we can get rid of this async for ... yield pattern.
-        match op.op_type:
-            case RunnerOpType.ASSIGN_RUNNER:
+        match op:
+            case AssignRunnerOp():
                 event_generator = self._execute_assign_op(op)
-            case RunnerOpType.UNASSIGN_RUNNER:
+            case UnassignRunnerOp():
                 event_generator = self._execute_unassign_op(op)
-            case RunnerOpType.RUNNER_UP:
+            case RunnerUpOp():
                 event_generator = self._execute_runner_up_op(op)
-            case RunnerOpType.RUNNER_DOWN:
+            case RunnerDownOp():
                 event_generator = self._execute_runner_down_op(op)
-            case RunnerOpType.RUNNER_FAILED:
+            case RunnerFailedOp():
                 event_generator = self._execute_runner_failed_op(op)
-            case RunnerOpType.CHAT_COMPLETION:
+            case ExecuteTaskOp():
                 event_generator = self._execute_task_op(op)
 
         async for event in event_generator:
@@ -624,7 +620,7 @@ class Worker:
         if runner_id in self.assigned_runners:
             yield TaskStateUpdated(
                 task_id=task_id,
-                task_status=TaskStatus.FAILED,
+                task_status=TaskStatus.Failed,
             )
 
             yield TaskFailed(
@@ -638,7 +634,7 @@ class Worker:
         fe = ForwarderEvent(
             origin_idx=self.local_event_index,
             origin=self.node_id,
-            tagged_event=TaggedEvent.from_(event),
+            event=event,
         )
         await self.local_event_sender.send(fe)
         self.out_for_delivery[event.event_id] = fe

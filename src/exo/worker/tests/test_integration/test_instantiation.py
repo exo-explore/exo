@@ -37,7 +37,7 @@ async def test_runner_spinup_timeout(
     async with create_task_group() as tg:
         tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-        instance_value.instance_type = InstanceStatus.ACTIVE
+        instance_value.instance_type = InstanceStatus.Active
         instance_value.shard_assignments.runner_to_shard[
             RUNNER_1_ID
         ].should_timeout = 10
@@ -61,11 +61,11 @@ async def test_runner_spinup_timeout(
                 [
                     x
                     for x in events
-                    if isinstance(x.tagged_event.c, RunnerStatusUpdated)
-                    and isinstance(x.tagged_event.c.runner_status, FailedRunnerStatus)
+                    if isinstance(x.event, RunnerStatusUpdated)
+                    and isinstance(x.event.runner_status, FailedRunnerStatus)
                 ]
             )
             == 3
         )
-        assert any([isinstance(x.tagged_event.c, InstanceDeleted) for x in events])
+        assert any([isinstance(x.event, InstanceDeleted) for x in events])
         worker.shutdown()

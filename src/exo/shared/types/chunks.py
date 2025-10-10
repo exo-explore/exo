@@ -1,35 +1,30 @@
 from enum import Enum
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, Field
 
 from exo.shared.openai_compat import FinishReason
 from exo.shared.types.common import CommandId
 from exo.shared.types.models import ModelId
+from exo.utils.pydantic_ext import TaggedModel
 
 
 class ChunkType(str, Enum):
-    token = "token"
-    image = "image"
+    Token = "Token"
+    Image = "Image"
 
 
-class BaseChunk[ChunkTypeT: ChunkType](BaseModel):
-    chunk_type: ChunkTypeT
+class BaseChunk(TaggedModel):
     command_id: CommandId
     idx: int
     model: ModelId
 
 
-class TokenChunk(BaseChunk[ChunkType.token]):
-    chunk_type: Literal[ChunkType.token] = Field(default=ChunkType.token, frozen=True)
+class TokenChunk(BaseChunk):
     text: str
     token_id: int
     finish_reason: FinishReason | None = None
 
 
-class ImageChunk(BaseChunk[ChunkType.image]):
-    chunk_type: Literal[ChunkType.image] = Field(default=ChunkType.image, frozen=True)
+class ImageChunk(BaseChunk):
     data: bytes
 
 
-GenerationChunk = Annotated[TokenChunk | ImageChunk, Field(discriminator="chunk_type")]
+GenerationChunk = TokenChunk | ImageChunk

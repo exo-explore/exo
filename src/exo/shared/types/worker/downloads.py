@@ -1,15 +1,6 @@
-from enum import Enum
-from typing import (
-    Annotated,
-    Literal,
-    Union,
-)
-
-from pydantic import Field
-
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
 class DownloadProgressData(CamelCaseModel):
@@ -17,50 +8,26 @@ class DownloadProgressData(CamelCaseModel):
     downloaded_bytes: Memory
 
 
-class DownloadStatus(str, Enum):
-    Pending = "Pending"
-    Downloading = "Downloading"
-    Completed = "Completed"
-    Failed = "Failed"
-
-
-class BaseDownloadProgress[DownloadStatusT: DownloadStatus](CamelCaseModel):
+class BaseDownloadProgress(TaggedModel):
     node_id: NodeId
-    download_status: DownloadStatusT
 
 
-class DownloadPending(BaseDownloadProgress[DownloadStatus.Pending]):
-    download_status: Literal[DownloadStatus.Pending] = Field(
-        default=DownloadStatus.Pending
-    )
+class DownloadPending(BaseDownloadProgress):
+    pass
 
 
-class DownloadCompleted(BaseDownloadProgress[DownloadStatus.Completed]):
-    download_status: Literal[DownloadStatus.Completed] = Field(
-        default=DownloadStatus.Completed
-    )
+class DownloadCompleted(BaseDownloadProgress):
+    pass
 
 
-class DownloadFailed(BaseDownloadProgress[DownloadStatus.Failed]):
-    download_status: Literal[DownloadStatus.Failed] = Field(
-        default=DownloadStatus.Failed
-    )
+class DownloadFailed(BaseDownloadProgress):
     error_message: str
 
 
-class DownloadOngoing(BaseDownloadProgress[DownloadStatus.Downloading]):
-    download_status: Literal[DownloadStatus.Downloading] = Field(
-        default=DownloadStatus.Downloading
-    )
+class DownloadOngoing(BaseDownloadProgress):
     download_progress: DownloadProgressData
 
 
-DownloadProgress = Annotated[
-    Union[
-        DownloadPending,
-        DownloadCompleted,
-        DownloadFailed,
-        DownloadOngoing,
-    ],
-    Field(discriminator="download_status"),
-]
+DownloadProgress = (
+    DownloadPending | DownloadCompleted | DownloadFailed | DownloadOngoing
+)

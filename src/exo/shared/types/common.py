@@ -1,11 +1,13 @@
 from typing import Self
 from uuid import uuid4
 
-from pydantic import BaseModel, GetCoreSchemaHandler, field_validator
+from pydantic import GetCoreSchemaHandler, field_validator
 from pydantic_core import core_schema
 
+from exo.utils.pydantic_ext import CamelCaseModel
 
-class ID(str):
+
+class Id(str):
     def __new__(cls, value: str | None = None) -> Self:
         return super().__new__(cls, value or str(uuid4()))
 
@@ -17,15 +19,15 @@ class ID(str):
         return core_schema.str_schema()
 
 
-class NodeId(ID):
+class NodeId(Id):
     pass
 
 
-class CommandId(ID):
+class CommandId(Id):
     pass
 
 
-class Host(BaseModel):
+class Host(CamelCaseModel):
     ip: str
     port: int
 

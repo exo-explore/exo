@@ -1,13 +1,13 @@
 from enum import Enum
 
-from exo.shared.types.common import ID
+from exo.shared.types.common import Id
 
 
-class InstanceId(ID):
+class InstanceId(Id):
     pass
 
 
-class RunnerId(ID):
+class RunnerId(Id):
     pass
 
 

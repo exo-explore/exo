@@ -1,80 +1,54 @@
 from collections.abc import Mapping
-from enum import Enum
-from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from pydantic import model_validator
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.models import ModelId
 from exo.shared.types.worker.common import RunnerId
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.shards import ShardMetadata
+from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
-class RunnerStatusType(str, Enum):
-    Downloading = "Downloading"
-    Inactive = "Inactive"
-    Starting = "Starting"
-    Loaded = "Loaded"
-    Running = "Running"
-    Failed = "Failed"
+class BaseRunnerStatus(TaggedModel):
+    pass
 
 
-class BaseRunnerStatus[T: RunnerStatusType](BaseModel):
-    runner_status: T
-
-
-class DownloadingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Downloading]):
-    runner_status: Literal[RunnerStatusType.Downloading] = Field(
-        default=RunnerStatusType.Downloading
-    )
+class DownloadingRunnerStatus(BaseRunnerStatus):
     download_progress: DownloadProgress
 
 
-class InactiveRunnerStatus(BaseRunnerStatus[RunnerStatusType.Inactive]):
-    runner_status: Literal[RunnerStatusType.Inactive] = Field(
-        default=RunnerStatusType.Inactive
-    )
+class InactiveRunnerStatus(BaseRunnerStatus):
+    pass
 
 
-class StartingRunnerStatus(BaseRunnerStatus[RunnerStatusType.Starting]):
-    runner_status: Literal[RunnerStatusType.Starting] = Field(
-        default=RunnerStatusType.Starting
-    )
+class StartingRunnerStatus(BaseRunnerStatus):
+    pass
 
 
-class LoadedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Loaded]):
-    runner_status: Literal[RunnerStatusType.Loaded] = Field(
-        default=RunnerStatusType.Loaded
-    )
+class LoadedRunnerStatus(BaseRunnerStatus):
+    pass
 
 
-class RunningRunnerStatus(BaseRunnerStatus[RunnerStatusType.Running]):
-    runner_status: Literal[RunnerStatusType.Running] = Field(
-        default=RunnerStatusType.Running
-    )
+class RunningRunnerStatus(BaseRunnerStatus):
+    pass
 
 
-class FailedRunnerStatus(BaseRunnerStatus[RunnerStatusType.Failed]):
-    runner_status: Literal[RunnerStatusType.Failed] = Field(
-        default=RunnerStatusType.Failed
-    )
+class FailedRunnerStatus(BaseRunnerStatus):
     error_message: str | None = None
 
 
-RunnerStatus = Annotated[
+RunnerStatus = (
     DownloadingRunnerStatus
     | InactiveRunnerStatus
     | StartingRunnerStatus
     | LoadedRunnerStatus
     | RunningRunnerStatus
-    | FailedRunnerStatus,
-    Field,
-]
-RunnerStatusParser: TypeAdapter[RunnerStatus] = TypeAdapter(RunnerStatus)
+    | FailedRunnerStatus
+)
 
 
-class ShardAssignments(BaseModel):
+class ShardAssignments(CamelCaseModel):
     model_id: ModelId
     runner_to_shard: Mapping[RunnerId, ShardMetadata]
     node_to_runner: Mapping[NodeId, RunnerId]

@@ -72,7 +72,7 @@ async def check_runner_connection(
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(2),
         )

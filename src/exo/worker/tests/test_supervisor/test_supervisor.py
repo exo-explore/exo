@@ -7,10 +7,10 @@ from exo.shared.openai_compat import FinishReason
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import Host
 from exo.shared.types.tasks import (
+    ChatCompletionTask,
     ChatCompletionTaskParams,
     Task,
     TaskId,
-    TaskType,
 )
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -143,7 +143,7 @@ async def test_supervisor_early_stopping(
     task = chat_completion_task(instance_id, TaskId())
 
     max_tokens = 50
-    assert task.task_type == TaskType.CHAT_COMPLETION
+    assert isinstance(task, ChatCompletionTask)
     print(f"chat_completion_task.task_params: {task.task_params}")
     assert isinstance(task.task_params, ChatCompletionTaskParams)
     task_params: ChatCompletionTaskParams = task.task_params

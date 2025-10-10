@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 import aiofiles
 import aiofiles.os as aios
 import aiohttp
-from pydantic import BaseModel, DirectoryPath, Field, PositiveInt, TypeAdapter
+from pydantic import BaseModel, DirectoryPath, Field, PositiveInt, TypeAdapter, ConfigDict
 
 from exo.shared.constants import EXO_HOME
 from exo.shared.types.worker.shards import ShardMetadata
@@ -53,8 +53,7 @@ class RepoFileDownloadProgress(BaseModel):
     status: Literal["not_started", "in_progress", "complete"]
     start_time: float
 
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen = True)
 
 
 class RepoDownloadProgress(BaseModel):
@@ -88,8 +87,9 @@ class RepoDownloadProgress(BaseModel):
     # fine-grained file progress keyed by file_path
     file_progress: Dict[str, RepoFileDownloadProgress] = Field(default_factory=dict)
 
-    class Config:
+    model_config = ConfigDict(
         frozen = True  # allow use as dict keys if desired
+    )
 
 
 def build_model_path(model_id: str) -> DirectoryPath:

@@ -1,7 +1,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, field_serializer
 
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
@@ -10,15 +10,10 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.common import InstanceId, WorkerStatus
 from exo.shared.types.worker.instances import Instance
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.utils.pydantic_ext import CamelCaseModel
 
 
-def _encode_topology(topo: "Topology") -> dict[str, Any]:  # noqa: D401
-    """Serialise *topo* into a JSON-compatible dict."""
-
-    return topo.to_snapshot().model_dump()
-
-
-class State(BaseModel):
+class State(CamelCaseModel):
     """Global system state.
 
     The :class:`Topology` instance is encoded/decoded via an immutable
@@ -28,9 +23,6 @@ class State(BaseModel):
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
-        json_encoders={
-            Topology: _encode_topology,
-        },
     )
     node_status: Mapping[NodeId, WorkerStatus] = {}
     instances: Mapping[InstanceId, Instance] = {}
@@ -40,6 +32,10 @@ class State(BaseModel):
     topology: Topology = Topology()
     history: Sequence[Topology] = []
     last_event_applied_idx: int = Field(default=-1, ge=-1)
+
+    @field_serializer("topology", mode="plain")
+    def _encode_topology(self, value: Topology) -> TopologySnapshot:
+        return value.to_snapshot()
 
     @field_validator("topology", mode="before")
     @classmethod

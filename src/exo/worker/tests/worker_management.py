@@ -6,7 +6,7 @@ from anyio import fail_after
 from exo.routing.topics import ConnectionMessage, ForwarderCommand, ForwarderEvent
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import ChunkGenerated, Event, TaggedEvent, TaskStateUpdated
+from exo.shared.types.events import ChunkGenerated, Event, TaskStateUpdated
 from exo.shared.types.tasks import TaskId, TaskStatus
 from exo.utils.channels import Receiver, Sender, channel
 from exo.worker.download.shard_downloader import NoopShardDownloader, ShardDownloader
@@ -24,7 +24,7 @@ class WorkerMailbox:
             await self.sender.send(
                 ForwarderEvent(
                     origin=origin,
-                    tagged_event=TaggedEvent.from_(event),
+                    event=event,
                     origin_idx=self.counter,
                 )
             )
@@ -105,7 +105,7 @@ async def read_streaming_response(
     token_count = 0
     extra_events: list[Event] = []
 
-    event = (await global_event_receiver.receive()).tagged_event.c
+    event = (await global_event_receiver.receive()).event
     extra_events.append(event)
 
     from loguru import logger
@@ -116,17 +116,17 @@ async def read_streaming_response(
         if filter_task:
             while not (
                 isinstance(event, TaskStateUpdated)
-                and event.task_status == TaskStatus.RUNNING
+                and event.task_status == TaskStatus.Running
                 and event.task_id == filter_task
             ):
-                event = (await global_event_receiver.receive()).tagged_event.c
+                event = (await global_event_receiver.receive()).event
                 extra_events.append(event)
 
         for event in extra_events:
             if isinstance(event, TaskStateUpdated):
-                if event.task_status == TaskStatus.RUNNING:
+                if event.task_status == TaskStatus.Running:
                     seen_task_started += 1
-                if event.task_status == TaskStatus.COMPLETE:
+                if event.task_status == TaskStatus.Complete:
                     seen_task_finished += 1
             if isinstance(event, ChunkGenerated) and isinstance(
                 event.chunk, TokenChunk
@@ -137,11 +137,11 @@ async def read_streaming_response(
                     finish_reason = event.chunk.finish_reason
 
         while not seen_task_finished:
-            event = (await global_event_receiver.receive()).tagged_event.c
+            event = (await global_event_receiver.receive()).event
             if isinstance(event, TaskStateUpdated):
-                if event.task_status == TaskStatus.RUNNING:
+                if event.task_status == TaskStatus.Running:
                     seen_task_started += 1
-                if event.task_status == TaskStatus.COMPLETE:
+                if event.task_status == TaskStatus.Complete:
                     seen_task_finished += 1
             if isinstance(event, ChunkGenerated) and isinstance(
                 event.chunk, TokenChunk
@@ -167,7 +167,7 @@ async def until_event_with_timeout[T](
 
     with fail_after(timeout):
         while times_seen < multiplicity:
-            event = (await global_event_receiver.receive()).tagged_event.c
+            event = (await global_event_receiver.receive()).event
             if isinstance(event, event_type):
                 print(f"Wow! We got a {event}")
                 print(

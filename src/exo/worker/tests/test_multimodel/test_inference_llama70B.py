@@ -22,7 +22,6 @@ from exo.shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
-    TaskType,
 )
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import (
@@ -107,7 +106,7 @@ async def test_ttft(
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(1),
         )
@@ -139,8 +138,7 @@ async def test_ttft(
             task_id=TASK_1_ID,
             command_id=COMMAND_1_ID,
             instance_id=INSTANCE_1_ID,
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=TaskStatus.PENDING,
+            task_status=TaskStatus.Pending,
             task_params=task1_params,
         )
 
@@ -157,7 +155,7 @@ async def test_ttft(
         first_chunk_seen_1 = False
         time_to_first_token_1: None | float = None
         while not first_chunk_seen_1:
-            event = (await global_events.receive()).tagged_event.c
+            event = (await global_events.receive()).event
             if isinstance(event, ChunkGenerated) and hasattr(event, "chunk"):
                 first_chunk_time_1 = time.time()
                 time_to_first_token_1 = first_chunk_time_1 - task_created_time_1
@@ -192,8 +190,7 @@ async def test_ttft(
             task_id=TASK_2_ID,
             command_id=COMMAND_2_ID,
             instance_id=INSTANCE_1_ID,
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=TaskStatus.PENDING,
+            task_status=TaskStatus.Pending,
             task_params=task2_params,
         )
 
@@ -211,7 +208,7 @@ async def test_ttft(
         first_chunk_seen_2 = False
         time_to_first_token_2: float | None = None
         while not first_chunk_seen_2:
-            event = (await global_events.receive()).tagged_event.c
+            event = (await global_events.receive()).event
             if isinstance(event, ChunkGenerated) and hasattr(event, "chunk"):
                 first_chunk_time_2 = time.time()
                 time_to_first_token_2 = first_chunk_time_2 - task_created_time_2
@@ -344,7 +341,7 @@ async def test_2_runner_inference(
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(2),
         )
@@ -424,7 +421,7 @@ async def test_parallel_inference(
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(2),
         )
@@ -443,8 +440,7 @@ async def test_parallel_inference(
             task_id=TASK_1_ID,
             command_id=COMMAND_1_ID,
             instance_id=INSTANCE_1_ID,
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=TaskStatus.PENDING,
+            task_status=TaskStatus.Pending,
             task_params=completion_create_params_1,
         )
 
@@ -462,8 +458,7 @@ async def test_parallel_inference(
             task_id=TASK_2_ID,
             command_id=COMMAND_2_ID,
             instance_id=INSTANCE_1_ID,
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=TaskStatus.PENDING,
+            task_status=TaskStatus.Pending,
             task_params=completion_create_params_2,
         )
 
@@ -485,7 +480,7 @@ async def test_parallel_inference(
 
         incomplete_task = (
             TASK_2_ID
-            if worker1.state.tasks[TASK_1_ID].task_status == TaskStatus.COMPLETE
+            if worker1.state.tasks[TASK_1_ID].task_status == TaskStatus.Complete
             else TASK_2_ID
         )
         (

@@ -104,7 +104,7 @@ def apply_task_state_updated(event: TaskStateUpdated, state: State) -> State:
     update: dict[str, TaskStatus | None] = {
         "task_status": event.task_status,
     }
-    if event.task_status != TaskStatus.FAILED:
+    if event.task_status != TaskStatus.Failed:
         update["error_type"] = None
         update["error_message"] = None
 
@@ -138,7 +138,7 @@ def apply_instance_activated(event: InstanceActivated, state: State) -> State:
         return state
 
     updated_instance = state.instances[event.instance_id].model_copy(
-        update={"instance_type": InstanceStatus.ACTIVE}
+        update={"instance_type": InstanceStatus.Active}
     )
     new_instances: Mapping[InstanceId, Instance] = {
         **state.instances,
@@ -152,7 +152,7 @@ def apply_instance_deactivated(event: InstanceDeactivated, state: State) -> Stat
         return state
 
     updated_instance = state.instances[event.instance_id].model_copy(
-        update={"instance_type": InstanceStatus.INACTIVE}
+        update={"instance_type": InstanceStatus.Inactive}
     )
     new_instances: Mapping[InstanceId, Instance] = {
         **state.instances,

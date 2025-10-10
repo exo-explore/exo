@@ -27,7 +27,7 @@ def topology() -> Topology:
 def instance() -> Instance:
     return Instance(
         instance_id=InstanceId(),
-        instance_type=InstanceStatus.ACTIVE,
+        instance_type=InstanceStatus.Active,
         shard_assignments=ShardAssignments(
             model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
         ),

@@ -934,7 +934,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ model_id: selectedModelId })
+                    body: JSON.stringify({ modelId: selectedModelId, model_id: selectedModelId })
                 });
 
                 if (!response.ok) {
@@ -976,26 +976,43 @@
 
         // Calculate download status for an instance based on its runners
         function calculateInstanceDownloadStatus(instance, runners) {
-            if (!instance.shard_assignments?.runner_to_shard || !runners) {
+            const shardAssignments = instance.shard_assignments ?? instance.shardAssignments;
+            const runnerToShard = shardAssignments?.runner_to_shard ?? shardAssignments?.runnerToShard;
+            if (!runnerToShard || !runners) {
                 return { isDownloading: false, progress: 0 };
             }
 
-            const runnerIds = Object.keys(instance.shard_assignments.runner_to_shard);
+            const runnerIds = Object.keys(runnerToShard);
             const downloadingRunners = [];
             let totalBytes = 0;
             let downloadedBytes = 0;
 
             for (const runnerId of runnerIds) {
                 const runner = runners[runnerId];
+                let isRunnerDownloading = false;
+
+                // Legacy snake_case structure
                 if (runner && runner.runner_status === 'Downloading' && runner.download_progress) {
-                    downloadingRunners.push(runner);
-                    
-                    // Aggregate download progress across all downloading runners
-                    if (runner.download_progress.download_status === 'Downloading' && runner.download_progress.download_progress) {
+                    isRunnerDownloading = runner.download_progress.download_status === 'Downloading';
+                    if (isRunnerDownloading && runner.download_progress.download_progress) {
                         totalBytes += runner.download_progress.download_progress.total_bytes || 0;
                         downloadedBytes += runner.download_progress.download_progress.downloaded_bytes || 0;
                     }
+                } else if (runner && typeof runner === 'object') {
+                    // Tagged-union camelCase structure, e.g. { "DownloadingRunnerStatus": { downloadProgress: { totalBytes, downloadedBytes } } }
+                    const tag = Object.keys(runner)[0];
+                    if (tag && /DownloadingRunnerStatus$/i.test(tag)) {
+                        isRunnerDownloading = true;
+                        const inner = runner[tag] || {};
+                        const prog = inner.downloadProgress || inner.download_progress || {};
+                        const t = prog.totalBytes ?? prog.total_bytes ?? 0;
+                        const d = prog.downloadedBytes ?? prog.downloaded_bytes ?? 0;
+                        totalBytes += typeof t === 'number' ? t : 0;
+                        downloadedBytes += typeof d === 'number' ? d : 0;
+                    }
                 }
+
+                if (isRunnerDownloading) downloadingRunners.push(runner);
             }
 
             const isDownloading = downloadingRunners.length > 0;
@@ -1007,16 +1024,25 @@
         // Derive a display status for an instance from its runners.
         // Priority: FAILED > DOWNLOADING > STARTING > RUNNING > LOADED > INACTIVE
         function deriveInstanceStatus(instance, runners = {}) {
-            const runnerIds = Object.keys(instance.shard_assignments?.runner_to_shard || {});
+            const shardAssignments = instance.shard_assignments ?? instance.shardAssignments;
+            const runnerToShard = shardAssignments?.runner_to_shard ?? shardAssignments?.runnerToShard ?? {};
+            const runnerIds = Object.keys(runnerToShard);
             const statuses = runnerIds
-                .map(rid => runners[rid]?.runner_status)
+                .map(rid => {
+                    const r = runners[rid];
+                    if (!r || typeof r !== 'object') return undefined;
+                    if (typeof r.runner_status === 'string') return r.runner_status;
+                    const tag = Object.keys(r)[0];
+                    return typeof tag === 'string' ? tag.replace(/RunnerStatus$/,'') : undefined; // e.g. LoadedRunnerStatus -> Loaded
+                })
                 .filter(s => typeof s === 'string');
 
             const has = (s) => statuses.includes(s);
             const every = (pred) => statuses.length > 0 && statuses.every(pred);
 
             if (statuses.length === 0) {
-                const inactive = instance.instance_type === 'INACTIVE';
+                const instanceType = instance.instance_type ?? instance.instanceType;
+                const inactive = instanceType === 'INACTIVE' || instanceType === 'Inactive';
                 return { statusText: inactive ? 'INACTIVE' : 'LOADED', statusClass: inactive ? 'inactive' : 'loaded' };
             }
 
@@ -1046,10 +1072,12 @@
             }
 
             const instancesHTML = instancesArray.map(instance => {
-                const modelId = instance.shard_assignments?.model_id || 'Unknown Model';
-                const truncatedInstanceId = instance.instance_id.length > 8 
-                    ? instance.instance_id.substring(0, 8) + '...' 
-                    : instance.instance_id;
+                const shardAssignments = instance.shard_assignments ?? instance.shardAssignments;
+                const modelId = shardAssignments?.model_id ?? shardAssignments?.modelId ?? 'Unknown Model';
+                const instanceId = instance.instance_id ?? instance.instanceId ?? '';
+                const truncatedInstanceId = instanceId.length > 8 
+                    ? instanceId.substring(0, 8) + '...' 
+                    : instanceId;
                 
                 const hostsHTML = instance.hosts?.map(host => 
                     `<span class="instance-host">${host.ip}:${host.port}</span>`
@@ -1083,14 +1111,14 @@
                                 <span class="instance-status ${statusClass}">${statusText}</span>
                             </div>
                             <div class="instance-actions">
-                                <button class="instance-delete-button" data-instance-id="${instance.instance_id}" title="Delete Instance">
+                                <button class="instance-delete-button" data-instance-id="${instanceId}" title="Delete Instance">
                                     Delete
                                 </button>
                             </div>
                         </div>
                         <div class="instance-model">${modelId}</div>
                         <div class="instance-details">
-                            Shards: ${Object.keys(instance.shard_assignments?.runner_to_shard || {}).length}
+                            Shards: ${Object.keys((shardAssignments?.runner_to_shard ?? shardAssignments?.runnerToShard) || {}).length}
                         </div>
                         ${downloadProgressHTML}
                         ${hostsHTML ? `<div class="instance-hosts">${hostsHTML}</div>` : ''}
@@ -1931,16 +1959,18 @@
                 return fallback;
             };
 
-            // Process nodes from topology or fallback to node_profiles directly
+            // Process nodes from topology or fallback to node_profiles/nodeProfiles directly
             let nodesToProcess = {};
             if (clusterState.topology && Array.isArray(clusterState.topology.nodes)) {
                 clusterState.topology.nodes.forEach(node => {
-                    if (node.node_id && node.node_profile) {
-                        nodesToProcess[node.node_id] = node.node_profile;
+                    const nid = node.node_id ?? node.nodeId;
+                    const nprof = node.node_profile ?? node.nodeProfile;
+                    if (nid && nprof) {
+                        nodesToProcess[nid] = nprof;
                     }
                 });
-            } else if (clusterState.node_profiles) {
-                nodesToProcess = clusterState.node_profiles;
+            } else if (clusterState.node_profiles || clusterState.nodeProfiles) {
+                nodesToProcess = clusterState.node_profiles ?? clusterState.nodeProfiles;
             }
 
             // Transform each node

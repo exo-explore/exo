@@ -5,7 +5,6 @@ from typing import AsyncIterator, Callable, Dict, List, Optional
 from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.worker.shards import (
-    PartitionStrategy,
     PipelineShardMetadata,
     ShardMetadata,
 )
@@ -24,7 +23,6 @@ async def build_base_shard(model_id: str) -> Optional[ShardMetadata]:
     # print(f"build_base_shard {model_id=} {model_meta=}")
     return PipelineShardMetadata(
         model_meta=model_meta,
-        partition_strategy=PartitionStrategy.pipeline,
         device_rank=0,
         world_size=1,
         start_layer=0,
@@ -39,7 +37,6 @@ async def build_full_shard(model_id: str) -> Optional[PipelineShardMetadata]:
         return None
     return PipelineShardMetadata(
         model_meta=base_shard.model_meta,
-        partition_strategy=base_shard.partition_strategy,
         device_rank=base_shard.device_rank,
         world_size=base_shard.world_size,
         start_layer=base_shard.start_layer,

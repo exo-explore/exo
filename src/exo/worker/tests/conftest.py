@@ -10,7 +10,6 @@ from exo.shared.types.tasks import (
     ChatCompletionTask,
     TaskId,
     TaskStatus,
-    TaskType,
 )
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance, InstanceStatus
@@ -131,7 +130,7 @@ def instance(
 
         return Instance(
             instance_id=resolved_instance_id,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(1),
         )
@@ -161,8 +160,7 @@ def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
             task_id=resolved_task_id,
             command_id=COMMAND_1_ID,
             instance_id=resolved_instance_id,
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=TaskStatus.PENDING,
+            task_status=TaskStatus.Pending,
             task_params=completion_create_params,
         )
 
