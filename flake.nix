@@ -57,13 +57,13 @@
 
               # NIX
               nixpkgs-fmt
+
+              # JUST
+              just
             ]
             ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
               # MACMON
               macmon
-
-              # JUST
-              just
             ]);
 
           shellHook = ''
