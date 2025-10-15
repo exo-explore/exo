@@ -17,6 +17,7 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
+from exo.shared.types.topology import NodeInfo
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance, InstanceStatus
 
@@ -36,7 +37,7 @@ def get_instance_placements_after_create(
     from loguru import logger
 
     logger.info("finding cycles:")
-    cycles = topology.get_cycles_tb()
+    cycles = topology.get_cycles()
     logger.info(f"{cycles=}")
     # we can also always just have a node on its own
     singleton_cycles = [[node] for node in all_nodes]
@@ -58,12 +59,16 @@ def get_instance_placements_after_create(
 
     if tb_only and smallest_tb_cycles == []:
         raise ValueError("No cycles found with sufficient memory")
-
     elif smallest_tb_cycles != []:
         smallest_cycles = smallest_tb_cycles
 
+    cycles_with_leaf_nodes: list[list[NodeInfo]] = [
+        cycle for cycle in smallest_cycles
+        if any(topology.node_is_leaf(node.node_id) for node in cycle)
+    ]
+
     selected_cycle = max(
-        smallest_cycles,
+        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
             (
                 node.node_profile.memory.ram_available

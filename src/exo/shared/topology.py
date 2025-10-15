@@ -49,6 +49,9 @@ class Topology:
         self._node_id_to_rx_id_map[node.node_id] = rx_id
         self._rx_id_to_node_id_map[rx_id] = node.node_id
 
+    def node_is_leaf(self, node_id: NodeId) -> bool:
+        return node_id in self._node_id_to_rx_id_map and len(self._graph.neighbors(self._node_id_to_rx_id_map[node_id])) == 1
+
     def contains_node(self, node_id: NodeId) -> bool:
         return node_id in self._node_id_to_rx_id_map
 
