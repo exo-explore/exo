@@ -630,18 +630,21 @@ class Worker:
             async for event in self.fail_runner(e, runner_id):
                 yield event
 
+
+
+    # This function is re-entrant, take care!
     async def event_publisher(self, event: Event) -> None:
         fe = ForwarderEvent(
             origin_idx=self.local_event_index,
             origin=self.node_id,
             event=event,
         )
-        await self.local_event_sender.send(fe)
-        self.out_for_delivery[event.event_id] = fe
         logger.debug(
             f"Worker published event {self.local_event_index}: {str(event)[:100]}"
         )
         self.local_event_index += 1
+        await self.local_event_sender.send(fe)
+        self.out_for_delivery[event.event_id] = fe
 
 
 def event_relevant_to_worker(event: Event, worker: Worker):

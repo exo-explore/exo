@@ -19,6 +19,9 @@ class OrderedBuffer[T]:
         if idx < self.next_idx_to_release:
             return
         if idx in self.store:
+            assert self.store[idx] == t, (
+                "Received different messages with identical indices, probable race condition"
+            )
             return
         self.store[idx] = t
 

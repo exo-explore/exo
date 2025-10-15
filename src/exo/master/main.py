@@ -193,6 +193,7 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
+
                     # TODO: SQL
                     self._event_log.append(event)
                     await self._send_event(indexed)
@@ -225,6 +226,7 @@ class Master:
                 )
                 local_index += 1
 
+    # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
