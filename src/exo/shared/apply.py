@@ -104,7 +104,7 @@ def apply_task_state_updated(event: TaskStateUpdated, state: State) -> State:
     update: dict[str, TaskStatus | None] = {
         "task_status": event.task_status,
     }
-    if event.task_status != TaskStatus.FAILED:
+    if event.task_status != TaskStatus.Failed:
         update["error_type"] = None
         update["error_message"] = None
 
@@ -138,7 +138,7 @@ def apply_instance_activated(event: InstanceActivated, state: State) -> State:
         return state
 
     updated_instance = state.instances[event.instance_id].model_copy(
-        update={"instance_type": InstanceStatus.ACTIVE}
+        update={"instance_type": InstanceStatus.Active}
     )
     new_instances: Mapping[InstanceId, Instance] = {
         **state.instances,
@@ -152,7 +152,7 @@ def apply_instance_deactivated(event: InstanceDeactivated, state: State) -> Stat
         return state
 
     updated_instance = state.instances[event.instance_id].model_copy(
-        update={"instance_type": InstanceStatus.INACTIVE}
+        update={"instance_type": InstanceStatus.Inactive}
     )
     new_instances: Mapping[InstanceId, Instance] = {
         **state.instances,
@@ -254,21 +254,18 @@ def apply_worker_status_updated(event: WorkerStatusUpdated, state: State) -> Sta
 
 
 def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> State:
-    logger.warning(f"~~~ APPLY Node {event.node_id} created")
     topology = copy.copy(state.topology)
     topology.add_node(NodeInfo(node_id=event.node_id))
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
-    logger.warning(f"~~~ APPLY Edge {event.edge.local_node_id} -> {event.edge.send_back_node_id} created")
     topology = copy.copy(state.topology)
     topology.add_connection(event.edge)
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
-    logger.warning(f"~~~ APPLY Edge {event.edge.local_node_id} -> {event.edge.send_back_node_id} deleted")
     topology = copy.copy(state.topology)
     if not topology.contains_connection(event.edge):
         return state

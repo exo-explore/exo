@@ -1,20 +1,19 @@
 from enum import Enum
 
-from pydantic import BaseModel
-
 from exo.shared.types.common import Host
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.runners import (
     ShardAssignments,
 )
+from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class InstanceStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
+    Active = "Active"
+    Inactive = "Inactive"
 
 
-class Instance(BaseModel):
+class Instance(CamelCaseModel):
     instance_id: InstanceId
     instance_type: InstanceStatus
     shard_assignments: ShardAssignments

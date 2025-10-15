@@ -1,5 +1,4 @@
 import asyncio
-import traceback
 import time
 from asyncio import Queue
 from functools import partial
@@ -13,8 +12,7 @@ from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
-from exo.worker.download.download_utils import map_repo_download_progress_to_download_progress_data
-from exo.shared.types.commands import ForwarderCommand, RequestEventLog, TaggedCommand
+from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -27,12 +25,12 @@ from exo.shared.types.events import (
     NodePerformanceMeasured,
     RunnerDeleted,
     RunnerStatusUpdated,
-    TaggedEvent,
     TaskFailed,
     TaskStateUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
+from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
@@ -43,6 +41,7 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
     DownloadPending,
+    DownloadProgressData,
 )
 from exo.shared.types.worker.ops import (
     AssignRunnerOp,
@@ -50,7 +49,6 @@ from exo.shared.types.worker.ops import (
     RunnerDownOp,
     RunnerFailedOp,
     RunnerOp,
-    RunnerOpType,
     RunnerUpOp,
     UnassignRunnerOp,
 )
@@ -120,25 +118,23 @@ class Worker:
                 ),
             )
 
+        async def memory_monitor_callback(
+            memory_profile: MemoryPerformanceProfile,
+        ) -> None:
+            await self.event_publisher(
+                NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
+            )
+
         # END CLEANUP
 
         async with create_task_group() as tg:
             self._tg = tg
             tg.start_soon(start_polling_node_metrics, resource_monitor_callback)
 
-            async def memory_monitor_callback(
-                memory_profile: MemoryPerformanceProfile,
-            ) -> None:
-                await self.event_publisher(
-                    NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
-                )
-
             tg.start_soon(start_polling_memory_metrics, memory_monitor_callback)
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)
-            # Proactively request a global event sync at startup to backfill any missed events.
-            tg.start_soon(self._request_full_event_log_once)
             # TODO: This is a little gross, but not too bad
             for msg in self._initial_connection_messages:
                 await self.event_publisher(
@@ -156,8 +152,8 @@ class Worker:
     async def _event_applier(self):
         with self.global_event_receiver as events:
             async for event in events:
-                self.event_buffer.ingest(event.origin_idx, event.tagged_event.c)
-                event_id = event.tagged_event.c.event_id
+                self.event_buffer.ingest(event.origin_idx, event.event)
+                event_id = event.event.event_id
                 if event_id in self.out_for_delivery:
                     del self.out_for_delivery[event_id]
 
@@ -201,8 +197,6 @@ class Worker:
                 async for event in self.execute_op(op):
                     await self.event_publisher(event)
             except Exception as e:
-                logger.error(f"Error executing op: {str(op)[:100]}")
-                logger.error(traceback.format_exc())
                 if isinstance(op, ExecuteTaskOp):
                     generator = self.fail_task(
                         e, runner_id=op.runner_id, task_id=op.task.task_id
@@ -227,7 +221,6 @@ class Worker:
     def _convert_connection_message_to_event(self, msg: ConnectionMessage):
         match msg.connection_type:
             case ConnectionMessageType.Connected:
-                logger.warning(f"!!! Node {self.node_id} connected to {msg.node_id}")
                 return TopologyEdgeCreated(
                     edge=Connection(
                         local_node_id=self.node_id,
@@ -239,7 +232,6 @@ class Worker:
                 )
 
             case ConnectionMessageType.Disconnected:
-                logger.warning(f"!!! Node {self.node_id} disconnected from {msg.node_id}")
                 return TopologyEdgeDeleted(
                     edge=Connection(
                         local_node_id=self.node_id,
@@ -262,26 +254,12 @@ class Worker:
                 await self.command_sender.send(
                     ForwarderCommand(
                         origin=self.node_id,
-                        tagged_command=TaggedCommand.from_(
-                            RequestEventLog(since_idx=self.event_buffer.next_idx_to_release)
-                        ),
+                        command=RequestEventLog(since_idx=0),
                     )
                 )
             finally:
                 if self._nack_cancel_scope is scope:
                     self._nack_cancel_scope = None
-
-    async def _request_full_event_log_once(self) -> None:
-        # Fire-and-forget one-time sync shortly after startup.
-        await anyio.sleep(0.1)
-        await self.command_sender.send(
-            ForwarderCommand(
-                origin=self.node_id,
-                tagged_command=TaggedCommand.from_(
-                    RequestEventLog(since_idx=self.event_buffer.next_idx_to_release)
-                ),
-            )
-        )
 
     async def _resend_out_for_delivery(self) -> None:
         # This can also be massively tightened, we should check events are at least a certain age before resending.
@@ -340,8 +318,13 @@ class Worker:
         assigned_runner.status = DownloadingRunnerStatus(
             download_progress=DownloadOngoing(
                 node_id=self.node_id,
-                download_progress=map_repo_download_progress_to_download_progress_data(initial_progress),
-            ),
+                download_progress=DownloadProgressData(
+                    total_bytes=Memory.from_bytes(initial_progress.total_bytes),
+                    downloaded_bytes=Memory.from_bytes(
+                        initial_progress.downloaded_bytes
+                    ),
+                ),
+            )
         )
         yield assigned_runner.status_update_event()
 
@@ -357,24 +340,15 @@ class Worker:
         download_task = asyncio.create_task(
             self.shard_downloader.ensure_shard(op.shard_metadata)
         )
-        logger.info(f"Started download for {op.shard_metadata.model_meta.model_id}")
 
         try:
             async for event in self._monitor_download_progress(
                 assigned_runner, download_progress_queue
             ):
                 yield event
-            # in case the download needs to finish up, wait up to 60 secs for it to finish
-            # this fixes a bug where the download gets cancelled before it can rename .partial file on finish
-            await asyncio.wait_for(download_task, timeout=15)
-        except Exception as e:
-            logger.error(f"Error monitoring download progress: {e}")
-            logger.error(traceback.format_exc())
-            raise e
         finally:
             if not download_task.done():
                 download_task.cancel()
-            
 
     async def _monitor_download_progress(
         self,
@@ -403,7 +377,12 @@ class Worker:
                     assigned_runner.status = DownloadingRunnerStatus(
                         download_progress=DownloadOngoing(
                             node_id=self.node_id,
-                            download_progress=map_repo_download_progress_to_download_progress_data(progress),
+                            download_progress=DownloadProgressData(
+                                total_bytes=Memory.from_bytes(progress.total_bytes),
+                                downloaded_bytes=Memory.from_bytes(
+                                    progress.downloaded_bytes
+                                ),
+                            ),
                         )
                     )
                     yield assigned_runner.status_update_event()
@@ -424,11 +403,9 @@ class Worker:
         )
 
         if initial_progress.status == "complete":
-            logger.info(f"Shard {op.shard_metadata.model_meta.model_id} already downloaded")
             async for event in self._handle_already_downloaded_shard(assigned_runner):
                 yield event
         else:
-            logger.info(f"Shard {op.shard_metadata.model_meta.model_id} not downloaded, starting download.")
             async for event in self._handle_shard_download_process(
                 assigned_runner, op, initial_progress
             ):
@@ -526,7 +503,7 @@ class Worker:
                     await queue.put(
                         TaskStateUpdated(
                             task_id=op.task.task_id,
-                            task_status=TaskStatus.RUNNING,
+                            task_status=TaskStatus.Running,
                         )
                     )
 
@@ -547,14 +524,14 @@ class Worker:
                     )
 
             if op.task.task_id in self.state.tasks:
-                self.state.tasks[op.task.task_id].task_status = TaskStatus.COMPLETE
+                self.state.tasks[op.task.task_id].task_status = TaskStatus.Complete
 
             if assigned_runner.shard_metadata.device_rank == 0:
                 # kind of hack - we don't want to wait for the round trip for this to complete
                 await queue.put(
                     TaskStateUpdated(
                         task_id=op.task.task_id,
-                        task_status=TaskStatus.COMPLETE,
+                        task_status=TaskStatus.Complete,
                     )
                 )
 
@@ -601,18 +578,18 @@ class Worker:
 
     async def execute_op(self, op: RunnerOp) -> AsyncGenerator[Event, None]:
         ## It would be great if we can get rid of this async for ... yield pattern.
-        match op.op_type:
-            case RunnerOpType.ASSIGN_RUNNER:
+        match op:
+            case AssignRunnerOp():
                 event_generator = self._execute_assign_op(op)
-            case RunnerOpType.UNASSIGN_RUNNER:
+            case UnassignRunnerOp():
                 event_generator = self._execute_unassign_op(op)
-            case RunnerOpType.RUNNER_UP:
+            case RunnerUpOp():
                 event_generator = self._execute_runner_up_op(op)
-            case RunnerOpType.RUNNER_DOWN:
+            case RunnerDownOp():
                 event_generator = self._execute_runner_down_op(op)
-            case RunnerOpType.RUNNER_FAILED:
+            case RunnerFailedOp():
                 event_generator = self._execute_runner_failed_op(op)
-            case RunnerOpType.CHAT_COMPLETION:
+            case ExecuteTaskOp():
                 event_generator = self._execute_task_op(op)
 
         async for event in event_generator:
@@ -643,7 +620,7 @@ class Worker:
         if runner_id in self.assigned_runners:
             yield TaskStateUpdated(
                 task_id=task_id,
-                task_status=TaskStatus.FAILED,
+                task_status=TaskStatus.Failed,
             )
 
             yield TaskFailed(
@@ -653,15 +630,21 @@ class Worker:
             async for event in self.fail_runner(e, runner_id):
                 yield event
 
+
+
+    # This function is re-entrant, take care!
     async def event_publisher(self, event: Event) -> None:
         fe = ForwarderEvent(
             origin_idx=self.local_event_index,
             origin=self.node_id,
-            tagged_event=TaggedEvent.from_(event),
+            event=event,
         )
+        logger.debug(
+            f"Worker published event {self.local_event_index}: {str(event)[:100]}"
+        )
+        self.local_event_index += 1
         await self.local_event_sender.send(fe)
         self.out_for_delivery[event.event_id] = fe
-        self.local_event_index += 1
 
 
 def event_relevant_to_worker(event: Event, worker: Worker):

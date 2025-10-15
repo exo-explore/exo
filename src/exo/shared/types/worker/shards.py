@@ -1,39 +1,26 @@
-from enum import Enum
-from typing import Annotated, Generic, Literal, Optional, TypeVar
+from pydantic import Field
 
-from pydantic import BaseModel, Field, TypeAdapter
-
-from exo.shared.types.common import NodeId
-from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.models import ModelMetadata
+from exo.utils.pydantic_ext import TaggedModel
 
 
-class PartitionStrategy(str, Enum):
-    pipeline = "pipeline"
-
-
-PartitionStrategyT = TypeVar(
-    "PartitionStrategyT", bound=PartitionStrategy, covariant=True
-)
-
-
-class BaseShardMetadata(BaseModel, Generic[PartitionStrategyT]):
+class BaseShardMetadata(TaggedModel):
     """
     Defines a specific shard of the model that is ready to be run on a device.
     Replaces previous `Shard` object.
     """
 
     model_meta: ModelMetadata
-    partition_strategy: PartitionStrategyT
     device_rank: int
     world_size: int
 
     # Error handling; equivalent to monkey-patch, but we can't monkey-patch runner.py
     # This is kinda annoying because it allocates memory in the ShardMetadata object. Can be rethought after Shanghai.
     immediate_exception: bool = False
-    should_timeout: Optional[float] = None
+    should_timeout: float | None = None
 
 
-class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline]]):
+class PipelineShardMetadata(BaseShardMetadata):
     """
     Pipeline parallelism shard meta.
 
@@ -41,12 +28,9 @@ class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline
     where start_layer is inclusive and end_layer is exclusive.
     """
 
-    partition_strategy: Literal[PartitionStrategy.pipeline] = Field(
-        default=PartitionStrategy.pipeline, frozen=True
-    )
-    start_layer: Annotated[int, Field(ge=0)]
-    end_layer: Annotated[int, Field(ge=0)]
-    n_layers: Annotated[int, Field(ge=0)]
+    start_layer: int = Field(ge=0)
+    end_layer: int = Field(ge=0)
+    n_layers: int = Field(ge=0)
 
     @property
     def is_first_layer(self) -> bool:
@@ -62,17 +46,4 @@ class PipelineShardMetadata(BaseShardMetadata[Literal[PartitionStrategy.pipeline
         )
 
 
-ShardMetadata = Annotated[
-    PipelineShardMetadata, Field(discriminator="partition_strategy")
-]
-ShardMetadataParser: TypeAdapter[ShardMetadata] = TypeAdapter(ShardMetadata)
-
-
-class ShardPlacement(BaseModel, Generic[PartitionStrategyT]):
-    """
-    A shard placement is the description of a model distributed across a set of nodes.
-    The Generic[PartitionStrategyT] enforces that the shard assignments all use the same partition strategy.
-    """
-
-    model_id: ModelId
-    shard_assignments: dict[NodeId, BaseShardMetadata[PartitionStrategyT]]
+ShardMetadata = PipelineShardMetadata

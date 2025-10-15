@@ -145,10 +145,10 @@ async def test_execute_task_op(
     assert isinstance(events[0].runner_status, RunningRunnerStatus)
 
     assert isinstance(events[1], TaskStateUpdated)
-    assert events[1].task_status == TaskStatus.RUNNING  # It tried to start.
+    assert events[1].task_status == TaskStatus.Running  # It tried to start.
 
     assert isinstance(events[-2], TaskStateUpdated)
-    assert events[-2].task_status == TaskStatus.COMPLETE  # It tried to start.
+    assert events[-2].task_status == TaskStatus.Complete  # It tried to start.
 
     assert isinstance(events[-1], RunnerStatusUpdated)
     assert isinstance(

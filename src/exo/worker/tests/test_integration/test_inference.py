@@ -17,7 +17,6 @@ from exo.shared.types.tasks import (
     Task,
     TaskId,
     TaskStatus,
-    TaskType,
 )
 from exo.shared.types.worker.common import InstanceId, RunnerId
 from exo.shared.types.worker.instances import (
@@ -57,7 +56,7 @@ async def test_runner_inference(
     async with create_task_group() as tg:
         tg.start_soon(worker.run)
         instance_value: Instance = instance(INSTANCE_1_ID, NODE_A, RUNNER_1_ID)
-        instance_value.instance_type = InstanceStatus.ACTIVE
+        instance_value.instance_type = InstanceStatus.Active
 
         task: Task = chat_completion_task(INSTANCE_1_ID, TASK_1_ID)
         await global_events.append_events(
@@ -120,7 +119,7 @@ async def test_2_runner_inference(
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(2),
         )
@@ -190,7 +189,7 @@ async def test_2_runner_multi_message(
 
         instance = Instance(
             instance_id=INSTANCE_1_ID,
-            instance_type=InstanceStatus.ACTIVE,
+            instance_type=InstanceStatus.Active,
             shard_assignments=shard_assignments,
             hosts=hosts(2),
         )
@@ -218,8 +217,7 @@ async def test_2_runner_multi_message(
             task_id=TASK_1_ID,
             command_id=CommandId(),
             instance_id=INSTANCE_1_ID,
-            task_type=TaskType.CHAT_COMPLETION,
-            task_status=TaskStatus.PENDING,
+            task_status=TaskStatus.Pending,
             task_params=completion_create_params,
         )
 

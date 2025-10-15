@@ -1,11 +1,11 @@
 from pydantic import PositiveInt
 
-from exo.shared.types.common import ID
+from exo.shared.types.common import Id
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
-class ModelId(ID):
+class ModelId(Id):
     pass
 
 

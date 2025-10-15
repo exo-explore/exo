@@ -23,13 +23,12 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceDeleted,
-    TaggedEvent,
     TaskCreated,
     TaskDeleted,
     TopologyEdgeDeleted,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus, TaskType
+from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus
 from exo.shared.types.worker.common import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import MultiSourceBuffer
@@ -90,11 +89,9 @@ class Master:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
-                    logger.info(
-                        f"Executing command: {forwarder_command.tagged_command.c}"
-                    )
+                    logger.info(f"Executing command: {forwarder_command.command}")
                     generated_events: list[Event] = []
-                    command = forwarder_command.tagged_command.c
+                    command = forwarder_command.command
                     match command:
                         case ChatCompletion():
                             instance_task_counts: dict[InstanceId, int] = {}
@@ -130,11 +127,10 @@ class Master:
                                 TaskCreated(
                                     task_id=task_id,
                                     task=ChatCompletionTask(
-                                        task_type=TaskType.CHAT_COMPLETION,
                                         task_id=task_id,
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
-                                        task_status=TaskStatus.PENDING,
+                                        task_status=TaskStatus.Pending,
                                         task_params=command.request_params,
                                     ),
                                 )
@@ -190,13 +186,14 @@ class Master:
             async for local_event in local_events:
                 self._multi_buffer.ingest(
                     local_event.origin_idx,
-                    local_event.tagged_event.c,
+                    local_event.event,
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
+
                     # TODO: SQL
                     self._event_log.append(event)
                     await self._send_event(indexed)
@@ -224,17 +221,18 @@ class Master:
                     ForwarderEvent(
                         origin=NodeId(f"master_{self.node_id}"),
                         origin_idx=local_index,
-                        tagged_event=TaggedEvent.from_(event),
+                        event=event,
                     )
                 )
                 local_index += 1
 
+    # This function is re-entrant, take care!
     async def _send_event(self, event: IndexedEvent):
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
             ForwarderEvent(
                 origin=self.node_id,
                 origin_idx=event.idx,
-                tagged_event=TaggedEvent.from_(event.event),
+                event=event.event,
             )
         )

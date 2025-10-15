@@ -88,7 +88,7 @@ def get_instance_placements_after_create(
     target_instances = dict(deepcopy(current_instances))
     target_instances[instance_id] = Instance(
         instance_id=instance_id,
-        instance_type=InstanceStatus.ACTIVE,
+        instance_type=InstanceStatus.Active,
         shard_assignments=shard_assignments,
         hosts=[
             Host(

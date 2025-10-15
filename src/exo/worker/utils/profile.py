@@ -99,13 +99,13 @@ async def start_polling_node_metrics(
                 system_info,
                 network_interfaces,
                 mac_friendly_name,
+                memory_profile,
             ) = await asyncio.gather(
                 get_mac_system_info_async(),
                 get_network_interface_info_async(),
                 get_mac_friendly_name_async(),
+                get_memory_profile_async(),
             )
-            # do the memory profile last to get a fresh reading to not conflict with the other memory profiling loop
-            memory_profile = await get_memory_profile_async()
 
             await callback(
                 NodePerformanceProfile(

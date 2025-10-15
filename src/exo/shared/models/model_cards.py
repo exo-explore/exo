@@ -15,21 +15,6 @@ class ModelCard(CamelCaseModel):
 
 
 MODEL_CARDS: dict[str, ModelCard] = {
-    # kimi k2
-    # "kimi-k2:4bit": ModelCard(
-    #     short_id="kimi-k2:4bit",
-    #     model_id="mlx-community/Kimi-K2-Instruct-4bit",
-    #     name="Kimi K2 (4-bit)",
-    #     description="""Kimi K2 is a state-of-the-art mixture-of-experts (MoE) language model with 32 billion activated parameters and 1 trillion total parameters. Trained with the Muon optimizer, Kimi K2 achieves exceptional performance across frontier knowledge, reasoning, and coding tasks while being meticulously optimized for agentic capabilities.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
-    #         pretty_name="Kimi K2 (4-bit)",
-    #         storage_size=Memory.from_kb(536870912),
-    #         n_layers=61,
-    #     ),
-    # ),
-
     # deepseek v3
     "deepseek-v3-0324:4bit": ModelCard(
         short_id="deepseek-v3-0324:4bit",
@@ -107,6 +92,19 @@ MODEL_CARDS: dict[str, ModelCard] = {
             model_id=ModelId("mlx-community/DeepSeek-R1-0528-8bit"),
             pretty_name="DeepSeek R1 671B (8-bit)",
             storage_size=Memory.from_bytes(754998771712),
+            n_layers=61,
+        ),
+    ),
+    "kimi-k2-instruct-4bit": ModelCard(
+        short_id="kimi-k2-instruct-4bit",
+        model_id="mlx-community/Kimi-K2-Instruct-4bit",
+        name="Kimi K2 Instruct (4-bit)",
+        description="""Kimi K2 is a large language model trained on the Kimi K2 dataset.""",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
+            pretty_name="Kimi K2 Instruct (4-bit)",
+            storage_size=Memory.from_bytes(577597603840),
             n_layers=61,
         ),
     ),

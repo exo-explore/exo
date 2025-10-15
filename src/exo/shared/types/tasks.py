@@ -1,30 +1,25 @@
 from enum import Enum
-from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from exo.shared.types.api import ChatCompletionTaskParams
-from exo.shared.types.common import ID, CommandId
+from exo.shared.types.common import CommandId, Id
 from exo.shared.types.worker.common import InstanceId
+from exo.utils.pydantic_ext import TaggedModel
 
 
-class TaskId(ID):
+class TaskId(Id):
     pass
-
-
-class TaskType(str, Enum):
-    CHAT_COMPLETION = "CHAT_COMPLETION"
-
+    
 
 class TaskStatus(str, Enum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETE = "COMPLETE"
-    FAILED = "FAILED"
+    Pending = "Pending"
+    Running = "Running"
+    Complete = "Complete"
+    Failed = "Failed"
 
 
-class ChatCompletionTask(BaseModel):
-    task_type: Literal[TaskType.CHAT_COMPLETION] = TaskType.CHAT_COMPLETION
+class ChatCompletionTask(TaggedModel):
     task_id: TaskId
     command_id: CommandId
     instance_id: InstanceId
@@ -35,4 +30,4 @@ class ChatCompletionTask(BaseModel):
     error_message: str | None = Field(default=None)
 
 
-Task = Annotated[ChatCompletionTask, Field(discriminator="task_type")]
+Task = ChatCompletionTask

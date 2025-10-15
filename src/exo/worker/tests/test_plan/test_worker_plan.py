@@ -6,7 +6,6 @@ from exo.shared.types.tasks import (
     ChatCompletionTask,
     ChatCompletionTaskParams,
     TaskStatus,
-    TaskType,
 )
 from exo.shared.types.worker.common import WorkerStatus
 from exo.shared.types.worker.downloads import (
@@ -85,7 +84,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": False,
                 }
             ],
-            instance_status=InstanceStatus.INACTIVE,
+            instance_status=InstanceStatus.Inactive,
             expected_op=UnassignRunnerOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -99,7 +98,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 }
             ],
-            instance_status=InstanceStatus.INACTIVE,
+            instance_status=InstanceStatus.Inactive,
             expected_op=None,
         ),
         PlanTestCase(
@@ -110,7 +109,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     INSTANCE_1_ID: [(RUNNER_1_ID, NODE_A, 0, InactiveRunnerStatus())]
                 },
                 model_id=MODEL_A_ID,
-                instance_status=InstanceStatus.ACTIVE,  # Either active or inactive should yield the same.
+                instance_status=InstanceStatus.Active,  # Either active or inactive should yield the same.
             ),
             expected_op=AssignRunnerOp(
                 instance_id=INSTANCE_1_ID,
@@ -153,7 +152,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=RunnerUpOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -180,11 +179,11 @@ def _get_test_cases() -> list[PlanTestCase]:
                 {
                     "task_id": TASK_1_ID,
                     "instance_id": INSTANCE_1_ID,
-                    "status": TaskStatus.PENDING,
+                    "status": TaskStatus.Pending,
                     "messages": [{"role": "user", "content": "Hello, world!"}],
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=None,
         ),
         make_test_case(
@@ -209,11 +208,11 @@ def _get_test_cases() -> list[PlanTestCase]:
                 {
                     "task_id": TASK_1_ID,
                     "instance_id": INSTANCE_1_ID,
-                    "status": TaskStatus.PENDING,
+                    "status": TaskStatus.Pending,
                     "messages": [{"role": "user", "content": "Hello, world!"}],
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=RunnerUpOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -227,7 +226,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 }
             ],
-            instance_status=InstanceStatus.INACTIVE,
+            instance_status=InstanceStatus.Inactive,
             expected_op=RunnerDownOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -241,7 +240,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 }
             ],
-            instance_status=InstanceStatus.INACTIVE,
+            instance_status=InstanceStatus.Inactive,
             expected_op=RunnerDownOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -259,19 +258,18 @@ def _get_test_cases() -> list[PlanTestCase]:
                 {
                     "task_id": TASK_1_ID,
                     "instance_id": INSTANCE_1_ID,
-                    "status": TaskStatus.PENDING,
+                    "status": TaskStatus.Pending,
                     "messages": [{"role": "user", "content": "Hello, world!"}],
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=ExecuteTaskOp(
                 runner_id=RUNNER_1_ID,
                 task=ChatCompletionTask(
                     task_id=TASK_1_ID,
                     command_id=COMMAND_1_ID,
                     instance_id=INSTANCE_1_ID,
-                    task_type=TaskType.CHAT_COMPLETION,
-                    task_status=TaskStatus.PENDING,
+                    task_status=TaskStatus.Pending,
                     task_params=ChatCompletionTaskParams(
                         model=str(MODEL_A_ID),
                         messages=[
@@ -304,11 +302,11 @@ def _get_test_cases() -> list[PlanTestCase]:
                 {
                     "task_id": TASK_1_ID,
                     "instance_id": INSTANCE_1_ID,
-                    "status": TaskStatus.PENDING,
+                    "status": TaskStatus.Pending,
                     "messages": [{"role": "user", "content": "Hello, world!"}],
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=None,
         ),
         make_test_case(
@@ -333,25 +331,24 @@ def _get_test_cases() -> list[PlanTestCase]:
                 {
                     "task_id": TASK_1_ID,
                     "instance_id": INSTANCE_1_ID,
-                    "status": TaskStatus.PENDING,
+                    "status": TaskStatus.Pending,
                     "messages": [{"role": "user", "content": "Hello, world!"}],
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=ExecuteTaskOp(
                 runner_id=RUNNER_1_ID,
                 task=ChatCompletionTask(
                     task_id=TASK_1_ID,
                     command_id=COMMAND_1_ID,
                     instance_id=INSTANCE_1_ID,
-                    task_type=TaskType.CHAT_COMPLETION,
                     task_params=ChatCompletionTaskParams(
                         model=str(MODEL_A_ID),
                         messages=[
                             ChatCompletionMessage(role="user", content="Hello, world!")
                         ],
                     ),
-                    task_status=TaskStatus.PENDING,
+                    task_status=TaskStatus.Pending,
                 ),
             ),
         ),
@@ -377,25 +374,24 @@ def _get_test_cases() -> list[PlanTestCase]:
                 {
                     "task_id": TASK_1_ID,
                     "instance_id": INSTANCE_1_ID,
-                    "status": TaskStatus.PENDING,
+                    "status": TaskStatus.Pending,
                     "messages": [{"role": "user", "content": "Hello, world!"}],
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=ExecuteTaskOp(
                 runner_id=RUNNER_1_ID,
                 task=ChatCompletionTask(
                     task_id=TASK_1_ID,
                     command_id=COMMAND_1_ID,
                     instance_id=INSTANCE_1_ID,
-                    task_type=TaskType.CHAT_COMPLETION,
                     task_params=ChatCompletionTaskParams(
                         model=str(MODEL_A_ID),
                         messages=[
                             ChatCompletionMessage(role="user", content="Hello, world!")
                         ],
                     ),
-                    task_status=TaskStatus.PENDING,
+                    task_status=TaskStatus.Pending,
                 ),
             ),
         ),
@@ -410,7 +406,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 }
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=RunnerDownOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -431,7 +427,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 },
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=RunnerDownOp(runner_id=RUNNER_1_ID),
         ),
         make_test_case(
@@ -452,7 +448,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 },
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=None,
         ),
         make_test_case(
@@ -473,7 +469,7 @@ def _get_test_cases() -> list[PlanTestCase]:
                     "downloaded": True,
                 },
             ],
-            instance_status=InstanceStatus.ACTIVE,
+            instance_status=InstanceStatus.Active,
             expected_op=RunnerDownOp(runner_id=RUNNER_1_ID),
         ),
     ]

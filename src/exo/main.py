@@ -19,8 +19,7 @@ from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
-from exo.utils.browser import open_url_in_browser_when_ready
-from exo.utils.chainlit_ui import start_chainlit, chainlit_cleanup
+
 
 # TODO: Entrypoint refactor
 # I marked this as a dataclass as I want trivial constructors.
@@ -156,27 +155,17 @@ class Node:
                     if self.api:
                         self.api.reset()
 
+
 def main():
     args = Args.parse()
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
-    
-    node = anyio.run(Node.create, args)
-    
-    chainlit_proc = (
-        start_chainlit(args.chainlit_port, args.chainlit_host, args.headless)
-        if args.with_chainlit
-        else None
-    )
-    if args.spawn_api and not args.headless:
-        open_url_in_browser_when_ready(f"http://localhost:{args.api_port}")
 
-    try:
-        anyio.run(node.run)
-    finally:
-        chainlit_cleanup(chainlit_proc)
-        logger_cleanup()
+    node = anyio.run(Node.create, args)
+    anyio.run(node.run)
+
+    logger_cleanup()
 
 
 class Args(CamelCaseModel):
@@ -185,11 +174,6 @@ class Args(CamelCaseModel):
     spawn_api: bool = False
     api_port: PositiveInt = 8000
     tb_only: bool = False
-    # Chainlit options
-    with_chainlit: bool = True
-    chainlit_port: PositiveInt = 8001
-    chainlit_host: str = "127.0.0.1"
-    headless: bool = False
 
     @classmethod
     def parse(cls) -> Self:
@@ -231,30 +215,6 @@ class Args(CamelCaseModel):
             "--tb-only",
             action="store_true",
             dest="tb_only",
-        )
-        parser.add_argument(
-            "--with-chainlit",
-            action="store_true",
-            dest="with_chainlit",
-            default=True,
-        )
-        parser.add_argument(
-            "--chainlit-port",
-            type=int,
-            dest="chainlit_port",
-            default=8001,
-        )
-        parser.add_argument(
-            "--chainlit-host",
-            type=str,
-            dest="chainlit_host",
-            default="127.0.0.1",
-        )
-        parser.add_argument(
-            "--headless",
-            action="store_true",
-            dest="headless",
-            help="Prevents the app from opening in the browser."
         )
 
         args = parser.parse_args()

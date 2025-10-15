@@ -9,7 +9,6 @@ from exo.shared.types.worker.commands_runner import (
     PrintResponse,
     RunnerMessage,
     RunnerResponse,
-    RunnerResponseType,
 )
 
 ### Utils - Runner Prints
@@ -17,7 +16,6 @@ from exo.shared.types.worker.commands_runner import (
 
 def runner_print(text: str) -> None:
     obj = PrintResponse(
-        type=RunnerResponseType.PrintResponse,
         text=text,
     )
 
@@ -27,7 +25,6 @@ def runner_print(text: str) -> None:
 
 def runner_write_error(error: Exception) -> None:
     error_response: ErrorResponse = ErrorResponse(
-        type=RunnerResponseType.ErrorResponse,
         error_type=type(error).__name__,
         error_message=str(error),
         traceback=traceback.format_exc(),

@@ -6,7 +6,6 @@ from typing import AsyncIterator, Callable
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.shards import (
-    PartitionStrategy,
     PipelineShardMetadata,
     ShardMetadata,
 )
@@ -57,7 +56,6 @@ class ShardDownloader(ABC):
                         storage_size=Memory.from_bytes(0),
                         n_layers=1,
                     ),
-                    partition_strategy=PartitionStrategy.pipeline,
                     device_rank=0,
                     world_size=1,
                     start_layer=0,
@@ -107,7 +105,6 @@ class NoopShardDownloader(ShardDownloader):
                         storage_size=Memory.from_bytes(0),
                         n_layers=1,
                     ),
-                    partition_strategy=PartitionStrategy.pipeline,
                     device_rank=0,
                     world_size=1,
                     start_layer=0,

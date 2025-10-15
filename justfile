@@ -15,3 +15,8 @@ sync:
 
 sync-clean:
     uv sync --all-packages --force-reinstall --no-cache
+
+clean:
+    rm -rf **/__pycache__
+    rm -rf rust/target
+    rm -rf .venv

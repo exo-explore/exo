@@ -2,17 +2,10 @@ import asyncio
 
 import pytest
 
-from exo.master.tests.api_utils_test import (
-    ChatMessage,
-    stream_chatgpt_response,
-    with_master_main,
-)
 
-
-@with_master_main
 @pytest.mark.asyncio
 async def test_master_api_multiple_response_sequential() -> None:
-    # TODO: This hangs at the moment it seems.
+    # TODO
     return
     messages = [ChatMessage(role="user", content="Hello, who are you?")]
     token_count = 0

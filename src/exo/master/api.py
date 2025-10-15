@@ -33,7 +33,6 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    TaggedCommand,
     # TODO: SpinUpInstance
     TaskFinished,
 )
@@ -306,9 +305,7 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for event in events:
-                if isinstance(event, ChunkGenerated):
-                    logger.info(f"API received ChunkGenerated: {str(event)[:100]}")
-                self.event_buffer.ingest(event.origin_idx, event.tagged_event.c)
+                self.event_buffer.ingest(event.origin_idx, event.event)
                 for idx, event in self.event_buffer.drain_indexed():
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
                     if (
@@ -319,7 +316,5 @@ class API:
 
     async def _send(self, command: Command):
         await self.command_sender.send(
-            ForwarderCommand(
-                origin=self.node_id, tagged_command=TaggedCommand.from_(command)
-            )
+            ForwarderCommand(origin=self.node_id, command=command)
         )

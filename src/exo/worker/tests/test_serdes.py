@@ -6,7 +6,7 @@ from exo.shared.types.common import Host
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.commands_runner import (
     ChatTaskMessage,
-    RunnerMessageTypeAdapter,
+    RunnerMessage,
     SetupMessage,
 )
 from exo.shared.types.worker.common import InstanceId
@@ -30,7 +30,7 @@ def test_supervisor_setup_message_serdes(
         model_shard_meta=pipeline_shard_meta(1, 0),
         hosts=hosts(1),
     )
-    assert_equal_serdes(setup_message, RunnerMessageTypeAdapter)
+    assert_equal_serdes(setup_message, TypeAdapter(RunnerMessage))
 
 
 def test_supervisor_task_message_serdes(
@@ -40,4 +40,4 @@ def test_supervisor_task_message_serdes(
     task_message = ChatTaskMessage(
         task_data=task.task_params,
     )
-    assert_equal_serdes(task_message, RunnerMessageTypeAdapter)
+    assert_equal_serdes(task_message, TypeAdapter(RunnerMessage))
