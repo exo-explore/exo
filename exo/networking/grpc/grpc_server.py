@@ -27,13 +27,13 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
 
   async def start(self) -> None:
     self.server = grpc.aio.server(
-      futures.ThreadPoolExecutor(max_workers=32),
+      futures.ThreadPoolExecutor(max_workers=128),  # Increased from 32 to handle concurrent streams
       options=[
         ("grpc.max_metadata_size", 32*1024*1024),
-        ("grpc.max_send_message_length", 256*1024*1024),
-        ("grpc.max_receive_message_length", 256*1024*1024),
-        ("grpc.keepalive_time_ms", 10000),
-        ("grpc.keepalive_timeout_ms", 5000),
+        ("grpc.max_send_message_length", 512*1024*1024),  # Increased from 256MB to 512MB for large tensors
+        ("grpc.max_receive_message_length", 512*1024*1024),  # Increased from 256MB to 512MB
+        ("grpc.keepalive_time_ms", 30000),  # Increased from 10s to 30s for long inference (8-15s per node)
+        ("grpc.keepalive_timeout_ms", 10000),  # Increased from 5s to 10s
         ("grpc.http2.max_pings_without_data", 0),
         ("grpc.http2.min_time_between_pings_ms", 10000),
         ("grpc.http2.min_ping_interval_without_data_ms", 5000),
@@ -41,7 +41,7 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
         ("grpc.tcp_nodelay", 1),
         ("grpc.optimization_target", "throughput"),
         ("grpc.keepalive_permit_without_calls", 1),
-        ("grpc.http2.max_concurrent_streams", 0),  # Unlimited concurrent streams
+        ("grpc.http2.max_concurrent_streams", 128),  # Aligned with thread pool size
       ],
     )
     node_service_pb2_grpc.add_NodeServiceServicer_to_server(self, self.server)
@@ -116,7 +116,8 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
   async def CollectTopology(self, request, context):
     max_depth = request.max_depth
     visited = set(request.visited)
-    topology = self.node.current_topology
+    # FIXED: Recursively collect topology instead of returning stale cache
+    topology = await self.node.collect_topology(visited, max_depth=max_depth)
     nodes = {
       node_id:
         node_service_pb2.DeviceCapabilities(
