@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 from exo.inference.tinygrad.models.llama import Transformer, TransformerShard, convert_from_huggingface, fix_bf16, sample_logits
+from exo.inference.tinygrad.models.qwen import Qwen3MoETransformer, Qwen3MoETransformerShard, convert_from_huggingface_qwen
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import safe_save, safe_load, get_state_dict, load_state_dict
@@ -39,27 +40,110 @@ MODEL_PARAMS = {
 }
 
 
-def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
-  # build model
-  linear = nn.Linear
-  model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=8192, jit=True, shard=shard)
+def load_model_config(model_path: Path) -> Optional[dict]:
+  """
+  Load and parse config.json if it exists
 
-  # load weights
-  if model_path.is_dir():
-    if (model_path/"model.safetensors.index.json").exists(): weights = load(str(model_path/"model.safetensors.index.json"), shard)
-    elif (model_path/"model.safetensors").exists(): weights = load(str(model_path/"model.safetensors"), shard)
-    else: weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
+  Args:
+    model_path: Path to model directory or file
+
+  Returns:
+    Parsed config dict or None if config doesn't exist
+  """
+  config_file = model_path / "config.json" if model_path.is_dir() else model_path.parent / "config.json"
+  if config_file.exists():
+    with open(config_file, 'r') as f:
+      return json.load(f)
+  return None
+
+
+def detect_architecture(config: Optional[dict]) -> str:
+  """
+  Detect model architecture from config
+
+  Args:
+    config: Parsed config.json dict
+
+  Returns:
+    Architecture string: "qwen3_moe" or "llama" (default)
+  """
+  if config is None:
+    return "llama"  # default fallback
+
+  arch = config.get('architectures', [])
+  model_type = config.get('model_type', '')
+
+  if 'Qwen3MoeForCausalLM' in arch or model_type == 'qwen3_moe':
+    return "qwen3_moe"
+  elif 'LlamaForCausalLM' in arch or model_type == 'llama':
+    return "llama"
   else:
-    weights = load(str(model_path), shard)
-  weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
-  weights = fix_bf16(weights)
+    return "llama"  # fallback to llama for unknown architectures
 
-  with Context(BEAM=0):
-    # replace weights in model
-    load_state_dict(model, weights, strict=False, consume=False)  # consume=True
-    model = TransformerShard(shard, model)
 
-  return model
+def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=None):
+  # Try dynamic config first
+  config = load_model_config(model_path)
+  architecture = detect_architecture(config)
+
+  if architecture == "qwen3_moe" and config:
+    # Build Qwen3 MoE model
+    args = {
+      "dim": config['hidden_size'],
+      "n_heads": config['num_attention_heads'],
+      "n_kv_heads": config['num_key_value_heads'],
+      "n_layers": config['num_hidden_layers'],
+      "num_experts": config['num_experts'],
+      "num_experts_per_tok": config['num_experts_per_tok'],
+      "moe_intermediate_size": config['moe_intermediate_size'],
+      "vocab_size": config['vocab_size'],
+      "norm_eps": config.get('rms_norm_eps', 1e-6),
+      "rope_theta": config.get('rope_theta', 10000000),
+      "hidden_dim": config.get('intermediate_size', 8192),
+      "use_qk_norm": config.get('use_qk_norm', True)
+    }
+
+    model = Qwen3MoETransformer(**args, linear=nn.Linear, max_context=2048, jit=True, shard=shard)
+
+    # Load weights
+    if model_path.is_dir():
+      if (model_path/"model.safetensors.index.json").exists():
+        weights = load(str(model_path/"model.safetensors.index.json"), shard)
+      elif (model_path/"model.safetensors").exists():
+        weights = load(str(model_path/"model.safetensors"), shard)
+    else:
+      weights = load(str(model_path), shard)
+
+    weights = convert_from_huggingface_qwen(weights, model, args["n_heads"], args["n_kv_heads"])
+    weights = fix_bf16(weights)
+
+    with Context(BEAM=0):
+      load_state_dict(model, weights, strict=False, consume=False)
+      model = Qwen3MoETransformerShard(shard, model)
+
+    return model
+
+  else:
+    # Existing LLaMA logic (unchanged)
+    linear = nn.Linear
+    model = Transformer(**MODEL_PARAMS[model_size]["args"], linear=linear, max_context=2048, jit=True, shard=shard)
+
+    # load weights
+    if model_path.is_dir():
+      if (model_path/"model.safetensors.index.json").exists(): weights = load(str(model_path/"model.safetensors.index.json"), shard)
+      elif (model_path/"model.safetensors").exists(): weights = load(str(model_path/"model.safetensors"), shard)
+      else: weights = concat_weights([load(str(model_path/f"consolidated.{i:02d}.pth"), shard) for i in range(MODEL_PARAMS[model_size]["files"])], device[0] if isinstance(device, tuple) else device)
+    else:
+      weights = load(str(model_path), shard)
+    weights = convert_from_huggingface(weights, model, MODEL_PARAMS[model_size]["args"]["n_heads"], MODEL_PARAMS[model_size]["args"]["n_kv_heads"])
+    weights = fix_bf16(weights)
+
+    with Context(BEAM=0):
+      # replace weights in model
+      load_state_dict(model, weights, strict=False, consume=False)  # consume=True
+      model = TransformerShard(shard, model)
+
+    return model
 
 _executor = ThreadPoolExecutor(max_workers=1) # singleton so tinygrad always runs on the same thread
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
@@ -148,8 +232,18 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
 
     if self.shard != shard:
       loop = asyncio.get_running_loop()
-      parameters = "1B" if "1b" in shard.model_id.lower() else "3B" if "3b" in shard.model_id.lower() else "8B" if "8b" in shard.model_id.lower() else "70B"
-      model_shard = await loop.run_in_executor(self.executor, build_transformer, model_path, shard, parameters)
+
+      # Try dynamic config first
+      config = load_model_config(model_path)
+      architecture = detect_architecture(config)
+
+      if architecture == "qwen3_moe":
+        # No model_size needed for Qwen3 (uses config)
+        model_shard = await loop.run_in_executor(self.executor, build_transformer, model_path, shard, None)
+      else:
+        # Existing LLaMA size detection
+        parameters = "1B" if "1b" in shard.model_id.lower() else "3B" if "3b" in shard.model_id.lower() else "8B" if "8b" in shard.model_id.lower() else "70B"
+        model_shard = await loop.run_in_executor(self.executor, build_transformer, model_path, shard, parameters)
 
       tokenizer_path = str((model_path if model_path.is_dir() else model_path.parent))
       self.tokenizer = await resolve_tokenizer(tokenizer_path)
