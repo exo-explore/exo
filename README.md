@@ -15,7 +15,6 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 </h3>
 
 [![GitHub Repo stars](https://img.shields.io/github/stars/exo-explore/exo)](https://github.com/exo-explore/exo/stargazers)
-[![Tests](https://dl.circleci.com/status-badge/img/circleci/TrkofJDoGzdQAeL6yVHKsg/4i5hJuafuwZYZQxbRAWS71/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/circleci/TrkofJDoGzdQAeL6yVHKsg/4i5hJuafuwZYZQxbRAWS71/tree/main)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 <a href="https://trendshift.io/repositories/11849" target="_blank"><img src="https://trendshift.io/api/badge/repositories/11849" alt="exo-explore%2Fexo | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
@@ -24,18 +23,23 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
+> **A New Chapter for EXO**
+>
+> EXO started out of a desire to run research experiments on LLMs using hardware we already owned. It has since evolved far beyond its original release, demonstrating what's possible when large-scale AI workloads run efficiently across networks of consumer-grade hardware.
+>
+> We're now focusing entirely on **EXO 1.0**, the next major evolution of EXO.
+>
+> This version will remain available for reference, but all new development and updates are going into EXO 1.0.
+>
+> **EXO 1.0 → soon™.**
+
+---
+
 Unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, NVIDIA, Raspberry Pi, pretty much any device!
 
 <div align="center">
-  <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
-  <h2>Interested in running exo in your business? <a href="mailto:hello@exolabs.net">Contact us</a> to discuss.</h2>
+  <h2>Update: exo is hiring. See <a href="https://team.exolabs.net">here</a> for more details.</h2>
 </div>
-
-## Get Involved
-
-exo is **experimental** software. Expect bugs early on. Create issues so they can be fixed. The [exo labs](https://x.com/exolabs) team will strive to resolve issues quickly.
-
-We also welcome contributions from the community. We have a list of bounties in [this sheet](https://docs.google.com/spreadsheets/d/1cTCpTIp48UnnIvHeLEUNg1iMy_Q6lRybgECSFCoVJpE/edit?usp=sharing).
 
 ## Features
 
