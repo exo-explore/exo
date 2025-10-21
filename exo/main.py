@@ -96,6 +96,16 @@ print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
 
+print("\n" + "="*80)
+print("EXO")
+print("="*80)
+print("\nEXO started out of a desire to run research experiments on large language")
+print("models using the hardware we already owned.")
+print("\nWhat began here is becoming part of something much larger.")
+print("\nsoon™")
+print("\n- The EXO Team")
+print("="*80 + "\n")
+
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
