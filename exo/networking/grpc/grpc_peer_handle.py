@@ -3,6 +3,8 @@ import numpy as np
 import asyncio
 from typing import Optional, Tuple, List
 
+from exo.inference.generation_options import GenerationOptions
+
 from . import node_service_pb2
 from . import node_service_pb2_grpc
 
@@ -97,7 +99,9 @@ class GRPCPeerHandle(PeerHandle):
         traceback.print_exc()
       return False
 
-  async def send_prompt(self, shard: Shard, prompt: str, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
+  async def send_prompt(self, shard: Shard, prompt: str, inference_state: Optional[dict] = None,
+                        request_id: Optional[str] = None, generation_options: Optional[GenerationOptions] = None) -> \
+  Optional[np.array]:
     await self._ensure_connected()
     request = node_service_pb2.PromptRequest(
       prompt=prompt,
@@ -108,11 +112,14 @@ class GRPCPeerHandle(PeerHandle):
         n_layers=shard.n_layers,
       ),
       request_id=request_id,
-      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
+      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state),
+      generation_options=None if generation_options is None else self.serialize_generation_options(generation_options)
     )
     await self.stub.SendPrompt(request)
 
-  async def send_tensor(self, shard: Shard, tensor: np.ndarray, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
+  async def send_tensor(self, shard: Shard, tensor: np.ndarray, inference_state: Optional[dict] = None,
+                        request_id: Optional[str] = None, generation_options: Optional[GenerationOptions] = None) -> \
+  Optional[np.array]:
     await self._ensure_connected()
     request = node_service_pb2.TensorRequest(
       shard=node_service_pb2.Shard(
@@ -123,7 +130,8 @@ class GRPCPeerHandle(PeerHandle):
       ),
       tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
       request_id=request_id,
-      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
+      inference_state=None if inference_state is None else self.serialize_inference_state(inference_state),
+      generation_options=None if generation_options is None else self.serialize_generation_options(generation_options)
     )
     response = await self.stub.SendTensor(request)
 
@@ -132,7 +140,8 @@ class GRPCPeerHandle(PeerHandle):
 
     return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
-  async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, train: bool, request_id: Optional[str] = None) -> Optional[np.array]:
+  async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, train: bool,
+                         request_id: Optional[str] = None) -> Optional[np.array]:
     await self._ensure_connected()
     request = node_service_pb2.ExampleRequest(
       shard=node_service_pb2.Shard(
@@ -150,7 +159,8 @@ class GRPCPeerHandle(PeerHandle):
     response = await self.stub.SendExample(request)
     loss = response.loss
     if train and not shard.is_first_layer():
-      grads = np.frombuffer(response.grads.tensor_data, dtype=np.dtype(response.grads.dtype)).reshape(response.grads.shape)
+      grads = np.frombuffer(response.grads.tensor_data, dtype=np.dtype(response.grads.dtype)).reshape(
+        response.grads.shape)
       return loss, grads
     else:
       return loss
@@ -181,7 +191,8 @@ class GRPCPeerHandle(PeerHandle):
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
       device_capabilities = DeviceCapabilities(
-        model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory, flops=DeviceFlops(fp16=capabilities.flops.fp16, fp32=capabilities.flops.fp32, int8=capabilities.flops.int8)
+        model=capabilities.model, chip=capabilities.chip, memory=capabilities.memory,
+        flops=DeviceFlops(fp16=capabilities.flops.fp16, fp32=capabilities.flops.fp32, int8=capabilities.flops.int8)
       )
       topology.update_node(node_id, device_capabilities)
     for node_id, peer_connections in response.peer_graph.items():
@@ -189,13 +200,15 @@ class GRPCPeerHandle(PeerHandle):
         topology.add_edge(node_id, conn.to_id, conn.description)
     return topology
 
-  async def send_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
+  async def send_result(self, request_id: str, result: List[int], is_finished: bool,
+                        finish_reason: Optional[str] = None) -> None:
     await self._ensure_connected()
     tensor = None
     if isinstance(result, np.ndarray):
       tensor = node_service_pb2.Tensor(tensor_data=result.tobytes(), shape=result.shape, dtype=str(result.dtype))
       result = []
-    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, tensor=tensor, is_finished=is_finished)
+    request = node_service_pb2.SendResultRequest(request_id=request_id, result=result, tensor=tensor,
+                                                 is_finished=is_finished, finish_reason=finish_reason)
     await self.stub.SendResult(request)
 
   async def send_opaque_status(self, request_id: str, status: str) -> None:
@@ -209,13 +222,15 @@ class GRPCPeerHandle(PeerHandle):
     for k, v in inference_state.items():
       if isinstance(v, mx.array):
         np_array = np.array(v)
-        tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
+        tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape),
+                                              dtype=str(np_array.dtype))
         proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
       elif isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
         tensor_list = node_service_pb2.TensorList()
         for tensor in v:
           np_array = np.array(tensor)
-          tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
+          tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape),
+                                                dtype=str(np_array.dtype))
           tensor_list.tensors.append(tensor_data)
         proto_inference_state.tensor_list_data[k].CopyFrom(tensor_list)
       else:
@@ -224,3 +239,10 @@ class GRPCPeerHandle(PeerHandle):
     if other_data:
       proto_inference_state.other_data_json = json.dumps(other_data)
     return proto_inference_state
+
+  def serialize_generation_options(self, generation_options: GenerationOptions) -> node_service_pb2.GenerationOptions:
+    return node_service_pb2.GenerationOptions(
+      max_completion_tokens=generation_options.max_completion_tokens,
+      stop=generation_options.stop,
+      grammar_definition=generation_options.grammar_definition
+    )
