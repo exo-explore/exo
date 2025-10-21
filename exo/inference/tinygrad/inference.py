@@ -7,6 +7,7 @@ from exo.inference.tokenizers import resolve_tokenizer
 from tinygrad.nn.state import safe_save, safe_load, get_state_dict, load_state_dict
 from tinygrad import Tensor, nn, Context, TinyJit
 from exo.inference.inference_engine import InferenceEngine
+from exo.helpers import DEBUG
 import numpy as np
 from exo.inference.tinygrad.tinygrad_helpers import concat_weights, load
 from exo.download.shard_download import ShardDownloader
@@ -139,10 +140,32 @@ class TinygradDynamicShardInferenceEngine(InferenceEngine):
     score = await asyncio.get_running_loop().run_in_executor(self.executor, lambda: self.session['jit'](Tensor(inputs), targets, lengths).realize())
     
     return loss.numpy(), loss.numpy()
-
   async def ensure_shard(self, shard: Shard):
     if self.shard == shard:
       return
+
+    # Apply GPU memory management recommendations for TinyGrad
+    try:
+      from exo.inference.memory_manager import should_prioritize_gpu, get_gpu_optimization_config
+      
+      if should_prioritize_gpu():
+        gpu_config = get_gpu_optimization_config()
+        if DEBUG >= 1:
+          print(f"TinyGrad GPU optimization config: {gpu_config}")
+          
+        # TinyGrad automatically uses GPU when available
+        if gpu_config.get('cuda_gpu', False):
+          if DEBUG >= 1:
+            print("Using CUDA GPU acceleration for TinyGrad inference")
+        elif gpu_config.get('metal_gpu', False):
+          if DEBUG >= 1:
+            print("Using Metal GPU acceleration for TinyGrad inference")
+      else:
+        if DEBUG >= 1:
+          print("Memory manager recommends CPU fallback for TinyGrad (though TinyGrad will still use GPU if available)")
+    except (ImportError, RuntimeError) as e:
+      if DEBUG >= 1:
+        print(f"Memory manager not available for TinyGrad optimization: {e}")
 
     model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
 

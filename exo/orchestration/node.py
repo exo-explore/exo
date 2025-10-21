@@ -54,9 +54,13 @@ class Node:
     self.node_download_progress: Dict[str, RepoProgressEvent] = {}
     self.topology_inference_engines_pool: List[List[str]] = []
     self.outstanding_requests = {}
-
   async def start(self, wait_for_peers: int = 0) -> None:
     self.device_capabilities = await device_capabilities()
+    
+    # Initialize GPU memory manager with device capabilities
+    from exo.inference.memory_manager import initialize_memory_manager
+    initialize_memory_manager(self.device_capabilities)
+    
     await self.server.start()
     await self.discovery.start()
     await self.update_peers(wait_for_peers)
@@ -67,7 +71,6 @@ class Node:
   async def stop(self) -> None:
     await self.discovery.stop()
     await self.server.stop()
-
   def on_node_status(self, request_id, opaque_status):
     try:
       status_data = json.loads(opaque_status)
@@ -82,6 +85,17 @@ class Node:
         elif status_data.get("status", "").startswith("end_"):
           if status_data.get("node_id") == self.current_topology.active_node_id:
             self.current_topology.active_node_id = None
+      elif status_type == "shard_loading":
+        # Track shard loading across nodes
+        node_id = status_data.get("node_id")
+        model_id = status_data.get("model_id")
+        start_layer = status_data.get("start_layer")
+        end_layer = status_data.get("end_layer")
+        total_layers = status_data.get("total_layers")
+        loading_status = status_data.get("status", "loading")
+        
+        if DEBUG >= 1:
+          print(f"Node {node_id} is {loading_status} model {model_id} layers {start_layer}-{end_layer}/{total_layers}")
 
       download_progress = None
       if status_type == "download_progress":
@@ -94,14 +108,20 @@ class Node:
     except Exception as e:
       if DEBUG >= 1: print(f"Error on_node_status: {e}")
       if DEBUG >= 1: traceback.print_exc()
-
   def get_supported_inference_engines(self):
     supported_engine_names = []
     if self.inference_engine.__class__.__name__ == 'MLXDynamicShardInferenceEngine':
       supported_engine_names.append('mlx')
+    elif self.inference_engine.__class__.__name__ == 'LlamaCppInferenceEngine':
+      supported_engine_names.append('llamacpp')
+    elif self.inference_engine.__class__.__name__ == 'TinygradDynamicShardInferenceEngine':
       supported_engine_names.append('tinygrad')
     else:
-      supported_engine_names.append('tinygrad')
+      # For dummy inference engine, keep it as is, otherwise default to llamacpp
+      if self.inference_engine.__class__.__name__ == 'DummyInferenceEngine':
+        supported_engine_names.append('dummy')
+      else:
+        supported_engine_names.append('llamacpp')
     return supported_engine_names
 
   async def broadcast_supported_engines(self, supported_engines_names: List[str]):
@@ -128,8 +148,25 @@ class Node:
         token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
         await self.inference_engine.ensure_shard(shard)
         self.buffered_token_output[request_id][0].append(token.item())
-        is_finished = token.item() == self.inference_engine.tokenizer.eos_token_id or is_finished or len(self.buffered_token_output[request_id][0]) >= self.max_generate_tokens
+        # Handle multiple potential EOS token IDs and add circuit breaker
+        common_eos_tokens = [2, 128001, 151645, self.inference_engine.tokenizer.eos_token_id]
+        is_eos = any(token.item() == eos for eos in common_eos_tokens)
+        token_count = len(self.buffered_token_output[request_id][0])
+        
+        # More lenient circuit breaker - only for extreme cases
+        if token_count > self.max_generate_tokens * 4:  # Increased threshold
+          if DEBUG >= 1: print(f"[{request_id}] Emergency circuit breaker activated at {token_count} tokens")
+          is_finished = True
+        else:
+          # Only finish on EOS or reasonable token limit
+          is_finished = is_eos or is_finished or token_count >= self.max_generate_tokens
         if DEBUG >= 2: print(f"[{request_id}] result size: {result.size}, is finished: {is_finished}, buffered tokens: {len(self.buffered_token_output[request_id][0])}")
+        if DEBUG >= 1: 
+            try:
+                decoded_token = self.inference_engine.tokenizer.decode([token.item()])
+                print(f"[{request_id}] Generated token: {token.item()} ('{decoded_token}'), EOS token ID: {self.inference_engine.tokenizer.eos_token_id}, is_finished: {is_finished}")
+            except Exception as e:
+                print(f"[{request_id}] Generated token: {token.item()}, EOS token ID: {self.inference_engine.tokenizer.eos_token_id}, is_finished: {is_finished}, decode error: {e}")
         forward = token.reshape(1, -1)
         intermediate_result = [self.buffered_token_output[request_id][0][-1]]
       else:
@@ -146,13 +183,21 @@ class Node:
     if is_finished:
       if shard.model_id != 'stable-diffusion-2-1-base':
         self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
-      self.outstanding_requests.pop(request_id)
+      self.outstanding_requests.pop(request_id, None)
+      
+      # Clean up buffered output after a delay to ensure all callbacks complete
+      async def cleanup_request(req_id):
+        await asyncio.sleep(2)  # Wait for callbacks to complete
+        if req_id in self.buffered_token_output:
+          if DEBUG >= 2: print(f"[{req_id}] Cleaning up buffered token output")
+          del self.buffered_token_output[req_id]
+      
+      asyncio.create_task(cleanup_request(request_id))
     else:
       self.outstanding_requests[request_id] = "waiting"
       asyncio.create_task(self.forward_tensor(shard, forward, request_id, self.get_partition_index(offset = 1), inference_state))
 
     return  np.array(self.buffered_token_output[request_id][0]) if shard.model_id != 'stable-diffusion-2-1-base' else intermediate_result
-
 
   async def process_prompt(
     self,
@@ -161,8 +206,19 @@ class Node:
     request_id: Optional[str] = None,
     inference_state: Optional[dict] = {},
   ) -> Optional[np.ndarray]:
+    if request_id is None:
+      request_id = str(uuid.uuid4())
+      
     shard = self.get_current_shard(base_shard)
     start_time = time.perf_counter_ns()
+    
+    # First, broadcast to all nodes to prepare their shards
+    await self.broadcast_model_preparation(base_shard, request_id)
+    
+    # Give nodes a moment to start loading their shards
+    await asyncio.sleep(0.1)
+    
+    # Start processing on this node
     asyncio.create_task(
       self.broadcast_opaque_status(
         request_id,
@@ -197,7 +253,7 @@ class Node:
       )
     )
     if DEBUG >= 2: print(f"[{request_id}] process prompt: {base_shard=} {shard=} {prompt=} {elapsed_time_ns=}")
-
+    return resp
   async def _process_prompt(self, base_shard: Shard, prompt: str, request_id: Optional[str] = None, inference_state: Optional[dict] = None) -> Optional[np.ndarray]:
     if request_id is None:
       request_id = str(uuid.uuid4())
@@ -211,9 +267,19 @@ class Node:
       return None
     else:
       self.outstanding_requests[request_id] = "processing"
-      result, inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
-      ret = await self.process_inference_result(shard, result, request_id, inference_state)
-      return result
+      if DEBUG >= 1: print(f"[{request_id}] Starting inference on shard {shard.start_layer}-{shard.end_layer}")
+      
+      try:
+        if DEBUG >= 1: print(f"[{request_id}] About to call inference_engine.infer_prompt...")
+        result, inference_state = await self.inference_engine.infer_prompt(request_id, shard, prompt, inference_state)
+        if DEBUG >= 1: print(f"[{request_id}] Inference completed, processing result")
+        ret = await self.process_inference_result(shard, result, request_id, inference_state)
+        return result
+      except Exception as e:
+        if DEBUG >= 1: print(f"[{request_id}] Error during inference: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
   async def enqueue_example(
     self,
@@ -441,14 +507,11 @@ class Node:
     target_id = self.partitioning_strategy.partition(self.topology)[target_index].node_id
     next_shard = self.get_current_shard(base_shard, target_index)
     if DEBUG >= 2: print(f"Computed target from: {base_shard} {target_index}, {self.topology}. target shard: {next_shard}")
-    if target_id == self.id:
-      await self.process_tensor(next_shard, tensor, request_id, inference_state)
-    else:
-      target_peer = next((p for p in self.peers if p.id() == target_id), None)
-      if not target_peer:
-        raise ValueError(f"Peer for {target_index} not found")
-      if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
-      await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state)
+    target_peer = next((p for p in self.peers if p.id() == target_id), None)
+    if not target_peer:
+      raise ValueError(f"Peer for {target_index} not found")
+    if DEBUG >= 1: print(f"Sending tensor to {target_peer.id()}: {tensor}")
+    await target_peer.send_tensor(next_shard, tensor, request_id=request_id, inference_state=inference_state)
 
   def get_partition_index(self, offset: int = 0):
     if not self.partitioning_strategy:
@@ -560,9 +623,17 @@ class Node:
         continue
 
       try:
-        other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=5.0)
+        # Increased timeout for better stability across different network conditions
+        timeout = 15.0 if max_depth > 1 else 10.0  # Longer timeout for recursive calls
+        other_topology = await asyncio.wait_for(peer.collect_topology(visited, max_depth=max_depth - 1), timeout=timeout)
         if DEBUG >= 2: print(f"Collected topology from: {peer.id()}: {other_topology}")
         next_topology.merge(peer.id(), other_topology)
+      except asyncio.TimeoutError as e:
+        if DEBUG >= 1: print(f"Timeout collecting topology from {peer.id()}: {timeout}s timeout exceeded")
+        continue  # Skip this peer and continue with others
+      except asyncio.CancelledError as e:
+        if DEBUG >= 1: print(f"Topology collection cancelled for {peer.id()}")
+        continue  # Skip this peer and continue with others
       except Exception as e:
         print(f"Error collecting topology from {peer.id()}: {e}")
         traceback.print_exc()
@@ -587,31 +658,46 @@ class Node:
   
   async def broadcast_result(self, request_id: str, result: List[int], is_finished: bool) -> None:
     if DEBUG >= 2: print(f"Broadcasting result: {request_id=} {result=} {is_finished=}")
+    
+    # Optimized parallel broadcast with reduced timeout for faster response
     async def send_result_to_peer(peer):
       try:
-        await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=15.0)
+        await asyncio.wait_for(peer.send_result(request_id, result, is_finished), timeout=5.0)
+        return f"Success: {peer.id()}"
       except asyncio.TimeoutError:
-        print(f"Timeout broadcasting result to {peer.id()}")
+        if DEBUG >= 1: print(f"Timeout broadcasting result to {peer.id()}")
+        return f"Timeout: {peer.id()}"
       except Exception as e:
-        print(f"Error broadcasting result to {peer.id()}: {e}")
-        traceback.print_exc()
+        if DEBUG >= 1: print(f"Error broadcasting result to {peer.id()}: {e}")
+        return f"Error: {peer.id()}"
 
-    await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
+    # Execute all broadcasts concurrently for better performance
+    if self.peers:
+      results = await asyncio.gather(*[send_result_to_peer(peer) for peer in self.peers], return_exceptions=True)
+      if DEBUG >= 2: 
+        success_count = sum(1 for r in results if isinstance(r, str) and r.startswith("Success"))
+        print(f"Broadcast completed: {success_count}/{len(self.peers)} successful")
 
   async def broadcast_opaque_status(self, request_id: str, status: str) -> None:
     if DEBUG >= 8: print(f"Broadcasting opaque status: {request_id=} {status=}")
 
+    # Optimized parallel status broadcast with reduced timeout
     async def send_status_to_peer(peer):
       try:
-        await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=15.0)
+        await asyncio.wait_for(peer.send_opaque_status(request_id, status), timeout=3.0)
+        return True
       except asyncio.TimeoutError:
-        print(f"Timeout sending opaque status to {peer.id()}")
+        if DEBUG >= 2: print(f"Timeout sending opaque status to {peer.id()}")
+        return False
       except Exception as e:
-        print(f"Error sending opaque status to {peer.id()}: {e}")
-        traceback.print_exc()
+        if DEBUG >= 2: print(f"Error sending opaque status to {peer.id()}: {e}")
+        return False
 
-    await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)
-    # in the case of opaque status, we also want to receive our own opaque statuses
+    # Execute all status broadcasts concurrently
+    if self.peers:
+      await asyncio.gather(*[send_status_to_peer(peer) for peer in self.peers], return_exceptions=True)
+    
+    # Trigger local opaque status callback
     self.on_opaque_status.trigger_all(request_id, status)
 
   @property
@@ -626,3 +712,21 @@ class Node:
     if progress[0] == progress[1]:
       intermediate_result = result
     return intermediate_result, inference_state
+
+  async def broadcast_model_preparation(self, base_shard: Shard, request_id: str):
+    """Broadcast to all nodes to prepare their shards for the given model"""
+    if DEBUG >= 1: 
+      print(f"[{request_id}] Broadcasting model preparation for {base_shard.model_id} across {len(self.peers)} peers")
+    
+    # Broadcast the base shard to all nodes so they can calculate their assigned shard
+    await self.broadcast_opaque_status(
+      request_id,
+      json.dumps({
+        "type": "node_status",
+        "node_id": self.id,
+        "status": "start_process_prompt", 
+        "base_shard": base_shard.to_dict(),
+        "shard": base_shard.to_dict(),  # Send base shard, each node will calculate their portion
+        "request_id": request_id,
+      })
+    )
