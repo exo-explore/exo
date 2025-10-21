@@ -96,6 +96,16 @@ print(f"Selected inference engine: {args.inference_engine}")
 
 print_yellow_exo()
 
+print("\n" + "="*80)
+print("\nEXO started out of a desire to run research experiments on LLMs using hardware")
+print("we already owned. It has since evolved far beyond its original release,")
+print("demonstrating what's possible when large-scale AI workloads run efficiently")
+print("across networks of consumer-grade hardware.")
+print("\nWe're now focusing entirely on EXO 1.0, the next major evolution of EXO.")
+print("\nThis version will remain available for reference, but all new development")
+print("and updates are going into EXO 1.0.")
+print("\nEXO 1.0 → soon™.")
+print("="*80 + "\n")
 system_info = get_system_info()
 print(f"Detected system: {system_info}")
 
