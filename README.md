@@ -32,7 +32,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 >
 > Thank you to everyone who's been part of the journey so far.
 >
-> - The EXO Team
+> \- The EXO Team
 
 ---
 
