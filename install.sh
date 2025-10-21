@@ -9,3 +9,4 @@ else
 fi
 source .venv/bin/activate
 pip install -e .
+pip install clang llvmlite
