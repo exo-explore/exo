@@ -28,7 +28,6 @@ install_requires = [
   "tqdm==4.66.4",
   "transformers==4.46.3",
   "uuid==1.30",
-  "uvloop==0.21.0",
   "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8",
 ]
 
@@ -50,7 +49,6 @@ if sys.platform.startswith("darwin") and platform.machine() == "arm64":
 # Check if running Windows
 if sys.platform.startswith("win32"):
   install_requires.extend(extras_require["windows"])
-
 
 def _add_gpu_requires():
   global install_requires
@@ -74,7 +72,6 @@ def _add_gpu_requires():
       install_requires.extend(extras_require["amd-gpu"])
   finally:
     pass
-
 
 _add_gpu_requires()
 
