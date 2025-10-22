@@ -117,7 +117,7 @@ def make_downloading_status(node_id: NodeId) -> DownloadingRunnerStatus:
         download_progress=DownloadOngoing(
             node_id=node_id,
             download_progress=DownloadProgressData(
-                total_bytes=Memory.from_bytes(1), downloaded_bytes=Memory.from_bytes(0)
+                total_bytes=Memory.from_bytes(1), downloaded_bytes=Memory.from_bytes(0), downloaded_bytes_this_session=Memory.from_bytes(0), completed_files=0, total_files=0, speed=0, eta_ms=0, files={}
             ),
         )
     )

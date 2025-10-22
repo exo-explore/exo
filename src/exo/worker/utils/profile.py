@@ -7,6 +7,7 @@ import anyio
 import psutil
 from loguru import logger
 
+from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
@@ -48,16 +49,14 @@ async def get_memory_profile_async() -> MemoryPerformanceProfile:
         vm = psutil.virtual_memory()
         sm = psutil.swap_memory()
 
-        override_memory_env = os.getenv("OVERRIDE_MEMORY")
+        override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
         override_memory: int | None = (
-            int(override_memory_env) * 2**30 if override_memory_env else None
+            Memory.from_mb(int(override_memory_env)).in_bytes if override_memory_env else None
         )
 
         return MemoryPerformanceProfile.from_bytes(
             ram_total=int(vm.total),
-            ram_available=int(override_memory)
-            if override_memory
-            else int(vm.available),
+            ram_available=int(override_memory) if override_memory else int(vm.available),
             swap_total=int(sm.total),
             swap_available=int(sm.free),
         )
@@ -99,13 +98,14 @@ async def start_polling_node_metrics(
                 system_info,
                 network_interfaces,
                 mac_friendly_name,
-                memory_profile,
             ) = await asyncio.gather(
                 get_mac_system_info_async(),
                 get_network_interface_info_async(),
                 get_mac_friendly_name_async(),
-                get_memory_profile_async(),
             )
+
+            # do the memory profile last to get a fresh reading to not conflict with the other memory profiling loop
+            memory_profile = await get_memory_profile_async()
 
             await callback(
                 NodePerformanceProfile(

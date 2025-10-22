@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import os
 import resource
+from loguru import logger
 from asyncio import AbstractEventLoop
 from typing import Any, Callable, Optional, cast
 
@@ -63,6 +64,9 @@ def mlx_setup(
     cache_frac_of_mrwss: float = 0.65,  # main workhorse
     wired_frac_of_mrwss: float = 0.00,  # start with no wiring
 ) -> None:
+    if not mx.metal.is_available():
+        logger.warning("Metal is not available. Skipping MLX memory wired limits setup.")
+        return
     info = mx.metal.device_info()
     mrwss = int(info["max_recommended_working_set_size"])  # bytes
     memsize = int(info["memory_size"])  # bytes

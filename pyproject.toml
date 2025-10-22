@@ -51,11 +51,11 @@ dev = [
     "ruff>=0.11.13",
 ]
 
-# dependencies only required for Apple Silicon
-[project.optional-dependencies]
-darwin = [
-    "mlx",
-]
+# mlx[cuda] requires a newer version of mlx. the ideal on linux is: default to mlx[cpu] unless[cuda] specified.
+# [project.optional-dependencies]
+# cuda = [
+#     "mlx[cuda]==0.26.3",
+# ]
 
 ###
 # workspace configuration

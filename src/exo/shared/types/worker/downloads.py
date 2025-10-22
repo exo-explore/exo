@@ -6,7 +6,15 @@ from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 class DownloadProgressData(CamelCaseModel):
     total_bytes: Memory
     downloaded_bytes: Memory
+    downloaded_bytes_this_session: Memory
 
+    completed_files: int
+    total_files: int
+
+    speed: float
+    eta_ms: int
+
+    files: dict[str, "DownloadProgressData"]
 
 class BaseDownloadProgress(TaggedModel):
     node_id: NodeId

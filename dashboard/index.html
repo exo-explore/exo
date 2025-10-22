@@ -492,6 +492,162 @@
             transition: width 0.3s ease;
         }
 
+        /* Detailed download info */
+        .download-details {
+            margin-top: 8px;
+            padding: 12px;
+            background-color: #1a1a1a;
+            border: 1px solid var(--exo-medium-gray);
+            border-radius: 6px;
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+            overflow: visible;
+        }
+        .download-runner-header {
+            font-size: 11px;
+            color: var(--exo-light-gray);
+            opacity: 0.85;
+            margin-bottom: 4px;
+        }
+        .download-overview-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .download-overview-item strong {
+            color: #E0E0E0;
+            font-weight: 600;
+            margin-right: 4px;
+        }
+        .progress-with-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .progress-with-label .progress-bar-container {
+            flex: 1 1 auto;
+        }
+        .progress-percent {
+            font-size: 12px;
+            color: var(--exo-light-gray);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .download-overview-combined {
+            font-size: 12px;
+            color: var(--exo-light-gray);
+            opacity: 0.9;
+        }
+        .instance-download-summary {
+            font-size: 11px;
+            color: var(--exo-light-gray);
+            margin-top: 6px;
+            opacity: 0.95;
+        }
+        .download-files-list {
+            display: grid;
+            gap: 8px;
+        }
+        .download-file {
+            padding: 8px;
+            background-color: var(--exo-dark-gray);
+            border: 1px solid var(--exo-medium-gray);
+            border-radius: 6px;
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+        }
+        .download-file-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+            margin-bottom: 6px;
+            width: 100%;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .download-file-name {
+            color: #E0E0E0;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .download-file-stats {
+            color: var(--exo-light-gray);
+            text-align: right;
+            white-space: nowrap;
+        }
+        .download-file-percent {
+            color: var(--exo-light-gray);
+            white-space: nowrap;
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            flex: 0 0 auto;
+        }
+        .download-file-subtext {
+            color: var(--exo-light-gray);
+            font-size: 10px;
+            opacity: 0.85;
+            margin-bottom: 6px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+        .download-details, .download-files-list {
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+        }
+        .download-files-list {
+            overflow: visible;
+            padding-right: 2px; /* avoid edge clipping */
+        }
+        .download-file .progress-bar-container {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            height: 5px;
+        }
+        .completed-files-section {
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid var(--exo-medium-gray);
+        }
+        .completed-files-header {
+            font-size: 10px;
+            color: var(--exo-light-gray);
+            opacity: 0.7;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .completed-files-list {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .completed-file-item {
+            font-size: 10px;
+            color: var(--exo-light-gray);
+            opacity: 0.8;
+            padding: 3px 6px;
+            background-color: rgba(74, 222, 128, 0.1);
+            border-left: 2px solid #4ade80;
+            border-radius: 3px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         /* Launch instance section styles */
         .launch-instance-section {
             display: flex;
@@ -750,6 +906,7 @@
 
         const USE_MOCK_DATA = false; // <<< FLAG TO TOGGLE MOCK DATA
         let currentlySelectedNodeId = null; // To store the ID of the currently selected node
+        let nodeIdToFriendlyName = {}; // Map nodeId -> friendly name for download sections
 
         const API_ENDPOINT = window.location.origin + window.location.pathname.replace(/\/$/, "") + '/state';
         const REFRESH_INTERVAL = 1000; // 1 second
@@ -855,6 +1012,36 @@
             return days + (days === 1 ? ' day ago' : ' days ago');
         }
 
+        // --- Download formatting helpers ---
+        function bytesFromValue(value) {
+            if (typeof value === 'number') return value;
+            if (!value || typeof value !== 'object') return 0;
+            if (typeof value.in_bytes === 'number') return value.in_bytes;
+            if (typeof value.inBytes === 'number') return value.inBytes;
+            return 0;
+        }
+
+        function formatDurationMs(ms) {
+            if (ms == null || isNaN(ms) || ms < 0) return '—';
+            const totalSeconds = Math.round(ms / 1000);
+            const s = totalSeconds % 60;
+            const m = Math.floor(totalSeconds / 60) % 60;
+            const h = Math.floor(totalSeconds / 3600);
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function formatPercent(value, digits = 2) {
+            if (value == null || isNaN(value)) return '0.00%';
+            return `${value.toFixed(digits)}%`;
+        }
+
+        function formatBytesPerSecond(bps) {
+            if (bps == null || isNaN(bps) || bps < 0) return '0 B/s';
+            return `${formatBytes(bps)}/s`;
+        }
+
         // Sidebar toggle functionality
         let sidebarOpen = false;
 
@@ -934,7 +1121,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ modelId: selectedModelId, model_id: selectedModelId })
+                    body: JSON.stringify({ model_id: selectedModelId })
                 });
 
                 if (!response.ok) {
@@ -974,66 +1161,185 @@
             }
         }
 
-        // Calculate download status for an instance based on its runners
+        // Calculate download status for an instance based on its runners, with detailed per-file info
         function calculateInstanceDownloadStatus(instance, runners) {
-            const shardAssignments = instance.shard_assignments ?? instance.shardAssignments;
-            const runnerToShard = shardAssignments?.runner_to_shard ?? shardAssignments?.runnerToShard;
-            if (!runnerToShard || !runners) {
-                return { isDownloading: false, progress: 0 };
+            if (!instance.shardAssignments?.runnerToShard || !runners) {
+                return { isDownloading: false, progress: 0, details: [] };
             }
 
-            const runnerIds = Object.keys(runnerToShard);
-            const downloadingRunners = [];
+            const pick = (obj, snake, camel, fallback = undefined) => {
+                if (!obj) return fallback;
+                if (obj[snake] !== undefined) return obj[snake];
+                if (obj[camel] !== undefined) return obj[camel];
+                return fallback;
+            };
+
+            // Returns [tag, payload] for objects serialized as {Tag: {...}}, else [null, null]
+            function getTagged(obj) {
+                if (!obj || typeof obj !== 'object') return [null, null];
+                const keys = Object.keys(obj);
+                if (keys.length === 1 && typeof keys[0] === 'string') {
+                    return [keys[0], obj[keys[0]]];
+                }
+                return [null, null];
+            }
+
+            function normalizeProgress(progressRaw) {
+                if (!progressRaw) return null;
+                const totalBytes = bytesFromValue(pick(progressRaw, 'total_bytes', 'totalBytes', 0));
+                const downloadedBytes = bytesFromValue(pick(progressRaw, 'downloaded_bytes', 'downloadedBytes', 0));
+                const downloadedBytesThisSession = bytesFromValue(pick(progressRaw, 'downloaded_bytes_this_session', 'downloadedBytesThisSession', 0));
+                const completedFiles = Number(pick(progressRaw, 'completed_files', 'completedFiles', 0)) || 0;
+                const totalFiles = Number(pick(progressRaw, 'total_files', 'totalFiles', 0)) || 0;
+                const speed = Number(pick(progressRaw, 'speed', 'speed', 0)) || 0;
+                const etaMs = Number(pick(progressRaw, 'eta_ms', 'etaMs', 0)) || 0;
+                const filesObj = pick(progressRaw, 'files', 'files', {}) || {};
+                const files = [];
+                Object.keys(filesObj).forEach(name => {
+                    const f = filesObj[name];
+                    if (!f || typeof f !== 'object') return;
+                    const fTotal = bytesFromValue(pick(f, 'total_bytes', 'totalBytes', 0));
+                    const fDownloaded = bytesFromValue(pick(f, 'downloaded_bytes', 'downloadedBytes', 0));
+                    const fSpeed = Number(pick(f, 'speed', 'speed', 0)) || 0;
+                    const fEta = Number(pick(f, 'eta_ms', 'etaMs', 0)) || 0;
+                    const fPct = fTotal > 0 ? (fDownloaded / fTotal) * 100 : 0;
+                    files.push({ name, totalBytes: fTotal, downloadedBytes: fDownloaded, speed: fSpeed, etaMs: fEta, percentage: fPct });
+                });
+                const percentage = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
+                return { totalBytes, downloadedBytes, downloadedBytesThisSession, completedFiles, totalFiles, speed, etaMs, files, percentage };
+            }
+
+            const runnerIds = Object.keys(instance.shardAssignments.runnerToShard);
+            const details = [];
             let totalBytes = 0;
             let downloadedBytes = 0;
 
             for (const runnerId of runnerIds) {
                 const runner = runners[runnerId];
-                let isRunnerDownloading = false;
+                if (!runner) continue;
 
-                // Legacy snake_case structure
-                if (runner && runner.runner_status === 'Downloading' && runner.download_progress) {
-                    isRunnerDownloading = runner.download_progress.download_status === 'Downloading';
-                    if (isRunnerDownloading && runner.download_progress.download_progress) {
-                        totalBytes += runner.download_progress.download_progress.total_bytes || 0;
-                        downloadedBytes += runner.download_progress.download_progress.downloaded_bytes || 0;
-                    }
-                } else if (runner && typeof runner === 'object') {
-                    // Tagged-union camelCase structure, e.g. { "DownloadingRunnerStatus": { downloadProgress: { totalBytes, downloadedBytes } } }
-                    const tag = Object.keys(runner)[0];
-                    if (tag && /DownloadingRunnerStatus$/i.test(tag)) {
-                        isRunnerDownloading = true;
-                        const inner = runner[tag] || {};
-                        const prog = inner.downloadProgress || inner.download_progress || {};
-                        const t = prog.totalBytes ?? prog.total_bytes ?? 0;
-                        const d = prog.downloadedBytes ?? prog.downloaded_bytes ?? 0;
-                        totalBytes += typeof t === 'number' ? t : 0;
-                        downloadedBytes += typeof d === 'number' ? d : 0;
-                    }
+                // New tagged format: { "DownloadingRunnerStatus": { downloadProgress: { "DownloadOngoing": { ... } } } }
+                const [statusKind, statusPayload] = getTagged(runner);
+                let nodeId;
+                let rawProg;
+
+                if (statusKind === 'DownloadingRunnerStatus') {
+                    const dpTagged = statusPayload && (statusPayload.downloadProgress || statusPayload.download_progress);
+                    const [dpKind, dpPayload] = getTagged(dpTagged);
+                    if (dpKind !== 'DownloadOngoing') continue;
+                    nodeId = (dpPayload && (dpPayload.nodeId || dpPayload.node_id)) || undefined;
+                    rawProg = pick(dpPayload, 'download_progress', 'downloadProgress', null);
+                } else {
+                    // Backward compatibility with old flat shape
+                    if (runner.runnerStatus !== 'Downloading' || !runner.downloadProgress) continue;
+                    const dp = runner.downloadProgress;
+                    const isDownloading = (dp.downloadStatus === 'Downloading') || (dp.download_status === 'Downloading');
+                    if (!isDownloading) continue;
+                    nodeId = (dp && (dp.nodeId || dp.node_id)) || undefined;
+                    rawProg = pick(dp, 'download_progress', 'downloadProgress', null);
                 }
 
-                if (isRunnerDownloading) downloadingRunners.push(runner);
+                const normalized = normalizeProgress(rawProg);
+                if (!normalized) continue;
+                details.push({ runnerId, nodeId, progress: normalized });
+                totalBytes += normalized.totalBytes || 0;
+                downloadedBytes += normalized.downloadedBytes || 0;
             }
 
-            const isDownloading = downloadingRunners.length > 0;
-            const progress = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+            const isDownloadingAny = details.length > 0;
+            const progress = totalBytes > 0 ? ((downloadedBytes / totalBytes) * 100) : 0;
+            return { isDownloading: isDownloadingAny, progress, details };
+        }
 
-            return { isDownloading, progress, downloadingRunners: downloadingRunners.length };
+        function buildDownloadDetailsHTML(details) {
+            if (!details || details.length === 0) return '';
+            function shortId(id) { return (id && id.length > 8) ? id.slice(0, 8) + '…' : (id || ''); }
+            return details.map(({ runnerId, nodeId, progress }) => {
+                const etaStr = formatDurationMs(progress.etaMs);
+                const pctStr = formatPercent(progress.percentage || 0, 2);
+                const bytesStr = `${formatBytes(progress.downloadedBytes)} / ${formatBytes(progress.totalBytes)}`;
+                const speedStr = formatBytesPerSecond(progress.speed);
+                const filesSummary = `${progress.completedFiles}/${progress.totalFiles}`;
+
+                const allFiles = progress.files || [];
+                const inProgressFiles = allFiles.filter(f => (f.percentage || 0) < 100);
+                const completedFiles = allFiles.filter(f => (f.percentage || 0) >= 100);
+
+                const inProgressHTML = inProgressFiles.map(f => {
+                    const fPct = f.percentage || 0;
+                    const fBytes = `${formatBytes(f.downloadedBytes)} / ${formatBytes(f.totalBytes)}`;
+                    const fEta = formatDurationMs(f.etaMs);
+                    const fSpeed = formatBytesPerSecond(f.speed);
+                    const pctText = formatPercent(fPct, 2);
+                    return `
+                        <div class="download-file">
+                            <div class="download-file-header">
+                                <span class="download-file-name" title="${f.name}">${f.name}</span>
+                                <span class="download-file-percent">${pctText}</span>
+                            </div>
+                            <div class="download-file-subtext">${fBytes} • ETA ${fEta} • ${fSpeed}</div>
+                            <div class="progress-bar-container"><div class="progress-bar" style="width: ${Math.max(0, Math.min(100, fPct)).toFixed(2)}%;"></div></div>
+                        </div>
+                    `;
+                }).join('');
+
+                const completedHTML = completedFiles.length > 0 ? `
+                    <div class="completed-files-section">
+                        <div class="completed-files-header">Completed (${completedFiles.length})</div>
+                        <div class="completed-files-list">
+                            ${completedFiles.map(f => `<div class="completed-file-item" title="${f.name}">${f.name}</div>`).join('')}
+                        </div>
+                    </div>
+                ` : '';
+
+                const runnerName = (nodeId && nodeIdToFriendlyName[nodeId]) ? nodeIdToFriendlyName[nodeId] : '?';
+                const headerText = `${runnerName} (${shortId(nodeId || '')})`;
+                return `
+                    <div class="download-details">
+                        <div class="download-runner-header">${headerText}</div>
+                        <div class="download-files-list">
+                            ${inProgressHTML}
+                        </div>
+                        ${completedHTML}
+                    </div>
+                `;
+            }).join('');
         }
 
         // Derive a display status for an instance from its runners.
         // Priority: FAILED > DOWNLOADING > STARTING > RUNNING > LOADED > INACTIVE
         function deriveInstanceStatus(instance, runners = {}) {
-            const shardAssignments = instance.shard_assignments ?? instance.shardAssignments;
-            const runnerToShard = shardAssignments?.runner_to_shard ?? shardAssignments?.runnerToShard ?? {};
-            const runnerIds = Object.keys(runnerToShard);
+            const runnerIds = Object.keys(instance.shardAssignments?.runnerToShard || {});
+
+            function getTagged(obj) {
+                if (!obj || typeof obj !== 'object') return [null, null];
+                const keys = Object.keys(obj);
+                if (keys.length === 1 && typeof keys[0] === 'string') {
+                    return [keys[0], obj[keys[0]]];
+                }
+                return [null, null];
+            }
+
+            function canonicalStatusFromKind(kind) {
+                const map = {
+                    DownloadingRunnerStatus: 'Downloading',
+                    InactiveRunnerStatus: 'Inactive',
+                    StartingRunnerStatus: 'Starting',
+                    LoadedRunnerStatus: 'Loaded',
+                    RunningRunnerStatus: 'Running',
+                    FailedRunnerStatus: 'Failed',
+                };
+                return map[kind] || null;
+            }
+
             const statuses = runnerIds
                 .map(rid => {
                     const r = runners[rid];
-                    if (!r || typeof r !== 'object') return undefined;
-                    if (typeof r.runner_status === 'string') return r.runner_status;
-                    const tag = Object.keys(r)[0];
-                    return typeof tag === 'string' ? tag.replace(/RunnerStatus$/,'') : undefined; // e.g. LoadedRunnerStatus -> Loaded
+                    if (!r) return null;
+                    const [kind] = getTagged(r);
+                    if (kind) return canonicalStatusFromKind(kind);
+                    const s = r.runnerStatus;
+                    return (typeof s === 'string') ? s : null; // backward compatibility
                 })
                 .filter(s => typeof s === 'string');
 
@@ -1041,8 +1347,8 @@
             const every = (pred) => statuses.length > 0 && statuses.every(pred);
 
             if (statuses.length === 0) {
-                const instanceType = instance.instance_type ?? instance.instanceType;
-                const inactive = instanceType === 'INACTIVE' || instanceType === 'Inactive';
+                const it = instance.instanceType;
+                const inactive = (it === 'Inactive' || it === 'INACTIVE');
                 return { statusText: inactive ? 'INACTIVE' : 'LOADED', statusClass: inactive ? 'inactive' : 'loaded' };
             }
 
@@ -1072,12 +1378,10 @@
             }
 
             const instancesHTML = instancesArray.map(instance => {
-                const shardAssignments = instance.shard_assignments ?? instance.shardAssignments;
-                const modelId = shardAssignments?.model_id ?? shardAssignments?.modelId ?? 'Unknown Model';
-                const instanceId = instance.instance_id ?? instance.instanceId ?? '';
-                const truncatedInstanceId = instanceId.length > 8 
-                    ? instanceId.substring(0, 8) + '...' 
-                    : instanceId;
+                const modelId = instance.shardAssignments?.modelId || 'Unknown Model';
+                const truncatedInstanceId = instance.instanceId.length > 8 
+                    ? instance.instanceId.substring(0, 8) + '...' 
+                    : instance.instanceId;
                 
                 const hostsHTML = instance.hosts?.map(host => 
                     `<span class="instance-host">${host.ip}:${host.port}</span>`
@@ -1094,15 +1398,31 @@
                 }
 
                 // Generate download progress HTML
-                const downloadProgressHTML = downloadStatus.isDownloading 
-                    ? `<div class="download-progress">
-                        <span>${downloadStatus.progress}% downloaded</span>
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" style="width: ${downloadStatus.progress}%;"></div>
-                        </div>
-                       </div>` 
-                    : '';
+                let downloadProgressHTML = '';
+                let instanceDownloadSummary = '';
+                if (downloadStatus.isDownloading) {
+                    const detailsHTML = buildDownloadDetailsHTML(downloadStatus.details || []);
+                    const pctText = (downloadStatus.progress || 0).toFixed(2);
+                    // Aggregate a compact summary from the first runner (they should be consistent in aggregate)
+                    const first = (downloadStatus.details || [])[0]?.progress;
+                    const etaStr = first ? formatDurationMs(first.etaMs) : '—';
+                    const bytesStr = first ? `${formatBytes(first.downloadedBytes)} / ${formatBytes(first.totalBytes)}` : '';
+                    const speedStr = first ? formatBytesPerSecond(first.speed) : '';
+                    const filesSummary = first ? `${first.completedFiles}/${first.totalFiles}` : '';
+                    instanceDownloadSummary = `${etaStr} · ${bytesStr} · ${speedStr} · ${filesSummary} files`;
 
+                    downloadProgressHTML = `
+                        <div class="download-progress">
+                            <span>${pctText}%</span>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar" style="width: ${pctText}%;"></div>
+                            </div>
+                        </div>
+                        ${detailsHTML}
+                    `;
+                }
+
+                const shardCount = Object.keys(instance.shardAssignments?.runnerToShard || {}).length;
                 return `
                     <div class="instance-item">
                         <div class="instance-header">
@@ -1111,15 +1431,14 @@
                                 <span class="instance-status ${statusClass}">${statusText}</span>
                             </div>
                             <div class="instance-actions">
-                                <button class="instance-delete-button" data-instance-id="${instanceId}" title="Delete Instance">
+                                <button class="instance-delete-button" data-instance-id="${instance.instanceId}" title="Delete Instance">
                                     Delete
                                 </button>
                             </div>
                         </div>
-                        <div class="instance-model">${modelId}</div>
-                        <div class="instance-details">
-                            Shards: ${Object.keys((shardAssignments?.runner_to_shard ?? shardAssignments?.runnerToShard) || {}).length}
-                        </div>
+                        <div class="instance-model">${modelId} <span style="color: var(--exo-light-gray); opacity: 0.8;">(${shardCount})</span></div>
+                        ${instanceDownloadSummary ? `<div class="instance-download-summary">${instanceDownloadSummary}</div>` : ''}
+                        
                         ${downloadProgressHTML}
                         ${hostsHTML ? `<div class="instance-hosts">${hostsHTML}</div>` : ''}
                     </div>
@@ -1176,10 +1495,12 @@
             }
         }
 
-        function renderNodes(nodesData) {
+        function renderNodes(topologyData) {
             if (!topologyGraphContainer) return;
             topologyGraphContainer.innerHTML = ''; // Clear previous SVG content
 
+            const nodesData = (topologyData && topologyData.nodes) ? topologyData.nodes : {};
+            const edgesData = (topologyData && Array.isArray(topologyData.edges)) ? topologyData.edges : [];
             const nodeIds = Object.keys(nodesData);
 
             if (nodeIds.length === 0) {
@@ -1214,23 +1535,128 @@
                 };
             });
 
-            // Create group for links (drawn first, so they are behind nodes)
+            // Add arrowhead definition (supports bidirectional arrows on a single line)
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            marker.setAttribute('id', 'arrowhead');
+            marker.setAttribute('viewBox', '0 0 10 10');
+            marker.setAttribute('refX', '10');
+            marker.setAttribute('refY', '5');
+            marker.setAttribute('markerWidth', '11');
+            marker.setAttribute('markerHeight', '11');
+            marker.setAttribute('orient', 'auto-start-reverse');
+            // Draw a subtle V-tip (no filled body)
+            const markerTip = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            markerTip.setAttribute('d', 'M 0 0 L 10 5 L 0 10');
+            markerTip.setAttribute('fill', 'none');
+            markerTip.setAttribute('stroke', 'var(--exo-light-gray)');
+            markerTip.setAttribute('stroke-width', '1.6');
+            markerTip.setAttribute('stroke-linecap', 'round');
+            markerTip.setAttribute('stroke-linejoin', 'round');
+            markerTip.setAttribute('stroke-dasharray', 'none');
+            markerTip.setAttribute('stroke-dashoffset', '0');
+            markerTip.setAttribute('style', 'animation: none; pointer-events: none;');
+            marker.appendChild(markerTip);
+            defs.appendChild(marker);
+            topologyGraphContainer.appendChild(defs);
+
+            // Create groups for links and separate arrow markers (so arrows are not affected by line animations)
             const linksGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             linksGroup.setAttribute('class', 'links-group');
+            linksGroup.setAttribute('style', 'pointer-events: none;');
+            const arrowsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            arrowsGroup.setAttribute('class', 'arrows-group');
+            arrowsGroup.setAttribute('style', 'pointer-events: none;');
 
-            for (let i = 0; i < numNodes; i++) {
-                for (let j = i + 1; j < numNodes; j++) {
-                    const link = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                    link.setAttribute('x1', nodesWithPositions[i].x);
-                    link.setAttribute('y1', nodesWithPositions[i].y);
-                    link.setAttribute('x2', nodesWithPositions[j].x);
-                    link.setAttribute('y2', nodesWithPositions[j].y);
-                    link.setAttribute('class', 'graph-link');
-                    linksGroup.appendChild(link);
+            // Build quick lookup for node positions
+            const positionById = {};
+            nodesWithPositions.forEach(n => { positionById[n.id] = { x: n.x, y: n.y }; });
+
+            // Group directed edges into undirected pairs to support single line with two arrows
+            const pairMap = new Map(); // key: "a|b" with a<b, value: { a, b, aToB, bToA }
+            edgesData.forEach(edge => {
+                if (!edge || !edge.source || !edge.target) return;
+                if (!positionById[edge.source] || !positionById[edge.target]) return;
+                if (edge.source === edge.target) return;
+                const a = edge.source < edge.target ? edge.source : edge.target;
+                const b = edge.source < edge.target ? edge.target : edge.source;
+                const key = `${a}|${b}`;
+                const entry = pairMap.get(key) || { a, b, aToB: false, bToA: false };
+                if (edge.source === a && edge.target === b) entry.aToB = true; else entry.bToA = true;
+                pairMap.set(key, entry);
+            });
+
+            // Draw one line per undirected pair with separate arrow carrier lines
+            pairMap.forEach(entry => {
+                const posA = positionById[entry.a];
+                const posB = positionById[entry.b];
+                if (!posA || !posB) return;
+
+                // Full-length center-to-center lines
+                const x1 = posA.x;
+                const y1 = posA.y;
+                const x2 = posB.x;
+                const y2 = posB.y;
+
+                // Base animated dashed line (no markers)
+                const baseLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                baseLine.setAttribute('x1', x1);
+                baseLine.setAttribute('y1', y1);
+                baseLine.setAttribute('x2', x2);
+                baseLine.setAttribute('y2', y2);
+                baseLine.setAttribute('class', 'graph-link');
+                linksGroup.appendChild(baseLine);
+
+                // Arrowheads centered on the line (tip lies exactly on the line),
+                // offset along the tangent so opposite directions straddle the center.
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const len = Math.hypot(dx, dy) || 1;
+                const ux = dx / len;
+                const uy = dy / len;
+                const mx = (x1 + x2) / 2;
+                const my = (y1 + y2) / 2;
+                const tipOffset = 16; // shift arrow tips away from the exact center along the line
+                const carrier = 2; // short carrier segment length to define orientation
+
+                if (entry.aToB) {
+                    // Arrow pointing A -> B: place tip slightly before center along +tangent
+                    const tipX = mx - ux * tipOffset;
+                    const tipY = my - uy * tipOffset;
+                    const sx = tipX - ux * carrier;
+                    const sy = tipY - uy * carrier;
+                    const ex = tipX;
+                    const ey = tipY;
+                    const arrowSeg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    arrowSeg.setAttribute('x1', sx);
+                    arrowSeg.setAttribute('y1', sy);
+                    arrowSeg.setAttribute('x2', ex);
+                    arrowSeg.setAttribute('y2', ey);
+                    arrowSeg.setAttribute('stroke', 'none');
+                    arrowSeg.setAttribute('fill', 'none');
+                    arrowSeg.setAttribute('marker-end', 'url(#arrowhead)');
+                    arrowsGroup.appendChild(arrowSeg);
                 }
-            }
-            topologyGraphContainer.appendChild(linksGroup);
 
+                if (entry.bToA) {
+                    // Arrow pointing B -> A: place tip slightly after center along -tangent
+                    const tipX = mx + ux * tipOffset;
+                    const tipY = my + uy * tipOffset;
+                    const sx = tipX + ux * carrier; // start ahead so the segment points toward tip
+                    const sy = tipY + uy * carrier;
+                    const ex = tipX;
+                    const ey = tipY;
+                    const arrowSeg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    arrowSeg.setAttribute('x1', sx);
+                    arrowSeg.setAttribute('y1', sy);
+                    arrowSeg.setAttribute('x2', ex);
+                    arrowSeg.setAttribute('y2', ey);
+                    arrowSeg.setAttribute('stroke', 'none');
+                    arrowSeg.setAttribute('fill', 'none');
+                    arrowSeg.setAttribute('marker-end', 'url(#arrowhead)');
+                    arrowsGroup.appendChild(arrowSeg);
+                }
+            });
             // Create group for nodes
             const nodesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             nodesGroup.setAttribute('class', 'nodes-group');
@@ -1738,7 +2164,10 @@
 
                 nodesGroup.appendChild(nodeG);
             });
+            // Draw order: lines at the very back, then nodes, then mid-line arrows on top
+            topologyGraphContainer.appendChild(linksGroup);
             topologyGraphContainer.appendChild(nodesGroup);
+            topologyGraphContainer.appendChild(arrowsGroup);
         }
 
         function showNodeDetails(selectedNodeId, allNodesData) {
@@ -1886,13 +2315,22 @@
                     throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
                 }
                 const clusterState = await response.json();
-                const nodesData = transformClusterStateToTopology(clusterState);
-                renderNodes(nodesData);
+                const topologyData = transformClusterStateToTopology(clusterState);
+                // Build nodeId -> friendly name map
+                nodeIdToFriendlyName = {};
+                if (topologyData && topologyData.nodes) {
+                    Object.keys(topologyData.nodes).forEach(nid => {
+                        const n = topologyData.nodes[nid];
+                        const name = (n && (n.friendly_name || (n.system_info && n.system_info.model_id))) || null;
+                        if (name) nodeIdToFriendlyName[nid] = name;
+                    });
+                }
+                renderNodes(topologyData);
 
                 // If a node was selected, and it still exists, refresh its details
-                if (currentlySelectedNodeId && nodesData[currentlySelectedNodeId]) {
-                    showNodeDetails(currentlySelectedNodeId, nodesData);
-                } else if (currentlySelectedNodeId && !nodesData[currentlySelectedNodeId]) {
+                if (currentlySelectedNodeId && topologyData.nodes[currentlySelectedNodeId]) {
+                    showNodeDetails(currentlySelectedNodeId, topologyData.nodes);
+                } else if (currentlySelectedNodeId && !topologyData.nodes[currentlySelectedNodeId]) {
                     // If selected node is gone, close panel and clear selection
                     nodeDetailPanel.classList.remove('visible');
                     currentlySelectedNodeId = null;
@@ -1938,8 +2376,9 @@
         }
 
         function transformClusterStateToTopology(clusterState) {
-            const result = {};
-            if (!clusterState) return result;
+            const resultNodes = {};
+            const resultEdges = [];
+            if (!clusterState) return { nodes: resultNodes, edges: resultEdges };
 
             // Helper: get numeric bytes from various shapes (number | {in_bytes}|{inBytes})
             function getBytes(value) {
@@ -1959,18 +2398,23 @@
                 return fallback;
             };
 
-            // Process nodes from topology or fallback to node_profiles/nodeProfiles directly
+            // Helper: detect API placeholders like "unknown" (case-insensitive)
+            const isUnknown = (value) => {
+                return typeof value === 'string' && value.trim().toLowerCase() === 'unknown';
+            };
+
+            // Process nodes from topology or fallback to nodeProfiles directly (support both snake_case and camelCase)
             let nodesToProcess = {};
             if (clusterState.topology && Array.isArray(clusterState.topology.nodes)) {
                 clusterState.topology.nodes.forEach(node => {
-                    const nid = node.node_id ?? node.nodeId;
-                    const nprof = node.node_profile ?? node.nodeProfile;
+                    const nid = node.nodeId ?? node.node_id;
+                    const nprof = node.nodeProfile ?? node.node_profile;
                     if (nid && nprof) {
                         nodesToProcess[nid] = nprof;
                     }
                 });
-            } else if (clusterState.node_profiles || clusterState.nodeProfiles) {
-                nodesToProcess = clusterState.node_profiles ?? clusterState.nodeProfiles;
+            } else if (clusterState.nodeProfiles || clusterState.node_profiles) {
+                nodesToProcess = clusterState.nodeProfiles || clusterState.node_profiles;
             }
 
             // Transform each node
@@ -1991,10 +2435,15 @@
                 memBytesAvailable = getBytes(ramAvailVal);
                 const memBytesUsed = Math.max(memBytesTotal - memBytesAvailable, 0);
 
-                // Extract model information
-                const modelId = pick(nodeProfile, 'model_id', 'modelId', 'Unknown');
-                const chipId = pick(nodeProfile, 'chip_id', 'chipId', '');
-                const friendlyName = pick(nodeProfile, 'friendly_name', 'friendlyName', `${nodeId.substring(0, 8)}...`);
+                // Extract model information with graceful placeholders while node is loading
+                const rawModelId = pick(nodeProfile, 'model_id', 'modelId', 'Unknown');
+                const rawChipId = pick(nodeProfile, 'chip_id', 'chipId', '');
+                const rawFriendlyName = pick(nodeProfile, 'friendly_name', 'friendlyName', `${nodeId.substring(0, 8)}...`);
+
+                // When API has not fully loaded (reports "unknown"), present a nice default
+                const modelId = isUnknown(rawModelId) ? 'Mac Studio' : rawModelId;
+                const chipId = isUnknown(rawChipId) ? '' : rawChipId;
+                const friendlyName = (!rawFriendlyName || isUnknown(rawFriendlyName)) ? 'Mac' : rawFriendlyName;
 
                 // Extract network addresses (support snake_case and camelCase)
                 const addrList = [];
@@ -2039,7 +2488,7 @@
                     timestamp: new Date().toISOString()
                 };
 
-                result[nodeId] = {
+                resultNodes[nodeId] = {
                     mem: memBytesTotal,
                     addrs: addrList,
                     last_addr_update: Date.now() / 1000,
@@ -2053,7 +2502,21 @@
                 };
             }
 
-            return result;
+            // Extract directed edges from topology.connections if present (support camelCase)
+            const connections = clusterState.topology && Array.isArray(clusterState.topology.connections)
+                ? clusterState.topology.connections
+                : [];
+            connections.forEach(conn => {
+                if (!conn) return;
+                const src = conn.localNodeId ?? conn.local_node_id;
+                const dst = conn.sendBackNodeId ?? conn.send_back_node_id;
+                if (!src || !dst) return;
+                if (!resultNodes[src] || !resultNodes[dst]) return; // only draw edges between known nodes
+                if (src === dst) return; // skip self loops for now
+                resultEdges.push({ source: src, target: dst });
+            });
+
+            return { nodes: resultNodes, edges: resultEdges };
         }
 
         // --- Conditional Data Handling ---
@@ -2193,11 +2656,12 @@
                         mi.timestamp = new Date().toISOString();
                     }
                 }
-                renderNodes(mockData);
+                const mockTopology = { nodes: mockData, edges: [] };
+                renderNodes(mockTopology);
                 lastUpdatedElement.textContent = `Last updated: ${new Date().toLocaleTimeString()} (Mock Data)`;
 
                 if (currentlySelectedNodeId && mockData[currentlySelectedNodeId]) {
-                    showNodeDetails(currentlySelectedNodeId, mockData);
+                    showNodeDetails(currentlySelectedNodeId, mockTopology.nodes);
                 } else if (currentlySelectedNodeId && !mockData[currentlySelectedNodeId]) {
                     nodeDetailPanel.classList.remove('visible');
                     currentlySelectedNodeId = null;
