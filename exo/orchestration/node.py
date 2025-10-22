@@ -684,10 +684,17 @@ class Node:
     # Unpack
     request_ids, shard_dicts, logits_list = zip(*batch)
     try:
+      engine_name = self.inference_engine.__class__.__name__
+      # Tinygrad sampling currently expects unbatched logits; fall back when batching >1
+      if engine_name.startswith('Tinygrad') and len(logits_list) > 1:
+        raise RuntimeError('tinygrad-sample-no-batch')
       # Stack logits on batch dimension
       stacked = np.stack(logits_list, axis=0)
       tokens = await self.inference_engine.sample(stacked, temp=self.default_sample_temperature)
       tokens = np.asarray(tokens).reshape(-1)
+      if engine_name.startswith('Tinygrad') and tokens.size != len(logits_list):
+        # Safety check: unexpected size, fall back
+        raise RuntimeError('tinygrad-sample-size-mismatch')
     except Exception as e:
       # Fallback: sample individually on error
       if DEBUG >= 1: print(f"Batched sampling failed, falling back to per-request sampling: {e}")
