@@ -1,0 +1,35 @@
+site_name: EXO Developer Docs
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Installation: installation.md
+  - Architecture: architecture.md
+  - Diagrams: diagrams.md
+  - FAQ: faq.md
+theme:
+  name: material
+docs_dir: ./docs
+markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.snippets
+  - pymdownx.tabbed
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.tasklist
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.caret
+  - pymdownx.tilde
+  - pymdownx.magiclink
+  - pymdownx.betterem
+  - pymdownx.progressbar
+  - pymdownx.arithmatex
+  - pymdownx.smartsymbols
+  - pymdownx.critic
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
