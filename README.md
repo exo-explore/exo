@@ -36,7 +36,7 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
---ify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, NVIDIA, Raspberry Pi, pretty much any device!
+Unify your existing devices into one powerful GPU: iPhone, iPad, Android, Mac, NVIDIA, Raspberry Pi, pretty much any device!
 
 <div align="center">
   <h2>Update: exo is hiring. See <a href="https://exolabs.net">here</a> for more details.</h2>
