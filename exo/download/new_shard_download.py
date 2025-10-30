@@ -198,9 +198,65 @@ async def get_downloaded_size(path: Path) -> int:
   if await aios.path.exists(partial_path): return (await aios.stat(partial_path)).st_size
   return 0
 
+async def download_progress_for_local_path(repo_id: str, shard: Shard, local_path: Path) -> RepoProgressEvent:
+  # Scan local files for accurate progress reporting
+  file_progress = {}
+  total_files = 0
+  total_bytes = 0
+
+  if await aios.path.isdir(local_path):
+    # Recursively count files and sizes
+    for root, _, files in os.walk(local_path):
+      for f in files:
+        if f.endswith(('.safetensors', '.bin', '.pt', '.gguf', '.json')):
+          file_path = Path(root) / f
+          size = (await aios.stat(file_path)).st_size
+          rel_path = str(file_path.relative_to(local_path))
+          file_progress[rel_path] = RepoFileProgressEvent(
+            repo_id=repo_id,
+            repo_revision="local",
+            file_path=rel_path,
+            downloaded=size,
+            downloaded_this_session=0,
+            total=size,
+            speed=0,
+            eta=timedelta(0),
+            status="complete",
+            start_time=time.time()
+          )
+          total_files += 1
+          total_bytes += size
+  else:
+    raise ValueError(f"Local path {local_path} is not a directory")
+
+  return RepoProgressEvent(
+    shard=shard,
+    repo_id=repo_id,
+    repo_revision="local",
+    completed_files=total_files,
+    total_files=total_files,
+    downloaded_bytes=total_bytes,
+    downloaded_bytes_this_session=0,
+    total_bytes=total_bytes,
+    overall_speed=0,
+    overall_eta=timedelta(0),
+    file_progress=file_progress,
+    status="complete"
+  )
+
 async def download_shard(shard: Shard, inference_engine_classname: str, on_progress: AsyncCallbackSystem[str, Tuple[Shard, RepoProgressEvent]], max_parallel_downloads: int = 8, skip_download: bool = False) -> tuple[Path, RepoProgressEvent]:
   if DEBUG >= 2 and not skip_download: print(f"Downloading {shard.model_id=} for {inference_engine_classname}")
   repo_id = get_repo(shard.model_id, inference_engine_classname)
+
+  if not repo_id:
+    raise ValueError(f"No repo found for {shard.model_id=} and inference engine {inference_engine_classname}")
+
+  # Handle local paths
+  if await aios.path.exists(repo_id):
+    if DEBUG >= 2: print(f"Using local model path {repo_id}")
+    local_path = Path(repo_id)
+    return local_path, await download_progress_for_local_path(repo_id, shard, local_path)
+
   revision = "main"
   target_dir = await ensure_downloads_dir()/repo_id.replace("/", "--")
   if not skip_download: await aios.makedirs(target_dir, exist_ok=True)

@@ -5,6 +5,8 @@ from asyncio import CancelledError
 
 import platform
 
+from exo.inference.generation_options import GenerationOptions
+
 from . import node_service_pb2
 from . import node_service_pb2_grpc
 from exo import DEBUG
@@ -69,7 +71,8 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     prompt = request.prompt
     request_id = request.request_id
     inference_state = None if request.inference_state is None else self.deserialize_inference_state(request.inference_state)
-    result = await self.node.process_prompt(shard, prompt, request_id, inference_state)
+    generation_options = None if request.generation_options is None else self.deserialize_generation_options(request.generation_options)
+    result = await self.node.process_prompt(shard, prompt, request_id, inference_state, generation_options)
     if DEBUG >= 5: print(f"SendPrompt {shard=} {prompt=} {request_id=} result: {result}")
     tensor_data = result.tobytes() if result is not None else None
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
@@ -85,8 +88,9 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     request_id = request.request_id
 
     inference_state = None if request.inference_state is None else self.deserialize_inference_state(request.inference_state)
+    generation_options = None if request.generation_options is None else self.deserialize_generation_options(request.generation_options)
 
-    result = await self.node.process_tensor(shard, tensor, request_id, inference_state)
+    result = await self.node.process_tensor(shard, tensor, request_id, inference_state, generation_options)
     if DEBUG >= 5: print(f"SendTensor tensor {shard=} {tensor=} {request_id=} result: {result}")
     tensor_data = result.tobytes() if result is not None else None
     return node_service_pb2.Tensor(tensor_data=tensor_data, shape=result.shape, dtype=str(result.dtype)) if result is not None else node_service_pb2.Tensor()
@@ -138,12 +142,13 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
     request_id = request.request_id
     result = request.result
     is_finished = request.is_finished
+    finish_reason = request.finish_reason
     img = request.tensor
-    if DEBUG >= 5: print(f"Received SendResult request: {request_id=} {result=} {is_finished=}")
+    if DEBUG >= 5: print(f"Received SendResult request: {request_id=} {result=} {is_finished=} {finish_reason=}")
     result = list(result)
     if len(img.tensor_data) > 0:
       result = np.frombuffer(img.tensor_data, dtype=np.dtype(img.dtype)).reshape(img.shape)
-    self.node.on_token.trigger_all(request_id, result, is_finished)
+    self.node.on_token.trigger_all(request_id, result, is_finished, finish_reason)
     return node_service_pb2.Empty()
 
   async def SendOpaqueStatus(self, request, context):
@@ -171,3 +176,11 @@ class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
       inference_state.update(other_data)
 
     return inference_state
+
+  def deserialize_generation_options(self, generation_options_proto: node_service_pb2.GenerationOptions) -> GenerationOptions:
+    return GenerationOptions(
+      max_completion_tokens=generation_options_proto.max_completion_tokens if generation_options_proto.HasField("max_completion_tokens") else None,
+      stop=generation_options_proto.stop,
+      grammar_definition=generation_options_proto.grammar_definition if generation_options_proto.HasField(
+        "grammar_definition") else None,
+    )
