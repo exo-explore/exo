@@ -1,4 +1,4 @@
-from typing import cast, override, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast, override
 
 import mlx.core as mx
 import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]

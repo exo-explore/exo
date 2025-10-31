@@ -30,7 +30,6 @@ from exo.shared.types.worker.communication import (
     runner_print,
 )
 
-
 generation_stream = mx.new_stream(mx.default_device())
 
 

@@ -3,10 +3,10 @@ import concurrent.futures
 import contextlib
 import os
 import resource
-from loguru import logger
 from asyncio import AbstractEventLoop
 from typing import Any, Callable, Optional, cast
 
+from loguru import logger
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper as _TokenizerWrapper

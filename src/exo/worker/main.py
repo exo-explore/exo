@@ -1,8 +1,8 @@
 import asyncio
+import time
 from asyncio import Queue
 from functools import partial
 from random import random
-import time
 from typing import AsyncGenerator, Optional
 
 import anyio
@@ -199,7 +199,7 @@ class Worker:
                     await self.event_publisher(event)
             except Exception as e:
                 logger.opt(exception=e).warning(
-                    f"Error occurred when executing task", flush=True
+                    "Error occurred when executing task", flush=True
                 )
 
                 if isinstance(op, ExecuteTaskOp):

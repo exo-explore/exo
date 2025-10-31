@@ -22,7 +22,7 @@ from pydantic import (
     TypeAdapter,
 )
 
-from exo.shared.constants import EXO_HOME
+from exo.shared.constants import EXO_HOME, EXO_MODELS_DIR
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadProgressData
 from exo.shared.types.worker.shards import ShardMetadata
@@ -123,7 +123,7 @@ def map_repo_download_progress_to_download_progress_data(
 
 
 def build_model_path(model_id: str) -> DirectoryPath:
-    return EXO_HOME / "models" / model_id.replace("/", "--")
+    return EXO_MODELS_DIR / model_id.replace("/", "--")
 
 
 async def resolve_model_path_for_repo(repo_id: str) -> Path:
@@ -150,9 +150,8 @@ async def has_exo_home_write_access() -> bool:
 
 
 async def ensure_models_dir() -> Path:
-    models_dir = EXO_HOME / "models"
-    await aios.makedirs(models_dir, exist_ok=True)
-    return models_dir
+    await aios.makedirs(EXO_MODELS_DIR, exist_ok=True)
+    return EXO_MODELS_DIR
 
 
 async def delete_model(repo_id: str) -> bool:
@@ -324,7 +323,7 @@ async def download_file_with_retry(
     revision: str,
     path: str,
     target_dir: Path,
-    on_progress: Callable[[int, int], None] = lambda _, __: None,
+    on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
 ) -> Path:
     n_attempts = 30
     for attempt in range(n_attempts):
@@ -350,7 +349,7 @@ async def _download_file(
     revision: str,
     path: str,
     target_dir: Path,
-    on_progress: Callable[[int, int], None] = lambda _, __: None,
+    on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
 ) -> Path:
     if await aios.path.exists(target_dir / path):
         return target_dir / path
@@ -383,7 +382,7 @@ async def _download_file(
             ) as f:
                 while chunk := await r.content.read(8 * 1024 * 1024):
                     n_read = n_read + (await f.write(chunk))
-                    on_progress(n_read, length)
+                    on_progress(n_read, length, False)
 
     final_hash = await calc_hash(
         partial_path, hash_type="sha256" if len(remote_hash) == 64 else "sha1"
@@ -398,6 +397,7 @@ async def _download_file(
             f"Downloaded file {target_dir / path} has hash {final_hash} but remote hash is {remote_hash}"
         )
     await aios.rename(partial_path, target_dir / path)
+    on_progress(length, length, True)
     return target_dir / path
 
 
@@ -570,7 +570,9 @@ async def download_shard(
     )
     file_progress: Dict[str, RepoFileDownloadProgress] = {}
 
-    def on_progress_wrapper(file: FileListEntry, curr_bytes: int, total_bytes: int):
+    def on_progress_wrapper(
+        file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
+    ):
         start_time = (
             file_progress[file.path].start_time
             if file.path in file_progress
@@ -601,7 +603,9 @@ async def download_shard(
             total=Memory.from_bytes(total_bytes),
             speed=speed,
             eta=eta,
-            status="complete" if curr_bytes == total_bytes else "in_progress",
+            status="complete"
+            if curr_bytes == total_bytes and is_renamed
+            else "in_progress",
             start_time=start_time,
         )
         on_progress(
@@ -639,8 +643,8 @@ async def download_shard(
                 revision,
                 file.path,
                 target_dir,
-                lambda curr_bytes, total_bytes: on_progress_wrapper(
-                    file, curr_bytes, total_bytes
+                lambda curr_bytes, total_bytes, is_renamed: on_progress_wrapper(
+                    file, curr_bytes, total_bytes, is_renamed
                 ),
             )
 

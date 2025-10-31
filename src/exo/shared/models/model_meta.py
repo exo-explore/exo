@@ -58,8 +58,8 @@ async def get_config_data(model_id: str) -> ConfigData:
         "main",
         "config.json",
         target_dir,
-        lambda curr_bytes, total_bytes: logger.info(
-            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes}"
+        lambda curr_bytes, total_bytes, is_renamed: logger.info(
+            f"Downloading config.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
         ),
     )
     async with aiofiles.open(config_path, "r") as f:
@@ -75,8 +75,8 @@ async def get_safetensors_size(model_id: str) -> Memory:
         "main",
         "model.safetensors.index.json",
         target_dir,
-        lambda curr_bytes, total_bytes: logger.info(
-            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes}"
+        lambda curr_bytes, total_bytes, is_renamed: logger.info(
+            f"Downloading model.safetensors.index.json for {model_id}: {curr_bytes}/{total_bytes} ({is_renamed=})"
         ),
     )
     async with aiofiles.open(index_path, "r") as f:
