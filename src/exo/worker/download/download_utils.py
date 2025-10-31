@@ -61,7 +61,7 @@ class RepoFileDownloadProgress(BaseModel):
     status: Literal["not_started", "in_progress", "complete"]
     start_time: float
 
-    model_config = ConfigDict(frozen = True)
+    model_config = ConfigDict(frozen=True)
 
 
 class RepoDownloadProgress(BaseModel):
@@ -78,16 +78,18 @@ class RepoDownloadProgress(BaseModel):
     status: Literal["not_started", "in_progress", "complete"]
     file_progress: Dict[str, RepoFileDownloadProgress] = Field(default_factory=dict)
 
-    model_config = ConfigDict(
-        frozen = True
-    )
+    model_config = ConfigDict(frozen=True)
+
 
 def trim_etag(etag: str) -> str:
     if (etag[0] == '"' and etag[-1] == '"') or (etag[0] == "'" and etag[-1] == "'"):
         return etag[1:-1]
     return etag
 
-def map_repo_file_download_progress_to_download_progress_data(repo_file_download_progress: RepoFileDownloadProgress) -> DownloadProgressData:
+
+def map_repo_file_download_progress_to_download_progress_data(
+    repo_file_download_progress: RepoFileDownloadProgress,
+) -> DownloadProgressData:
     return DownloadProgressData(
         downloaded_bytes=repo_file_download_progress.downloaded,
         downloaded_bytes_this_session=repo_file_download_progress.downloaded_this_session,
@@ -98,7 +100,11 @@ def map_repo_file_download_progress_to_download_progress_data(repo_file_download
         eta_ms=int(repo_file_download_progress.eta.total_seconds() * 1000),
         files={},
     )
-def map_repo_download_progress_to_download_progress_data(repo_download_progress: RepoDownloadProgress) -> DownloadProgressData:
+
+
+def map_repo_download_progress_to_download_progress_data(
+    repo_download_progress: RepoDownloadProgress,
+) -> DownloadProgressData:
     return DownloadProgressData(
         total_bytes=repo_download_progress.total_bytes,
         downloaded_bytes=repo_download_progress.downloaded_bytes,
@@ -107,8 +113,14 @@ def map_repo_download_progress_to_download_progress_data(repo_download_progress:
         total_files=repo_download_progress.total_files,
         speed=repo_download_progress.overall_speed,
         eta_ms=int(repo_download_progress.overall_eta.total_seconds() * 1000),
-        files={file_path: map_repo_file_download_progress_to_download_progress_data(file_progress) for file_path, file_progress in repo_download_progress.file_progress.items()},
+        files={
+            file_path: map_repo_file_download_progress_to_download_progress_data(
+                file_progress
+            )
+            for file_path, file_progress in repo_download_progress.file_progress.items()
+        },
     )
+
 
 def build_model_path(model_id: str) -> DirectoryPath:
     return EXO_HOME / "models" / model_id.replace("/", "--")
@@ -235,6 +247,7 @@ async def _fetch_file_list(
 async def get_download_headers() -> dict[str, str]:
     return {**(await get_auth_headers()), "Accept-Encoding": "identity"}
 
+
 def create_http_session(
     auto_decompress: bool = False,
     timeout_profile: Literal["short", "long"] = "long",
@@ -259,6 +272,7 @@ def create_http_session(
             sock_connect=sock_connect_timeout,
         ),
     )
+
 
 async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -> str:
     hasher = hashlib.sha1() if hash_type == "sha1" else hashlib.sha256()
@@ -395,8 +409,12 @@ def calculate_repo_progress(
     all_start_time: float,
 ) -> RepoDownloadProgress:
     all_total_bytes = sum((p.total.in_bytes for p in file_progress.values()), 0)
-    all_downloaded_bytes = sum((p.downloaded.in_bytes for p in file_progress.values()), 0)
-    all_downloaded_bytes_this_session = sum((p.downloaded_this_session.in_bytes for p in file_progress.values()), 0)
+    all_downloaded_bytes = sum(
+        (p.downloaded.in_bytes for p in file_progress.values()), 0
+    )
+    all_downloaded_bytes_this_session = sum(
+        (p.downloaded_this_session.in_bytes for p in file_progress.values()), 0
+    )
     elapsed_time = time.time() - all_start_time
     all_speed = (
         all_downloaded_bytes_this_session / elapsed_time if elapsed_time > 0 else 0
@@ -422,7 +440,9 @@ def calculate_repo_progress(
         ),
         total_files=len(file_progress),
         downloaded_bytes=Memory.from_bytes(all_downloaded_bytes),
-        downloaded_bytes_this_session=Memory.from_bytes(all_downloaded_bytes_this_session),
+        downloaded_bytes_this_session=Memory.from_bytes(
+            all_downloaded_bytes_this_session
+        ),
         total_bytes=Memory.from_bytes(all_total_bytes),
         overall_speed=all_speed,
         overall_eta=all_eta,

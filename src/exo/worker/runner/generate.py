@@ -30,6 +30,7 @@ from exo.shared.types.worker.communication import (
     runner_print,
 )
 
+
 generation_stream = mx.new_stream(mx.default_device())
 
 
@@ -82,7 +83,7 @@ def generate_step(
 
             logits = logits[:, -1, :]
 
-            logprobs = logits - mx.logsumexp(logits, keepdims=True)  # pyright: ignore[reportUnknownMemberType]
+            logprobs = logits - mx.logsumexp(logits, keepdims=True)
             sampled = sampler(logprobs)
             return sampled, logprobs.squeeze(0)
 
@@ -220,7 +221,7 @@ async def warmup_inference(
 
     def _generate_warmup():
         nonlocal tokens_generated
-        for _ in stream_generate(
+        for token in stream_generate(
             model=model,
             tokenizer=tokenizer,
             prompt=warmup_prompt,
@@ -228,6 +229,7 @@ async def warmup_inference(
             sampler=sampler,
             conn=None,
         ):
+            runner_print("Generated warmup token: " + str(token.text))
             tokens_generated += 1
 
     await loop.run_in_executor(mlx_executor, _generate_warmup)

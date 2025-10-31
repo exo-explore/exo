@@ -300,7 +300,9 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     )
 
     # Act
-    placements = get_instance_placements_after_create(create_instance_command, topology, {})
+    placements = get_instance_placements_after_create(
+        create_instance_command, topology, {}
+    )
 
     # Assert the chosen cycle is A-B-C (contains at least one leaf node), even though
     # D-E-F has more total memory.

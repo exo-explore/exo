@@ -51,12 +51,16 @@ async def get_memory_profile_async() -> MemoryPerformanceProfile:
 
         override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
         override_memory: int | None = (
-            Memory.from_mb(int(override_memory_env)).in_bytes if override_memory_env else None
+            Memory.from_mb(int(override_memory_env)).in_bytes
+            if override_memory_env
+            else None
         )
 
         return MemoryPerformanceProfile.from_bytes(
             ram_total=int(vm.total),
-            ram_available=int(override_memory) if override_memory else int(vm.available),
+            ram_available=int(override_memory)
+            if override_memory
+            else int(vm.available),
             swap_total=int(sm.total),
             swap_available=int(sm.free),
         )

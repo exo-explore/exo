@@ -1,4 +1,4 @@
-from typing import Protocol, cast, override
+from typing import cast, override, Protocol, TYPE_CHECKING
 
 import mlx.core as mx
 import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
@@ -22,10 +22,29 @@ class _LayerCallable(Protocol):
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
 
 
-class PipelineFirstLayer(nn.Module):
-    def __init__(self, original_layer: _LayerCallable, r: int, s: int):
+class CustomMlxLayer(nn.Module):
+    """Base class for replacing an MLX layer with a custom implementation."""
+
+    def __init__(self, original_layer: _LayerCallable):
         super().__init__()
+        # Set twice to avoid __setattr__ recursion
+        object.__setattr__(self, "_original_layer", original_layer)
         self.original_layer: _LayerCallable = original_layer
+
+    # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
+    if not TYPE_CHECKING:
+
+        def __getattr__(self, name):
+            try:
+                return super().__getattr__(name)
+            except AttributeError:
+                original_layer = object.__getattribute__(self, "_original_layer")
+                return object.__getattribute__(original_layer, name)
+
+
+class PipelineFirstLayer(CustomMlxLayer):
+    def __init__(self, original_layer: _LayerCallable, r: int, s: int):
+        super().__init__(original_layer)
         self.r: int = r
         self.s: int = s
 
@@ -36,10 +55,9 @@ class PipelineFirstLayer(nn.Module):
         return self.original_layer(x, *args, **kwargs)
 
 
-class PipelineLastLayer(nn.Module):
+class PipelineLastLayer(CustomMlxLayer):
     def __init__(self, original_layer: _LayerCallable, r: int, s: int):
-        super().__init__()
-        self.original_layer: _LayerCallable = original_layer
+        super().__init__(original_layer)
         self.r: int = r
         self.s: int = s
 
@@ -48,7 +66,7 @@ class PipelineLastLayer(nn.Module):
         output: mx.array = self.original_layer(x, *args, **kwargs)
         if self.r != self.s - 1:
             output = mx.distributed.send(output, (self.r + 1) % self.s)
-        output = mx.distributed.all_gather(output)[-output.shape[0] :]  # pyright: ignore[reportUnknownMemberType]
+        output = mx.distributed.all_gather(output)[-output.shape[0] :]
         return output
 
 

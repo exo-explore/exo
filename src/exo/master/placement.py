@@ -63,7 +63,8 @@ def get_instance_placements_after_create(
         smallest_cycles = smallest_tb_cycles
 
     cycles_with_leaf_nodes: list[list[NodeInfo]] = [
-        cycle for cycle in smallest_cycles
+        cycle
+        for cycle in smallest_cycles
         if any(topology.node_is_leaf(node.node_id) for node in cycle)
     ]
 

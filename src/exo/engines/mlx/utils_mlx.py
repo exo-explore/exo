@@ -50,7 +50,7 @@ def broadcast_from_zero(value: int) -> int:
 
     m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu))
     mx.eval(m)  # type: ignore
-    return int(m.item())  # type: ignore
+    return int(m.item())
 
 
 class HostList(RootModel[list[str]]):
@@ -65,7 +65,9 @@ def mlx_setup(
     wired_frac_of_mrwss: float = 0.00,  # start with no wiring
 ) -> None:
     if not mx.metal.is_available():
-        logger.warning("Metal is not available. Skipping MLX memory wired limits setup.")
+        logger.warning(
+            "Metal is not available. Skipping MLX memory wired limits setup."
+        )
         return
     info = mx.metal.device_info()
     mrwss = int(info["max_recommended_working_set_size"])  # bytes
@@ -216,8 +218,8 @@ class NullKVCache(KVCache):
     def __init__(self, dtype: mx.Dtype = mx.float16):
         super().__init__()
         # zero-length K/V so shapes/dtypes are defined but empty
-        self.keys = mx.zeros((1, 1, 0, 1), dtype=dtype)  # pyright: ignore[reportUnknownMemberType]
-        self.values = mx.zeros((1, 1, 0, 1), dtype=dtype)  # pyright: ignore[reportUnknownMemberType]
+        self.keys = mx.zeros((1, 1, 0, 1), dtype=dtype)
+        self.values = mx.zeros((1, 1, 0, 1), dtype=dtype)
         self.offset = 0
 
     @property
@@ -247,11 +249,11 @@ def mlx_force_oom(size: int = 40000) -> None:
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
     mx.set_default_device(mx.gpu)  # type: ignore
-    a = mx.random.uniform(shape=(size, size), dtype=mx.float32)  # type: ignore
-    b = mx.random.uniform(shape=(size, size), dtype=mx.float32)  # type: ignore
+    a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
+    b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     mx.eval(a, b)  # type: ignore
-    c = mx.matmul(a, b)  # type: ignore
-    d = mx.matmul(a, c)  # type: ignore
-    e = mx.matmul(b, c)  # type: ignore
-    f = mx.sigmoid(d + e)  # type: ignore
+    c = mx.matmul(a, b)
+    d = mx.matmul(a, c)
+    e = mx.matmul(b, c)
+    f = mx.sigmoid(d + e)
     mx.eval(f)  # type: ignore

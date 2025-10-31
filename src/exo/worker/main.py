@@ -1,8 +1,8 @@
 import asyncio
-import time
 from asyncio import Queue
 from functools import partial
 from random import random
+import time
 from typing import AsyncGenerator, Optional
 
 import anyio
@@ -198,6 +198,10 @@ class Worker:
                 async for event in self.execute_op(op):
                     await self.event_publisher(event)
             except Exception as e:
+                logger.opt(exception=e).warning(
+                    f"Error occurred when executing task", flush=True
+                )
+
                 if isinstance(op, ExecuteTaskOp):
                     generator = self.fail_task(
                         e, runner_id=op.runner_id, task_id=op.task.task_id
@@ -319,7 +323,9 @@ class Worker:
         assigned_runner.status = DownloadingRunnerStatus(
             download_progress=DownloadOngoing(
                 node_id=self.node_id,
-                download_progress=map_repo_download_progress_to_download_progress_data(initial_progress),
+                download_progress=map_repo_download_progress_to_download_progress_data(
+                    initial_progress
+                ),
             )
         )
         yield assigned_runner.status_update_event()
@@ -373,7 +379,9 @@ class Worker:
                     assigned_runner.status = DownloadingRunnerStatus(
                         download_progress=DownloadOngoing(
                             node_id=self.node_id,
-                            download_progress=map_repo_download_progress_to_download_progress_data(progress),
+                            download_progress=map_repo_download_progress_to_download_progress_data(
+                                progress
+                            ),
                         )
                     )
                     yield assigned_runner.status_update_event()
@@ -620,8 +628,6 @@ class Worker:
 
             async for event in self.fail_runner(e, runner_id):
                 yield event
-
-
 
     # This function is re-entrant, take care!
     async def event_publisher(self, event: Event) -> None:

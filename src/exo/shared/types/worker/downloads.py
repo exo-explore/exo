@@ -16,6 +16,7 @@ class DownloadProgressData(CamelCaseModel):
 
     files: dict[str, "DownloadProgressData"]
 
+
 class BaseDownloadProgress(TaggedModel):
     node_id: NodeId
 
