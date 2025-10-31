@@ -3,6 +3,7 @@ import time
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from transformers import AutoTokenizer
 from typing import List, Literal, Union, Dict, Optional
@@ -31,6 +32,61 @@ if platform.system().lower() == "darwin" and platform.machine().lower() == "arm6
   import mlx.core as mx
 else:
   import numpy as mx
+
+
+def parse_tool_calls(content: str) -> tuple[Optional[str], Optional[List[Dict]], Optional[str]]:
+  """
+  Parse tool calls from model output in XML format.
+
+  Returns:
+    tuple of (content_before_tools, tool_calls_list, finish_reason)
+    - content_before_tools: Text content before first tool call (or None if no tools)
+    - tool_calls_list: List of tool call dicts with OpenAI format (or None if no tools)
+    - finish_reason: "tool_calls" if tools found, None otherwise
+  """
+  tool_calls = []
+
+  # Find all tool call matches
+  matches = list(re.finditer(r"<tool_call>\n(.+?)\n</tool_call>", content, re.DOTALL))
+
+  if not matches:
+    return None, None, None
+
+  # Get content before first tool call
+  first_match_start = matches[0].start()
+  content_before = content[:first_match_start].strip() if first_match_start > 0 else None
+
+  # Parse each tool call
+  for match in matches:
+    try:
+      tool_call_json = json.loads(match.group(1))
+
+      # Ensure arguments is a JSON string (not an object)
+      if "arguments" in tool_call_json and isinstance(tool_call_json["arguments"], dict):
+        tool_call_json["arguments"] = json.dumps(tool_call_json["arguments"])
+
+      # Generate unique call ID
+      call_id = f"call_{uuid.uuid4().hex[:24]}"
+
+      # Format according to OpenAI spec
+      tool_calls.append({
+        "id": call_id,
+        "type": "function",
+        "function": {
+          "name": tool_call_json.get("name", ""),
+          "arguments": tool_call_json.get("arguments", "{}")
+        }
+      })
+    except json.JSONDecodeError as e:
+      if DEBUG >= 2:
+        print(f"Failed to parse tool call JSON: {match.group(1)}")
+        print(f"Error: {e}")
+      continue
+
+  if tool_calls:
+    return content_before, tool_calls, "tool_calls"
+
+  return None, None, None
 
 
 class Message:
@@ -64,9 +120,23 @@ def generate_completion(
   request_id: str,
   tokens: List[int],
   stream: bool,
-  finish_reason: Union[Literal["length", "stop"], None],
+  finish_reason: Union[Literal["length", "stop", "tool_calls"], None],
   object_type: Literal["chat.completion", "text_completion"],
 ) -> dict:
+  decoded_content = tokenizer.decode(tokens)
+
+  # Parse tool calls from content if tools were provided in request
+  content_before_tools = None
+  tool_calls = None
+  tool_finish_reason = None
+
+  if chat_request.tools:
+    content_before_tools, tool_calls, tool_finish_reason = parse_tool_calls(decoded_content)
+
+  # Override finish_reason if tool calls were detected
+  if tool_finish_reason:
+    finish_reason = tool_finish_reason
+
   completion = {
     "id": f"chatcmpl-{request_id}",
     "object": object_type,
@@ -75,7 +145,7 @@ def generate_completion(
     "system_fingerprint": f"exo_{VERSION}",
     "choices": [{
       "index": 0,
-      "message": {"role": "assistant", "content": tokenizer.decode(tokens)},
+      "message": {"role": "assistant", "content": decoded_content},
       "logprobs": None,
       "finish_reason": finish_reason,
     }],
@@ -91,9 +161,21 @@ def generate_completion(
   choice = completion["choices"][0]
   if object_type.startswith("chat.completion"):
     key_name = "delta" if stream else "message"
-    choice[key_name] = {"role": "assistant", "content": tokenizer.decode(tokens)}
+
+    # Build message/delta content
+    message_content = {
+      "role": "assistant",
+      "content": content_before_tools if tool_calls else decoded_content
+    }
+
+    # Add tool_calls array if tools were called
+    if tool_calls:
+      message_content["tool_calls"] = tool_calls
+
+    choice[key_name] = message_content
+
   elif object_type == "text_completion":
-    choice["text"] = tokenizer.decode(tokens)
+    choice["text"] = decoded_content
   else:
     ValueError(f"Unsupported response type: {object_type}")
 
