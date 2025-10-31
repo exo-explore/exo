@@ -13,7 +13,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     ForwarderCommand,
 )
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
@@ -38,6 +38,7 @@ from exo.utils.channels import channel
 async def test_master():
     keypair = get_node_id_keypair()
     node_id = NodeId(keypair.to_peer_id().to_base58())
+    session_id = SessionId(master_node_id=node_id, election_clock=0)
 
     ge_sender, global_event_receiver = channel[ForwarderEvent]()
     command_sender, co_receiver = channel[ForwarderCommand]()
@@ -58,6 +59,7 @@ async def test_master():
 
     master = Master(
         node_id,
+        session_id,
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
@@ -74,6 +76,7 @@ async def test_master():
             ForwarderEvent(
                 origin_idx=0,
                 origin=sender_node_id,
+                session=session_id,
                 event=(
                     NodePerformanceMeasured(
                         node_id=node_id,

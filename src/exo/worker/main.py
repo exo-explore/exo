@@ -13,7 +13,7 @@ from loguru import logger
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -75,6 +75,7 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         shard_downloader: ShardDownloader,
         *,
         initial_connection_messages: list[ConnectionMessage],
@@ -91,6 +92,7 @@ class Worker:
         command_sender: Sender[ForwarderCommand],
     ):
         self.node_id: NodeId = node_id
+        self.session_id: SessionId = session_id
         self.shard_downloader: ShardDownloader = shard_downloader
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
@@ -634,6 +636,7 @@ class Worker:
         fe = ForwarderEvent(
             origin_idx=self.local_event_index,
             origin=self.node_id,
+            session=self.session_id,
             event=event,
         )
         logger.debug(

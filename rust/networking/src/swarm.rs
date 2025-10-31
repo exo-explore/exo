@@ -95,6 +95,7 @@ mod transport {
 
 mod behaviour {
     use crate::{alias, discovery};
+    use std::time::Duration;
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{gossipsub, identity};
 
@@ -124,6 +125,7 @@ mod behaviour {
         gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(keypair.clone()),
             ConfigBuilder::default()
+                .publish_queue_duration(Duration::from_secs(15))
                 .validation_mode(ValidationMode::Strict)
                 .build()
                 .expect("the configuration should always be valid"),

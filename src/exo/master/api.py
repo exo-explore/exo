@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import final
 
 import uvicorn
+from anyio import Event as AsyncTaskEvent
 from anyio import create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from exo.shared.apply import apply
+from exo.shared.election import ElectionMessage
 from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
@@ -36,7 +38,7 @@ from exo.shared.types.commands import (
     # TODO: SpinUpInstance
     TaskFinished,
 )
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.state import State
@@ -74,19 +76,27 @@ async def resolve_model_meta(model_id: str) -> ModelMetadata:
 class API:
     def __init__(
         self,
-        *,
         node_id: NodeId,
+        session_id: SessionId,
+        *,
         port: int = 8000,
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],
+        # This lets us pause the API if an election is running
+        election_receiver: Receiver[ElectionMessage],
     ) -> None:
         self.state = State()
         self.command_sender = command_sender
         self.global_event_receiver = global_event_receiver
+        self.election_receiver = election_receiver
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
         self.node_id: NodeId = node_id
+        self.session_id: SessionId = session_id
         self.port = port
+
+        self.paused: bool = False
+        self.paused_ev: AsyncTaskEvent = AsyncTaskEvent()
 
         self.app = FastAPI()
         self._setup_cors()
@@ -111,10 +121,17 @@ class API:
         ] = {}
         self._tg: TaskGroup | None = None
 
-    def reset(self):
+    def reset(self, new_session_id: SessionId):
         self.state = State()
+        self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._chat_completion_queues = {}
+        self.unpause()
+
+    def unpause(self):
+        self.paused = False
+        self.paused_ev.set()
+        self.paused_ev = AsyncTaskEvent()
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
@@ -160,10 +177,9 @@ class API:
         )
 
     def get_instance(self, instance_id: InstanceId) -> Instance:
-        state = self.state
-        if instance_id not in state.instances:
+        if instance_id not in self.state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
-        return state.instances[instance_id]
+        return self.state.instances[instance_id]
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
         if instance_id not in self.state.instances:
@@ -299,6 +315,7 @@ class API:
             logger.info("Starting API")
             tg.start_soon(uvicorn_server.serve)
             tg.start_soon(self._apply_state)
+            tg.start_soon(self._pause_on_new_election)
         self.command_sender.close()
         self.global_event_receiver.close()
 
@@ -314,7 +331,15 @@ class API:
                     ):
                         self._chat_completion_queues[event.command_id].put_nowait(event)
 
+    async def _pause_on_new_election(self):
+        with self.election_receiver as ems:
+            async for message in ems:
+                if message.clock > self.session_id.election_clock:
+                    self.paused = True
+
     async def _send(self, command: Command):
+        while self.paused:
+            await self.paused_ev.wait()
         await self.command_sender.send(
             ForwarderCommand(origin=self.node_id, command=command)
         )

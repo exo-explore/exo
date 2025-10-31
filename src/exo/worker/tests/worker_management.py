@@ -5,12 +5,15 @@ from anyio import fail_after
 
 from exo.routing.topics import ConnectionMessage, ForwarderCommand, ForwarderEvent
 from exo.shared.types.chunks import TokenChunk
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import ChunkGenerated, Event, TaskStateUpdated
 from exo.shared.types.tasks import TaskId, TaskStatus
 from exo.utils.channels import Receiver, Sender, channel
 from exo.worker.download.shard_downloader import NoopShardDownloader, ShardDownloader
 from exo.worker.main import Worker
+from exo.worker.tests.constants import MASTER_NODE_ID
+
+session = SessionId(master_node_id=MASTER_NODE_ID, election_clock=0)
 
 
 @dataclass
@@ -19,11 +22,17 @@ class WorkerMailbox:
     receiver: Receiver[ForwarderEvent]
     counter: int = 0
 
-    async def append_events(self, events: list[Event], *, origin: NodeId):
+    async def append_events(
+        self,
+        events: list[Event],
+        *,
+        origin: NodeId,
+    ):
         for event in events:
             await self.sender.send(
                 ForwarderEvent(
                     origin=origin,
+                    session=session,
                     event=event,
                     origin_idx=self.counter,
                 )
@@ -45,6 +54,7 @@ def create_worker_void_mailbox(
         shard_downloader = NoopShardDownloader()
     return Worker(
         node_id,
+        session_id=session,
         shard_downloader=shard_downloader,
         initial_connection_messages=[],
         connection_message_receiver=channel[ConnectionMessage]()[1],
@@ -64,6 +74,7 @@ def create_worker_and_mailbox(
     sender, grecv = channel[ForwarderEvent]()
     worker = Worker(
         node_id,
+        session_id=session,
         shard_downloader=shard_downloader,
         initial_connection_messages=[],
         connection_message_receiver=channel[ConnectionMessage]()[1],
@@ -84,6 +95,7 @@ def create_worker_with_old_mailbox(
     # This function is subtly complex, come talk to Evan if you want to know what it's actually doing.
     worker = Worker(
         node_id,
+        session_id=session,
         shard_downloader=shard_downloader,
         initial_connection_messages=[],
         connection_message_receiver=channel[ConnectionMessage]()[1],

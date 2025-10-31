@@ -1,5 +1,3 @@
-from enum import Enum
-
 from pydantic import Field
 
 from exo.shared.types.api import ChatCompletionTaskParams
@@ -10,17 +8,12 @@ from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
 # TODO: We need to have a distinction between create instance and spin up instance.
-class CommandType(str, Enum):
-    ChatCompletion = "ChatCompletion"
-    CreateInstance = "CreateInstance"
-    SpinUpInstance = "SpinUpInstance"
-    DeleteInstance = "DeleteInstance"
-    TaskFinished = "TaskFinished"
-    RequestEventLog = "RequestEventLog"
-
-
 class BaseCommand(TaggedModel):
     command_id: CommandId = Field(default_factory=CommandId)
+
+
+class TestCommand(BaseCommand):
+    pass
 
 
 class ChatCompletion(BaseCommand):
@@ -48,7 +41,8 @@ class RequestEventLog(BaseCommand):
 
 
 Command = (
-    RequestEventLog
+    TestCommand
+    | RequestEventLog
     | ChatCompletion
     | CreateInstance
     | SpinUpInstance

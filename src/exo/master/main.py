@@ -16,8 +16,9 @@ from exo.shared.types.commands import (
     RequestEventLog,
     SpinUpInstance,
     TaskFinished,
+    TestCommand,
 )
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import (
     Event,
     ForwarderEvent,
@@ -38,6 +39,7 @@ class Master:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         *,
         command_receiver: Receiver[ForwarderCommand],
         # Receiving indexed events from the forwarder to be applied to state
@@ -51,6 +53,7 @@ class Master:
         self.state = State()
         self._tg: TaskGroup | None = None
         self.node_id = node_id
+        self.session_id = session_id
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
@@ -93,6 +96,8 @@ class Master:
                     generated_events: list[Event] = []
                     command = forwarder_command.command
                     match command:
+                        case TestCommand():
+                            pass
                         case ChatCompletion():
                             instance_task_counts: dict[InstanceId, int] = {}
                             for instance in self.state.instances.values():
@@ -184,6 +189,9 @@ class Master:
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
             async for local_event in local_events:
+                # Discard all events not from our session
+                if local_event.session != self.session_id:
+                    continue
                 self._multi_buffer.ingest(
                     local_event.origin_idx,
                     local_event.event,
@@ -221,6 +229,7 @@ class Master:
                     ForwarderEvent(
                         origin=NodeId(f"master_{self.node_id}"),
                         origin_idx=local_index,
+                        session=self.session_id,
                         event=event,
                     )
                 )
@@ -233,6 +242,7 @@ class Master:
             ForwarderEvent(
                 origin=self.node_id,
                 origin_idx=event.idx,
+                session=self.session_id,
                 event=event.event,
             )
         )

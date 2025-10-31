@@ -23,6 +23,11 @@ class NodeId(Id):
     pass
 
 
+class SessionId(CamelCaseModel):
+    master_node_id: NodeId
+    election_clock: int
+
+
 class CommandId(Id):
     pass
 
