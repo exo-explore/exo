@@ -7,7 +7,16 @@ import random
 import platform
 import psutil
 import uuid
-from scapy.all import get_if_addr, get_if_list
+# Import scapy with Windows compatibility
+try:
+  from scapy.all import get_if_addr, get_if_list
+except ImportError as e:
+  print(f"Warning: scapy import failed: {e}")
+  # Provide fallback functions for Windows
+  def get_if_addr(interface):
+    return "127.0.0.1"
+  def get_if_list():
+    return ["lo"]
 import re
 import subprocess
 from pathlib import Path
@@ -40,7 +49,9 @@ def get_system_info():
     return "Unknown Mac architecture"
   if psutil.LINUX:
     return "Linux"
-  return "Non-Mac, non-Linux system"
+  if psutil.WINDOWS:
+    return "Windows"
+  return "Unknown system"
 
 
 def find_available_port(host: str = "", min_port: int = 49152, max_port: int = 65535) -> int:
@@ -237,9 +248,37 @@ def get_all_ip_addresses_and_interfaces():
         ip = get_if_addr(interface)
         if ip.startswith("0.0."): continue
         simplified_interface = re.sub(r'^\\Device\\NPF_', '', interface)
+        
+        # Windows-specific filtering to avoid problematic interfaces
+        if psutil.WINDOWS:
+          interface_lower = simplified_interface.lower()
+          # Skip known problematic Windows virtual interfaces
+          skip_patterns = [
+            'vmware', 'virtualbox', 'hyper-v', 'vethernet', 'docker', 'wsl',
+            'npcap loopback', 'teredo', 'isatap', '6to4'
+          ]
+          if any(pattern in interface_lower for pattern in skip_patterns):
+            if DEBUG >= 2: print(f"Skipping Windows virtual interface: {simplified_interface}")
+            continue
+          
+          # Skip invalid IP ranges for Windows
+          if ip.startswith(('169.254.', '0.', '224.', '239.', '255.')):
+            if DEBUG >= 2: print(f"Skipping invalid IP range {ip} on {simplified_interface}")
+            continue
+          
+          # Test if interface is actually reachable on Windows
+          try:
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            test_sock.settimeout(0.1)
+            test_sock.bind((ip, 0))
+            test_sock.close()
+          except OSError as e:
+            if DEBUG >= 2: print(f"Skipping unreachable Windows interface {simplified_interface} ({ip}): {e}")
+            continue
+        
         ip_addresses.append((ip, simplified_interface))
-      except:
-        if DEBUG >= 1: print(f"Failed to get IP address for interface {interface}")
+      except Exception as e:
+        if DEBUG >= 1: print(f"Failed to get IP address for interface {interface}: {e}")
         if DEBUG >= 1: traceback.print_exc()
     if not ip_addresses:
       if DEBUG >= 1: print("Failed to get any IP addresses. Defaulting to localhost.")
@@ -285,6 +324,28 @@ async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
   if psutil.MACOS:
     macos_type = await get_macos_interface_type(ifname)
     if macos_type is not None: return macos_type
+
+  # Windows-specific interface detection
+  if psutil.WINDOWS:
+    ifname_lower = ifname.lower()
+    # Windows virtual adapters and tunnels (lowest priority)
+    if any(x in ifname_lower for x in ['vethernet', 'hyper-v', 'vmware', 'virtualbox', 'docker', 'wsl']):
+      return (8, "Virtual Adapter")
+    # Windows loopback
+    if 'loopback' in ifname_lower or ifname_lower.startswith('lo'):
+      return (7, "Loopback")
+    # Windows Ethernet interfaces (including USB adapters)
+    if any(x in ifname_lower for x in ['ethernet', 'local area connection', 'eth']):
+      return (4, "Ethernet")
+    # Windows WiFi interfaces
+    if any(x in ifname_lower for x in ['wi-fi', 'wireless', 'wifi', 'wlan']):
+      return (3, "WiFi")
+    # Windows Bluetooth adapters
+    if 'bluetooth' in ifname_lower:
+      return (2, "Bluetooth")
+    # Windows VPN and tunnel interfaces
+    if any(x in ifname_lower for x in ['vpn', 'tunnel', 'tap', 'tun']):
+      return (1, "VPN/Tunnel")
 
   # Local container/virtual interfaces
   if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or 'bridge' in ifname):

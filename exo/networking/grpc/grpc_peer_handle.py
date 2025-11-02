@@ -1,6 +1,7 @@
 import grpc
 import numpy as np
 import asyncio
+import zlib
 from typing import Optional, Tuple, List
 
 from . import node_service_pb2
@@ -16,8 +17,9 @@ import platform
 
 if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
   import mlx.core as mx
+  HAS_MLX = True
 else:
-  import numpy as mx
+  HAS_MLX = False
 
 
 class GRPCPeerHandle(PeerHandle):
@@ -42,6 +44,21 @@ class GRPCPeerHandle(PeerHandle):
       ("grpc.tcp_nodelay", 1),
       ("grpc.optimization_target", "throughput"),
     ]
+
+  def _compress_tensor_data(self, tensor_data: bytes) -> bytes:
+    """Compress tensor data using zlib for efficient transmission"""
+    if len(tensor_data) > 1024:  # Only compress if larger than 1KB
+      return zlib.compress(tensor_data, level=1)  # Fast compression
+    return tensor_data
+
+  def _decompress_tensor_data(self, compressed_data: bytes, original_size: int) -> bytes:
+    """Decompress tensor data, with fallback for uncompressed data"""
+    try:
+      if len(compressed_data) < original_size:  # Likely compressed
+        return zlib.decompress(compressed_data)
+    except zlib.error:
+      pass  # Not compressed or corrupted
+    return compressed_data
 
   def id(self) -> str:
     return self._id
@@ -86,15 +103,14 @@ class GRPCPeerHandle(PeerHandle):
     try:
       await self._ensure_connected()
       request = node_service_pb2.HealthCheckRequest()
-      response = await asyncio.wait_for(self.stub.HealthCheck(request), timeout=5)
+      # Increased health check timeout for cross-platform stability
+      response = await asyncio.wait_for(self.stub.HealthCheck(request), timeout=8.0)
       return response.is_healthy
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+      if DEBUG >= 2: print(f"Health check timeout/cancelled for {self._id}")
       return False
     except Exception:
-      if DEBUG >= 4:
-        print(f"Health check failed for {self._id}@{self.address}.")
-        import traceback
-        traceback.print_exc()
+      if DEBUG >= 2: print(f"Health check failed for {self._id}@{self.address}")
       return False
 
   async def send_prompt(self, shard: Shard, prompt: str, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
@@ -114,6 +130,11 @@ class GRPCPeerHandle(PeerHandle):
 
   async def send_tensor(self, shard: Shard, tensor: np.ndarray, inference_state: Optional[dict] = None, request_id: Optional[str] = None) -> Optional[np.array]:
     await self._ensure_connected()
+    
+    # Compress tensor data for efficient transmission
+    tensor_bytes = tensor.tobytes()
+    compressed_data = self._compress_tensor_data(tensor_bytes)
+    
     request = node_service_pb2.TensorRequest(
       shard=node_service_pb2.Shard(
         model_id=shard.model_id,
@@ -121,7 +142,7 @@ class GRPCPeerHandle(PeerHandle):
         end_layer=shard.end_layer,
         n_layers=shard.n_layers,
       ),
-      tensor=node_service_pb2.Tensor(tensor_data=tensor.tobytes(), shape=tensor.shape, dtype=str(tensor.dtype)),
+      tensor=node_service_pb2.Tensor(tensor_data=compressed_data, shape=tensor.shape, dtype=str(tensor.dtype)),
       request_id=request_id,
       inference_state=None if inference_state is None else self.serialize_inference_state(inference_state)
     )
@@ -130,7 +151,11 @@ class GRPCPeerHandle(PeerHandle):
     if not response.tensor_data or not response.shape or not response.dtype:
       return None
 
-    return np.frombuffer(response.tensor_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
+    # Decompress response data
+    original_size = np.prod(response.shape) * np.dtype(response.dtype).itemsize
+    decompressed_data = self._decompress_tensor_data(response.tensor_data, original_size)
+    
+    return np.frombuffer(decompressed_data, dtype=np.dtype(response.dtype)).reshape(response.shape)
 
   async def send_example(self, shard: Shard, example: np.ndarray, target: np.ndarray, length: np.ndarray, train: bool, request_id: Optional[str] = None) -> Optional[np.array]:
     await self._ensure_connected()
@@ -177,7 +202,16 @@ class GRPCPeerHandle(PeerHandle):
   async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
     await self._ensure_connected()
     request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
-    response = await self.stub.CollectTopology(request)
+    # Increased timeout for topology collection to handle cross-platform communication
+    timeout = 12.0 if max_depth > 1 else 8.0
+    try:
+      response = await asyncio.wait_for(self.stub.CollectTopology(request), timeout=timeout)
+    except asyncio.CancelledError:
+      if DEBUG >= 1: print(f"Topology collection cancelled for {self._id}")
+      raise
+    except asyncio.TimeoutError:
+      if DEBUG >= 1: print(f"Topology collection timeout for {self._id} after {timeout}s")
+      raise
     topology = Topology()
     for node_id, capabilities in response.nodes.items():
       device_capabilities = DeviceCapabilities(
@@ -207,11 +241,11 @@ class GRPCPeerHandle(PeerHandle):
     proto_inference_state = node_service_pb2.InferenceState()
     other_data = {}
     for k, v in inference_state.items():
-      if isinstance(v, mx.array):
+      if HAS_MLX and isinstance(v, mx.array):
         np_array = np.array(v)
         tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))
         proto_inference_state.tensor_data[k].CopyFrom(tensor_data)
-      elif isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
+      elif HAS_MLX and isinstance(v, list) and all(isinstance(item, mx.array) for item in v):
         tensor_list = node_service_pb2.TensorList()
         for tensor in v:
           np_array = np.array(tensor)

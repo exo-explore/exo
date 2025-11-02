@@ -25,21 +25,51 @@ class DeviceFlops(BaseModel):
 class DeviceCapabilities(BaseModel):
   model: str
   chip: str
-  memory: int
+  memory: int  # Total memory for backward compatibility
   flops: DeviceFlops
+  gpu_memory: int = 0  # Dedicated GPU memory (VRAM)
+  system_memory: int = 0  # System RAM
 
   def __str__(self):
-    return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}"
+    if self.gpu_memory > 0 and self.system_memory > 0:
+      return f"Model: {self.model}. Chip: {self.chip}. GPU Memory: {self.gpu_memory}MB. System Memory: {self.system_memory}MB. Total: {self.memory}MB. Flops: {self.flops}"
+    else:
+      return f"Model: {self.model}. Chip: {self.chip}. Memory: {self.memory}MB. Flops: {self.flops}"
 
   def model_post_init(self, __context: Any) -> None:
     if isinstance(self.flops, dict):
       self.flops = DeviceFlops(**self.flops)
+    # If gpu_memory and system_memory are not set, fall back to old behavior
+    if self.gpu_memory == 0 and self.system_memory == 0:
+      self.system_memory = self.memory
+
+  @property
+  def available_gpu_memory(self) -> int:
+    """Returns available GPU memory in MB"""
+    return self.gpu_memory
+
+  @property
+  def available_system_memory(self) -> int:
+    """Returns available system memory in MB"""
+    return self.system_memory
+
+  @property
+  def total_memory(self) -> int:
+    """Returns total available memory (GPU + system) in MB"""
+    return self.gpu_memory + self.system_memory
 
   def to_dict(self):
-    return {"model": self.model, "chip": self.chip, "memory": self.memory, "flops": self.flops.to_dict()}
+    return {
+      "model": self.model, 
+      "chip": self.chip, 
+      "memory": self.memory, 
+      "gpu_memory": self.gpu_memory,
+      "system_memory": self.system_memory,
+      "flops": self.flops.to_dict()
+    }
 
 
-UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
+UNKNOWN_DEVICE_CAPABILITIES = DeviceCapabilities(model="Unknown Model", chip="Unknown Chip", memory=0, gpu_memory=0, system_memory=0, flops=DeviceFlops(fp32=0, fp16=0, int8=0))
 
 CHIP_FLOPS = {
   # Source: https://www.cpu-monkey.com
@@ -67,6 +97,16 @@ CHIP_FLOPS = {
   "Apple A16 Bionic": DeviceFlops(fp32=1.79*TFLOPS, fp16=3.58*TFLOPS, int8=7.16*TFLOPS),
   "Apple A17 Pro": DeviceFlops(fp32=2.15*TFLOPS, fp16=4.30*TFLOPS, int8=8.60*TFLOPS),
   ### NVIDIA GPUs
+  # RTX 50 series (Blackwell architecture)
+  "NVIDIA GEFORCE RTX 5090": DeviceFlops(fp32=104.8*TFLOPS, fp16=209.6*TFLOPS, int8=419.2*TFLOPS),
+  "NVIDIA GEFORCE RTX 5080": DeviceFlops(fp32=56.28*TFLOPS, fp16=112.56*TFLOPS, int8=225.12*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070 TI": DeviceFlops(fp32=43.94*TFLOPS, fp16=87.88*TFLOPS, int8=175.76*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070": DeviceFlops(fp32=30.87*TFLOPS, fp16=61.74*TFLOPS, int8=123.48*TFLOPS),
+  # RTX 50 series Mobile variants
+  "NVIDIA GEFORCE RTX 5090 MOBILE": DeviceFlops(fp32=95.0*TFLOPS, fp16=190.0*TFLOPS, int8=380.0*TFLOPS),
+  "NVIDIA GEFORCE RTX 5080 MOBILE": DeviceFlops(fp32=50.0*TFLOPS, fp16=100.0*TFLOPS, int8=200.0*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070 TI MOBILE": DeviceFlops(fp32=40.0*TFLOPS, fp16=80.0*TFLOPS, int8=160.0*TFLOPS),
+  "NVIDIA GEFORCE RTX 5070 MOBILE": DeviceFlops(fp32=28.0*TFLOPS, fp16=56.0*TFLOPS, int8=112.0*TFLOPS),
   # RTX 40 series
   "NVIDIA GEFORCE RTX 4090": DeviceFlops(fp32=82.58*TFLOPS, fp16=165.16*TFLOPS, int8=330.32*TFLOPS),
   "NVIDIA GEFORCE RTX 4080": DeviceFlops(fp32=48.74*TFLOPS, fp16=97.48*TFLOPS, int8=194.96*TFLOPS),
@@ -166,10 +206,14 @@ async def device_capabilities() -> DeviceCapabilities:
 async def mac_device_capabilities() -> DeviceCapabilities:
   model_id, chip_id, memory = await get_mac_system_info()
   
+  # Apple Silicon has unified memory, so we'll consider it as GPU memory
+  # since it can be directly accessed by the GPU cores
   return DeviceCapabilities(
     model=model_id,
     chip=chip_id,
     memory=memory,
+    gpu_memory=memory,  # Unified memory acts as GPU memory
+    system_memory=0,     # No separate system memory on Apple Silicon
     flops=CHIP_FLOPS.get(chip_id, DeviceFlops(fp32=0, fp16=0, int8=0))
   )
 
@@ -187,15 +231,20 @@ async def linux_device_capabilities() -> DeviceCapabilities:
     gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
     gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
     gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    system_memory = psutil.virtual_memory().total // 2**20
+    gpu_memory = gpu_memory_info.total // 2**20
+    total_memory = system_memory + gpu_memory
 
-    if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
+    if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=} System RAM: {system_memory}MB, GPU VRAM: {gpu_memory}MB, Total: {total_memory}MB")
 
     pynvml.nvmlShutdown()
 
     return DeviceCapabilities(
       model=f"Linux Box ({gpu_name})",
       chip=gpu_name,
-      memory=gpu_memory_info.total // 2**20,
+      memory=total_memory,
+      gpu_memory=gpu_memory,
+      system_memory=system_memory,
       flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
     )
   elif Device.DEFAULT == "AMD":
@@ -204,26 +253,34 @@ async def linux_device_capabilities() -> DeviceCapabilities:
     gpu_raw_info = pyamdgpuinfo.get_gpu(0)
     gpu_name = gpu_raw_info.name
     gpu_memory_info = gpu_raw_info.memory_info["vram_size"]
+    system_memory = psutil.virtual_memory().total // 2**20
+    gpu_memory = gpu_memory_info // 2**20
+    total_memory = system_memory + gpu_memory
 
-    if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")
+    if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=} System RAM: {system_memory}MB, GPU VRAM: {gpu_memory}MB, Total: {total_memory}MB")
 
     return DeviceCapabilities(
       model="Linux Box (" + gpu_name + ")",
       chip=gpu_name,
-      memory=gpu_memory_info // 2**20,
+      memory=total_memory,
+      gpu_memory=gpu_memory,
+      system_memory=system_memory,
       flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
     )
 
   else:
+    system_memory = psutil.virtual_memory().total // 2**20
     return DeviceCapabilities(
       model=f"Linux Box (Device: {Device.DEFAULT})",
       chip=f"Unknown Chip (Device: {Device.DEFAULT})",
-      memory=psutil.virtual_memory().total // 2**20,
+      memory=system_memory,
+      gpu_memory=0,
+      system_memory=system_memory,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
     )
 
 
-def windows_device_capabilities() -> DeviceCapabilities:
+async def windows_device_capabilities() -> DeviceCapabilities:
   import psutil
 
   def get_gpu_info():
@@ -249,46 +306,111 @@ def windows_device_capabilities() -> DeviceCapabilities:
 
   contains_nvidia = any('nvidia' in gpu_name.lower() for gpu_name in gpu_names)
   contains_amd = any('amd' in gpu_name.lower() for gpu_name in gpu_names)
-
   if contains_nvidia:
-    import pynvml
+    # Try PyTorch first for RTX 50 series detection (better compatibility)
+    try:
+      import torch
+      if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        props = torch.cuda.get_device_properties(0)
+        gpu_name = props.name.upper()
+        gpu_memory = props.total_memory // (1024**2)  # Convert to MB
+        system_memory = psutil.virtual_memory().total // 2**20
+        total_memory = system_memory + gpu_memory
+        
+        # Check for PyTorch 2.6+ RTX 50 series support
+        if "RTX 50" in gpu_name or "5070" in gpu_name or "5080" in gpu_name or "5090" in gpu_name:
+          torch_version = torch.__version__.split('.')
+          major, minor = int(torch_version[0]), int(torch_version[1])
+          if major >= 2 and minor >= 6:
+            if DEBUG >= 1: print(f"✅ RTX 50 series detected via PyTorch {torch.__version__}")
+          else:
+            if DEBUG >= 1: print(f"⚠️ RTX 50 series detected but PyTorch {torch.__version__} may not fully support it")
+        
+        if DEBUG >= 2: print(f"PyTorch NVIDIA device {gpu_name=} GPU VRAM: {gpu_memory}MB, System RAM: {system_memory}MB, Total: {total_memory}MB")
+        
+        return DeviceCapabilities(
+          model=f"Windows Box ({gpu_name})",
+          chip=gpu_name,
+          memory=total_memory,
+          gpu_memory=gpu_memory,
+          system_memory=system_memory,
+          flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+        )
+    except ImportError:
+      if DEBUG >= 1: print("PyTorch not available, falling back to pynvml")
+    except Exception as e:
+      if DEBUG >= 1: print(f"PyTorch GPU detection failed: {e}, falling back to pynvml")
+    
+    # Fallback to pynvml
+    try:
+      import pynvml
 
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
-    gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
-    gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+      pynvml.nvmlInit()
+      handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+      gpu_raw_name = pynvml.nvmlDeviceGetName(handle).upper()
+      gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
+      gpu_memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+      system_memory = psutil.virtual_memory().total // 2**20
+      gpu_memory = gpu_memory_info.total // 2**20
+      total_memory = system_memory + gpu_memory
 
-    if DEBUG >= 2: print(f"NVIDIA device {gpu_name=} {gpu_memory_info=}")
+      if DEBUG >= 2: print(f"NVML NVIDIA device {gpu_name=} {gpu_memory_info=} System RAM: {system_memory}MB, GPU VRAM: {gpu_memory}MB, Total: {total_memory}MB")
 
-    return DeviceCapabilities(
-      model=f"Windows Box ({gpu_name})",
-      chip=gpu_name,
-      memory=gpu_memory_info.total // 2**20,
-      flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
-    )
+      pynvml.nvmlShutdown()
+
+      return DeviceCapabilities(
+        model=f"Windows Box ({gpu_name})",
+        chip=gpu_name,
+        memory=total_memory,
+        gpu_memory=gpu_memory,
+        system_memory=system_memory,
+        flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+      )
+    except ImportError:
+      if DEBUG >= 1: print("pynvml not available for NVIDIA GPU detection")
+    except Exception as e:
+      if DEBUG >= 1: print(f"NVML GPU detection failed: {e}")
   elif contains_amd:
     # For AMD GPUs, pyrsmi is the way (Official python package for rocm-smi)
-    from pyrsmi import rocml
+    try:
+      from pyrsmi import rocml
 
-    rocml.smi_initialize()
-    gpu_name = rocml.smi_get_device_name(0).upper()
-    gpu_memory_info = rocml.smi_get_device_memory_total(0)
+      rocml.smi_initialize()
+      gpu_name = rocml.smi_get_device_name(0).upper()
+      gpu_memory_info = rocml.smi_get_device_memory_total(0)
+      system_memory = psutil.virtual_memory().total // 2**20
+      gpu_memory = gpu_memory_info // 2**20
 
-    if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")
+      if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")
 
-    rocml.smi_shutdown()
+      rocml.smi_shutdown()
 
-    return DeviceCapabilities(
-      model="Windows Box ({gpu_name})",
-      chip={gpu_name},
-      memory=gpu_memory_info.total // 2**20,
-      flops=DeviceFlops(fp32=0, fp16=0, int8=0),
-    )
+      return DeviceCapabilities(
+        model=f"Windows Box ({gpu_name})",
+        chip=gpu_name,
+        memory=gpu_memory + system_memory,
+        gpu_memory=gpu_memory,
+        system_memory=system_memory,
+        flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
+      )
+    except ImportError:
+      if DEBUG >= 1: print("pyrsmi not available for AMD GPU detection on Windows")
+      system_memory = psutil.virtual_memory().total // 2**20
+      return DeviceCapabilities(
+        model="Windows Box (AMD GPU - pyrsmi not available)",
+        chip="AMD GPU (details unavailable)",
+        memory=system_memory,
+        gpu_memory=0,
+        system_memory=system_memory,
+        flops=DeviceFlops(fp32=0, fp16=0, int8=0),
+      )
   else:
+    system_memory = psutil.virtual_memory().total // 2**20
     return DeviceCapabilities(
       model=f"Windows Box (Device: Unknown)",
       chip=f"Unknown Chip (Device(s): {gpu_names})",
-      memory=psutil.virtual_memory().total // 2**20,
+      memory=system_memory,
+      gpu_memory=0,
+      system_memory=system_memory,
       flops=DeviceFlops(fp32=0, fp16=0, int8=0),
     )

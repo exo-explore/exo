@@ -52,6 +52,7 @@ class InferenceEngine(ABC):
 
 
 inference_engine_classes = {
+  "llamacpp": "LlamaCppInferenceEngine",
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
@@ -61,7 +62,10 @@ inference_engine_classes = {
 def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDownloader):
   if DEBUG >= 2:
     print(f"get_inference_engine called with: {inference_engine_name}")
-  if inference_engine_name == "mlx":
+  if inference_engine_name == "llamacpp":
+    from exo.inference.llamacpp.llama_inference_engine import LlamaCppInferenceEngine
+    return LlamaCppInferenceEngine(shard_downloader)
+  elif inference_engine_name == "mlx":
     from exo.inference.mlx.sharded_inference_engine import MLXDynamicShardInferenceEngine
 
     return MLXDynamicShardInferenceEngine(shard_downloader)

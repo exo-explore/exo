@@ -8,10 +8,9 @@ document.addEventListener("alpine:init", () => {
     },
 
     // historical state
-    histories: JSON.parse(localStorage.getItem("histories")) || [],
-
-    home: 0,
+    histories: JSON.parse(localStorage.getItem("histories")) || [],    home: 0,
     generating: false,
+    generatingStartTime: null,
     endpoint: `${window.location.origin}/v1`,
 
     // Initialize error message structure
@@ -46,11 +45,15 @@ document.addEventListener("alpine:init", () => {
     topologyInterval: null,
 
     // Add these new properties
-    expandedGroups: {},
-
-    init() {
+    expandedGroups: {},    init() {
       // Clean up any pending messages
       localStorage.removeItem("pendingMessage");
+      
+      // Reset any stuck generating state from previous session
+      this.generating = false;
+      
+      // Add a safety check to reset generating state periodically
+      this.setupGeneratingStateMonitor();
 
       // Get initial model list
       this.fetchInitialModels();
@@ -62,6 +65,30 @@ document.addEventListener("alpine:init", () => {
       this.startModelPolling();
     },
 
+    setupGeneratingStateMonitor() {
+      // Monitor for stuck generating state and auto-reset after 2 minutes
+      setInterval(() => {
+        if (this.generating) {
+          console.warn('Generating state has been active for an extended period. Checking if reset is needed.');
+          
+          // Add a timestamp check to see how long it's been stuck
+          if (!this.generatingStartTime) {
+            this.generatingStartTime = Date.now();
+          } else {
+            const elapsed = Date.now() - this.generatingStartTime;
+            if (elapsed > 120000) { // 2 minutes
+              console.error('Generating state stuck for over 2 minutes. Force resetting.');
+              this.generating = false;
+              this.generatingStartTime = null;
+              this.setError(new Error('Request timed out. The system has been reset.'));
+            }
+          }
+        } else {
+          this.generatingStartTime = null;
+        }
+      }, 30000); // Check every 30 seconds
+    },
+
     async fetchInitialModels() {
       try {
         const response = await fetch(`${window.location.origin}/initial_models`);
@@ -70,7 +97,11 @@ document.addEventListener("alpine:init", () => {
           this.models = initialModels;
         }
       } catch (error) {
-        console.error('Error fetching initial models:', error);
+        if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+          console.error('Error fetching initial models:', error);
+        }
+        // If server is not available, still provide a basic model structure so UI works
+        this.models = {};
       }
     },
 
@@ -81,7 +112,10 @@ document.addEventListener("alpine:init", () => {
           // Wait 15 seconds before next poll
           await new Promise(resolve => setTimeout(resolve, 15000));
         } catch (error) {
-          console.error('Model polling error:', error);
+          // Only log error if it's not a network error (which is expected when server is down)
+          if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+            console.error('Model polling error:', error);
+          }
           // If there's an error, wait before retrying
           await new Promise(resolve => setTimeout(resolve, 15000));
         }
@@ -95,6 +129,12 @@ document.addEventListener("alpine:init", () => {
         evtSource.onmessage = (event) => {
           if (event.data === "[DONE]") {
             evtSource.close();
+            // Ensure any remaining models are not stuck in loading state
+            Object.keys(this.models).forEach(modelName => {
+              if (this.models[modelName].loading) {
+                this.models[modelName].loading = false;
+              }
+            });
             resolve();
             return;
           }
@@ -108,6 +148,12 @@ document.addEventListener("alpine:init", () => {
                 ...data,
                 loading: false
               };
+            } else {
+              // Add new model if it doesn't exist
+              this.models[modelName] = {
+                ...data,
+                loading: false
+              };
             }
           });
         };
@@ -115,7 +161,15 @@ document.addEventListener("alpine:init", () => {
         evtSource.onerror = (error) => {
           console.error('EventSource failed:', error);
           evtSource.close();
-          reject(error);
+          // Ensure models are not stuck in loading state when EventSource fails
+          Object.keys(this.models).forEach(modelName => {
+            if (this.models[modelName].loading) {
+              this.models[modelName].loading = false;
+            }
+          });
+          // Don't reject on network errors - this is expected during connection issues
+          // Instead, resolve to prevent infinite retries
+          resolve();
         };
       });
     },
@@ -170,8 +224,6 @@ document.addEventListener("alpine:init", () => {
         reader.readAsDataURL(file);
       }
     },
-
-
     async handleSend() {
       try {
         const el = document.getElementById("input-form");
@@ -180,6 +232,7 @@ document.addEventListener("alpine:init", () => {
 
         if (this.generating) return;
         this.generating = true;
+        this.generatingStartTime = Date.now(); // Track when generation started
         if (this.home === 0) this.home = 1;
 
         // ensure that going back in history will go back to home
@@ -201,11 +254,18 @@ document.addEventListener("alpine:init", () => {
         console.error('error', error);
         this.setError(error);
         this.generating = false;
+        this.generatingStartTime = null;
       }
-    },
-
-    async processMessage(value) {
+    },async processMessage(value) {
+      let timeoutId = null;
       try {
+        // Set a global timeout for the entire message processing
+        timeoutId = setTimeout(() => {
+          console.error('Message processing timeout - resetting generating state');
+          this.generating = false;
+          this.setError(new Error('Message processing timed out. Please try again.'));
+        }, 60000); // 60 second timeout for the entire process
+
         // reset performance tracking
         const prefill_start = Date.now();
         let start_time = 0;
@@ -237,57 +297,80 @@ document.addEventListener("alpine:init", () => {
             };
           }
         });
-        
-        if (this.cstate.selectedModel === "stable-diffusion-2-1-base") {
+          if (this.cstate.selectedModel === "stable-diffusion-2-1-base") {
           // Send a request to the image generation endpoint
           console.log(apiMessages[apiMessages.length - 1].content)
           console.log(this.cstate.selectedModel)  
           console.log(this.endpoint)
-          const response = await fetch(`${this.endpoint}/image/generations`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              "model": 'stable-diffusion-2-1-base',
-              "prompt": apiMessages[apiMessages.length - 1].content,
-              "image_url": this.imageUrl
-            }),
-          });
-      
-          if (!response.ok) {
-            throw new Error("Failed to fetch");
-          }
-          const reader = response.body.getReader();
-          let done = false;
-          let gottenFirstChunk = false;
-  
-          while (!done) {
-            const { value, done: readerDone } = await reader.read();
-            done = readerDone;
-            const decoder = new TextDecoder();
-  
-            if (value) {
-              // Assume non-binary data (text) comes first
-              const chunk = decoder.decode(value, { stream: true });
-              const parsed = JSON.parse(chunk);
-              console.log(parsed)
-  
-              if (parsed.progress) {
-                if (!gottenFirstChunk) {
-                  this.cstate.messages.push({ role: "assistant", content: "" });
-                  gottenFirstChunk = true;
+          
+          let imageReader = null;
+          try {
+            const response = await fetch(`${this.endpoint}/image/generations`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                "model": 'stable-diffusion-2-1-base',
+                "prompt": apiMessages[apiMessages.length - 1].content,
+                "image_url": this.imageUrl
+              }),
+            });
+        
+            if (!response.ok) {
+              throw new Error(`Image generation failed: ${response.status} ${response.statusText}`);
+            }
+            
+            imageReader = response.body.getReader();
+            let done = false;
+            let gottenFirstChunk = false;
+    
+            while (!done) {
+              const { value, done: readerDone } = await imageReader.read();
+              done = readerDone;
+              const decoder = new TextDecoder();
+    
+              if (value) {
+                try {
+                  // Assume non-binary data (text) comes first
+                  const chunk = decoder.decode(value, { stream: true });
+                  const parsed = JSON.parse(chunk);
+                  console.log(parsed)
+    
+                  if (parsed.progress) {
+                    if (!gottenFirstChunk) {
+                      this.cstate.messages.push({ role: "assistant", content: "" });
+                      gottenFirstChunk = true;
+                    }
+                    this.cstate.messages[this.cstate.messages.length - 1].content = parsed.progress;
+                  }
+                  else if (parsed.images) {
+                    if (!gottenFirstChunk) {
+                      this.cstate.messages.push({ role: "assistant", content: "" });
+                      gottenFirstChunk = true;
+                    }
+                    const imageUrl = parsed.images[0].url;
+                    console.log(imageUrl)
+                    this.cstate.messages[this.cstate.messages.length - 1].content = `![Generated Image](${imageUrl}?t=${Date.now()})`;
+                  }
+                } catch (parseError) {
+                  console.error('Error parsing image generation response:', parseError);
+                  continue; // Skip this chunk and continue
                 }
-                this.cstate.messages[this.cstate.messages.length - 1].content = parsed.progress;
               }
-              else if (parsed.images) {
-                if (!gottenFirstChunk) {
-                  this.cstate.messages.push({ role: "assistant", content: "" });
-                  gottenFirstChunk = true;
-                }
-                const imageUrl = parsed.images[0].url;
-                console.log(imageUrl)
-                this.cstate.messages[this.cstate.messages.length - 1].content = `![Generated Image](${imageUrl}?t=${Date.now()})`;
+            }
+          } catch (imageError) {
+            console.error('Image generation error:', imageError);
+            this.cstate.messages.push({ 
+              role: "assistant", 
+              content: `Sorry, I encountered an error while generating the image: ${imageError.message}`
+            });
+          } finally {
+            if (imageReader) {
+              try {
+                await imageReader.cancel();
+              } catch (cancelError) {
+                console.warn('Error canceling image reader:', cancelError);
               }
             }
           }
@@ -316,31 +399,55 @@ document.addEventListener("alpine:init", () => {
           console.log(apiMessages)
           //start receiving server sent events
           let gottenFirstChunk = false;
-          for await (
-            const chunk of this.openaiChatCompletion(this.cstate.selectedModel, apiMessages)
-          ) {
-            if (!gottenFirstChunk) {
-              this.cstate.messages.push({ role: "assistant", content: "" });
-              gottenFirstChunk = true;
-            }
+          let hasError = false;
+          
+          try {
+            for await (
+              const chunk of this.openaiChatCompletion(this.cstate.selectedModel, apiMessages)
+            ) {
+              if (!gottenFirstChunk) {
+                this.cstate.messages.push({ role: "assistant", content: "" });
+                gottenFirstChunk = true;
+              }
 
-            // add chunk to the last message
-            this.cstate.messages[this.cstate.messages.length - 1].content += chunk;
+              // add chunk to the last message
+              this.cstate.messages[this.cstate.messages.length - 1].content += chunk;
 
-            // calculate performance tracking
-            tokens += 1;
-            this.total_tokens += 1;
-            if (start_time === 0) {
-              start_time = Date.now();
-              this.time_till_first = start_time - prefill_start;
-            } else {
-              const diff = Date.now() - start_time;
-              if (diff > 0) {
-                this.tokens_per_second = tokens / (diff / 1000);
+              // calculate performance tracking
+              tokens += 1;
+              this.total_tokens += 1;
+              if (start_time === 0) {
+                start_time = Date.now();
+                this.time_till_first = start_time - prefill_start;
+              } else {
+                const diff = Date.now() - start_time;
+                if (diff > 0) {
+                  this.tokens_per_second = tokens / (diff / 1000);
+                }
               }
             }
+          } catch (streamError) {
+            hasError = true;
+            console.error('Stream error:', streamError);
+            
+            // If we haven't received any chunks yet, add an error message
+            if (!gottenFirstChunk) {
+              this.cstate.messages.push({ role: "assistant", content: "I encountered an error while processing your request. Please try again." });
+            } else {
+              // If we were mid-stream, append error info to the partial response
+              this.cstate.messages[this.cstate.messages.length - 1].content += "\n\n[Error: Stream interrupted]";
+            }
+            
+            throw streamError;
           }
         }
+        
+        // Clear timeout since we completed successfully
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
         // Clean the cstate before adding it to histories
         const cleanedCstate = JSON.parse(JSON.stringify(this.cstate));
         cleanedCstate.messages = cleanedCstate.messages.map(msg => {
@@ -373,10 +480,17 @@ document.addEventListener("alpine:init", () => {
           console.error("Failed to save histories to localStorage:", error);
         }
       } catch (error) {
-        console.error('error', error);
-        this.setError(error);
-      } finally {
+        console.error('error in processMessage:', error);
+        this.setError(error);      } finally {
+        // Always clear the timeout and reset generating state
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
         this.generating = false;
+        this.generatingStartTime = null;
+        
+        // Clean up any pending message
+        localStorage.removeItem("pendingMessage");
       }
     },
 
@@ -396,42 +510,93 @@ document.addEventListener("alpine:init", () => {
       }).then((response) => response.json()).then((data) => {
         this.total_tokens = data.length;
       }).catch(console.error);
-    },
-
-    async *openaiChatCompletion(model, messages) {
-      const response = await fetch(`${this.endpoint}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          "model": model,
-          "messages": messages,
-          "stream": true,
-        }),
-      });
-      if (!response.ok) {
-        const errorResBody = await response.json()
-        if (errorResBody?.detail) {
-          throw new Error(`Failed to fetch completions: ${errorResBody.detail}`);
-        } else {
-          throw new Error("Failed to fetch completions: Unknown error");
-        }
-      }
-
-      const reader = response.body.pipeThrough(new TextDecoderStream())
-        .pipeThrough(new EventSourceParserStream()).getReader();
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    },    async *openaiChatCompletion(model, messages) {
+      let reader = null;
+      try {
+        const response = await fetch(`${this.endpoint}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            "model": model,
+            "messages": messages,
+            "stream": true,
+          }),
+        });
         
-        if (value.type === "event") {
-          const json = JSON.parse(value.data);
-          if (json.choices) {
-            const choice = json.choices[0];
-            if (choice.finish_reason === "stop") break;
-            if (choice.delta.content) yield choice.delta.content;
+        if (!response.ok) {
+          let errorMessage = "Failed to fetch completions: Unknown error";
+          try {
+            const errorResBody = await response.json();
+            errorMessage = errorResBody?.detail || errorMessage;
+          } catch (parseError) {
+            console.error('Error parsing error response:', parseError);
+          }
+          throw new Error(errorMessage);
+        }
+
+        reader = response.body.pipeThrough(new TextDecoderStream())
+          .pipeThrough(new EventSourceParserStream()).getReader();
+        
+        let streamTimeout = null;
+        const STREAM_TIMEOUT = 30000; // 30 second timeout
+        
+        while (true) {
+          // Set a timeout for reading from the stream
+          streamTimeout = setTimeout(() => {
+            console.warn('Stream read timeout, ending stream');
+            if (reader) {
+              reader.cancel();
+            }
+          }, STREAM_TIMEOUT);
+          
+          const { done, value } = await reader.read();
+          clearTimeout(streamTimeout);
+          
+          if (done) {
+            console.log('Stream completed normally');
+            break;
+          }
+          
+          if (value && value.type === "event") {
+            try {
+              // Handle the special [DONE] marker
+              if (value.data === "[DONE]") {
+                console.log('Received [DONE] marker, ending stream');
+                break;
+              }
+              
+              const json = JSON.parse(value.data);
+              if (json.choices && json.choices.length > 0) {
+                const choice = json.choices[0];
+                
+                // Check for any finish_reason to ensure completion
+                if (choice.finish_reason && choice.finish_reason !== null) {
+                  console.log(`Stream finished with reason: ${choice.finish_reason}`);
+                  break;
+                }
+                
+                if (choice.delta && choice.delta.content) {
+                  yield choice.delta.content;
+                }
+              }
+            } catch (parseError) {
+              console.error('Error parsing JSON from stream:', parseError, 'Data:', value.data);
+              // Continue with the stream rather than breaking it entirely
+              continue;
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error in openaiChatCompletion:', error);
+        throw error;
+      } finally {
+        if (reader) {
+          try {
+            await reader.cancel();
+          } catch (cancelError) {
+            console.warn('Error canceling reader:', cancelError);
           }
         }
       }
@@ -442,8 +607,10 @@ document.addEventListener("alpine:init", () => {
         const response = await fetch(`${this.endpoint}/download/progress`);
         if (response.ok) {
           const data = await response.json();
+          console.log('Download progress data:', data);
           const progressArray = Object.values(data);
           if (progressArray.length > 0) {
+            console.log(`Found ${progressArray.length} downloads in progress`);
             this.downloadProgress = progressArray.map(progress => {
               // Check if download is complete
               if (progress.status === "complete") {
@@ -487,11 +654,22 @@ document.addEventListener("alpine:init", () => {
             }
           } else {
             // No ongoing download
+            console.log('No downloads in progress, clearing downloadProgress');
             this.downloadProgress = null;
+            // Reset any loading states when no downloads are active
+            Object.keys(this.models).forEach(modelName => {
+              if (this.models[modelName].loading) {
+                console.log(`Resetting loading state for ${modelName} - no active downloads`);
+                this.models[modelName].loading = false;
+              }
+            });
           }
         }
       } catch (error) {
-        console.error("Error fetching download progress:", error);
+        // Only log error if it's not a network error (which is expected when server is down)
+        if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+          console.error("Error fetching download progress:", error);
+        }
         this.downloadProgress = null;
       }
     },
@@ -577,7 +755,20 @@ document.addEventListener("alpine:init", () => {
 
     async handleDownload(modelName) {
       try {
-        const response = await fetch(`${window.location.origin}/download`, {
+        console.log(`Starting download for model: ${modelName}`);
+        
+        // Set loading state immediately
+        if (this.models[modelName]) {
+          this.models[modelName] = {
+            ...this.models[modelName],
+            loading: true
+          };
+        }
+
+        const downloadUrl = `${window.location.origin}/download`;
+        console.log(`Making download request to: ${downloadUrl}`);
+
+        const response = await fetch(downloadUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -587,23 +778,48 @@ document.addEventListener("alpine:init", () => {
           })
         });
 
+        console.log(`Download response status: ${response.status}`);
+
         const data = await response.json();
+        console.log('Download response data:', data);
 
         if (!response.ok) {
-          throw new Error(data.error || 'Failed to start download');
+          throw new Error(data.error || `Failed to start download (${response.status})`);
         }
 
-        // Update the model's status immediately when download starts
-        if (this.models[modelName]) {
-          this.models[modelName] = {
-            ...this.models[modelName],
-            loading: true
-          };
-        }
+        // Download started successfully - keep loading state and start download progress polling
+        console.log(`Download started successfully for ${modelName}:`, data.message || 'Download initiated');
+        
+        // Wait a moment for download to start before beginning progress polling
+        setTimeout(() => {
+          this.startDownloadProgressPolling();
+        }, 2000);
+        
+        // Set a timeout to reset loading state if no progress is seen after 30 seconds
+        setTimeout(() => {
+          if (this.models[modelName] && this.models[modelName].loading) {
+            console.log(`Resetting loading state for ${modelName} due to timeout`);
+            this.models[modelName].loading = false;
+          }
+        }, 30000);
 
       } catch (error) {
         console.error('Error starting download:', error);
-        this.setError(error);
+        
+        // Reset loading state on error
+        if (this.models[modelName]) {
+          this.models[modelName] = {
+            ...this.models[modelName],
+            loading: false
+          };
+        }
+        
+        // Show user-friendly error message
+        if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+          this.setError(new Error(`Cannot connect to exo server at ${window.location.origin}. Please make sure the server is running.`));
+        } else {
+          this.setError(error);
+        }
       }
     },
 
@@ -613,7 +829,10 @@ document.addEventListener("alpine:init", () => {
         if (!response.ok) throw new Error('Failed to fetch topology');
         return await response.json();
       } catch (error) {
-        console.error('Topology fetch error:', error);
+        // Only log error if it's not a network error (which is expected when server is down)
+        if (!error.message.includes('NetworkError') && !error.message.includes('Failed to fetch')) {
+          console.error('Topology fetch error:', error);
+        }
         return null;
       }
     },
@@ -726,17 +945,56 @@ document.addEventListener("alpine:init", () => {
       const key = subPrefix ? `${prefix}-${subPrefix}` : prefix;
       return this.expandedGroups[key] || false;
     },
+
+    // Debug utility function to help diagnose issues
+    debugGeneratingState() {
+      console.log('=== Debug Generating State ===');
+      console.log('generating:', this.generating);
+      console.log('generatingStartTime:', this.generatingStartTime);
+      console.log('generatingDuration:', this.generatingStartTime ? Date.now() - this.generatingStartTime : 'N/A');
+      console.log('downloadProgress:', this.downloadProgress);
+      console.log('errorMessage:', this.errorMessage);
+      console.log('cstate.messages.length:', this.cstate.messages.length);
+      console.log('Last message:', this.cstate.messages[this.cstate.messages.length - 1]);
+      console.log('========================');
+    },
   }));
 });
 
-const { markedHighlight } = globalThis.markedHighlight;
-marked.use(markedHighlight({
-  langPrefix: "hljs language-",
-  highlight(code, lang, _info) {
-    const language = hljs.getLanguage(lang) ? lang : "plaintext";
-    return hljs.highlight(code, { language }).value;
+// Expose debug functions to window for console access
+window.debugExoChat = {
+  resetGenerating: () => {
+    const state = Alpine.store || (window.Alpine && window.Alpine.$data(document.querySelector('[x-data="state"]')));
+    if (state) {
+      state.generating = false;
+      state.generatingStartTime = null;
+      console.log('Generating state manually reset via debugExoChat.resetGenerating()');
+    } else {
+      console.error('Could not find Alpine state');
+    }
   },
-}));
+  
+  getState: () => {
+    const stateElement = document.querySelector('[x-data="state"]');
+    if (stateElement && stateElement._x_dataStack) {
+      return stateElement._x_dataStack[0];
+    }
+    console.error('Could not access Alpine state');
+    return null;
+  },
+  
+  debugGenerating: () => {
+    const state = window.debugExoChat.getState();
+    if (state && state.debugGeneratingState) {
+      state.debugGeneratingState();
+    }
+  }
+};
+
+console.log('ExoChat debug utilities loaded. Available commands:');
+console.log('- debugExoChat.resetGenerating() - Reset stuck generating state');
+console.log('- debugExoChat.debugGenerating() - Show debug info');
+console.log('- debugExoChat.getState() - Get current Alpine state');
 
 // **** eventsource-parser ****
 class EventSourceParserStream extends TransformStream {
@@ -752,9 +1010,24 @@ class EventSourceParserStream extends TransformStream {
         });
       },
 
-      transform(chunk) {
-        parser.feed(chunk);
+      transform(chunk, controller) {
+        try {
+          parser.feed(chunk);
+        } catch (error) {
+          console.error('EventSourceParserStream transform error:', error);
+          controller.error(error);
+        }
       },
+
+      flush(controller) {
+        try {
+          // Signal end of stream
+          console.log('EventSourceParserStream flushing');
+        } catch (error) {
+          console.error('EventSourceParserStream flush error:', error);
+          controller.error(error);
+        }
+      }
     });
   }
 }
