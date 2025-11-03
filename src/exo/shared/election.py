@@ -11,7 +11,8 @@ from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage
-from exo.shared.types.common import NodeId
+from exo.shared.types.commands import ForwarderCommand
+from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.pydantic_ext import CamelCaseModel
 
@@ -21,18 +22,24 @@ ELECTION_TIMEOUT = 3.0
 class ElectionMessage(CamelCaseModel):
     clock: int
     seniority: int
-    node_id: NodeId
+    proposed_session: SessionId
+    commands_seen: int
 
     # Could eventually include a list of neighbour nodes for centrality
-    def __lt__(self, other: Self):
+    def __lt__(self, other: Self) -> bool:
         if self.seniority != other.seniority:
             return self.seniority < other.seniority
+        elif self.commands_seen != other.commands_seen:
+            return self.commands_seen < other.commands_seen
         else:
-            return self.node_id < other.node_id
+            return (
+                self.proposed_session.master_node_id
+                < other.proposed_session.master_node_id
+            )
 
 
 class ElectionResult(CamelCaseModel):
-    node_id: NodeId
+    session_id: SessionId
     is_new_master: bool
     historic_messages: list[ConnectionMessage]
 
@@ -41,11 +48,12 @@ class Election:
     def __init__(
         self,
         node_id: NodeId,
+        *,
         election_message_receiver: Receiver[ElectionMessage],
         election_message_sender: Sender[ElectionMessage],
         election_result_sender: Sender[ElectionResult],
         connection_message_receiver: Receiver[ConnectionMessage],
-        *,
+        command_receiver: Receiver[ForwarderCommand],
         is_candidate: bool = True,
         seniority: int = 0,
     ):
@@ -55,13 +63,18 @@ class Election:
         self.seniority = seniority if is_candidate else -1
         self.clock = 0
         self.node_id = node_id
+        self.commands_seen = 0
         # Every node spawns as master
-        self.master_node_id: NodeId = node_id
+        self.current_session: SessionId = SessionId(
+            master_node_id=node_id, election_clock=0
+        )
 
+        # Senders/Receivers
         self._em_sender = election_message_sender
         self._em_receiver = election_message_receiver
         self._er_sender = election_result_sender
         self._cm_receiver = connection_message_receiver
+        self._co_receiver = command_receiver
 
         # Campaign state
         self._candidates: list[ElectionMessage] = []
@@ -76,6 +89,7 @@ class Election:
             self._tg = tg
             tg.start_soon(self._election_receiver)
             tg.start_soon(self._connection_receiver)
+            tg.start_soon(self._command_counter)
             await self._campaign(None)
 
         if self._campaign_cancel_scope is not None:
@@ -84,12 +98,12 @@ class Election:
         if self._campaign_done is not None:
             await self._campaign_done.wait()
 
-    async def elect(self, node_id: NodeId) -> None:
-        is_new_master = node_id != self.master_node_id
-        self.master_node_id = node_id
+    async def elect(self, em: ElectionMessage) -> None:
+        is_new_master = em.proposed_session != self.current_session
+        self.current_session = em.proposed_session
         await self._er_sender.send(
             ElectionResult(
-                node_id=node_id,
+                session_id=em.proposed_session,
                 is_new_master=is_new_master,
                 historic_messages=self._connection_messages,
             )
@@ -106,7 +120,7 @@ class Election:
     async def _election_receiver(self) -> None:
         with self._em_receiver as election_messages:
             async for message in election_messages:
-                if message.node_id == self.node_id:
+                if message.proposed_session.master_node_id == self.node_id:
                     # Drop messages from us (See exo.routing.router)
                     continue
                 # If a new round is starting, we participate
@@ -128,6 +142,11 @@ class Election:
                 self.clock += 1
                 await self._campaign(None)
                 self._connection_messages.append(msg)
+
+    async def _command_counter(self) -> None:
+        with self._co_receiver as commands:
+            async for _command in commands:
+                self.commands_seen += 1
 
     async def _campaign(self, initial_message: ElectionMessage | None) -> None:
         # Kill the old campaign
@@ -167,10 +186,15 @@ class Election:
                 candidates = sorted(candidates)
                 logger.debug(f"Election queue {candidates}")
                 elected = candidates[-1]
-                logger.info("Election finished")
-                if self.node_id == elected.node_id and self.seniority >= 0:
+                if (
+                    self.node_id == elected.proposed_session.master_node_id
+                    and self.seniority >= 0
+                ):
                     self.seniority = max(self.seniority, len(candidates))
-                await self.elect(elected.node_id)
+                logger.info(
+                    f"Election finished, new SessionId({elected.proposed_session})"
+                )
+                await self.elect(elected)
         except get_cancelled_exc_class():
             logger.info("Election cancelled")
         finally:
@@ -180,4 +204,13 @@ class Election:
 
     def _election_status(self, clock: int | None = None) -> ElectionMessage:
         c = self.clock if clock is None else clock
-        return ElectionMessage(clock=c, seniority=self.seniority, node_id=self.node_id)
+        return ElectionMessage(
+            proposed_session=(
+                self.current_session
+                if self.current_session.master_node_id == self.node_id
+                else SessionId(master_node_id=self.node_id, election_clock=c)
+            ),
+            clock=c,
+            seniority=self.seniority,
+            commands_seen=self.commands_seen,
+        )

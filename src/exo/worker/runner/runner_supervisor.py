@@ -45,7 +45,7 @@ class RunnerSupervisor:
     def __init__(
         self,
         model_shard_meta: ShardMetadata,
-        hosts: list[Host],
+        hosts: list[Host] | None,
         runner_process: Process,
         conn: Connection,
         read_queue: asyncio.Queue[RunnerResponse],
@@ -67,7 +67,7 @@ class RunnerSupervisor:
     async def create(
         cls,
         model_shard_meta: ShardMetadata,
-        hosts: list[Host],
+        hosts: list[Host] | None = None,
         initialize_timeout: Optional[float] = None,
     ) -> "RunnerSupervisor":
         """

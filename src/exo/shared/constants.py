@@ -4,6 +4,10 @@ from pathlib import Path
 
 EXO_HOME_RELATIVE_PATH = os.environ.get("EXO_HOME", ".exo")
 EXO_HOME = Path.home() / EXO_HOME_RELATIVE_PATH
+
+EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR")
+EXO_MODELS_DIR = Path(EXO_MODELS_DIR_ENV) if EXO_MODELS_DIR_ENV else EXO_HOME / "models"
+
 EXO_GLOBAL_EVENT_DB = EXO_HOME / "global_events.db"
 EXO_WORKER_EVENT_DB = EXO_HOME / "worker_events.db"
 EXO_MASTER_STATE = EXO_HOME / "master_state.json"

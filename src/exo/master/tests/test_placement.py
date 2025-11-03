@@ -49,6 +49,7 @@ def create_instance_command(model_meta: ModelMetadata) -> CreateInstance:
     return CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
+        strategy="auto",
     )
 
 
@@ -78,6 +79,7 @@ def test_get_instance_placements_create_instance(
     create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
+        strategy="auto",
     )
     node_id_a = NodeId()
     node_id_b = NodeId()
@@ -91,7 +93,7 @@ def test_get_instance_placements_create_instance(
 
     # act
     placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
+        create_instance_command, topology, {}, {}
     )
 
     # assert
@@ -132,9 +134,10 @@ def test_get_instance_placements_one_node_exact_fit(
             pretty_name="Test Model",
             n_layers=10,
         ),
+        strategy="auto",
     )
     placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
+        create_instance_command, topology, {}, {}
     )
 
     assert len(placements) == 1
@@ -160,9 +163,10 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
             pretty_name="Test Model",
             n_layers=10,
         ),
+        strategy="auto",
     )
     placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
+        create_instance_command, topology, {}, {}
     )
 
     assert len(placements) == 1
@@ -188,10 +192,11 @@ def test_get_instance_placements_one_node_not_fit(
             pretty_name="Test Model",
             n_layers=10,
         ),
+        strategy="auto",
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        get_instance_placements_after_create(create_instance_command, topology, {})
+        get_instance_placements_after_create(create_instance_command, topology, {}, {})
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -297,10 +302,13 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
+        strategy="auto",
     )
 
     # Act
-    placements = get_instance_placements_after_create(create_instance_command, topology, {})
+    placements = get_instance_placements_after_create(
+        create_instance_command, topology, {}, {}
+    )
 
     # Assert the chosen cycle is A-B-C (contains at least one leaf node), even though
     # D-E-F has more total memory.

@@ -14,7 +14,7 @@ from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
@@ -40,6 +40,7 @@ class Node:
     async def create(cls, args: "Args") -> "Self":
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_peer_id().to_base58())
+        session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(keypair)
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
@@ -50,16 +51,19 @@ class Node:
         logger.info(f"Starting node {node_id}")
         if args.spawn_api:
             api = API(
-                node_id=node_id,
+                node_id,
+                session_id,
                 port=args.api_port,
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 command_sender=router.sender(topics.COMMANDS),
+                election_receiver=router.receiver(topics.ELECTION_MESSAGES),
             )
         else:
             api = None
 
         worker = Worker(
             node_id,
+            session_id,
             exo_shard_downloader(),
             initial_connection_messages=[],
             connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
@@ -70,22 +74,24 @@ class Node:
         # We start every node with a master
         master = Master(
             node_id,
+            session_id,
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
             tb_only=args.tb_only,
         )
 
-        # If someone manages to assemble 1 MILLION devices into an exo cluster then. well done. good job champ.
         er_send, er_recv = channel[ElectionResult]()
         election = Election(
             node_id,
+            # If someone manages to assemble 1 MILLION devices into an exo cluster then. well done. good job champ.
             seniority=1_000_000 if args.force_master else 0,
             # nb: this DOES feedback right now. i have thoughts on how to address this,
             # but ultimately it seems not worth the complexity
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),
             election_message_receiver=router.receiver(topics.ELECTION_MESSAGES),
             connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
+            command_receiver=router.receiver(topics.COMMANDS),
             election_result_sender=er_send,
         )
 
@@ -107,6 +113,9 @@ class Node:
         assert self._tg
         with self.election_result_receiver as results:
             async for result in results:
+                # This function continues to have a lot of very specific entangled logic
+                # At least it's somewhat contained
+
                 # I don't like this duplication, but it's manageable for now.
                 # TODO: This function needs refactoring generally
 
@@ -116,23 +125,37 @@ class Node:
                 # - Shutdown and re-create the worker
                 # - Shut down and re-create the API
 
-                if result.node_id == self.node_id and self.master is not None:
+                if (
+                    result.session_id.master_node_id == self.node_id
+                    and self.master is not None
+                ):
                     logger.info("Node elected Master")
-                elif result.node_id == self.node_id and self.master is None:
+                elif (
+                    result.session_id.master_node_id == self.node_id
+                    and self.master is None
+                ):
                     logger.info("Node elected Master - promoting self")
                     self.master = Master(
                         self.node_id,
+                        result.session_id,
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),
                         command_receiver=self.router.receiver(topics.COMMANDS),
                     )
                     self._tg.start_soon(self.master.run)
-                elif result.node_id != self.node_id and self.master is not None:
-                    logger.info(f"Node {result.node_id} elected master - demoting self")
+                elif (
+                    result.session_id.master_node_id != self.node_id
+                    and self.master is not None
+                ):
+                    logger.info(
+                        f"Node {result.session_id.master_node_id} elected master - demoting self"
+                    )
                     await self.master.shutdown()
                     self.master = None
                 else:
-                    logger.info(f"Node {result.node_id} elected master")
+                    logger.info(
+                        f"Node {result.session_id.master_node_id} elected master"
+                    )
                 if result.is_new_master:
                     await anyio.sleep(0)
                     if self.worker:
@@ -140,6 +163,7 @@ class Node:
                         # TODO: add profiling etc to resource monitor
                         self.worker = Worker(
                             self.node_id,
+                            result.session_id,
                             exo_shard_downloader(),
                             initial_connection_messages=result.historic_messages,
                             connection_message_receiver=self.router.receiver(
@@ -153,7 +177,10 @@ class Node:
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
-                        self.api.reset()
+                        self.api.reset(result.session_id)
+                else:
+                    if self.api:
+                        self.api.unpause()
 
 
 def main():

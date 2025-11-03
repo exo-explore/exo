@@ -200,15 +200,15 @@ class Router:
                 await router.publish(message)
 
     async def _networking_publish(self):
-        # This with/for pattern ensures this method doesn't return until after the receiver closes
-        # This is good for safety, but is mostly a redundant check.
         with self.networking_receiver as networked_items:
             async for topic, data in networked_items:
                 try:
                     logger.trace(f"Sending message on {topic} with payload {data}")
                     await self._net.gossipsub_publish(topic, data)
+                # As a hack, this also catches AllQueuesFull
+                # Need to fix that ASAP.
                 except NoPeersSubscribedToTopicError:
-                    logger.trace(f"Failed to send over {topic} - No peers found.")
+                    pass
 
 
 def get_node_id_keypair(

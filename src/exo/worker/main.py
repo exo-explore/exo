@@ -13,7 +13,7 @@ from loguru import logger
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -30,7 +30,6 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
-from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
@@ -41,7 +40,6 @@ from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
     DownloadPending,
-    DownloadProgressData,
 )
 from exo.shared.types.worker.ops import (
     AssignRunnerOp,
@@ -64,6 +62,9 @@ from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import OrderedBuffer
 from exo.worker.common import AssignedRunner
+from exo.worker.download.download_utils import (
+    map_repo_download_progress_to_download_progress_data,
+)
 from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDownloader
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
@@ -74,6 +75,7 @@ class Worker:
     def __init__(
         self,
         node_id: NodeId,
+        session_id: SessionId,
         shard_downloader: ShardDownloader,
         *,
         initial_connection_messages: list[ConnectionMessage],
@@ -90,6 +92,7 @@ class Worker:
         command_sender: Sender[ForwarderCommand],
     ):
         self.node_id: NodeId = node_id
+        self.session_id: SessionId = session_id
         self.shard_downloader: ShardDownloader = shard_downloader
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
@@ -191,12 +194,16 @@ class Worker:
 
         # run the op, synchronously blocking for now
         if op is not None:
-            logger.info(f"Executing op {str(op)[:100]}")
-            logger.debug(f"Worker executing op: {str(op)[:100]}")
+            logger.info(f"Executing op {type(op)} {str(op)}")
+            logger.debug(f"Worker executing op: {type(op)} {str(op)}")
             try:
                 async for event in self.execute_op(op):
                     await self.event_publisher(event)
             except Exception as e:
+                logger.opt(exception=e).warning(
+                    "Error occurred when executing task", flush=True
+                )
+
                 if isinstance(op, ExecuteTaskOp):
                     generator = self.fail_task(
                         e, runner_id=op.runner_id, task_id=op.task.task_id
@@ -318,11 +325,8 @@ class Worker:
         assigned_runner.status = DownloadingRunnerStatus(
             download_progress=DownloadOngoing(
                 node_id=self.node_id,
-                download_progress=DownloadProgressData(
-                    total_bytes=Memory.from_bytes(initial_progress.total_bytes),
-                    downloaded_bytes=Memory.from_bytes(
-                        initial_progress.downloaded_bytes
-                    ),
+                download_progress=map_repo_download_progress_to_download_progress_data(
+                    initial_progress
                 ),
             )
         )
@@ -377,11 +381,8 @@ class Worker:
                     assigned_runner.status = DownloadingRunnerStatus(
                         download_progress=DownloadOngoing(
                             node_id=self.node_id,
-                            download_progress=DownloadProgressData(
-                                total_bytes=Memory.from_bytes(progress.total_bytes),
-                                downloaded_bytes=Memory.from_bytes(
-                                    progress.downloaded_bytes
-                                ),
+                            download_progress=map_repo_download_progress_to_download_progress_data(
+                                progress
                             ),
                         )
                     )
@@ -630,13 +631,12 @@ class Worker:
             async for event in self.fail_runner(e, runner_id):
                 yield event
 
-
-
     # This function is re-entrant, take care!
     async def event_publisher(self, event: Event) -> None:
         fe = ForwarderEvent(
             origin_idx=self.local_event_index,
             origin=self.node_id,
+            session=self.session_id,
             event=event,
         )
         logger.debug(

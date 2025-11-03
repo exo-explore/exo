@@ -18,12 +18,12 @@ from exo.worker.runner.runner_supervisor import RunnerSupervisor
 class AssignedRunner(BaseModel):
     runner_id: RunnerId
     instance_id: InstanceId
-    shard_metadata: ShardMetadata  # just data
-    hosts: list[Host]
+    shard_metadata: ShardMetadata
+    hosts: list[Host] | None = None
 
     status: RunnerStatus
     failures: list[tuple[float, Exception]] = []
-    runner: RunnerSupervisor | None  # set if the runner is 'up'
+    runner: RunnerSupervisor | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

@@ -10,7 +10,7 @@ from exo.utils.pydantic_ext import TaggedModel
 
 class TaskId(Id):
     pass
-    
+
 
 class TaskStatus(str, Enum):
     Pending = "Pending"

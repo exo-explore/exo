@@ -1,7 +1,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from pydantic import ConfigDict, Field, field_validator, field_serializer
+from pydantic import ConfigDict, Field, field_serializer, field_validator
 
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId

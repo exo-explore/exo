@@ -1,10 +1,11 @@
+from datetime import datetime
 from enum import Enum
 
 from pydantic import Field
 
 from exo.shared.topology import Connection, NodePerformanceProfile
 from exo.shared.types.chunks import CommandId, GenerationChunk
-from exo.shared.types.common import Id, NodeId
+from exo.shared.types.common import Id, NodeId, SessionId
 from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.common import InstanceId, WorkerStatus
@@ -60,6 +61,8 @@ class EventType(str, Enum):
 
 class BaseEvent(TaggedModel):
     event_id: EventId = Field(default_factory=EventId)
+    # Internal, for debugging. Please don't rely on this field for anything!
+    _master_time_stamp: None | datetime = None
 
 
 class TestEvent(BaseEvent):
@@ -177,4 +180,5 @@ class ForwarderEvent(CamelCaseModel):
 
     origin_idx: int = Field(ge=0)
     origin: NodeId
+    session: SessionId
     event: Event

@@ -166,6 +166,8 @@ async fn networking_task(
                             IdentTopic::new(topic), data);
                         let pyresult: PyResult<MessageId> = if let Err(PublishError::NoPeersSubscribedToTopic) = result {
                             Err(exception::PyNoPeersSubscribedToTopicError::new_err())
+                        } else if let Err(PublishError::AllQueuesFull(_)) = result {
+                            Err(exception::PyNoPeersSubscribedToTopicError::new_err())
                         } else {
                             result.pyerr()
                         };

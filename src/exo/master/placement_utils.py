@@ -9,8 +9,13 @@ from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.topology import NodeInfo
 from exo.shared.types.worker.common import RunnerId
+from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
 from exo.shared.types.worker.runners import ShardAssignments
-from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.shared.types.worker.shards import (
+    PipelineShardMetadata,
+    ShardMetadata,
+    TensorShardMetadata,
+)
 
 
 class NodeWithProfile(BaseModel):
@@ -43,10 +48,10 @@ def get_smallest_cycles(cycles: list[list[NodeInfo]]) -> list[list[NodeInfo]]:
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
 
-def get_shard_assignments(
+def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeInfo],
-) -> ShardAssignments:
+):
     if not narrow_all_nodes(selected_cycle):
         raise ValueError("All nodes must have profiles to create shard assignments")
 
@@ -55,7 +60,8 @@ def get_shard_assignments(
         start=Memory(),
     )
     total_layers = model_meta.n_layers
-    runner_to_shard: dict[RunnerId, PipelineShardMetadata] = {}
+    world_size = len(selected_cycle)
+    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
     layers_assigned = 0
@@ -73,10 +79,11 @@ def get_shard_assignments(
             node_layers = max(1, node_layers)
 
         runner_id = RunnerId()
+
         shard = PipelineShardMetadata(
             model_meta=model_meta,
             device_rank=i,
-            world_size=len(selected_cycle),
+            world_size=world_size,
             start_layer=layers_assigned,
             end_layer=layers_assigned + node_layers,
             n_layers=total_layers,
@@ -93,6 +100,62 @@ def get_shard_assignments(
     )
 
     return shard_assignments
+
+
+def get_shard_assignments_for_tensor_parallel(
+    model_meta: ModelMetadata,
+    selected_cycle: list[NodeInfo],
+):
+    if not narrow_all_nodes(selected_cycle):
+        raise ValueError("All nodes must have profiles to create shard assignments")
+
+    total_layers = model_meta.n_layers
+    world_size = len(selected_cycle)
+    runner_to_shard: dict[RunnerId, ShardMetadata] = {}
+    node_to_runner: dict[NodeId, RunnerId] = {}
+
+    for i, node in enumerate(selected_cycle):
+        shard = TensorShardMetadata(
+            model_meta=model_meta,
+            device_rank=i,
+            world_size=world_size,
+            start_layer=0,
+            end_layer=total_layers,
+            n_layers=total_layers,
+        )
+
+        runner_id = RunnerId()
+
+        runner_to_shard[runner_id] = shard
+        node_to_runner[node.node_id] = runner_id
+
+    shard_assignments = ShardAssignments(
+        model_id=model_meta.model_id,
+        runner_to_shard=runner_to_shard,
+        node_to_runner=node_to_runner,
+    )
+
+    return shard_assignments
+
+
+def get_shard_assignments(
+    model_meta: ModelMetadata,
+    selected_cycle: list[NodeInfo],
+    parallelisation_strategy: ParallelisationStrategyType,
+) -> ShardAssignments:
+    match parallelisation_strategy:
+        case "auto":
+            return get_shard_assignments_for_pipeline_parallel(
+                model_meta=model_meta, selected_cycle=selected_cycle
+            )
+        case "pipeline":
+            return get_shard_assignments_for_pipeline_parallel(
+                model_meta=model_meta, selected_cycle=selected_cycle
+            )
+        case "tensor":
+            return get_shard_assignments_for_tensor_parallel(
+                model_meta=model_meta, selected_cycle=selected_cycle
+            )
 
 
 def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:

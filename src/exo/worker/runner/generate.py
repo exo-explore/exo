@@ -13,9 +13,9 @@ from mlx_lm.models.cache import KVCache
 from exo.engines.mlx import Model, TokenizerWrapper
 from exo.engines.mlx.utils_mlx import (
     apply_chat_template,
-    broadcast_from_zero,
+    broadcast_from_zero,  # type: ignore
     make_kv_cache,
-    mx_barrier,
+    mx_barrier,  # type: ignore
 )
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.tasks import ChatCompletionTaskParams
@@ -82,7 +82,7 @@ def generate_step(
 
             logits = logits[:, -1, :]
 
-            logprobs = logits - mx.logsumexp(logits, keepdims=True)  # pyright: ignore[reportUnknownMemberType]
+            logprobs = logits - mx.logsumexp(logits, keepdims=True)
             sampled = sampler(logprobs)
             return sampled, logprobs.squeeze(0)
 
@@ -220,7 +220,7 @@ async def warmup_inference(
 
     def _generate_warmup():
         nonlocal tokens_generated
-        for _ in stream_generate(
+        for token in stream_generate(
             model=model,
             tokenizer=tokenizer,
             prompt=warmup_prompt,
@@ -228,6 +228,7 @@ async def warmup_inference(
             sampler=sampler,
             conn=None,
         ):
+            runner_print("Generated warmup token: " + str(token.text))
             tokens_generated += 1
 
     await loop.run_in_executor(mlx_executor, _generate_warmup)

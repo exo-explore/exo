@@ -57,11 +57,18 @@ async def main(raw_conn: Connection):
         mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_running_loop()
 
-        model, tokenizer, sampler = await loop.run_in_executor(
+        model, tokenizer, sampler, group = await loop.run_in_executor(  # type: ignore[type-arg]
             mlx_executor,
-            partial(initialize_mlx, model_shard_meta=model_shard_meta, hosts=hosts),
+            partial(
+                initialize_mlx,
+                model_shard_meta=model_shard_meta,
+                hosts=hosts,
+            ),
         )
 
+        runner_print(
+            f"Warming up inference for model_shard_meta: {model_shard_meta} hosts: {hosts}"
+        )
         toks = await warmup_inference(
             mlx_executor=mlx_executor,
             model=model,

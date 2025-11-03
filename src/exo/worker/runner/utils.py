@@ -65,7 +65,7 @@ def get_init_timeout(model_shard_meta: ShardMetadata) -> float:
 
     kbps_read = 1024 * 1024 * LB_DISK_GBPS / 3
 
-    return weights_size.in_kb / kbps_read + 2.0
+    return weights_size.in_kb / kbps_read + 30.0
 
 
 def _prefill_flops_for_shard(model_shard_meta: ShardMetadata, s: int) -> float:

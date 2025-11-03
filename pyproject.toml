@@ -26,8 +26,8 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.43",
     "greenlet>=3.2.4",
     "huggingface-hub>=0.33.4",
-    "mlx==0.26.3",
-    "mlx-lm==0.26.4",
+    "mlx==0.29.3",
+    "mlx-lm==0.28.3",
     "psutil>=7.0.0",
     "transformers>=4.55.2",
     "cobs>=1.2.2",
@@ -51,11 +51,11 @@ dev = [
     "ruff>=0.11.13",
 ]
 
-# dependencies only required for Apple Silicon
-[project.optional-dependencies]
-darwin = [
-    "mlx",
-]
+# mlx[cuda] requires a newer version of mlx. the ideal on linux is: default to mlx[cpu] unless[cuda] specified.
+# [project.optional-dependencies]
+# cuda = [
+#     "mlx[cuda]==0.26.3",
+# ]
 
 ###
 # workspace configuration

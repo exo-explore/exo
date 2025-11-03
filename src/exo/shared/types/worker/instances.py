@@ -17,4 +17,4 @@ class Instance(CamelCaseModel):
     instance_id: InstanceId
     instance_type: InstanceStatus
     shard_assignments: ShardAssignments
-    hosts: list[Host]
+    hosts: list[Host] | None = None
