@@ -62,9 +62,9 @@ exo [optimally splits up models](exo/topology/ring_memory_weighted_partitioning_
 
 exo will [automatically discover](https://github.com/exo-explore/exo/blob/945f90f676182a751d2ad7bcf20987ab7fe0181e/exo/orchestration/node.py#L154) other devices using the best method available. Zero manual configuration.
 
-### ChatGPT-compatible API
+### OpenAI-compatible API
 
-exo provides a [ChatGPT-compatible API](exo/api/chatgpt_api.py) for running models. It's a [one-line change](examples/chatgpt_api.sh) in your application to run models on your own hardware using exo.
+exo provides a [OpenAI-compatible API](exo/api/chatgpt_api.py) for running models. It's a [one-line change](examples/chatgpt_api.sh) in your application to run models on your own hardware using exo.
 
 ### Device Equality
 
@@ -137,7 +137,7 @@ That's it! No configuration required - exo will automatically discover the other
 
 exo starts a ChatGPT-like WebUI (powered by [tinygrad tinychat](https://github.com/tinygrad/tinygrad/tree/master/examples/tinychat)) on http://localhost:52415
 
-For developers, exo also starts a ChatGPT-compatible API endpoint on http://localhost:52415/v1/chat/completions. Examples with curl:
+For developers, exo also starts a OpenAI-compatible API endpoint on http://localhost:52415/v1/chat/completions. Examples with curl:
 
 #### Llama 3.2 3B:
 
