@@ -11,7 +11,9 @@ class BaseRunnerMessage(TaggedModel):
 
 class SetupMessage(BaseRunnerMessage):
     model_shard_meta: ShardMetadata
-    hosts: list[Host]
+    hosts: list[Host] | None = None
+    mlx_ibv_devices: list[list[str | None]] | None = None
+    mlx_ibv_coordinator: str | None = None
 
 
 # TODO: We probably want a general task message that can take any task type. Can be fixed later.

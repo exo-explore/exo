@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from anyio import create_task_group
 from anyio.abc import TaskGroup
 from loguru import logger
@@ -201,6 +203,8 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
+
+                    event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
 
                     # TODO: SQL
                     self._event_log.append(event)

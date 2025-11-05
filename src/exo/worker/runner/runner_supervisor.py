@@ -34,18 +34,21 @@ from exo.shared.types.worker.common import RunnerError
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.runner.bootstrap import entrypoint
 from exo.worker.runner.utils import (
-    get_init_timeout,
-    get_prefil_timeout,
-    get_token_generate_timeout,
     get_weights_size,
 )
+
+INITIALIZE_TIMEOUT = 400
+PREFILL_TIMEOUT_SECONDS = 60
+DECODE_TIMEOUT_SECONDS = 5
 
 
 class RunnerSupervisor:
     def __init__(
         self,
         model_shard_meta: ShardMetadata,
-        hosts: list[Host],
+        hosts: list[Host] | None,
+        mlx_ibv_devices: list[list[str | None]] | None,
+        mlx_ibv_coordinator: str | None,
         runner_process: Process,
         conn: Connection,
         read_queue: asyncio.Queue[RunnerResponse],
@@ -53,6 +56,8 @@ class RunnerSupervisor:
     ):
         self.model_shard_meta = model_shard_meta
         self.hosts = hosts
+        self.mlx_ibv_devices = mlx_ibv_devices
+        self.mlx_ibv_coordinator = mlx_ibv_coordinator
         self.runner_process = runner_process
 
         self.conn = AsyncConnection[RunnerMessage, RunnerResponse](conn)
@@ -67,7 +72,9 @@ class RunnerSupervisor:
     async def create(
         cls,
         model_shard_meta: ShardMetadata,
-        hosts: list[Host],
+        hosts: list[Host] | None = None,
+        mlx_ibv_devices: list[list[str | None]] | None = None,
+        mlx_ibv_coordinator: str | None = None,
         initialize_timeout: Optional[float] = None,
     ) -> "RunnerSupervisor":
         """
@@ -93,6 +100,8 @@ class RunnerSupervisor:
         self = cls(
             model_shard_meta=model_shard_meta,
             hosts=hosts,
+            mlx_ibv_devices=mlx_ibv_devices,
+            mlx_ibv_coordinator=mlx_ibv_coordinator,
             runner_process=runner_process,
             read_queue=read_queue,
             conn=parent_conn,
@@ -104,12 +113,12 @@ class RunnerSupervisor:
             SetupMessage(
                 model_shard_meta=model_shard_meta,
                 hosts=hosts,
+                mlx_ibv_devices=mlx_ibv_devices,
+                mlx_ibv_coordinator=mlx_ibv_coordinator,
             )
         )
 
-        if not initialize_timeout:
-            initialize_timeout = get_init_timeout(model_shard_meta)
-
+        initialize_timeout = initialize_timeout or INITIALIZE_TIMEOUT
         response = await self._read_with_error_check(timeout=initialize_timeout)
 
         assert isinstance(response, InitializedResponse)
@@ -206,17 +215,13 @@ class RunnerSupervisor:
 
         response = await self._read_with_error_check(5.0)
         assert isinstance(response, TokenizedResponse)
-        prompt_tokens = response.prompt_tokens
 
         if request_started_callback is not None:
             await request_started_callback()
 
-        prefil_timeout = get_prefil_timeout(
-            self.model_shard_meta, prompt_tokens=prompt_tokens
-        )
-        token_timeout = get_token_generate_timeout(self.model_shard_meta)
-        timeout = prefil_timeout
-        logger.bind(user_facing=True).info(
+        timeout = PREFILL_TIMEOUT_SECONDS
+
+        logger.info(
             f"Starting chat completion with timeout {timeout}"
         )
 
@@ -224,8 +229,8 @@ class RunnerSupervisor:
             try:
                 response = await self._read_with_error_check(timeout)
             except asyncio.TimeoutError as e:
-                logger.bind(user_facing=True).error(
-                    f"Generation timed out during {'prefil' if timeout == prefil_timeout else 'decoding stage'}"
+                logger.error(
+                    f"Generation timed out during {'prefill' if timeout == PREFILL_TIMEOUT_SECONDS else 'decoding stage'}"
                 )
                 raise e
 
@@ -239,7 +244,7 @@ class RunnerSupervisor:
                         token_id=response.token,
                         finish_reason=response.finish_reason,
                     )
-                    timeout = token_timeout
+                    timeout = DECODE_TIMEOUT_SECONDS
                 case FinishedResponse():
                     break
                 case _:
@@ -322,7 +327,7 @@ class RunnerSupervisor:
             except Exception:
                 cause = f"signal={sig}"
 
-        logger.bind(user_facing=True).error(f"Runner terminated ({cause}).\n{captured}")
+        logger.error(f"Runner terminated ({cause}).\n{captured}")
 
         return RunnerError(
             error_type="RunnerCrash",

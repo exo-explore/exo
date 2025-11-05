@@ -17,4 +17,6 @@ class Instance(CamelCaseModel):
     instance_id: InstanceId
     instance_type: InstanceStatus
     shard_assignments: ShardAssignments
-    hosts: list[Host]
+    hosts: list[Host] | None = None
+    mlx_ibv_devices: list[list[str | None]] | None = None
+    mlx_ibv_coordinator: str | None = None

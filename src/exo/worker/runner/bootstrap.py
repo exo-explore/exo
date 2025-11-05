@@ -21,6 +21,7 @@ def entrypoint(raw_conn: Connection, err_path: str) -> None:
     It redirects fd=2 (stderr) to a pipe provided by the parent, *then* imports
     the heavy runner module so that any C/C++ or MLX logs/crashes land in that pipe.
     """
+    # os.environ["MLX_METAL_FAST_SYNCH"] = "1"
     _redirect_stderr_to_file(err_path)
     faulthandler.enable(file=sys.stderr, all_threads=True)
 

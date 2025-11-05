@@ -1,6 +1,7 @@
 from pydantic import Field
 
 from exo.shared.types.models import ModelMetadata
+from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
 from exo.utils.pydantic_ext import TaggedModel
 
 
@@ -19,18 +20,11 @@ class BaseShardMetadata(TaggedModel):
     immediate_exception: bool = False
     should_timeout: float | None = None
 
-
-class PipelineShardMetadata(BaseShardMetadata):
-    """
-    Pipeline parallelism shard meta.
-
-    Layers are represented as a half-open interval [start_layer, end_layer),
-    where start_layer is inclusive and end_layer is exclusive.
-    """
-
     start_layer: int = Field(ge=0)
     end_layer: int = Field(ge=0)
     n_layers: int = Field(ge=0)
+
+    strategy: ParallelisationStrategyType = "auto"
 
     @property
     def is_first_layer(self) -> bool:
@@ -46,4 +40,19 @@ class PipelineShardMetadata(BaseShardMetadata):
         )
 
 
-ShardMetadata = PipelineShardMetadata
+class PipelineShardMetadata(BaseShardMetadata):
+    """
+    Pipeline parallelism shard meta.
+
+    Layers are represented as a half-open interval [start_layer, end_layer),
+    where start_layer is inclusive and end_layer is exclusive.
+    """
+
+    strategy: ParallelisationStrategyType = "pipeline"
+
+
+class TensorShardMetadata(BaseShardMetadata):
+    strategy: ParallelisationStrategyType = "tensor"
+
+
+ShardMetadata = PipelineShardMetadata | TensorShardMetadata

@@ -1,11 +1,32 @@
+from abc import ABC, abstractmethod
+from functools import partial
 from typing import TYPE_CHECKING, Protocol, cast, override
+
+from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
+from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
+from mlx_lm.models.llama import Model as LlamaModel
+from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
+from mlx_lm.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 
 import mlx.core as mx
 import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
-from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.shared.types.worker.shards import (
+    PipelineShardMetadata,
+    ShardMetadata,
+    TensorShardMetadata,
+)
+from mlx.nn.layers.distributed import (  # type: ignore
+    shard_inplace,  # type: ignore
+    shard_linear,  # type: ignore
+    sum_gradients,  # type: ignore
+)
 
 
 class IdentityLayer(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.use_sliding = False
+
     @override
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         return x
@@ -70,61 +91,270 @@ class PipelineLastLayer(CustomMlxLayer):
         return output
 
 
-def inner_model(model: nn.Module) -> nn.Module:
-    inner = getattr(model, "model", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    inner = getattr(model, "transformer", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    raise ValueError("Model must either have a 'model' or 'transformer' attribute")
+class ParallelisationShardStrategy(Protocol):
+    def auto_parallel(
+        self, model: nn.Module, model_shard_meta: ShardMetadata
+    ) -> nn.Module: ...
 
 
-# def auto_parallel(model: nn.Module, rank: int, size: int, start_layer: int, end_layer: int) -> nn.Module:
-def auto_parallel(
-    model: nn.Module, model_shard_meta: PipelineShardMetadata
-) -> nn.Module:
-    """
-    Automatically parallelize a model across multiple devices.
+class PipelineParallelisationStrategy(ParallelisationShardStrategy):
+    def auto_parallel(
+        self, model: nn.Module, model_shard_meta: ShardMetadata
+    ) -> nn.Module:
+        """
+        Automatically parallelize a model across multiple devices.
+        Args:
+        model: The model to parallelize (must have a 'layers' or 'h' property)
+        model_shard_meta: The metadata for the model shard
+        Returns:
+        The parallelized model
+        """
+        assert isinstance(model_shard_meta, PipelineShardMetadata)
 
-    Args:
-      model: The model to parallelize (must have a 'layers' or 'h' property)
-      model_shard_meta: The metadata for the model shard
+        inner_model_instance: nn.Module = PipelineParallelisationStrategy._inner_model(
+            model
+        )
 
-    Returns:
-      The parallelized model
-    """
-    inner_model_instance: nn.Module = inner_model(model)
+        # Handle both model.layers and model.h cases
+        layers: list[_LayerCallable]
+        if hasattr(inner_model_instance, "layers"):
+            layers = cast(list[_LayerCallable], inner_model_instance.layers)
+        elif hasattr(inner_model_instance, "h"):
+            layers = cast(list[_LayerCallable], inner_model_instance.h)
+        else:
+            raise ValueError("Model must have either a 'layers' or 'h' attribute")
 
-    # Handle both model.layers and model.h cases
-    layers: list[_LayerCallable]
-    if hasattr(inner_model_instance, "layers"):
-        layers = cast(list[_LayerCallable], inner_model_instance.layers)
-    else:
-        layers = cast(list[_LayerCallable], inner_model_instance.h)
+        layers[: model_shard_meta.start_layer] = [
+            IdentityLayer() for _ in range(model_shard_meta.start_layer)
+        ]
+        layers[model_shard_meta.end_layer :] = [
+            IdentityLayer() for _ in range(len(layers) - model_shard_meta.end_layer)
+        ]
+        layers[model_shard_meta.start_layer] = PipelineFirstLayer(
+            layers[model_shard_meta.start_layer],
+            model_shard_meta.device_rank,
+            model_shard_meta.world_size,
+        )
+        layers[model_shard_meta.end_layer - 1] = PipelineLastLayer(
+            layers[model_shard_meta.end_layer - 1],
+            model_shard_meta.device_rank,
+            model_shard_meta.world_size,
+        )
 
-    layers[: model_shard_meta.start_layer] = [
-        IdentityLayer() for _ in range(model_shard_meta.start_layer)
-    ]
-    layers[model_shard_meta.end_layer :] = [
-        IdentityLayer() for _ in range(len(layers) - model_shard_meta.end_layer)
-    ]
-    layers[model_shard_meta.start_layer] = PipelineFirstLayer(
-        layers[model_shard_meta.start_layer],
-        model_shard_meta.device_rank,
-        model_shard_meta.world_size,
-    )
-    layers[model_shard_meta.end_layer - 1] = PipelineLastLayer(
-        layers[model_shard_meta.end_layer - 1],
-        model_shard_meta.device_rank,
-        model_shard_meta.world_size,
-    )
+        # At this point `layers` *must* be a concrete list.
+        assert isinstance(layers, list), (
+            "Expected a list of layers after auto-parallel initialisation"
+        )
 
-    # At this point `layers` *must* be a concrete list.
-    assert isinstance(layers, list), (
-        "Expected a list of layers after auto-parallel initialisation"
-    )
+        return model
 
-    return model
+    @staticmethod
+    def _inner_model(model: nn.Module) -> nn.Module:
+        inner = getattr(model, "model", None)
+        if isinstance(inner, nn.Module):
+            return inner
+
+        inner = getattr(model, "transformer", None)
+        if isinstance(inner, nn.Module):
+            return inner
+
+        raise ValueError("Model must either have a 'model' or 'transformer' attribute")
+
+
+class TensorParallelisationStrategy(ParallelisationShardStrategy):
+    def __init__(self, group: mx.distributed.Group):  # type: ignore
+        self.group = group  # type: ignore
+        self.N = self.group.size  # type: ignore
+
+    def auto_parallel(
+        self, model: nn.Module, model_shard_meta: ShardMetadata
+    ) -> nn.Module:
+        assert isinstance(model_shard_meta, TensorShardMetadata)
+
+        all_to_sharded_linear = partial(
+            shard_linear,
+            sharding="all-to-sharded",
+            group=self.group,  # pyright: ignore
+        )
+        sharded_to_all_linear = partial(
+            shard_linear,
+            sharding="sharded-to-all",
+            group=self.group,  # type: ignore
+        )
+
+        all_to_sharded_linear_in_place = partial(
+            shard_inplace,
+            sharding="all-to-sharded",
+            group=self.group,  # pyright: ignore
+        )
+        sharded_to_all_linear_in_place = partial(
+            shard_inplace,
+            sharding="sharded-to-all",
+            group=self.group,  # type: ignore
+        )
+
+        if isinstance(model, LlamaModel):
+            tensor_parallel_sharding_strategy = LlamaShardingStrategy(
+                self.group,  # type: ignore
+                all_to_sharded_linear,
+                sharded_to_all_linear,
+                all_to_sharded_linear_in_place,
+                sharded_to_all_linear_in_place,
+            )
+        elif isinstance(model, DeepseekV3Model):
+            tensor_parallel_sharding_strategy = DeepSeekShardingStrategy(
+                self.group,  # type: ignore
+                all_to_sharded_linear,
+                sharded_to_all_linear,
+                all_to_sharded_linear_in_place,
+                sharded_to_all_linear_in_place,
+            )
+        elif isinstance(model, Qwen3MoeModel):
+            tensor_parallel_sharding_strategy = QwenShardingStrategy(
+                self.group,  # type: ignore
+                all_to_sharded_linear,
+                sharded_to_all_linear,
+                all_to_sharded_linear_in_place,
+                sharded_to_all_linear_in_place,
+            )
+        else:
+            raise ValueError(f"Unsupported model type: {type(model)}")
+
+        return tensor_parallel_sharding_strategy.shard_model(model)
+
+
+class TensorParallelShardingStrategy(ABC):
+    def __init__(
+        self,
+        group,  # type: ignore
+        all_to_sharded_linear,  # type: ignore
+        sharded_to_all_linear,  # type: ignore
+        all_to_sharded_linear_in_place,  # type: ignore
+        sharded_to_all_linear_in_place,  # type: ignore
+    ):
+        self.all_to_sharded_linear = all_to_sharded_linear
+        self.sharded_to_all_linear = sharded_to_all_linear
+        self.all_to_sharded_linear_in_place = all_to_sharded_linear_in_place
+        self.sharded_to_all_linear_in_place = sharded_to_all_linear_in_place
+        self.group = group or mx.distributed.init()  # type: ignore
+        self.N = cast(int, group.size())  # type: ignore
+
+    @abstractmethod
+    def shard_model(self, model: nn.Module) -> nn.Module: ...
+
+
+class LlamaShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(self, model: nn.Module) -> nn.Module:
+        model = cast(LlamaModel, model)
+        for layer in model.layers:
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.n_heads //= self.N
+            if layer.self_attn.n_kv_heads is not None:
+                layer.self_attn.n_kv_heads //= self.N
+
+            layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+            layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+            layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+
+        return model
+
+
+class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(self, model: nn.Module) -> nn.Module:
+        model = cast(DeepseekV3Model, model)
+        for layer in model.layers:
+            # Shard the self attention
+            if layer.self_attn.q_lora_rank is None:  # pyright: ignore[reportUnnecessaryComparison]
+                layer.self_attn.q_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_proj
+                )
+            else:
+                layer.self_attn.q_b_proj = self.all_to_sharded_linear(
+                    layer.self_attn.q_b_proj
+                )
+            layer.self_attn.kv_b_proj = self.all_to_sharded_linear(
+                layer.self_attn.kv_b_proj
+            )
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.num_heads //= self.N
+
+            # Shard the MLP
+            if isinstance(layer.mlp, DeepseekV3MLP):
+                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+
+            # Shard the MoE. Shard in place since the MoE should be responsible
+            # for aggregating the results.
+            else:
+                self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.shared_experts.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.shared_experts.up_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                layer.mlp = ShardedDeepseekV3MoE(layer.mlp)  # type: ignore
+                layer.mlp.sharding_group = self.group  # type: ignore
+
+        return model
+
+
+class ShardedDeepseekV3MoE(CustomMlxLayer):
+    def __init__(self, layer: _LayerCallable):
+        super().__init__(layer)
+        self.sharding_group: mx.distributed.Group | None = None  # type: ignore
+
+    def __call__(self, x: mx.array) -> mx.array:
+        if self.sharding_group is not None:  # type: ignore
+            x = sum_gradients(self.sharding_group)(x)  # type: ignore
+        y = self.original_layer.__call__(x)  # type: ignore
+        if self.sharding_group is not None:  # type: ignore
+            y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
+        return y
+
+
+class QwenShardingStrategy(TensorParallelShardingStrategy):
+    def shard_model(self, model: nn.Module) -> nn.Module:
+        model = cast(Qwen3MoeModel, model)
+        for layer in model.layers:
+            # Shard the self attention
+            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
+            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
+            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
+            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
+            layer.self_attn.n_heads //= self.N
+            layer.self_attn.n_kv_heads //= self.N
+
+            # Shard the MoE. Shard in place since the MoE should be responsible
+            # for aggregating the results.
+            if isinstance(layer.mlp, Qwen3MoeSparseMoeBlock):
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
+                layer.mlp = ShardedQwenMoE(layer.mlp)  # type: ignore
+                layer.mlp.sharding_group = self.group  # type:ignore
+
+            # Shard the MLP
+            else:
+                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+
+        return model
+
+
+class ShardedQwenMoE(CustomMlxLayer):
+    def __init__(self, layer: _LayerCallable):
+        super().__init__(layer)
+        self.sharding_group: mx.distributed.Group | None = None  # type: ignore
+
+    def __call__(self, x: mx.array) -> mx.array:
+        if self.sharding_group is not None:  # type: ignore
+            x = sum_gradients(self.sharding_group)(x)  # type: ignore
+        y = self.original_layer.__call__(x)  # type: ignore
+        if self.sharding_group is not None:  # type: ignore
+            y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
+        return y

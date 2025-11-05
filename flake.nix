@@ -61,6 +61,10 @@
               # JUST
               just
             ]
+            ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
+              # IFCONFIG
+              unixtools.ifconfig
+            ])
             ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
               # MACMON
               macmon
@@ -68,8 +72,8 @@
 
           shellHook = ''
             # PYTHON
-            export DASHBOARD_DIR=$(git rev-parse --show-toplevel)/dashboard;
-            export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${pkgs.python313}/lib
+            export DASHBOARD_DIR="$(git rev-parse --show-toplevel)/dashboard"
+            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.python313}/lib"
             echo
             echo "🍎🍎 Run 'just <recipe>' to get started"
             just --list

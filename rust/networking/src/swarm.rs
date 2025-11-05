@@ -13,6 +13,7 @@ pub type Swarm = libp2p::Swarm<Behaviour>;
 ///       this be passed in as a parameter? What about rapidly changing versions in debug builds?
 ///       this is all VERY very hard to figure out and needs to be mulled over as a team.
 pub const NETWORK_VERSION: &[u8] = b"v0.0.1";
+pub const OVERRIDE_VERSION_ENV_VAR: &str = "EXO_LIBP2P_NAMESPACE";
 
 /// Create and configure a swarm which listens to all ports on OS
 pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
@@ -29,20 +30,27 @@ pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
 
 mod transport {
     use crate::alias;
-    use crate::swarm::NETWORK_VERSION;
+    use crate::swarm::{NETWORK_VERSION, OVERRIDE_VERSION_ENV_VAR};
     use futures::{AsyncRead, AsyncWrite};
     use keccak_const::Sha3_256;
     use libp2p::core::muxing;
     use libp2p::core::transport::Boxed;
     use libp2p::pnet::{PnetError, PnetOutput};
     use libp2p::{PeerId, Transport, identity, noise, pnet, yamux};
+    use std::{sync::LazyLock, env};
 
     /// Key used for networking's private network; parametrized on the [`NETWORK_VERSION`].
     /// See [`pnet_upgrade`] for more.
-    const PNET_PRESHARED_KEY: [u8; 32] = Sha3_256::new()
-        .update(b"exo_discovery_network")
-        .update(NETWORK_VERSION)
-        .finalize();
+    static PNET_PRESHARED_KEY: LazyLock<[u8; 32]> = LazyLock::new(|| {
+        let builder = Sha3_256::new().update(b"exo_discovery_network");
+        
+        if let Ok(var) = env::var(OVERRIDE_VERSION_ENV_VAR) {
+            let bytes = var.into_bytes(); 
+            builder.update(&bytes)
+        } else {
+            builder.update(NETWORK_VERSION)
+        }.finalize()
+    });
 
     /// Make the Swarm run on a private network, as to not clash with public libp2p nodes and
     /// also different-versioned instances of this same network.
@@ -55,7 +63,7 @@ mod transport {
         TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
         use pnet::{PnetConfig, PreSharedKey};
-        PnetConfig::new(PreSharedKey::new(PNET_PRESHARED_KEY))
+        PnetConfig::new(PreSharedKey::new(*PNET_PRESHARED_KEY))
             .handshake(socket)
             .await
     }

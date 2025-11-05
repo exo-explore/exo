@@ -1,7 +1,6 @@
 import asyncio
 import re
 import sys
-from typing import Dict, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -72,20 +71,16 @@ async def get_mac_friendly_name_async() -> str | None:
         return None
 
 
-async def get_network_interface_info_async() -> List[NetworkInterfaceInfo]:
+async def get_network_interface_info_async() -> list[NetworkInterfaceInfo]:
     """
     Retrieves detailed network interface information on macOS.
     Parses output from 'networksetup -listallhardwareports' and 'ifconfig'
     to determine interface names, IP addresses, and types (ethernet, wifi, vpn, other).
     Returns a list of NetworkInterfaceInfo objects.
     """
-    if sys.platform != "darwin":
-        return []
+    interfaces_info: list[NetworkInterfaceInfo] = []
 
-    interfaces_info: List[NetworkInterfaceInfo] = []
-    device_to_type_map: Dict[str, str] = {}
-
-    async def _run_cmd_async(command_parts: List[str]) -> Optional[str]:
+    async def _run_cmd_async(command_parts: list[str]) -> str | None:
         # Helper to run a command and return its stdout, or None on error.
         try:
             process = await asyncio.create_subprocess_exec(
@@ -118,37 +113,9 @@ async def get_network_interface_info_async() -> List[NetworkInterfaceInfo]:
             )
             return None
 
-    # 1. Get hardware port types from networksetup
-    networksetup_output = await _run_cmd_async(
-        ["networksetup", "-listallhardwareports"]
-    )
-    if networksetup_output:
-        current_hardware_port_type_raw: Optional[str] = None
-        for line in networksetup_output.splitlines():
-            line_stripped = line.strip()
-            if line_stripped.startswith("Hardware Port:"):
-                current_hardware_port_type_raw = line_stripped.split(":", 1)[1].strip()
-            elif line_stripped.startswith("Device:") and current_hardware_port_type_raw:
-                device_name = line_stripped.split(":", 1)[1].strip()
-                if device_name and device_name != "N/A":
-                    if "Thunderbolt" in current_hardware_port_type_raw:
-                        device_to_type_map[device_name] = "thunderbolt"
-                    elif (
-                        "Wi-Fi" in current_hardware_port_type_raw
-                        or "AirPort" in current_hardware_port_type_raw
-                    ):
-                        device_to_type_map[device_name] = "wifi"
-                    elif (
-                        "Ethernet" in current_hardware_port_type_raw
-                        or "LAN" in current_hardware_port_type_raw
-                    ):
-                        device_to_type_map[device_name] = "ethernet"
-                current_hardware_port_type_raw = None  # Reset for the next block
-
-    # 2. Get interface names and IP addresses from ifconfig
+    # Get interface names and IP addresses from ifconfig
     ifconfig_output = await _run_cmd_async(["ifconfig"])
     if ifconfig_output:
-        current_if_name: Optional[str] = None
         # Regex for interface name (e.g., en0:, utun0:, tailscale0.)
         interface_header_pattern = re.compile(r"^([a-zA-Z0-9\._-]+):")
         # Regex for IPv4 address (inet)
@@ -156,44 +123,30 @@ async def get_network_interface_info_async() -> List[NetworkInterfaceInfo]:
         # Regex for IPv6 address (inet6)
         inet6_pattern = re.compile(r"^\s+inet6\s+([0-9a-fA-F:]+(?:%[a-zA-Z0-9._-]+)?)")
 
-        def _add_interface_entry(if_name: str, ip_addr: str):
-            _if_type = device_to_type_map.get(if_name)
-            if not _if_type:  # Infer type if not found via networksetup
-                if if_name.startswith(("utun", "wg", "ppp")) or "tailscale" in if_name:
-                    _if_type = "vpn"
-                elif if_name.startswith("bridge"):
-                    _if_type = "virtual"  # For non-Thunderbolt bridges (e.g., Docker)
-                else:
-                    _if_type = "other"
-
-            interfaces_info.append(
-                NetworkInterfaceInfo(name=if_name, ip_address=ip_addr, type=_if_type)
-            )
-
+        current_if_name: str | None = None
         for line in ifconfig_output.splitlines():
             header_match = interface_header_pattern.match(line)
             if header_match:
-                potential_if_name = header_match.group(1)
-                if potential_if_name == "lo0":  # Skip loopback interface
-                    current_if_name = None
-                else:
-                    current_if_name = potential_if_name
-                continue
+                current_if_name = header_match.group(1)
 
             if current_if_name:
                 inet_m = inet_pattern.match(line)
                 if inet_m:
                     ipv4_address = inet_m.group(1)
-                    _add_interface_entry(
-                        current_if_name, ipv4_address
-                    )  # Add all IPv4, including APIPA
-                    continue
+                    interfaces_info.append(
+                        NetworkInterfaceInfo(
+                            name=current_if_name, ip_address=ipv4_address, type=""
+                        )
+                    )
 
                 inet6_m = inet6_pattern.match(line)
                 if inet6_m:
                     ipv6_address = inet6_m.group(1)
-                    # No specific filtering for IPv6 link-local (e.g., fe80::) for now.
-                    _add_interface_entry(current_if_name, ipv6_address)
+                    interfaces_info.append(
+                        NetworkInterfaceInfo(
+                            name=current_if_name, ip_address=ipv6_address, type=""
+                        )
+                    )
 
     return interfaces_info
 
@@ -203,7 +156,7 @@ async def get_mac_system_info_async() -> SystemInfo:
     model_id_val = "Unknown Model"
     chip_id_val = "Unknown Chip"
     memory_val = 0
-    network_interfaces_info_list: List[NetworkInterfaceInfo] = []
+    network_interfaces_info_list: list[NetworkInterfaceInfo] = []
 
     if sys.platform != "darwin":
         return SystemInfo(

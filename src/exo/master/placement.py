@@ -6,6 +6,8 @@ from typing import Sequence
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_hosts_from_subgraph,
+    get_mlx_ibv_coordinator,
+    get_mlx_ibv_devices_matrix,
     get_shard_assignments,
     get_smallest_cycles,
 )
@@ -39,7 +41,6 @@ def get_instance_placements_after_create(
     logger.info("finding cycles:")
     cycles = topology.get_cycles()
     logger.info(f"{cycles=}")
-    # we can also always just have a node on its own
     singleton_cycles = [[node] for node in all_nodes]
     candidate_cycles = cycles + singleton_cycles
     cycles_with_sufficient_memory = filter_cycles_by_memory(
@@ -58,7 +59,7 @@ def get_instance_placements_after_create(
     ]
 
     if tb_only and smallest_tb_cycles == []:
-        raise ValueError("No cycles found with sufficient memory")
+        raise ValueError("No TB cycles found with sufficient memory")
     elif smallest_tb_cycles != []:
         smallest_cycles = smallest_tb_cycles
 
@@ -80,29 +81,46 @@ def get_instance_placements_after_create(
         ),
     )
 
-    shard_assignments = get_shard_assignments(command.model_meta, selected_cycle)
+    shard_assignments = get_shard_assignments(
+        command.model_meta, selected_cycle, command.strategy
+    )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle)
-    hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
 
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
-    target_instances[instance_id] = Instance(
-        instance_id=instance_id,
-        instance_type=InstanceStatus.Active,
-        shard_assignments=shard_assignments,
-        hosts=[
-            Host(
-                ip=host.ip,
-                # NOTE: this is stupid
-                #       |
-                #       v
-                # NOTE: it's fine to have non-deterministic ports here since this is in a command decision
-                port=random_ephemeral_port(),
-            )
-            for host in hosts
-        ],
-    )
+
+    if command.strategy in ("tensor_rdma", "pipeline_rdma"):
+        mlx_ibv_devices = get_mlx_ibv_devices_matrix(
+            selected_cycle,
+            cycle_digraph,
+        )
+        mlx_ibv_coordinator = get_mlx_ibv_coordinator(
+            selected_cycle,
+            coordinator_port=random_ephemeral_port(),
+        )
+        target_instances[instance_id] = Instance(
+            instance_id=instance_id,
+            instance_type=InstanceStatus.Active,
+            shard_assignments=shard_assignments,
+            mlx_ibv_devices=mlx_ibv_devices,
+            mlx_ibv_coordinator=mlx_ibv_coordinator,
+        )
+    else:
+        hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
+        target_instances[instance_id] = Instance(
+            instance_id=instance_id,
+            instance_type=InstanceStatus.Active,
+            shard_assignments=shard_assignments,
+            hosts=[
+                Host(
+                    ip=host.ip,
+                    port=random_ephemeral_port(),
+                )
+                for host in hosts
+            ],
+        )
+
     return target_instances
 
 

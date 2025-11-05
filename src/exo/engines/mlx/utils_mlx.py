@@ -1,24 +1,31 @@
 import asyncio
 import concurrent.futures
-import contextlib
 import os
 import resource
 from asyncio import AbstractEventLoop
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional
 
-from loguru import logger
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper as _TokenizerWrapper
-from mlx_lm.tokenizer_utils import load_tokenizer  # type: ignore
+
+try:
+    from mlx_lm.tokenizer_utils import load_tokenizer  # type: ignore
+except ImportError:
+    from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
 from mlx_lm.utils import load_model  # type: ignore
 from pydantic import RootModel
 
 import mlx.core as mx
 import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
 from exo.engines.mlx import Model, TokenizerWrapper
-from exo.engines.mlx.auto_parallel import IdentityLayer, auto_parallel
+from exo.engines.mlx.auto_parallel import (
+    IdentityLayer,
+    PipelineParallelisationStrategy,
+    TensorParallelisationStrategy,
+)
 from exo.shared.types.common import Host
+from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.communication import runner_print
 from exo.shared.types.worker.shards import ShardMetadata
@@ -31,15 +38,17 @@ mlx_rank: None | int = None
 mlx_world_size: None | int = None
 
 
-def mx_barrier():
+def mx_barrier(group: mx.distributed.Group | None = None):  # type: ignore
     mx.eval(  # type: ignore
         mx.distributed.all_sum(
-            mx.array(1.0), stream=mx.default_stream(mx.Device(mx.cpu))
+            mx.array(1.0),
+            stream=mx.default_stream(mx.Device(mx.cpu)),
+            group=group,  # type: ignore[type-arg]
         )
     )
 
 
-def broadcast_from_zero(value: int) -> int:
+def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None):  # type: ignore
     if mlx_rank is None:
         return value
 
@@ -48,7 +57,7 @@ def broadcast_from_zero(value: int) -> int:
     else:
         a = mx.array([0], dtype=mx.int32)
 
-    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu))
+    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu), group=group)  # type: ignore
     mx.eval(m)  # type: ignore
     return int(m.item())
 
@@ -59,68 +68,60 @@ class HostList(RootModel[list[str]]):
         return cls(root=[str(host) for host in hosts])
 
 
-def mlx_setup(
-    model_size_mb: int,
-    cache_frac_of_mrwss: float = 0.65,  # main workhorse
-    wired_frac_of_mrwss: float = 0.00,  # start with no wiring
-) -> None:
-    if not mx.metal.is_available():
-        logger.warning(
-            "Metal is not available. Skipping MLX memory wired limits setup."
-        )
-        return
-    info = mx.metal.device_info()
-    mrwss = int(info["max_recommended_working_set_size"])  # bytes
-    memsize = int(info["memory_size"])  # bytes
-
-    runner_print(f"model size mb {model_size_mb}")
-    runner_print(f"{mrwss=}")
-    runner_print(f"{memsize=}")
-
-    model_bytes = int(model_size_mb * 1024**2)
-    kv_bytes = int(0.02 * model_bytes)
-
-    # Cache: keep most of weights+KV “on ice”, but don’t starve the OS.
-    target_cache = int(1.10 * (model_bytes + kv_bytes))  # +10% slack
-    target_cache = min(target_cache, int(cache_frac_of_mrwss * mrwss))
-    target_cache = min(target_cache, memsize)
-
-    runner_print(f"{target_cache=}")
-    mx.set_cache_limit(max(target_cache, 0))
-
-    # Wiring: off by default; if you re‑enable, wire at most a small fraction.
-    if wired_frac_of_mrwss > 0.0:
-        target_wired = int(wired_frac_of_mrwss * mrwss)
-        target_wired = min(target_wired, target_cache)  # don’t wire more than cache
-
-        runner_print(f"{target_wired=}")
-        with contextlib.suppress(Exception):  # older macOS won’t have this
-            mx.set_wired_limit(max(target_wired, 0))
-
-
-def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group:  # type: ignore
+def mlx_distributed_init(  # type: ignore[return]
+    rank: int,
+    hosts: list[Host] | None = None,
+    mlx_ibv_devices: list[list[str | None]] | None = None,
+    mlx_ibv_coordinator: str | None = None,
+) -> mx.distributed.Group:  # type: ignore
     """
-    Initialize the MLX distributed (runs in thread pool)
+    Initialize the MLX distributed (runs in thread pool).
+
+    Either hosts or mlx_ibv_devices must be provided:
+    - hosts: traditional host-based connectivity using MLX_HOSTFILE
+    - mlx_ibv_devices: RDMA connectivity matrix using MLX_IBV_DEVICES
+    - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
     """
-    global mlx_rank, mlx_world_size
     runner_print(f"Starting initialization for rank {rank}")
 
-    # Setup distributed environment
-    hostfile = f"./hosts_{rank}.json"  # TODO: this needs to be unique?
-    hosts_json = HostList.from_hosts(hosts).model_dump_json()
+    if mlx_ibv_devices is not None:
+        assert mlx_ibv_coordinator is not None, (
+            "To use ibv backend must set ibv coordinator"
+        )
+        import json
 
-    runner_print(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
+        # Use RDMA connectivity matrix
+        devices_file = f"./hosts_{rank}.json"
+        ibv_devices_json = json.dumps(mlx_ibv_devices)
+        runner_print(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
+        runner_print(f"rank {rank} MLX_IBV_COORDINATOR: {mlx_ibv_coordinator}")
 
-    with open(hostfile, "w") as f:
-        _ = f.write(hosts_json)
+        with open(devices_file, "w") as f:
+            _ = f.write(ibv_devices_json)
 
-    os.environ["MLX_HOSTFILE"] = hostfile
-    os.environ["MLX_RANK"] = str(rank)
-    os.environ["MLX_RING_VERBOSE"] = "1"
+        os.environ["MLX_IBV_DEVICES"] = devices_file
+        os.environ["MLX_RANK"] = str(rank)
+        os.environ["MLX_IBV_COORDINATOR"] = mlx_ibv_coordinator
 
-    group = mx.distributed.init(backend="ring", strict=True)
-    mlx_rank = group.rank()
-    mlx_world_size = group.rank()
+    elif hosts is not None:
+        # Traditional host-based connectivity
+        hostfile = f"./hosts_{rank}.json"
+        hosts_json = HostList.from_hosts(hosts).model_dump_json()
+
+        runner_print(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
+
+        with open(hostfile, "w") as f:
+            _ = f.write(hosts_json)
+
+        os.environ["MLX_HOSTFILE"] = hostfile
+        os.environ["MLX_RANK"] = str(rank)
+        os.environ["MLX_RING_VERBOSE"] = "1"
+    else:
+        raise ValueError("Either hosts or mlx_ibv_devices must be provided")
+
+    group = mx.distributed.init(
+        backend="ring" if hosts is not None else "ibv", strict=True
+    )
     runner_print(f"Rank {rank} mlx distributed initialization complete")
 
     return group
@@ -128,40 +129,79 @@ def mlx_distributed_init(rank: int, hosts: list[Host]) -> mx.distributed.Group: 
 
 def initialize_mlx(
     model_shard_meta: ShardMetadata,
-    hosts: list[Host],
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
+    hosts: list[Host] | None = None,
+    mlx_ibv_devices: list[list[str | None]] | None = None,
+    mlx_ibv_coordinator: str | None = None,
+) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array], Any]:
     """
     Initialize the MLX model, tokenizer, and sampler. Runs in the MLX thread.
+
+    Either hosts or mlx_ibv_devices must be provided for distributed setups:
+    - hosts: traditional host-based connectivity
+    - mlx_ibv_devices: RDMA connectivity matrix
     """
     mx.random.seed(42)
-    if len(hosts) > 1:
-        mlx_distributed_init(model_shard_meta.device_rank, hosts)
+    group = mlx_distributed_init(  # type: ignore[misc]
+        model_shard_meta.device_rank,
+        hosts=hosts,
+        mlx_ibv_devices=mlx_ibv_devices,
+        mlx_ibv_coordinator=mlx_ibv_coordinator,
+    )
+
+    # set_wired_limit_for_model(get_weights_size(model_shard_meta))
+
+    # Determine world size from either hosts or mlx_ibv_devices
+
     sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
 
-    model, tokenizer = shard_and_load(model_shard_meta)
-    model = cast(Model, model)
+    model, tokenizer = shard_and_load(model_shard_meta, group=group)  # type: ignore[reportUnknownArgumentType]
 
-    return model, tokenizer, sampler
+    return model, tokenizer, sampler, group  # type: ignore[return-value]
 
 
 def shard_and_load(
     model_shard_meta: ShardMetadata,
+    group: mx.distributed.Group,  # type: ignore
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(model_shard_meta.model_meta.model_id)
 
-    runner_print(f"loading model from {model_path}")
+    runner_print(
+        f"loading model from {model_path} with strategy {model_shard_meta.strategy}"
+    )
 
     model, config = load_model(model_path, lazy=True, strict=False)  # type: ignore
     runner_print(f"{config=}")
     assert isinstance(model, nn.Module)
 
-    tokenizer = load_tokenizer(model_path)
+    tokenizer = load_tokenizer(model_path)  # type: ignore
     assert isinstance(tokenizer, _TokenizerWrapper)
-    model = auto_parallel(model, model_shard_meta)
+
+    if group:
+        runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")  # type: ignore
+    else:
+        runner_print("!!! No group")
+
+    match model_shard_meta.strategy:
+        case "auto":
+            strategy = PipelineParallelisationStrategy()
+        case "pipeline":
+            strategy = PipelineParallelisationStrategy()
+        case "pipeline_rdma":
+            strategy = PipelineParallelisationStrategy()
+        case "tensor":
+            strategy = TensorParallelisationStrategy(group)  # type: ignore[reportUnknownArgumentType]
+        case "tensor_rdma":
+            strategy = TensorParallelisationStrategy(group)  # type: ignore[reportUnknownArgumentType]
+
+    model = strategy.auto_parallel(model, model_shard_meta)
+
+    runner_print(f"Model after auto_parallel: {str(model)}")
+
     mx.eval(model.parameters())  # type: ignore
+    mx.eval(model)  # type: ignore
 
     # Synchronize processes before generation to avoid timeout
-    mx_barrier()
+    mx_barrier(group)  # type: ignore[reportUnknownArgumentType]
 
     return model, tokenizer  # type: ignore
 
@@ -257,3 +297,30 @@ def mlx_force_oom(size: int = 40000) -> None:
     e = mx.matmul(b, c)
     f = mx.sigmoid(d + e)
     mx.eval(f)  # type: ignore
+
+
+def set_wired_limit_for_model(model_size: Memory):
+    """
+    A context manager to temporarily change the wired limit.
+
+    Note, the wired limit should not be changed during an async eval.  If an
+    async eval could be running pass in the streams to synchronize with prior
+    to exiting the context manager.
+    """
+    if not mx.metal.is_available():
+        return
+
+    model_bytes = model_size.in_bytes
+    max_rec_size = int(mx.metal.device_info()["max_recommended_working_set_size"])
+    if model_bytes > 0.9 * max_rec_size:
+        model_mb = model_bytes // 2**20
+        max_rec_mb = max_rec_size // 2**20
+        runner_print(
+            f"[WARNING] Generating with a model that requires {model_mb} MB "
+            f"which is close to the maximum recommended size of {max_rec_mb} "
+            "MB. This can be slow. See the documentation for possible work-arounds: "
+            "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
+        )
+    runner_print(f"Setting wired limit to {max_rec_size}")
+    mx.set_wired_limit(max_rec_size)
+    runner_print(f"Wired limit set to {max_rec_size}")

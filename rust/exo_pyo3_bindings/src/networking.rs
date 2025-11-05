@@ -65,6 +65,40 @@ mod exception {
             Self::MSG.to_string()
         }
     }
+
+    #[gen_stub_pyclass]
+    #[pyclass(frozen, extends=PyException, name="AllQueuesFullError")]
+    pub struct PyAllQueuesFullError {}
+
+    impl PyAllQueuesFullError {
+        const MSG: &'static str = "All libp2p peers are unresponsive, resend the message or reconnect.";
+
+        ///   Creates a new  [ `PyErr` ]  of this type.
+        ///
+        ///   [`PyErr`] :  https://docs.rs/pyo3/latest/pyo3/struct.PyErr.html   "PyErr in pyo3"
+        pub(crate) fn new_err() -> PyErr {
+            PyErr::new::<Self, _>(()) // TODO: check if this needs to be replaced???
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl PyAllQueuesFullError {
+        #[new]
+        #[pyo3(signature = (*args))]
+        #[allow(unused_variables)]
+        pub(crate) fn new(args: &Bound<'_, PyTuple>) -> Self {
+            Self {}
+        }
+
+        fn __repr__(&self) -> String {
+            format!("PeerId(\"{}\")", Self::MSG)
+        }
+
+        fn __str__(&self) -> String {
+            Self::MSG.to_string()
+        }
+    }
 }
 
 /// Connection or disconnection event discriminant type.
@@ -167,7 +201,7 @@ async fn networking_task(
                         let pyresult: PyResult<MessageId> = if let Err(PublishError::NoPeersSubscribedToTopic) = result {
                             Err(exception::PyNoPeersSubscribedToTopicError::new_err())
                         } else if let Err(PublishError::AllQueuesFull(_)) = result {
-                            Err(exception::PyNoPeersSubscribedToTopicError::new_err())
+                            Err(exception::PyAllQueuesFullError::new_err())
                         } else {
                             result.pyerr()
                         };
@@ -526,6 +560,7 @@ impl PyNetworkingHandle {
 
 pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<exception::PyNoPeersSubscribedToTopicError>()?;
+    m.add_class::<exception::PyAllQueuesFullError>()?;
 
     m.add_class::<PyConnectionUpdateType>()?;
     m.add_class::<PyConnectionUpdate>()?;

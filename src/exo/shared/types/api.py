@@ -7,6 +7,7 @@ from exo.shared.openai_compat import FinishReason
 from exo.shared.types.common import CommandId
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
 
 
 class ModelListModel(BaseModel):
@@ -123,6 +124,7 @@ class ChatCompletionTaskParams(BaseModel):
 class CreateInstanceTaskParams(BaseModel):
     # TODO: in future the user could specify a specific Instance, not just a model_id
     model_id: str
+    strategy: ParallelisationStrategyType = "auto"
 
 
 class DeleteInstanceTaskParams(BaseModel):

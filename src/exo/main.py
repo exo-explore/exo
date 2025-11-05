@@ -153,7 +153,9 @@ class Node:
                     await self.master.shutdown()
                     self.master = None
                 else:
-                    logger.info(f"Node {result.session_id.master_node_id} elected master")
+                    logger.info(
+                        f"Node {result.session_id.master_node_id} elected master"
+                    )
                 if result.is_new_master:
                     await anyio.sleep(0)
                     if self.worker:
@@ -175,10 +177,10 @@ class Node:
                         )
                         self._tg.start_soon(self.worker.run)
                     if self.api:
-                        self.api.reset(result.session_id)
+                        self.api.reset(result.session_id, result.won_clock)
                 else:
                     if self.api:
-                        self.api.unpause()
+                        self.api.unpause(result.won_clock)
 
 
 def main():

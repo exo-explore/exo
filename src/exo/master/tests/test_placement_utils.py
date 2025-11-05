@@ -200,7 +200,7 @@ def test_get_shard_assignments(
     selected_cycle = cycles[0]
 
     # act
-    shard_assignments = get_shard_assignments(model_meta, selected_cycle)
+    shard_assignments = get_shard_assignments(model_meta, selected_cycle, "pipeline")
 
     # assert
     runner_id_a = shard_assignments.node_to_runner[node_a_id]

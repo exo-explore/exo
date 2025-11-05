@@ -1,4 +1,5 @@
 from math import inf
+from typing import Self
 
 from anyio import ClosedResourceError, WouldBlock
 from anyio.streams.memory import (
@@ -46,6 +47,9 @@ class Receiver[T](AnyioReceiver[T]):
             out.append(await self.receive())
             out.extend(self.collect())
         return out
+
+    def __enter__(self) -> Self:
+        return self
 
 
 class channel[T]:  # noqa: N801

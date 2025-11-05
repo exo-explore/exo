@@ -12,6 +12,7 @@ from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
 from exo.shared.types.topology import Connection, NodeInfo
 from exo.shared.types.worker.common import InstanceId
 from exo.shared.types.worker.instances import Instance, InstanceStatus
@@ -49,6 +50,7 @@ def create_instance_command(model_meta: ModelMetadata) -> CreateInstance:
     return CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
+        strategy="auto",
     )
 
 
@@ -78,6 +80,7 @@ def test_get_instance_placements_create_instance(
     create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
+        strategy="auto",
     )
     node_id_a = NodeId()
     node_id_b = NodeId()
@@ -132,6 +135,7 @@ def test_get_instance_placements_one_node_exact_fit(
             pretty_name="Test Model",
             n_layers=10,
         ),
+        strategy="auto",
     )
     placements = get_instance_placements_after_create(
         create_instance_command, topology, {}
@@ -160,6 +164,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
             pretty_name="Test Model",
             n_layers=10,
         ),
+        strategy="auto",
     )
     placements = get_instance_placements_after_create(
         create_instance_command, topology, {}
@@ -188,6 +193,7 @@ def test_get_instance_placements_one_node_not_fit(
             pretty_name="Test Model",
             n_layers=10,
         ),
+        strategy="auto",
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
@@ -297,6 +303,7 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     create_instance_command = CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
+        strategy="auto",
     )
 
     # Act
@@ -316,3 +323,130 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
 
     assert expected_leaf_cycle_nodes.issubset(assigned_nodes)
     assert assigned_nodes.isdisjoint(non_leaf_cycle_nodes)
+
+
+def test_tensor_rdma_backend_connectivity_matrix(
+    topology: Topology,
+    model_meta: ModelMetadata,
+    create_node: Callable[[int, NodeId | None], NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    model_meta.n_layers = 12
+    model_meta.storage_size.in_bytes = 1500
+
+    node_id_a = NodeId()
+    node_id_b = NodeId()
+    node_id_c = NodeId()
+
+    node_a = create_node(500, node_id_a)
+    node_b = create_node(500, node_id_b)
+    node_c = create_node(500, node_id_c)
+
+    ethernet_interface = NetworkInterfaceInfo(
+        name="en0",
+        ip_address="192.168.1.100",
+        type="ethernet",
+    )
+
+    assert node_a.node_profile is not None
+    assert node_b.node_profile is not None
+    assert node_c.node_profile is not None
+
+    conn_a_b = create_connection(node_id_a, node_id_b)
+    conn_b_c = create_connection(node_id_b, node_id_c)
+    conn_c_a = create_connection(node_id_c, node_id_a)
+
+    assert conn_a_b.send_back_multiaddr is not None
+    assert conn_b_c.send_back_multiaddr is not None
+    assert conn_c_a.send_back_multiaddr is not None
+
+    node_a.node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=node_a.node_profile.memory,
+        network_interfaces=[
+            NetworkInterfaceInfo(
+                name="en3",
+                ip_address=conn_a_b.send_back_multiaddr.ip_address,
+                type="rdma",
+            ),
+            ethernet_interface,
+        ],
+        system=node_a.node_profile.system,
+    )
+    node_b.node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=node_b.node_profile.memory,
+        network_interfaces=[
+            NetworkInterfaceInfo(
+                name="en4",
+                ip_address=conn_b_c.send_back_multiaddr.ip_address,
+                type="rdma",
+            ),
+            ethernet_interface,
+        ],
+        system=node_b.node_profile.system,
+    )
+    node_c.node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=node_c.node_profile.memory,
+        network_interfaces=[
+            NetworkInterfaceInfo(
+                name="en5",
+                ip_address=conn_c_a.send_back_multiaddr.ip_address,
+                type="rdma",
+            ),
+            ethernet_interface,
+        ],
+        system=node_c.node_profile.system,
+    )
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
+    topology.add_connection(conn_a_b)
+    topology.add_connection(conn_b_c)
+    topology.add_connection(conn_c_a)
+
+    create_instance_command = CreateInstance(
+        command_id=CommandId(),
+        model_meta=model_meta,
+        strategy="tensor_rdma",
+    )
+
+    placements = get_instance_placements_after_create(
+        create_instance_command, topology, {}
+    )
+
+    assert len(placements) == 1
+    instance_id = list(placements.keys())[0]
+    instance = placements[instance_id]
+
+    assert instance.hosts is None
+    assert instance.mlx_ibv_devices is not None
+    assert instance.mlx_ibv_coordinator is not None
+
+    matrix = instance.mlx_ibv_devices
+    assert len(matrix) == 3
+
+    for i in range(3):
+        assert matrix[i][i] is None
+
+    assigned_nodes = list(instance.shard_assignments.node_to_runner.keys())
+    node_to_idx = {node_id: idx for idx, node_id in enumerate(assigned_nodes)}
+
+    idx_a = node_to_idx[node_id_a]
+    idx_b = node_to_idx[node_id_b]
+    idx_c = node_to_idx[node_id_c]
+
+    assert matrix[idx_a][idx_b] == "rdma_en3"
+    assert matrix[idx_b][idx_c] == "rdma_en4"
+    assert matrix[idx_c][idx_a] == "rdma_en5"
+
+    assert ":" in instance.mlx_ibv_coordinator
+    assert not instance.mlx_ibv_coordinator.startswith("169.254")

@@ -12,7 +12,12 @@ from anyio import (
     sleep_forever,
 )
 from anyio.abc import TaskGroup
-from exo_pyo3_bindings import Keypair, NetworkingHandle, NoPeersSubscribedToTopicError
+from exo_pyo3_bindings import (
+    AllQueuesFullError,
+    Keypair,
+    NetworkingHandle,
+    NoPeersSubscribedToTopicError,
+)
 from filelock import FileLock
 from loguru import logger
 
@@ -207,7 +212,7 @@ class Router:
                     await self._net.gossipsub_publish(topic, data)
                 # As a hack, this also catches AllQueuesFull
                 # Need to fix that ASAP.
-                except NoPeersSubscribedToTopicError:
+                except (NoPeersSubscribedToTopicError, AllQueuesFullError):
                     pass
 
 

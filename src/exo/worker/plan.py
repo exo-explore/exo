@@ -176,6 +176,8 @@ def assign_runners(
                         runner_id
                     ],
                     hosts=instance.hosts,
+                    mlx_ibv_devices=instance.mlx_ibv_devices,
+                    mlx_ibv_coordinator=instance.mlx_ibv_coordinator,
                 )
     return None
 

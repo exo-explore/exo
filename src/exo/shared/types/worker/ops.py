@@ -14,7 +14,9 @@ class AssignRunnerOp(BaseRunnerOp):
     instance_id: InstanceId
     runner_id: RunnerId
     shard_metadata: ShardMetadata
-    hosts: list[Host]
+    hosts: list[Host] | None = None
+    mlx_ibv_devices: list[list[str | None]] | None = None
+    mlx_ibv_coordinator: str | None = None
 
 
 class UnassignRunnerOp(BaseRunnerOp):

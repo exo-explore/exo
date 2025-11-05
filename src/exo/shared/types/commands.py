@@ -4,6 +4,7 @@ from exo.shared.types.api import ChatCompletionTaskParams
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.worker.common import InstanceId
+from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -22,6 +23,7 @@ class ChatCompletion(BaseCommand):
 
 class CreateInstance(BaseCommand):
     model_meta: ModelMetadata
+    strategy: ParallelisationStrategyType
 
 
 class SpinUpInstance(BaseCommand):

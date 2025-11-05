@@ -118,6 +118,7 @@ async def test_master():
                             n_layers=16,
                             storage_size=Memory.from_bytes(678948),
                         ),
+                        strategy="auto",
                     )
                 ),
             )

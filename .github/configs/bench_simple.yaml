@@ -1,0 +1,36 @@
+# Simple single-shot benchmark
+# Tests 2 instances concurrently on 2 nodes
+
+# Hardware configuration - maps runner labels to instance counts
+hardware_plan:
+  puffin4: 1
+  puffin8: 1
+
+# Environment variables to set on each node
+environment:
+  PLACEHOLDER: "placeholder"
+  # OVERRIDE_MEMORY_MB: 30000
+  # MLX_METAL_FAST_SYNCH: 1
+
+# Timeout for instance and runner readiness (seconds)
+timeout_seconds: 900
+
+# Model instances to run concurrently
+model_ids:
+  - "mlx-community/DeepSeek-V3.1-8bit"
+  # - "mlx-community/Qwen3-235B-A22B-4bit"
+  # - "mlx-community/Llama-3.3-70B-Instruct-4bit"
+
+# Placement strategy: "tensor", "pipeline", or "auto"
+strategy: "tensor_rdma"
+
+# If true, run requests sequentially (no overlap); if false, fire-and-forget (default: false)
+no_overlap: true
+
+# Benchmark stages
+stages:
+  - name: "simple"
+    prompt_length: 512
+    generation_length: 10
+    time_between_requests: 2.0
+    iterations: 10

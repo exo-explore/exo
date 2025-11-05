@@ -2,8 +2,16 @@
 # ruff: noqa: E501, F401
 
 import builtins
-from enum import Enum
+import enum
+import typing
 
+@typing.final
+class AllQueuesFullError(builtins.Exception):
+    def __new__(cls, *args: typing.Any) -> AllQueuesFullError: ...
+    def __repr__(self) -> builtins.str: ...
+    def __str__(self) -> builtins.str: ...
+
+@typing.final
 class ConnectionUpdate:
     @property
     def update_type(self) -> ConnectionUpdateType:
@@ -26,6 +34,7 @@ class ConnectionUpdate:
         Remote connection's TCP port.
         """
 
+@typing.final
 class Keypair:
     r"""
     Identity keypair of a node.
@@ -46,12 +55,12 @@ class Keypair:
         Generate a new Secp256k1 keypair.
         """
     @staticmethod
-    def from_protobuf_encoding(bytes:bytes) -> Keypair:
+    def from_protobuf_encoding(bytes: bytes) -> Keypair:
         r"""
         Decode a private key from a protobuf structure and parse it as a `Keypair`.
         """
     @staticmethod
-    def rsa_from_pkcs8(bytes:bytes) -> Keypair:
+    def rsa_from_pkcs8(bytes: bytes) -> Keypair:
         r"""
         Decode an keypair from a DER-encoded secret key in PKCS#8 `PrivateKeyInfo`
         format (i.e. unencrypted) as defined in [RFC5208].
@@ -59,7 +68,7 @@ class Keypair:
         [RFC5208]: https://tools.ietf.org/html/rfc5208#section-5
         """
     @staticmethod
-    def secp256k1_from_der(bytes:bytes) -> Keypair:
+    def secp256k1_from_der(bytes: bytes) -> Keypair:
         r"""
         Decode a keypair from a DER-encoded Secp256k1 secret key in an `ECPrivateKey`
         structure as defined in [RFC5915].
@@ -67,7 +76,7 @@ class Keypair:
         [RFC5915]: https://tools.ietf.org/html/rfc5915
         """
     @staticmethod
-    def ed25519_from_bytes(bytes:bytes) -> Keypair: ...
+    def ed25519_from_bytes(bytes: bytes) -> Keypair: ...
     def to_protobuf_encoding(self) -> bytes:
         r"""
         Encode a private key as protobuf structure.
@@ -77,6 +86,7 @@ class Keypair:
         Convert the `Keypair` into the corresponding `PeerId`.
         """
 
+@typing.final
 class Multiaddr:
     r"""
     Representation of a Multiaddr.
@@ -87,17 +97,17 @@ class Multiaddr:
         Create a new, empty multiaddress.
         """
     @staticmethod
-    def with_capacity(n:builtins.int) -> Multiaddr:
+    def with_capacity(n: builtins.int) -> Multiaddr:
         r"""
         Create a new, empty multiaddress with the given capacity.
         """
     @staticmethod
-    def from_bytes(bytes:bytes) -> Multiaddr:
+    def from_bytes(bytes: bytes) -> Multiaddr:
         r"""
         Parse a `Multiaddr` value from its byte slice representation.
         """
     @staticmethod
-    def from_string(string:builtins.str) -> Multiaddr:
+    def from_string(string: builtins.str) -> Multiaddr:
         r"""
         Parse a `Multiaddr` value from its string representation.
         """
@@ -118,13 +128,14 @@ class Multiaddr:
         Convert a Multiaddr to a string.
         """
 
+@typing.final
 class NetworkingHandle:
-    def __new__(cls, identity:Keypair) -> NetworkingHandle: ...
+    def __new__(cls, identity: Keypair) -> NetworkingHandle: ...
     async def connection_update_recv(self) -> ConnectionUpdate:
         r"""
         Receives the next `ConnectionUpdate` from networking.
         """
-    async def connection_update_recv_many(self, limit:builtins.int) -> builtins.list[ConnectionUpdate]:
+    async def connection_update_recv_many(self, limit: builtins.int) -> builtins.list[ConnectionUpdate]:
         r"""
         Receives at most `limit` `ConnectionUpdate`s from networking and returns them.
         
@@ -132,19 +143,19 @@ class NetworkingHandle:
         For `limit > 0`, if there are no `ConnectionUpdate`s in the channel's queue this method
         will sleep until a `ConnectionUpdate`s is sent.
         """
-    async def gossipsub_subscribe(self, topic:builtins.str) -> builtins.bool:
+    async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
         Subscribe to a `GossipSub` topic.
         
         Returns `True` if the subscription worked. Returns `False` if we were already subscribed.
         """
-    async def gossipsub_unsubscribe(self, topic:builtins.str) -> builtins.bool:
+    async def gossipsub_unsubscribe(self, topic: builtins.str) -> builtins.bool:
         r"""
         Unsubscribes from a `GossipSub` topic.
         
         Returns `True` if we were subscribed to this topic. Returns `False` if we were not subscribed.
         """
-    async def gossipsub_publish(self, topic:builtins.str, data:bytes) -> None:
+    async def gossipsub_publish(self, topic: builtins.str, data: bytes) -> None:
         r"""
         Publishes a message with multiple topics to the `GossipSub` network.
         
@@ -154,7 +165,7 @@ class NetworkingHandle:
         r"""
         Receives the next message from the `GossipSub` network.
         """
-    async def gossipsub_recv_many(self, limit:builtins.int) -> builtins.list[tuple[builtins.str, bytes]]:
+    async def gossipsub_recv_many(self, limit: builtins.int) -> builtins.list[tuple[builtins.str, bytes]]:
         r"""
         Receives at most `limit` messages from the `GossipSub` network and returns them.
         
@@ -163,11 +174,13 @@ class NetworkingHandle:
         will sleep until a message is sent.
         """
 
+@typing.final
 class NoPeersSubscribedToTopicError(builtins.Exception):
-    def __new__(cls, *args) -> NoPeersSubscribedToTopicError: ...
+    def __new__(cls, *args: typing.Any) -> NoPeersSubscribedToTopicError: ...
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
 
+@typing.final
 class PeerId:
     r"""
     Identifier of a peer of the network.
@@ -183,7 +196,7 @@ class PeerId:
         This is useful for randomly walking on a DHT, or for testing purposes.
         """
     @staticmethod
-    def from_bytes(bytes:bytes) -> PeerId:
+    def from_bytes(bytes: bytes) -> PeerId:
         r"""
         Parses a `PeerId` from bytes.
         """
@@ -198,7 +211,8 @@ class PeerId:
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
 
-class ConnectionUpdateType(Enum):
+@typing.final
+class ConnectionUpdateType(enum.Enum):
     r"""
     Connection or disconnection event discriminant type.
     """

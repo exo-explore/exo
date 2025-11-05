@@ -194,8 +194,8 @@ class Worker:
 
         # run the op, synchronously blocking for now
         if op is not None:
-            logger.info(f"Executing op {str(op)[:100]}")
-            logger.debug(f"Worker executing op: {str(op)[:100]}")
+            logger.info(f"Executing op {type(op)} {str(op)[:100]}")
+            logger.debug(f"Worker executing op: {type(op)} {str(op)[:100]}")
             try:
                 async for event in self.execute_op(op):
                     await self.event_publisher(event)
@@ -285,6 +285,8 @@ class Worker:
             instance_id=op.instance_id,
             shard_metadata=op.shard_metadata,
             hosts=op.hosts,
+            mlx_ibv_devices=op.mlx_ibv_devices,
+            mlx_ibv_coordinator=op.mlx_ibv_coordinator,
             status=DownloadingRunnerStatus(
                 download_progress=DownloadPending(node_id=self.node_id)
             ),
@@ -439,6 +441,8 @@ class Worker:
         assigned_runner.runner = await RunnerSupervisor.create(
             model_shard_meta=assigned_runner.shard_metadata,
             hosts=assigned_runner.hosts,
+            mlx_ibv_devices=assigned_runner.mlx_ibv_devices,
+            mlx_ibv_coordinator=assigned_runner.mlx_ibv_coordinator,
             initialize_timeout=initialize_timeout,
         )
 

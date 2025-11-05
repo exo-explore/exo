@@ -93,6 +93,7 @@ class API:
         self.event_buffer: OrderedBuffer[Event] = OrderedBuffer[Event]()
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
+        self.last_completed_election: int = 0
         self.port = port
 
         self.paused: bool = False
@@ -121,14 +122,15 @@ class API:
         ] = {}
         self._tg: TaskGroup | None = None
 
-    def reset(self, new_session_id: SessionId):
+    def reset(self, new_session_id: SessionId, result_clock: int):
         self.state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._chat_completion_queues = {}
-        self.unpause()
+        self.unpause(result_clock)
 
-    def unpause(self):
+    def unpause(self, result_clock: int):
+        self.last_completed_election = result_clock
         self.paused = False
         self.paused_ev.set()
         self.paused_ev = AsyncTaskEvent()
@@ -155,6 +157,7 @@ class API:
         self, payload: CreateInstanceTaskParams
     ) -> CreateInstanceResponse:
         model_meta = await resolve_model_meta(payload.model_id)
+        strategy = payload.strategy
         required_memory_bytes = model_meta.storage_size.in_kb
         available_memory_bytes = self._calculate_total_available_memory()
 
@@ -165,8 +168,7 @@ class API:
             )
 
         command = CreateInstance(
-            command_id=CommandId(),
-            model_meta=model_meta,
+            command_id=CommandId(), model_meta=model_meta, strategy=strategy
         )
         await self._send(command)
 
@@ -260,10 +262,10 @@ class API:
                         # Store thinking in the thinking field
                         message.thinking = thinking_match.group(1).strip()
 
-        for instance in self.state.instances.values():
-            if instance.shard_assignments.model_id == payload.model:
-                break
-        else:
+        if not any(
+            instance.shard_assignments.model_id == payload.model
+            for instance in self.state.instances.values()
+        ):
             await self._trigger_notify_user_to_download_model(payload.model)
             raise HTTPException(
                 status_code=404, detail=f"No instance found for model {payload.model}"
@@ -334,7 +336,7 @@ class API:
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
             async for message in ems:
-                if message.clock > self.session_id.election_clock:
+                if message.clock > self.last_completed_election:
                     self.paused = True
 
     async def _send(self, command: Command):

@@ -7,7 +7,6 @@ from multiprocessing.connection import Connection
 from exo.engines.mlx.utils_mlx import (
     initialize_mlx,
     mlx_force_oom,
-    mlx_setup,
 )
 from exo.shared.global_conn import set_conn
 from exo.shared.types.worker.commands_runner import (
@@ -26,8 +25,7 @@ from exo.shared.types.worker.communication import (
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils import ensure_type
-from exo.worker.runner.generate import mlx_generate, warmup_inference
-from exo.worker.runner.utils import get_weights_size
+from exo.worker.runner.generate import mlx_generate, warmup_inference  # type: ignore
 
 
 async def main(raw_conn: Connection):
@@ -40,33 +38,39 @@ async def main(raw_conn: Connection):
         setup_message = ensure_type(init_message, SetupMessage)
         model_shard_meta: ShardMetadata = setup_message.model_shard_meta
         hosts = setup_message.hosts
+        mlx_ibv_devices = setup_message.mlx_ibv_devices
+        mlx_ibv_coordinator = setup_message.mlx_ibv_coordinator
 
         if getattr(model_shard_meta, "immediate_exception", False):
             raise Exception("Fake exception - runner failed to spin up.")
         if timeout := getattr(model_shard_meta, "should_timeout", 0):
             await asyncio.sleep(timeout)
 
-        mlx_setup(
-            int(get_weights_size(model_shard_meta).in_kb // 2**10),
-            cache_frac_of_mrwss=0.8,
-            wired_frac_of_mrwss=0.8,
-        )
-
         setup_start_time = time.time()
 
         mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_running_loop()
 
-        model, tokenizer, sampler = await loop.run_in_executor(
+        model, tokenizer, sampler, group = await loop.run_in_executor(  # type: ignore[type-arg]
             mlx_executor,
-            partial(initialize_mlx, model_shard_meta=model_shard_meta, hosts=hosts),
+            partial(
+                initialize_mlx,
+                model_shard_meta=model_shard_meta,
+                hosts=hosts,
+                mlx_ibv_devices=mlx_ibv_devices,
+                mlx_ibv_coordinator=mlx_ibv_coordinator,
+            ),
         )
 
+        runner_print(
+            f"Warming up inference for model_shard_meta: {model_shard_meta} hosts: {hosts}"
+        )
         toks = await warmup_inference(
             mlx_executor=mlx_executor,
             model=model,
             tokenizer=tokenizer,
             sampler=sampler,
+            group=group,  # type: ignore[type-arg]
         )
         runner_print(f"Warmed up by generating {toks} tokens")
         await conn.send(InitializedResponse(time_taken=time.time() - setup_start_time))

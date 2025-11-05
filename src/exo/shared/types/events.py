@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 
 from pydantic import Field
@@ -60,6 +61,8 @@ class EventType(str, Enum):
 
 class BaseEvent(TaggedModel):
     event_id: EventId = Field(default_factory=EventId)
+    # Internal, for debugging. Please don't rely on this field for anything!
+    _master_time_stamp: None | datetime = None
 
 
 class TestEvent(BaseEvent):
