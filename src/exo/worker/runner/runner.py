@@ -25,7 +25,7 @@ from exo.shared.types.worker.communication import (
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils import ensure_type
-from exo.worker.runner.generate import mlx_generate, warmup_inference  # type: ignore
+from exo.worker.runner.generate import mlx_generate, warmup_inference
 
 
 async def main(raw_conn: Connection):
@@ -51,7 +51,7 @@ async def main(raw_conn: Connection):
         mlx_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_running_loop()
 
-        model, tokenizer, sampler, group = await loop.run_in_executor(  # type: ignore[type-arg]
+        model, tokenizer, sampler, group = await loop.run_in_executor(
             mlx_executor,
             partial(
                 initialize_mlx,
@@ -70,7 +70,7 @@ async def main(raw_conn: Connection):
             model=model,
             tokenizer=tokenizer,
             sampler=sampler,
-            group=group,  # type: ignore[type-arg]
+            group=group,
         )
         runner_print(f"Warmed up by generating {toks} tokens")
         await conn.send(InitializedResponse(time_taken=time.time() - setup_start_time))

@@ -162,9 +162,9 @@ class PipelineParallelisationStrategy(ParallelisationShardStrategy):
 
 
 class TensorParallelisationStrategy(ParallelisationShardStrategy):
-    def __init__(self, group: mx.distributed.Group):  # type: ignore
-        self.group = group  # type: ignore
-        self.N = self.group.size  # type: ignore
+    def __init__(self, group: mx.distributed.Group):
+        self.group = group
+        self.N = self.group.size
 
     def auto_parallel(
         self, model: nn.Module, model_shard_meta: ShardMetadata
@@ -174,28 +174,28 @@ class TensorParallelisationStrategy(ParallelisationShardStrategy):
         all_to_sharded_linear = partial(
             shard_linear,
             sharding="all-to-sharded",
-            group=self.group,  # pyright: ignore
+            group=self.group,
         )
         sharded_to_all_linear = partial(
             shard_linear,
             sharding="sharded-to-all",
-            group=self.group,  # type: ignore
+            group=self.group,
         )
 
         all_to_sharded_linear_in_place = partial(
             shard_inplace,
             sharding="all-to-sharded",
-            group=self.group,  # pyright: ignore
+            group=self.group,
         )
         sharded_to_all_linear_in_place = partial(
             shard_inplace,
             sharding="sharded-to-all",
-            group=self.group,  # type: ignore
+            group=self.group,
         )
 
         if isinstance(model, LlamaModel):
             tensor_parallel_sharding_strategy = LlamaShardingStrategy(
-                self.group,  # type: ignore
+                self.group,
                 all_to_sharded_linear,
                 sharded_to_all_linear,
                 all_to_sharded_linear_in_place,
@@ -203,7 +203,7 @@ class TensorParallelisationStrategy(ParallelisationShardStrategy):
             )
         elif isinstance(model, DeepseekV3Model):
             tensor_parallel_sharding_strategy = DeepSeekShardingStrategy(
-                self.group,  # type: ignore
+                self.group,
                 all_to_sharded_linear,
                 sharded_to_all_linear,
                 all_to_sharded_linear_in_place,
@@ -211,7 +211,7 @@ class TensorParallelisationStrategy(ParallelisationShardStrategy):
             )
         elif isinstance(model, Qwen3MoeModel):
             tensor_parallel_sharding_strategy = QwenShardingStrategy(
-                self.group,  # type: ignore
+                self.group,
                 all_to_sharded_linear,
                 sharded_to_all_linear,
                 all_to_sharded_linear_in_place,
@@ -305,14 +305,14 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
 class ShardedDeepseekV3MoE(CustomMlxLayer):
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None  # type: ignore
+        self.sharding_group: mx.distributed.Group | None = None
 
     def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:  # type: ignore
+        if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)  # type: ignore
         y = self.original_layer.__call__(x)  # type: ignore
-        if self.sharding_group is not None:  # type: ignore
-            y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
+        if self.sharding_group is not None:
+            y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y
 
 
@@ -349,12 +349,12 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
 class ShardedQwenMoE(CustomMlxLayer):
     def __init__(self, layer: _LayerCallable):
         super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None  # type: ignore
+        self.sharding_group: mx.distributed.Group | None = None
 
     def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:  # type: ignore
+        if self.sharding_group is not None:
             x = sum_gradients(self.sharding_group)(x)  # type: ignore
         y = self.original_layer.__call__(x)  # type: ignore
-        if self.sharding_group is not None:  # type: ignore
-            y = mx.distributed.all_sum(y, group=self.sharding_group)  # type: ignore
+        if self.sharding_group is not None:
+            y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y

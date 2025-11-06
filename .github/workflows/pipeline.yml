@@ -62,6 +62,33 @@ jobs:
           fi
         shell: bash
 
+      - name: Configure basedpyright include for local MLX
+        run: |
+          RUNNER_LABELS='${{ toJSON(runner.labels) }}'
+          if echo "$RUNNER_LABELS" | grep -q "local_mlx"; then
+            if [ -d "/Users/Shared/mlx" ]; then
+              echo "Updating [tool.basedpyright].include to use /Users/Shared/mlx"
+              awk '
+                BEGIN { in=0 }
+                /^\[tool\.basedpyright\]/ { in=1; print; next }
+                in && /^\[/ { in=0 }  # next section
+                in && /^[ \t]*include[ \t]*=/ {
+                  print "include = [\"/Users/Shared/mlx\"]"
+                  next
+                }
+                { print }
+              ' pyproject.toml > pyproject.toml.tmp && mv pyproject.toml.tmp pyproject.toml
+
+              echo "New [tool.basedpyright] section:"
+              sed -n '/^\[tool\.basedpyright\]/,/^\[/p' pyproject.toml | sed '$d' || true
+            else
+              echo "local_mlx tag present but /Users/Shared/mlx not found; leaving pyproject unchanged."
+            fi
+          else
+            echo "Runner does not have 'local_mlx' tag; leaving pyproject unchanged."
+          fi
+        shell: bash
+
       - uses: ./.github/actions/typecheck
 
 #  ci:

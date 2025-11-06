@@ -14,9 +14,9 @@ from mlx_lm.models.cache import KVCache
 from exo.engines.mlx import Model, TokenizerWrapper
 from exo.engines.mlx.utils_mlx import (
     apply_chat_template,
-    broadcast_from_zero,  # type: ignore
+    broadcast_from_zero,
     make_kv_cache,
-    mx_barrier,  # type: ignore
+    mx_barrier,
 )
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.tasks import ChatCompletionTaskParams
@@ -62,7 +62,7 @@ def generate_step(
     quantized_kv_start: int = 0,
     prompt_progress_callback: Callable[[int, int], None] | None = None,
     input_embeddings: mx.array | None = None,
-    group: mx.distributed.Group | None = None,  # type: ignore[type-arg]
+    group: mx.distributed.Group | None = None,
 ) -> Generator[Tuple[int, mx.array], None, None]:
     """
     A generator producing token ids based on the given prompt from the model.
@@ -213,7 +213,7 @@ def generate_step(
 
         y, logprobs = _step(input_tokens=prompt, input_embeddings=input_embeddings)
 
-    mx.async_eval(y, logprobs)  # type: ignore[type-arg]
+    mx.async_eval(y, logprobs)
     next_y: array | None = None
     next_logprobs: array | None = None
     n = 0
@@ -221,7 +221,7 @@ def generate_step(
         if n != max_tokens:
             assert y is not None
             next_y, next_logprobs = _step(y)
-            mx.async_eval(next_y, next_logprobs)  # type: ignore[type-arg]
+            mx.async_eval(next_y, next_logprobs)
         if n == 0:
             mx.eval(y)  # type: ignore[type-arg]
             prompt_progress_callback(total_prompt_tokens, total_prompt_tokens)
@@ -250,7 +250,7 @@ def stream_generate(
     quantized_kv_start: int = 0,
     prompt_progress_callback: Callable[[int, int], None] | None = None,
     input_embeddings: mx.array | None = None,
-    group: mx.distributed.Group | None = None,  # type: ignore[type-arg]
+    group: mx.distributed.Group | None = None,
 ) -> Generator[GenerationResponse, None, None]:
     # Try to infer if special tokens are needed
     add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
@@ -310,7 +310,7 @@ async def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
-    group: mx.distributed.Group | None = None,  # type: ignore
+    group: mx.distributed.Group | None = None,
 ) -> int:
     loop = asyncio.get_running_loop()
 

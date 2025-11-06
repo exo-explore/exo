@@ -221,9 +221,7 @@ class RunnerSupervisor:
 
         timeout = PREFILL_TIMEOUT_SECONDS
 
-        logger.info(
-            f"Starting chat completion with timeout {timeout}"
-        )
+        logger.info(f"Starting chat completion with timeout {timeout}")
 
         while True:
             try:

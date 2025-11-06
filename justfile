@@ -1,5 +1,5 @@
 fmt:
-    uv run ruff format src
+    uv run ruff format src typings
 
 lint:
     uv run ruff check --fix src

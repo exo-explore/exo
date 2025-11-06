@@ -38,17 +38,17 @@ mlx_rank: None | int = None
 mlx_world_size: None | int = None
 
 
-def mx_barrier(group: mx.distributed.Group | None = None):  # type: ignore
-    mx.eval(  # type: ignore
+def mx_barrier(group: mx.distributed.Group | None = None):
+    mx.eval(
         mx.distributed.all_sum(
             mx.array(1.0),
             stream=mx.default_stream(mx.Device(mx.cpu)),
-            group=group,  # type: ignore[type-arg]
+            group=group,
         )
     )
 
 
-def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None):  # type: ignore
+def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None):
     if mlx_rank is None:
         return value
 
@@ -57,8 +57,8 @@ def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None): 
     else:
         a = mx.array([0], dtype=mx.int32)
 
-    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu), group=group)  # type: ignore
-    mx.eval(m)  # type: ignore
+    m = mx.distributed.all_sum(a, stream=mx.Device(mx.DeviceType.cpu), group=group)
+    mx.eval(m)
     return int(m.item())
 
 
@@ -68,12 +68,12 @@ class HostList(RootModel[list[str]]):
         return cls(root=[str(host) for host in hosts])
 
 
-def mlx_distributed_init(  # type: ignore[return]
+def mlx_distributed_init(
     rank: int,
     hosts: list[Host] | None = None,
     mlx_ibv_devices: list[list[str | None]] | None = None,
     mlx_ibv_coordinator: str | None = None,
-) -> mx.distributed.Group:  # type: ignore
+) -> mx.distributed.Group:
     """
     Initialize the MLX distributed (runs in thread pool).
 
@@ -132,7 +132,9 @@ def initialize_mlx(
     hosts: list[Host] | None = None,
     mlx_ibv_devices: list[list[str | None]] | None = None,
     mlx_ibv_coordinator: str | None = None,
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array], Any]:
+) -> tuple[
+    Model, TokenizerWrapper, Callable[[mx.array], mx.array], mx.distributed.Group
+]:
     """
     Initialize the MLX model, tokenizer, and sampler. Runs in the MLX thread.
 
@@ -141,7 +143,7 @@ def initialize_mlx(
     - mlx_ibv_devices: RDMA connectivity matrix
     """
     mx.random.seed(42)
-    group = mlx_distributed_init(  # type: ignore[misc]
+    group = mlx_distributed_init(
         model_shard_meta.device_rank,
         hosts=hosts,
         mlx_ibv_devices=mlx_ibv_devices,
@@ -154,14 +156,14 @@ def initialize_mlx(
 
     sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
 
-    model, tokenizer = shard_and_load(model_shard_meta, group=group)  # type: ignore[reportUnknownArgumentType]
+    model, tokenizer = shard_and_load(model_shard_meta, group=group)
 
     return model, tokenizer, sampler, group  # type: ignore[return-value]
 
 
 def shard_and_load(
     model_shard_meta: ShardMetadata,
-    group: mx.distributed.Group,  # type: ignore
+    group: mx.distributed.Group,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(model_shard_meta.model_meta.model_id)
 
@@ -177,7 +179,7 @@ def shard_and_load(
     assert isinstance(tokenizer, _TokenizerWrapper)
 
     if group:
-        runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")  # type: ignore
+        runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")
     else:
         runner_print("!!! No group")
 
@@ -189,19 +191,19 @@ def shard_and_load(
         case "pipeline_rdma":
             strategy = PipelineParallelisationStrategy()
         case "tensor":
-            strategy = TensorParallelisationStrategy(group)  # type: ignore[reportUnknownArgumentType]
+            strategy = TensorParallelisationStrategy(group)
         case "tensor_rdma":
-            strategy = TensorParallelisationStrategy(group)  # type: ignore[reportUnknownArgumentType]
+            strategy = TensorParallelisationStrategy(group)
 
     model = strategy.auto_parallel(model, model_shard_meta)
 
     runner_print(f"Model after auto_parallel: {str(model)}")
 
     mx.eval(model.parameters())  # type: ignore
-    mx.eval(model)  # type: ignore
+    mx.eval(model)
 
     # Synchronize processes before generation to avoid timeout
-    mx_barrier(group)  # type: ignore[reportUnknownArgumentType]
+    mx_barrier(group)
 
     return model, tokenizer  # type: ignore
 
@@ -288,15 +290,15 @@ def mlx_force_oom(size: int = 40000) -> None:
     """
     Force an Out-Of-Memory (OOM) error in MLX by performing large tensor operations.
     """
-    mx.set_default_device(mx.gpu)  # type: ignore
+    mx.set_default_device(mx.gpu)
     a = mx.random.uniform(shape=(size, size), dtype=mx.float32)
     b = mx.random.uniform(shape=(size, size), dtype=mx.float32)
-    mx.eval(a, b)  # type: ignore
+    mx.eval(a, b)
     c = mx.matmul(a, b)
     d = mx.matmul(a, c)
     e = mx.matmul(b, c)
     f = mx.sigmoid(d + e)
-    mx.eval(f)  # type: ignore
+    mx.eval(f)
 
 
 def set_wired_limit_for_model(model_size: Memory):
