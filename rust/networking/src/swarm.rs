@@ -134,6 +134,7 @@ mod behaviour {
             MessageAuthenticity::Signed(keypair.clone()),
             ConfigBuilder::default()
                 .publish_queue_duration(Duration::from_secs(15))
+                .max_transmit_size(1024 * 1024)
                 .validation_mode(ValidationMode::Strict)
                 .build()
                 .expect("the configuration should always be valid"),
