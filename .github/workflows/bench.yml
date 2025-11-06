@@ -1,6 +1,8 @@
 name: bench
 
-on: [push]
+on:
+  pull_request:
+    types: [review_requested]
 
 jobs:
   plan:
