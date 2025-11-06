@@ -35,16 +35,18 @@ generation_stream = mx.new_stream(mx.default_device())
 
 
 def maybe_quantize_kv_cache(
-    prompt_cache: list[Any],
+    prompt_cache: list[KVCache | Any],
     quantized_kv_start: int,
     kv_group_size: int,
     kv_bits: int | None,
 ) -> None:
     if kv_bits is None:
         return
-    for e, c in enumerate(prompt_cache):  # type: ignore[type-arg]
-        if hasattr(c, "to_quantized") and c.offset >= quantized_kv_start:  # type: ignore[type-arg]
-            prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)  # type: ignore[type-arg]
+    for e, c in enumerate(prompt_cache):
+        if (
+            hasattr(c, "to_quantized") and c.offset >= quantized_kv_start  # type: ignore
+        ):
+            prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
 
 
 def generate_step(
@@ -189,7 +191,7 @@ def generate_step(
             quantize_cache_fn(prompt_cache)
 
             start_time = time.time()
-            mx.eval([c.state for c in prompt_cache])  # type: ignore
+            mx.eval([c.state for c in prompt_cache])
             eval_time = time.time() - start_time
             prompt_processed_tokens += n_to_process
 
@@ -221,9 +223,17 @@ def generate_step(
     n = 0
 
     while True:
-        mx.eval(y, logprobs)
+        assert y is not None
+        assert logprobs is not None
+        if n != max_tokens:
+            next_y, next_logprobs = _step(y)
+            mx.async_eval(next_y, next_logprobs)
+        if n == 0:
+            mx.eval(y)
+            prompt_progress_callback(total_prompt_tokens, total_prompt_tokens)
+        if n == max_tokens:
+            break
         yield int(y.item()), logprobs
-        n += 1
         if n % 256 == 0:
             mx.clear_cache()
         if n == max_tokens:

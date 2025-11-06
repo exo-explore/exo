@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-# type: ignore
 """
 Unified benchmark script for EXO.
 Runs single or multi-stage benchmarks with configurable load patterns.

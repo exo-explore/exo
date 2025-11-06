@@ -31,7 +31,7 @@ async def build_base_shard(model_id: str) -> ShardMetadata:
     )
 
 
-async def build_full_shard(model_id: str) -> PipelineShardMetadata | None:
+async def build_full_shard(model_id: str) -> PipelineShardMetadata:
     base_shard = await build_base_shard(model_id)
     return PipelineShardMetadata(
         model_meta=base_shard.model_meta,
@@ -150,11 +150,9 @@ class ResumableShardDownloader(ShardDownloader):
         # print("get_shard_download_status")
         async def _status_for_model(
             model_id: str,
-        ) -> tuple[Path, RepoDownloadProgress] | None:
+        ) -> tuple[Path, RepoDownloadProgress]:
             """Helper coroutine that builds the shard for a model and gets its download status."""
             shard = await build_full_shard(model_id)
-            if shard is None:
-                return None
             return await download_shard(
                 shard, self.on_progress_wrapper, skip_download=True
             )
@@ -168,8 +166,6 @@ class ResumableShardDownloader(ShardDownloader):
         for task in asyncio.as_completed(tasks):
             try:
                 result = await task
-                if result is None:
-                    continue
                 path, progress = result
                 yield (path, progress)
             except Exception as e:

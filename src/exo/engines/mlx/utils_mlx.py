@@ -9,10 +9,10 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 
 try:
-    from mlx_lm.tokenizer_utils import load_tokenizer  # type: ignore
+    from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
-from mlx_lm.utils import load_model  # type: ignore
+from mlx_lm.utils import load_model
 from pydantic import RootModel
 
 import mlx.core as mx
@@ -167,12 +167,11 @@ def shard_and_load(
         f"loading model from {model_path} with strategy {model_shard_meta.strategy}"
     )
 
-    model, config = load_model(model_path, lazy=True, strict=False)  # type: ignore
+    model, config = load_model(model_path, lazy=True, strict=False)
     runner_print(f"{config=}")
     assert isinstance(model, nn.Module)
 
-    tokenizer = load_tokenizer(model_path)  # type: ignore
-    tokenizer = cast(TokenizerWrapper, tokenizer)
+    tokenizer = cast(TokenizerWrapper, load_tokenizer(model_path))
 
     runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")
 

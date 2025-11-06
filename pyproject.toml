@@ -81,7 +81,7 @@ build-backend = "uv_build"
 ###
 
 [tool.basedpyright]
-include = [".venv/lib/mlx", "src"]
+include = [".venv/lib/mlx", ".venv/lib/mlx_lm", "src"]
 typeCheckingMode = "strict"
 failOnWarnings = true
 
@@ -97,8 +97,8 @@ reportUnnecessaryTypeIgnoreComment = "error"
 pythonVersion = "3.13"
 pythonPlatform = "Darwin"
 
-exclude = ["**/.venv", "**/venv", "**/__pycache__", "**/exo_scripts", "**/.direnv", "**/rust"]
-stubPath = "typings"
+exclude = ["**/.venv", "**/venv", "**/__pycache__", "**/exo_scripts", "**/.direnv", "**/rust", "**/.github"]
+stubPath = ".mlx_typings"
 
 [[tool.basedpyright.executionEnvironments]]
 root = "src"

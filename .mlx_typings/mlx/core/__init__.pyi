@@ -2614,7 +2614,7 @@ type MX_ARRAY_TREE = (
     | Mapping[str, MX_ARRAY_TREE]
 )
 
-def eval(*args: MX_ARRAY_TREE) -> None:
+def eval(*args: MX_ARRAY_TREE | None) -> None:
     """
     Evaluate an :class:`array` or tree of :class:`array`.
 

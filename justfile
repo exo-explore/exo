@@ -1,5 +1,5 @@
 fmt:
-    uv run ruff format src typings
+    uv run ruff format src .mlx_typings
 
 lint:
     uv run ruff check --fix src
