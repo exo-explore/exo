@@ -2,7 +2,6 @@ import asyncio
 import platform
 import shutil
 import subprocess
-from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -43,10 +42,10 @@ def _get_binary_path() -> str:
 class MemoryMetrics(BaseModel):
     """Memory-related metrics returned by macmon."""
 
-    ram_total: Optional[int] = None
-    ram_usage: Optional[int] = None
-    swap_total: Optional[int] = None
-    swap_usage: Optional[int] = None
+    ram_total: int | None = None
+    ram_usage: int | None = None
+    swap_total: int | None = None
+    swap_usage: int | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -54,8 +53,8 @@ class MemoryMetrics(BaseModel):
 class TempMetrics(BaseModel):
     """Temperature-related metrics returned by macmon."""
 
-    cpu_temp_avg: Optional[float] = None
-    gpu_temp_avg: Optional[float] = None
+    cpu_temp_avg: float | None = None
+    gpu_temp_avg: float | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -67,19 +66,19 @@ class Metrics(BaseModel):
     Unknown fields are ignored for forward-compatibility.
     """
 
-    all_power: Optional[float] = None
-    ane_power: Optional[float] = None
-    cpu_power: Optional[float] = None
-    ecpu_usage: Optional[Tuple[int, float]] = None
-    gpu_power: Optional[float] = None
-    gpu_ram_power: Optional[float] = None
-    gpu_usage: Optional[Tuple[int, float]] = None
-    memory: Optional[MemoryMetrics] = None
-    pcpu_usage: Optional[Tuple[int, float]] = None
-    ram_power: Optional[float] = None
-    sys_power: Optional[float] = None
-    temp: Optional[TempMetrics] = None
-    timestamp: Optional[str] = None
+    all_power: float | None = None
+    ane_power: float | None = None
+    cpu_power: float | None = None
+    ecpu_usage: tuple[int, float] | None = None
+    gpu_power: float | None = None
+    gpu_ram_power: float | None = None
+    gpu_usage: tuple[int, float] | None = None
+    memory: MemoryMetrics | None = None
+    pcpu_usage: tuple[int, float] | None = None
+    ram_power: float | None = None
+    sys_power: float | None = None
+    temp: TempMetrics | None = None
+    timestamp: str | None = None
 
     model_config = ConfigDict(extra="ignore")
 

@@ -1,10 +1,8 @@
 import enum
 import pathlib
-import sys
 import types
 from typing import (
     Annotated,
-    Any,
     Callable,
     Literal,
     Mapping,
@@ -14,6 +12,7 @@ from typing import (
 )
 
 import numpy
+from mlx.nn.layers import Module
 from numpy.typing import ArrayLike as _ArrayLike
 
 from . import cuda as cuda
@@ -2609,9 +2608,10 @@ euler_gamma: float = ...
 
 type MX_ARRAY_TREE = (
     array
+    | Module
     | list[MX_ARRAY_TREE]
     | tuple[MX_ARRAY_TREE, ...]
-    | Mapping[Any, MX_ARRAY_TREE]
+    | Mapping[str, MX_ARRAY_TREE]
 )
 
 def eval(*args: MX_ARRAY_TREE) -> None:

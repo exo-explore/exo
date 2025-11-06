@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable
 
 import pytest
 
@@ -109,13 +109,11 @@ def instance(
     pipeline_shard_meta: Callable[[int, int], PipelineShardMetadata],
     hosts: Callable[[int], list[Host]],
 ):
-    from typing import Optional
-
     def _instance(
-        instance_id: Optional[InstanceId] = None,
-        node_id: Optional[NodeId] = None,
-        runner_id: Optional[RunnerId] = None,
-        model_id: Optional[ModelId] = None,
+        instance_id: InstanceId | None = None,
+        node_id: NodeId | None = None,
+        runner_id: RunnerId | None = None,
+        model_id: ModelId | None = None,
     ) -> Instance:
         resolved_instance_id = instance_id if instance_id is not None else INSTANCE_1_ID
         resolved_node_id = node_id if node_id is not None else NODE_A
@@ -150,8 +148,8 @@ def completion_create_params(user_message: str) -> ChatCompletionTaskParams:
 @pytest.fixture
 def chat_completion_task(completion_create_params: ChatCompletionTaskParams):
     def _chat_completion_task(
-        instance_id: Optional[InstanceId] = None,
-        task_id: Optional[TaskId] = None,
+        instance_id: InstanceId | None = None,
+        task_id: TaskId | None = None,
         user_message: str = "Hello",
     ) -> ChatCompletionTask:
         resolved_instance_id = instance_id if instance_id is not None else INSTANCE_1_ID

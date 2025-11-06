@@ -1,7 +1,7 @@
 import os
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Callable, Dict, Generator, Iterable, List, Optional, TypeVar, Union
+from typing import Callable, Generator, Iterable, TypeVar
 
 import aiofiles
 import aiofiles.os as aios
@@ -15,9 +15,9 @@ T = TypeVar("T")
 def filter_repo_objects(
     items: Iterable[T],
     *,
-    allow_patterns: Optional[Union[List[str], str]] = None,
-    ignore_patterns: Optional[Union[List[str], str]] = None,
-    key: Optional[Callable[[T], str]] = None,
+    allow_patterns: list[str] | str | None = None,
+    ignore_patterns: list[str] | str | None = None,
+    key: Callable[[T], str] | None = None,
 ) -> Generator[T, None, None]:
     if isinstance(allow_patterns, str):
         allow_patterns = [allow_patterns]
@@ -69,7 +69,7 @@ def get_hf_home() -> Path:
     return Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
 
 
-async def get_hf_token() -> Optional[str]:
+async def get_hf_token() -> str | None:
     """Retrieve the Hugging Face token from the user's HF_HOME directory."""
     token_path = get_hf_home() / "token"
     if await aios.path.exists(token_path):
@@ -86,7 +86,7 @@ async def get_auth_headers() -> dict[str, str]:
     return {}
 
 
-def extract_layer_num(tensor_name: str) -> Optional[int]:
+def extract_layer_num(tensor_name: str) -> int | None:
     # This is a simple example and might need to be adjusted based on the actual naming convention
     parts = tensor_name.split(".")
     for part in parts:
@@ -95,7 +95,7 @@ def extract_layer_num(tensor_name: str) -> Optional[int]:
     return None
 
 
-def get_allow_patterns(weight_map: Dict[str, str], shard: ShardMetadata) -> List[str]:
+def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list[str]:
     default_patterns = set(["*.json", "*.py", "tokenizer.model", "*.tiktoken", "*.txt"])
     shard_specific_patterns: set[str] = set()
     if weight_map:

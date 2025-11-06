@@ -3,11 +3,10 @@ import concurrent.futures
 import os
 import resource
 from asyncio import AbstractEventLoop
-from typing import Any, Callable, Optional
+from typing import Any, Callable, cast
 
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
-from mlx_lm.tokenizer_utils import TokenizerWrapper as _TokenizerWrapper
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer  # type: ignore
@@ -17,7 +16,7 @@ from mlx_lm.utils import load_model  # type: ignore
 from pydantic import RootModel
 
 import mlx.core as mx
-import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
+import mlx.nn as nn
 from exo.engines.mlx import Model, TokenizerWrapper
 from exo.engines.mlx.auto_parallel import (
     IdentityLayer,
@@ -150,15 +149,12 @@ def initialize_mlx(
         mlx_ibv_coordinator=mlx_ibv_coordinator,
     )
 
-    # set_wired_limit_for_model(get_weights_size(model_shard_meta))
-
-    # Determine world size from either hosts or mlx_ibv_devices
-
     sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
 
     model, tokenizer = shard_and_load(model_shard_meta, group=group)
+    model = cast(Model, model)
 
-    return model, tokenizer, sampler, group  # type: ignore[return-value]
+    return model, tokenizer, sampler, group
 
 
 def shard_and_load(
@@ -176,12 +172,9 @@ def shard_and_load(
     assert isinstance(model, nn.Module)
 
     tokenizer = load_tokenizer(model_path)  # type: ignore
-    assert isinstance(tokenizer, _TokenizerWrapper)
+    tokenizer = cast(TokenizerWrapper, tokenizer)
 
-    if group:
-        runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")
-    else:
-        runner_print("!!! No group")
+    runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")
 
     match model_shard_meta.strategy:
         case "auto":
@@ -199,13 +192,13 @@ def shard_and_load(
 
     runner_print(f"Model after auto_parallel: {str(model)}")
 
-    mx.eval(model.parameters())  # type: ignore
+    mx.eval(model.parameters())
     mx.eval(model)
 
     # Synchronize processes before generation to avoid timeout
     mx_barrier(group)
 
-    return model, tokenizer  # type: ignore
+    return model, tokenizer
 
 
 async def apply_chat_template(
@@ -217,10 +210,10 @@ async def apply_chat_template(
 
     # Now we can properly access the messages
     messages = chat_task_data.messages
-    messages_dicts = [msg.model_dump() for msg in messages]
+    messages_dicts: list[dict[str, Any]] = [msg.model_dump() for msg in messages]
 
     # Filter out None values, keeping relevant keys for the model
-    formatted_messages = []
+    formatted_messages: list[dict[str, Any]] = []
     for message in messages_dicts:
         filtered_message: dict[str, Any] = {
             k: v
@@ -235,13 +228,13 @@ async def apply_chat_template(
             # If neither content nor thinking is present, skip this message
             continue
 
-        formatted_messages.append(filtered_message)  # type: ignore
+        formatted_messages.append(filtered_message)
 
     messages_dicts = formatted_messages
 
     prompt: str = await loop.run_in_executor(
         executor=mlx_executor,
-        func=lambda: tokenizer.apply_chat_template(  # type: ignore
+        func=lambda: tokenizer.apply_chat_template(
             messages_dicts,
             tokenize=False,
             add_generation_prompt=True,
@@ -276,7 +269,7 @@ class NullKVCache(KVCache):
 
 async def make_kv_cache(
     model: Model,
-    max_kv_size: Optional[int] = None,
+    max_kv_size: int | None = None,
 ) -> list[KVCache]:
     assert hasattr(model, "layers")
 

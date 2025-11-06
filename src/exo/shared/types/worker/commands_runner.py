@@ -43,7 +43,7 @@ class TokenizedResponse(BaseRunnerResponse):
 class GenerationResponse(BaseRunnerResponse):
     text: str
     token: int
-    # logprobs: Optional[list[float]] = None # too big. we can change to be top-k
+    # logprobs: list[float] | None = None # too big. we can change to be top-k
     finish_reason: FinishReason | None = None
 
 

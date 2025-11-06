@@ -4,7 +4,7 @@ import functools
 import time
 from collections.abc import AsyncGenerator
 from functools import partial
-from typing import Any, Callable, Generator, Optional, Tuple
+from typing import Any, Callable, Generator
 
 import mlx.core as mx
 from mlx.core import array
@@ -54,8 +54,8 @@ def generate_step(
     max_tokens: int = 256,
     sampler: Callable[[mx.array], mx.array],
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] | None = None,
-    max_kv_size: Optional[int] = None,
-    prompt_cache: Optional[list[KVCache]] = None,
+    max_kv_size: int | None = None,
+    prompt_cache: list[KVCache] | None = None,
     prefill_step_size: int = 2048,
     kv_bits: int | None = None,
     kv_group_size: int = 64,
@@ -63,7 +63,7 @@ def generate_step(
     prompt_progress_callback: Callable[[int, int], None] | None = None,
     input_embeddings: mx.array | None = None,
     group: mx.distributed.Group | None = None,
-) -> Generator[Tuple[int, mx.array], None, None]:
+) -> Generator[tuple[int, mx.array], None, None]:
     """
     A generator producing token ids based on the given prompt from the model.
 
@@ -74,12 +74,12 @@ def generate_step(
           generator. Default: ``256``.
         sampler (Callable[mx.array, mx.array]): A sampler for sampling a
           token from a vector of log probabilities.
-        logits_processors (List[Callable[[mx.array, mx.array], mx.array]], optional):
+        logits_processors (list[Callable[[mx.array, mx.array], mx.array]], optional):
           A list of functions that take tokens and logits and return the processed
           logits. Default: ``None``.
         max_kv_size (int, optional): Maximum size of the key-value cache. Old
           entries (except the first 4 tokens) will be overwritten.
-        prompt_cache (List[Any], optional): A pre-computed prompt cache. Note, if
+        prompt_cache (list[Any], optional): A pre-computed prompt cache. Note, if
           provided, the cache will be updated in place.
         prefill_step_size (int): Step size for processing the prompt.
         kv_bits (int, optional): Number of bits to use for KV cache quantization.
@@ -93,7 +93,7 @@ def generate_step(
           conjunction with prompt tokens. Default: ``None``.
 
     Yields:
-        Tuple[int, mx.array]: One token and a vector of log probabilities.
+        tuple[int, mx.array]: One token and a vector of log probabilities.
     """
     if input_embeddings is not None:
         if len(prompt) > 0 and len(prompt) != len(input_embeddings):
@@ -115,7 +115,7 @@ def generate_step(
             max_kv_size=max_kv_size,
         )
 
-    prompt_progress_callback = prompt_progress_callback or (lambda *_: None)  # type: ignore[type-arg]
+    prompt_progress_callback = prompt_progress_callback or (lambda _, __: None)
 
     quantize_cache_fn = functools.partial(
         maybe_quantize_kv_cache,
@@ -128,10 +128,10 @@ def generate_step(
         input_tokens: mx.array, input_embeddings: mx.array | None
     ) -> mx.array:
         if input_embeddings is not None:
-            return model(  # type: ignore[type-arg]
+            return model(
                 input_tokens,
                 cache=prompt_cache,
-                input_embeddings=input_embeddings,  # type: ignore[type-arg]
+                input_embeddings=input_embeddings,
             )
         else:
             return model(input_tokens, cache=prompt_cache)
@@ -209,29 +209,28 @@ def generate_step(
             prompt_progress_callback(prompt_processed_tokens, total_prompt_tokens)
 
         if prompt_processed_tokens > 0:
-            runner_print("finished prefil stage.")
+            runner_print("finished prefill stage.")
 
         y, logprobs = _step(input_tokens=prompt, input_embeddings=input_embeddings)
 
+    prompt_progress_callback(total_prompt_tokens, total_prompt_tokens)
+
     mx.async_eval(y, logprobs)
-    next_y: array | None = None
-    next_logprobs: array | None = None
+    next_y, next_logprobs = _step(y)
+    mx.async_eval(next_y, next_logprobs)
     n = 0
+
     while True:
-        if n != max_tokens:
-            assert y is not None
-            next_y, next_logprobs = _step(y)
-            mx.async_eval(next_y, next_logprobs)
-        if n == 0:
-            mx.eval(y)  # type: ignore[type-arg]
-            prompt_progress_callback(total_prompt_tokens, total_prompt_tokens)
-        if n == max_tokens:
-            break
-        yield int(y.item()), logprobs  # type: ignore
+        mx.eval(y, logprobs)
+        yield int(y.item()), logprobs
+        n += 1
         if n % 256 == 0:
             mx.clear_cache()
-        y, logprobs = next_y, next_logprobs
-        n += 1
+        if n == max_tokens:
+            break
+        y, logprobs = next_y, logprobs
+        next_y, next_logprobs = _step(y)
+        mx.async_eval(next_y, next_logprobs)
 
 
 def stream_generate(
@@ -243,7 +242,7 @@ def stream_generate(
     conn: AsyncConnection[RunnerResponse, RunnerMessage] | None,
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] | None = None,
     max_kv_size: int | None = None,
-    prompt_cache: Optional[list[KVCache]] = None,
+    prompt_cache: list[KVCache] | None = None,
     prefill_step_size: int = 2048,
     kv_bits: int | None = None,
     kv_group_size: int = 64,
@@ -264,7 +263,7 @@ def stream_generate(
 
     detokenizer = tokenizer.detokenizer
 
-    token_generator: Generator[Tuple[int, array], None, None] = generate_step(
+    token_generator: Generator[tuple[int, array], None, None] = generate_step(
         prompt_array,
         model,
         max_tokens=max_tokens,

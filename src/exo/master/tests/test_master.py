@@ -1,4 +1,4 @@
-from typing import List, Sequence
+from typing import Sequence
 
 import anyio
 import pytest
@@ -44,7 +44,7 @@ async def test_master():
     command_sender, co_receiver = channel[ForwarderCommand]()
     local_event_sender, le_receiver = channel[ForwarderEvent]()
 
-    all_events: List[IndexedEvent] = []
+    all_events: list[IndexedEvent] = []
 
     def _get_events() -> Sequence[IndexedEvent]:
         orig_events = global_event_receiver.collect()

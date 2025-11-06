@@ -1,4 +1,4 @@
-from typing import Annotated, Dict, Optional
+from typing import Annotated
 
 import aiofiles
 import aiofiles.os as aios
@@ -19,14 +19,12 @@ class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
 
     # Common field names for number of layers across different architectures
-    num_hidden_layers: Optional[Annotated[int, Field(ge=0)]] = None
-    num_layers: Optional[Annotated[int, Field(ge=0)]] = None
-    n_layer: Optional[Annotated[int, Field(ge=0)]] = None
-    n_layers: Optional[Annotated[int, Field(ge=0)]] = None  # Sometimes used
-    num_decoder_layers: Optional[Annotated[int, Field(ge=0)]] = (
-        None  # Transformer models
-    )
-    decoder_layers: Optional[Annotated[int, Field(ge=0)]] = None  # Some architectures
+    num_hidden_layers: Annotated[int, Field(ge=0)] | None = None
+    num_layers: Annotated[int, Field(ge=0)] | None = None
+    n_layer: Annotated[int, Field(ge=0)] | None = None
+    n_layers: Annotated[int, Field(ge=0)] | None = None  # Sometimes used
+    num_decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Transformer models
+    decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Some architectures
 
     @property
     def layer_count(self) -> int:
@@ -92,7 +90,7 @@ async def get_safetensors_size(model_id: str) -> Memory:
     return Memory.from_bytes(info.safetensors.total)
 
 
-_model_meta_cache: Dict[str, ModelMetadata] = {}
+_model_meta_cache: dict[str, ModelMetadata] = {}
 
 
 async def get_model_meta(model_id: str) -> ModelMetadata:

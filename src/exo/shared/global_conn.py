@@ -3,7 +3,6 @@
 import asyncio
 import threading
 from multiprocessing.connection import Connection
-from typing import Optional
 
 from exo.shared.types.worker.commands_runner import (
     RunnerMessage,
@@ -54,7 +53,7 @@ class AsyncConnection[SendT, RecvT]:
         self._conn.close()
 
 
-_conn: Optional[AsyncConnection[RunnerResponse, RunnerMessage]] = None
+_conn: AsyncConnection[RunnerResponse, RunnerMessage] | None = None
 
 
 def set_conn(c: AsyncConnection[RunnerResponse, RunnerMessage]) -> None:

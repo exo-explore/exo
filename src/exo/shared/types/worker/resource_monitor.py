@@ -1,7 +1,7 @@
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Coroutine
-from typing import Callable, List, Set
+from typing import Callable
 
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
@@ -23,8 +23,8 @@ class MemoryResourceCollector(ResourceCollector):
 
 
 class ResourceMonitor:
-    data_collectors: List[ResourceCollector]
-    effect_handlers: Set[
+    data_collectors: list[ResourceCollector]
+    effect_handlers: set[
         Callable[[SystemPerformanceProfile | MemoryPerformanceProfile], None]
     ]
 

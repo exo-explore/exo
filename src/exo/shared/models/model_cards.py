@@ -1,5 +1,3 @@
-from typing import List
-
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -10,7 +8,7 @@ class ModelCard(CamelCaseModel):
     model_id: str
     name: str
     description: str
-    tags: List[str]
+    tags: list[str]
     metadata: ModelMetadata
 
 

@@ -7,7 +7,6 @@ from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue as QueueT
 from multiprocessing.synchronize import Event as EventT
 from multiprocessing.synchronize import Semaphore as SemaphoreT
-from typing import Optional
 
 from pytest import LogCaptureFixture
 
@@ -64,7 +63,7 @@ def _get_keypair_concurrent(num_procs: int) -> bytes:
     # check that the input/output order match, and that
     # all subprocesses end up reading the same file
     logging.info(msg="PARENT: Checking consistency")
-    keypair: Optional[bytes] = None
+    keypair: bytes | None = None
     qsize = 0  # cannot use Queue.qsize due to MacOS incompatibility :(
     while not queue.empty():
         qsize += 1

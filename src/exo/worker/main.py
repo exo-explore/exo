@@ -3,7 +3,7 @@ import time
 from asyncio import Queue
 from functools import partial
 from random import random
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 import anyio
 from anyio import CancelScope, create_task_group
@@ -430,7 +430,7 @@ class Worker:
         yield RunnerDeleted(runner_id=op.runner_id)
 
     async def _execute_runner_up_op(
-        self, op: RunnerUpOp, initialize_timeout: Optional[float] = None
+        self, op: RunnerUpOp, initialize_timeout: float | None = None
     ) -> AsyncGenerator[Event, None]:
         assigned_runner = self.assigned_runners[op.runner_id]
 

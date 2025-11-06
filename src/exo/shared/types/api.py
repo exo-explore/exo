@@ -1,5 +1,5 @@
 import time
-from typing import Any, List, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,12 +20,12 @@ class ModelListModel(BaseModel):
     name: str = Field(default="")
     description: str = Field(default="")
     context_length: int = Field(default=0)
-    tags: List[str] = Field(default=[])
+    tags: list[str] = Field(default=[])
 
 
 class ModelList(BaseModel):
     object: str = "list"
-    data: List[ModelListModel]
+    data: list[ModelListModel]
 
 
 class ChatCompletionMessage(BaseModel):

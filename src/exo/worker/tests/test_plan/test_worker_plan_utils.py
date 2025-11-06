@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, NotRequired, Optional, TypedDict
+from typing import NotRequired, TypedDict
 
 from typing_extensions import Literal
 
@@ -78,8 +78,8 @@ class PlanTestCase:
 
     description: str
     state: State
-    in_process_runners: List[InProcessRunner]
-    expected_op: Optional[RunnerOp]
+    in_process_runners: list[InProcessRunner]
+    expected_op: RunnerOp | None
 
     def id(self) -> str:  # noqa: D401
         return self.description.replace(" ", "_")
@@ -229,7 +229,7 @@ def make_test_case(
     description: str,
     runner_specs: list[RunnerSpecDict],
     tasks: list[TaskSpecDict] | None = None,
-    expected_op: Optional[RunnerOp] = None,
+    expected_op: RunnerOp | None = None,
     instance_id: InstanceId = INSTANCE_1_ID,
     instance_status: InstanceStatus = InstanceStatus.Active,
     model_id: ModelId = MODEL_A_ID,

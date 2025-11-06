@@ -7,7 +7,7 @@ import tempfile
 import traceback
 from multiprocessing import Process
 from multiprocessing.connection import Connection
-from typing import Any, AsyncGenerator, Callable, Coroutine, Optional
+from typing import Any, AsyncGenerator, Callable, Coroutine
 
 import psutil
 from loguru import logger
@@ -75,7 +75,7 @@ class RunnerSupervisor:
         hosts: list[Host] | None = None,
         mlx_ibv_devices: list[list[str | None]] | None = None,
         mlx_ibv_coordinator: str | None = None,
-        initialize_timeout: Optional[float] = None,
+        initialize_timeout: float | None = None,
     ) -> "RunnerSupervisor":
         """
         Create and initialize a RunnerSupervisor instance.

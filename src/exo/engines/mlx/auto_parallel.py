@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import TYPE_CHECKING, Protocol, cast, override
+from typing import TYPE_CHECKING, Callable, Protocol, cast, override
 
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
@@ -9,16 +9,16 @@ from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 
 import mlx.core as mx
-import mlx.nn as nn  # pyright: ignore[reportMissingTypeStubs]
+import mlx.nn as nn
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
 )
-from mlx.nn.layers.distributed import (  # type: ignore
-    shard_inplace,  # type: ignore
-    shard_linear,  # type: ignore
-    sum_gradients,  # type: ignore
+from mlx.nn.layers.distributed import (
+    shard_inplace,
+    shard_linear,
+    sum_gradients,
 )
 
 
@@ -226,18 +226,18 @@ class TensorParallelisationStrategy(ParallelisationShardStrategy):
 class TensorParallelShardingStrategy(ABC):
     def __init__(
         self,
-        group,  # type: ignore
-        all_to_sharded_linear,  # type: ignore
-        sharded_to_all_linear,  # type: ignore
-        all_to_sharded_linear_in_place,  # type: ignore
-        sharded_to_all_linear_in_place,  # type: ignore
+        group: mx.distributed.Group,
+        all_to_sharded_linear: Callable[..., nn.Linear],
+        sharded_to_all_linear: Callable[..., nn.Linear],
+        all_to_sharded_linear_in_place: Callable[..., None],
+        sharded_to_all_linear_in_place: Callable[..., None],
     ):
         self.all_to_sharded_linear = all_to_sharded_linear
         self.sharded_to_all_linear = sharded_to_all_linear
         self.all_to_sharded_linear_in_place = all_to_sharded_linear_in_place
         self.sharded_to_all_linear_in_place = sharded_to_all_linear_in_place
-        self.group = group or mx.distributed.init()  # type: ignore
-        self.N = cast(int, group.size())  # type: ignore
+        self.group = group or mx.distributed.init()
+        self.N = group.size()
 
     @abstractmethod
     def shard_model(self, model: nn.Module) -> nn.Module: ...
@@ -268,6 +268,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         for layer in model.layers:
             # Shard the self attention
             if layer.self_attn.q_lora_rank is None:  # pyright: ignore[reportUnnecessaryComparison]
+                # Unfortunately, q_lora_rank can be None despite typing hints.
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
                 )
@@ -297,7 +298,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
                 layer.mlp = ShardedDeepseekV3MoE(layer.mlp)  # type: ignore
-                layer.mlp.sharding_group = self.group  # type: ignore
+                layer.mlp.sharding_group = self.group
 
         return model
 
@@ -309,8 +310,8 @@ class ShardedDeepseekV3MoE(CustomMlxLayer):
 
     def __call__(self, x: mx.array) -> mx.array:
         if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)  # type: ignore
-        y = self.original_layer.__call__(x)  # type: ignore
+            x = sum_gradients(self.sharding_group)(x)
+        y = self.original_layer.__call__(x)
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y
@@ -335,7 +336,7 @@ class QwenShardingStrategy(TensorParallelShardingStrategy):
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
                 layer.mlp = ShardedQwenMoE(layer.mlp)  # type: ignore
-                layer.mlp.sharding_group = self.group  # type:ignore
+                layer.mlp.sharding_group = self.group
 
             # Shard the MLP
             else:
@@ -353,8 +354,8 @@ class ShardedQwenMoE(CustomMlxLayer):
 
     def __call__(self, x: mx.array) -> mx.array:
         if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)  # type: ignore
-        y = self.original_layer.__call__(x)  # type: ignore
+            x = sum_gradients(self.sharding_group)(x)
+        y = self.original_layer.__call__(x)
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)
         return y

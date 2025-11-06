@@ -6,7 +6,7 @@ import time
 import traceback
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Callable, Literal
 from urllib.parse import urljoin
 
 import aiofiles
@@ -39,8 +39,8 @@ class ModelSafetensorsIndexMetadata(BaseModel):
 
 
 class ModelSafetensorsIndex(BaseModel):
-    metadata: Optional[ModelSafetensorsIndexMetadata]
-    weight_map: Dict[str, str]
+    metadata: ModelSafetensorsIndexMetadata | None
+    weight_map: dict[str, str]
 
 
 class FileListEntry(BaseModel):
@@ -76,7 +76,7 @@ class RepoDownloadProgress(BaseModel):
     overall_speed: float
     overall_eta: timedelta
     status: Literal["not_started", "in_progress", "complete"]
-    file_progress: Dict[str, RepoFileDownloadProgress] = Field(default_factory=dict)
+    file_progress: dict[str, RepoFileDownloadProgress] = Field(default_factory=dict)
 
     model_config = ConfigDict(frozen=True)
 
@@ -162,7 +162,7 @@ async def delete_model(repo_id: str) -> bool:
     return True
 
 
-async def seed_models(seed_dir: Union[str, Path]):
+async def seed_models(seed_dir: str | Path):
     """Move model in resources folder of app to .cache/huggingface/hub"""
     source_dir = Path(seed_dir)
     dest_dir = await ensure_models_dir()
@@ -181,7 +181,7 @@ async def seed_models(seed_dir: Union[str, Path]):
 
 async def fetch_file_list_with_cache(
     repo_id: str, revision: str = "main", recursive: bool = False
-) -> List[FileListEntry]:
+) -> list[FileListEntry]:
     target_dir = (
         (await ensure_models_dir()) / "caches" / str(repo_id).replace("/", "--")
     )
@@ -191,17 +191,17 @@ async def fetch_file_list_with_cache(
     )
     if await aios.path.exists(cache_file):
         async with aiofiles.open(cache_file, "r") as f:
-            return TypeAdapter(List[FileListEntry]).validate_json(await f.read())
+            return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
     file_list = await fetch_file_list_with_retry(repo_id, revision, recursive=recursive)
     await aios.makedirs(cache_file.parent, exist_ok=True)
     async with aiofiles.open(cache_file, "w") as f:
-        await f.write(TypeAdapter(List[FileListEntry]).dump_json(file_list).decode())
+        await f.write(TypeAdapter(list[FileListEntry]).dump_json(file_list).decode())
     return file_list
 
 
 async def fetch_file_list_with_retry(
     repo_id: str, revision: str = "main", path: str = "", recursive: bool = False
-) -> List[FileListEntry]:
+) -> list[FileListEntry]:
     n_attempts = 30
     for attempt in range(n_attempts):
         try:
@@ -217,7 +217,7 @@ async def fetch_file_list_with_retry(
 
 async def _fetch_file_list(
     repo_id: str, revision: str = "main", path: str = "", recursive: bool = False
-) -> List[FileListEntry]:
+) -> list[FileListEntry]:
     api_url = f"{get_hf_endpoint()}/api/models/{repo_id}/tree/{revision}"
     url = f"{api_url}/{path}" if path else api_url
 
@@ -286,7 +286,7 @@ async def calc_hash(path: Path, hash_type: Literal["sha1", "sha256"] = "sha1") -
 
 async def file_meta(
     repo_id: str, revision: str, path: str, redirected_location: str | None = None
-) -> Tuple[int, str]:
+) -> tuple[int, str]:
     url = (
         urljoin(f"{get_hf_endpoint()}/{repo_id}/resolve/{revision}/", path)
         if redirected_location is None
@@ -405,7 +405,7 @@ def calculate_repo_progress(
     shard: ShardMetadata,
     repo_id: str,
     revision: str,
-    file_progress: Dict[str, RepoFileDownloadProgress],
+    file_progress: dict[str, RepoFileDownloadProgress],
     all_start_time: float,
 ) -> RepoDownloadProgress:
     all_total_bytes = sum((p.total.in_bytes for p in file_progress.values()), 0)
@@ -451,7 +451,7 @@ def calculate_repo_progress(
     )
 
 
-async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]:
+async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]:
     target_dir = (await ensure_models_dir()) / str(repo_id).replace("/", "--")
     await aios.makedirs(target_dir, exist_ok=True)
     index_file = await download_file_with_retry(
@@ -462,7 +462,7 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> Dict[str, str]
     return index_data.weight_map
 
 
-async def resolve_allow_patterns(shard: ShardMetadata) -> List[str]:
+async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
     try:
         weight_map = await get_weight_map(str(shard.model_meta.model_id))
         return get_allow_patterns(weight_map, shard)
@@ -484,7 +484,7 @@ async def get_downloaded_size(path: Path) -> int:
 async def download_progress_for_local_path(
     repo_id: str, shard: ShardMetadata, local_path: Path
 ) -> RepoDownloadProgress:
-    file_progress: Dict[str, RepoFileDownloadProgress] = {}
+    file_progress: dict[str, RepoFileDownloadProgress] = {}
     total_files = 0
     total_bytes = 0
 
@@ -533,7 +533,7 @@ async def download_shard(
     on_progress: Callable[[ShardMetadata, RepoDownloadProgress], None],
     max_parallel_downloads: int = 8,
     skip_download: bool = False,
-    allow_patterns: List[str] | None = None,
+    allow_patterns: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.info(f"Downloading {shard.model_meta.model_id=}")
@@ -568,7 +568,7 @@ async def download_shard(
             file_list, allow_patterns=allow_patterns, key=lambda x: x.path
         )
     )
-    file_progress: Dict[str, RepoFileDownloadProgress] = {}
+    file_progress: dict[str, RepoFileDownloadProgress] = {}
 
     def on_progress_wrapper(
         file: FileListEntry, curr_bytes: int, total_bytes: int, is_renamed: bool
