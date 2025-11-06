@@ -165,6 +165,20 @@
             }
         }
 
+        .edge-label {
+            font-size: 10px;
+            fill: var(--exo-light-gray);
+            text-anchor: middle;
+            pointer-events: none;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            opacity: 0.95;
+        }
+
+        .edge-label-bg {
+            fill: var(--exo-dark-gray);
+            opacity: 0.85;
+        }
+
         .node-info-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -363,6 +377,16 @@
             margin-bottom: 12px;
             border-left: 4px solid var(--exo-yellow);
             transition: background-color 0.2s ease;
+            position: relative;
+        }
+
+        .instance-color-indicator {
+            position: absolute;
+            top: 15px;
+            left: -4px;
+            width: 4px;
+            height: calc(100% - 30px);
+            border-radius: 0 2px 2px 0;
         }
 
         .instance-item:hover {
@@ -1006,6 +1030,25 @@
         }
         setRgbVar('exo-yellow', getComputedStyle(document.documentElement).getPropertyValue('--exo-yellow').trim());
 
+        // Generate a consistent color for an instance ID using a simple hash
+        function generateInstanceColor(instanceId) {
+            if (!instanceId) return '#888888';
+            
+            // Simple hash function
+            let hash = 0;
+            for (let i = 0; i < instanceId.length; i++) {
+                hash = instanceId.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            
+            // Convert to HSL for better color distribution
+            // Use high saturation and medium lightness for vibrant, distinguishable colors
+            const hue = Math.abs(hash % 360);
+            const saturation = 65 + (Math.abs(hash >> 8) % 20); // 65-85%
+            const lightness = 55 + (Math.abs(hash >> 16) % 15); // 55-70%
+            
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        }
+
         const topologyGraphContainer = document.getElementById('topologyGraphContainer');
         const lastUpdatedElement = document.getElementById('lastUpdated');
         const nodeDetailPanel = document.getElementById('nodeDetailPanel');
@@ -1027,6 +1070,8 @@
         const USE_MOCK_DATA = false; // <<< FLAG TO TOGGLE MOCK DATA
         let currentlySelectedNodeId = null; // To store the ID of the currently selected node
         let nodeIdToFriendlyName = {}; // Map nodeId -> friendly name for download sections
+        let instanceIdToColor = {}; // Map instanceId -> color for visual coding
+        let connectionToInstances = {}; // Map "nodeA|nodeB" -> [instanceIds] using that connection
 
         const API_ENDPOINT = window.location.origin + window.location.pathname.replace(/\/$/, "") + '/state';
         const REFRESH_INTERVAL = 1000; // 1 second
@@ -1449,6 +1494,33 @@
                 return;
             }
 
+            // Build maps for instance colors and connection usage
+            instanceIdToColor = {};
+            connectionToInstances = {};
+            
+            instancesArray.forEach(instance => {
+                const instanceId = instance.instanceId;
+                instanceIdToColor[instanceId] = generateInstanceColor(instanceId);
+                
+                // Determine which nodes this instance uses
+                const nodeToRunner = instance.shardAssignments?.nodeToRunner || {};
+                const nodesUsed = Object.keys(nodeToRunner);
+                
+                // For each pair of nodes, record that this instance uses that connection
+                for (let i = 0; i < nodesUsed.length; i++) {
+                    for (let j = i + 1; j < nodesUsed.length; j++) {
+                        const nodeA = nodesUsed[i];
+                        const nodeB = nodesUsed[j];
+                        const key = nodeA < nodeB ? `${nodeA}|${nodeB}` : `${nodeB}|${nodeA}`;
+                        
+                        if (!connectionToInstances[key]) {
+                            connectionToInstances[key] = [];
+                        }
+                        connectionToInstances[key].push(instanceId);
+                    }
+                }
+            });
+
             const instancesHTML = instancesArray.map(instance => {
                 const modelId = instance.shardAssignments?.modelId || 'Unknown Model';
                 const truncatedInstanceId = instance.instanceId.length > 8 
@@ -1586,8 +1658,14 @@
                 }
 
                 const shardCount = Object.keys(runnerToShard).length;
+                
+                // Use the instance's color for the indicator
+                const instanceColor = instanceIdToColor[instance.instanceId] || 'var(--exo-yellow)';
+                const borderStyle = `background-color: ${instanceColor};`;
+                
                 return `
                     <div class="instance-item">
+                        <div class="instance-color-indicator" style="${borderStyle}"></div>
                         <div class="instance-header">
                             <div class="instance-info">
                                 <span class="instance-id">${truncatedInstanceId}</span>
@@ -1655,6 +1733,78 @@
             } catch (error) {
                 console.error('Error deleting instance:', error);
                 alert(`Error deleting instance: ${error.message}`);
+            }
+        }
+
+        // Helper function to create edge labels with optional colored indicators for instances
+        function createEdgeLabel(labelLines, labelX, labelY, parentGroup, instanceColors = []) {
+            if (!labelLines || labelLines.length === 0) return;
+            
+            const colorStripWidth = 3;  // Narrow strip width
+            const colorStripHeight = 12; // Taller for visibility
+            const colorStripSpacing = 1.5; // Small gap between strips
+            const paddingBetweenStripsAndText = 8; // Space between strips and text
+            const hasColorBoxes = instanceColors.length > 0;
+            
+            // Create color indicator strips if colors are provided
+            let totalColorBoxWidth = 0;
+            if (hasColorBoxes) {
+                totalColorBoxWidth = instanceColors.length * (colorStripWidth + colorStripSpacing) - colorStripSpacing;
+                const stripsStartX = labelX - totalColorBoxWidth - paddingBetweenStripsAndText - 30; // Move 30px further left
+                
+                instanceColors.forEach((color, idx) => {
+                    const colorStrip = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    // Position strips well to the left of the text
+                    const stripX = stripsStartX + idx * (colorStripWidth + colorStripSpacing);
+                    colorStrip.setAttribute('x', stripX);
+                    colorStrip.setAttribute('y', labelY - colorStripHeight / 2);
+                    colorStrip.setAttribute('width', colorStripWidth);
+                    colorStrip.setAttribute('height', colorStripHeight);
+                    colorStrip.setAttribute('fill', color);
+                    colorStrip.setAttribute('stroke', 'var(--exo-light-gray)');
+                    colorStrip.setAttribute('stroke-width', '0.5');
+                    colorStrip.setAttribute('rx', 1);
+                    parentGroup.appendChild(colorStrip);
+                });
+            }
+            
+            // Create text element
+            const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            labelText.setAttribute('class', 'edge-label');
+            labelText.setAttribute('x', labelX);
+            labelText.setAttribute('y', labelY);
+            
+            // Add background for better readability
+            const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            labelBg.setAttribute('class', 'edge-label-bg');
+            
+            // Add each line as a tspan
+            labelLines.forEach((line, idx) => {
+                const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                tspan.setAttribute('x', labelX);
+                tspan.setAttribute('dy', idx === 0 ? '0' : '1.1em');
+                tspan.textContent = line;
+                labelText.appendChild(tspan);
+            });
+            
+            // Add text first to get bounding box, then add background
+            parentGroup.appendChild(labelText);
+            
+            // Get text bounding box and create background rect
+            try {
+                const bbox = labelText.getBBox();
+                const padding = 3;
+                const extraLeft = hasColorBoxes ? totalColorBoxWidth : 0;
+                
+                // Background should cover text area only, strips are separate
+                labelBg.setAttribute('x', bbox.x - padding);
+                labelBg.setAttribute('y', bbox.y - padding);
+                labelBg.setAttribute('width', bbox.width + 2 * padding);
+                labelBg.setAttribute('height', bbox.height + 2 * padding);
+                labelBg.setAttribute('rx', 2);
+                parentGroup.insertBefore(labelBg, labelText);
+            } catch (e) {
+                console.error('Failed to get bbox for label:', e);
             }
         }
 
@@ -1730,13 +1880,16 @@
             const arrowsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             arrowsGroup.setAttribute('class', 'arrows-group');
             arrowsGroup.setAttribute('style', 'pointer-events: none;');
+            const edgeLabelsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            edgeLabelsGroup.setAttribute('class', 'edge-labels-group');
+            edgeLabelsGroup.setAttribute('style', 'pointer-events: none;');
 
             // Build quick lookup for node positions
             const positionById = {};
             nodesWithPositions.forEach(n => { positionById[n.id] = { x: n.x, y: n.y }; });
 
             // Group directed edges into undirected pairs to support single line with two arrows
-            const pairMap = new Map(); // key: "a|b" with a<b, value: { a, b, aToB, bToA }
+            const pairMap = new Map(); // key: "a|b" with a<b, value: { a, b, aToB, bToA, aToBEdges, bToAEdges }
             edgesData.forEach(edge => {
                 if (!edge || !edge.source || !edge.target) return;
                 if (!positionById[edge.source] || !positionById[edge.target]) return;
@@ -1744,8 +1897,14 @@
                 const a = edge.source < edge.target ? edge.source : edge.target;
                 const b = edge.source < edge.target ? edge.target : edge.source;
                 const key = `${a}|${b}`;
-                const entry = pairMap.get(key) || { a, b, aToB: false, bToA: false };
-                if (edge.source === a && edge.target === b) entry.aToB = true; else entry.bToA = true;
+                const entry = pairMap.get(key) || { a, b, aToB: false, bToA: false, aToBEdges: [], bToAEdges: [] };
+                if (edge.source === a && edge.target === b) {
+                    entry.aToB = true;
+                    entry.aToBEdges.push(edge); // Store all A->B edges
+                } else {
+                    entry.bToA = true;
+                    entry.bToAEdges.push(edge); // Store all B->A edges
+                }
                 pairMap.set(key, entry);
             });
 
@@ -1799,6 +1958,52 @@
                     arrowSeg.setAttribute('fill', 'none');
                     arrowSeg.setAttribute('marker-end', 'url(#arrowhead)');
                     arrowsGroup.appendChild(arrowSeg);
+                    
+                    // Add label for A->B direction (show all connections)
+                    if (entry.aToBEdges && entry.aToBEdges.length > 0) {
+                        // Count occurrences of each IP/interface combination
+                        const connectionCounts = new Map();
+                        
+                        entry.aToBEdges.forEach(edgeData => {
+                            if (edgeData.sendBackIp) {
+                                let ipLabel = edgeData.sendBackIp;
+                                if (edgeData.sendBackInterface) {
+                                    ipLabel = `${edgeData.sendBackInterface}: ${ipLabel}`;
+                                }
+                                connectionCounts.set(ipLabel, (connectionCounts.get(ipLabel) || 0) + 1);
+                            }
+                        });
+                        
+                        // Build label lines with counts for duplicates
+                        const labelLines = [];
+                        connectionCounts.forEach((count, ipLabel) => {
+                            if (count > 1) {
+                                labelLines.push(`${ipLabel} (${count})`);
+                            } else {
+                                labelLines.push(ipLabel);
+                            }
+                        });
+                        
+                        if (labelLines.length > 0) {
+                            // Position label before the A->B arrow (toward A side, away from arrow tip)
+                            // Move further back from center along the line toward A
+                            const labelPosX = mx - ux * (tipOffset * 2.5);
+                            const labelPosY = my - uy * (tipOffset * 2.5);
+                            // Offset perpendicular to the line (to the side)
+                            const perpX = -uy;
+                            const perpY = ux;
+                            const labelOffset = 25; // Increased offset to be clearly beside the line
+                            const labelX = labelPosX + perpX * labelOffset;
+                            const labelY = labelPosY + perpY * labelOffset;
+                            
+                            // Get colors for instances using this connection
+                            const connectionKey = `${entry.a}|${entry.b}`;
+                            const instancesUsingConnection = connectionToInstances[connectionKey] || [];
+                            const instanceColors = instancesUsingConnection.map(id => instanceIdToColor[id]).filter(c => c);
+                            
+                            createEdgeLabel(labelLines, labelX, labelY, edgeLabelsGroup, instanceColors);
+                        }
+                    }
                 }
 
                 if (entry.bToA) {
@@ -1818,6 +2023,52 @@
                     arrowSeg.setAttribute('fill', 'none');
                     arrowSeg.setAttribute('marker-end', 'url(#arrowhead)');
                     arrowsGroup.appendChild(arrowSeg);
+                    
+                    // Add label for B->A direction (show all connections)
+                    if (entry.bToAEdges && entry.bToAEdges.length > 0) {
+                        // Count occurrences of each IP/interface combination
+                        const connectionCounts = new Map();
+                        
+                        entry.bToAEdges.forEach(edgeData => {
+                            if (edgeData.sendBackIp) {
+                                let ipLabel = edgeData.sendBackIp;
+                                if (edgeData.sendBackInterface) {
+                                    ipLabel = `${edgeData.sendBackInterface}: ${ipLabel}`;
+                                }
+                                connectionCounts.set(ipLabel, (connectionCounts.get(ipLabel) || 0) + 1);
+                            }
+                        });
+                        
+                        // Build label lines with counts for duplicates
+                        const labelLines = [];
+                        connectionCounts.forEach((count, ipLabel) => {
+                            if (count > 1) {
+                                labelLines.push(`${ipLabel} (${count})`);
+                            } else {
+                                labelLines.push(ipLabel);
+                            }
+                        });
+                        
+                        if (labelLines.length > 0) {
+                            // Position label before the B->A arrow (toward B side, away from arrow tip)
+                            // Move further back from center along the line toward B
+                            const labelPosX = mx + ux * (tipOffset * 2.5);
+                            const labelPosY = my + uy * (tipOffset * 2.5);
+                            // Offset perpendicular to the line (to the side)
+                            const perpX = -uy;
+                            const perpY = ux;
+                            const labelOffset = 25; // Increased offset to be clearly beside the line
+                            const labelX = labelPosX + perpX * labelOffset;
+                            const labelY = labelPosY + perpY * labelOffset;
+                            
+                            // Get colors for instances using this connection
+                            const connectionKey = `${entry.a}|${entry.b}`;
+                            const instancesUsingConnection = connectionToInstances[connectionKey] || [];
+                            const instanceColors = instancesUsingConnection.map(id => instanceIdToColor[id]).filter(c => c);
+                            
+                            createEdgeLabel(labelLines, labelX, labelY, edgeLabelsGroup, instanceColors);
+                        }
+                    }
                 }
             });
             // Create group for nodes
@@ -2327,8 +2578,9 @@
 
                 nodesGroup.appendChild(nodeG);
             });
-            // Draw order: lines at the very back, then nodes, then mid-line arrows on top
+            // Draw order: lines at the very back, then edge labels, then nodes, then mid-line arrows on top
             topologyGraphContainer.appendChild(linksGroup);
+            topologyGraphContainer.appendChild(edgeLabelsGroup);
             topologyGraphContainer.appendChild(nodesGroup);
             topologyGraphContainer.appendChild(arrowsGroup);
         }
@@ -2676,7 +2928,55 @@
                 if (!src || !dst) return;
                 if (!resultNodes[src] || !resultNodes[dst]) return; // only draw edges between known nodes
                 if (src === dst) return; // skip self loops for now
-                resultEdges.push({ source: src, target: dst });
+                
+                // Extract address information from connection
+                const sendBackMultiaddr = conn.sendBackMultiaddr ?? conn.send_back_multiaddr;
+                
+                // Extract IP from sendBackMultiaddr object
+                // It might have properties like 'multiaddr' or be serialized differently
+                let sendBackAddrString = null;
+                if (sendBackMultiaddr) {
+                    // Try different possible field names
+                    sendBackAddrString = sendBackMultiaddr.multiaddr ?? 
+                                        sendBackMultiaddr.address ?? 
+                                        sendBackMultiaddr.addr ??
+                                        (typeof sendBackMultiaddr === 'string' ? sendBackMultiaddr : null);
+                    
+                    // If it's still an object, try to convert to string
+                    if (!sendBackAddrString && typeof sendBackMultiaddr === 'object') {
+                        sendBackAddrString = sendBackMultiaddr.toString?.() ?? JSON.stringify(sendBackMultiaddr);
+                    }
+                }
+                
+                // Extract IP from the multiaddr string
+                const sendBackIp = _extractIpFromMultiaddr(sendBackAddrString);
+                
+                // Try to map IP to interface name on destination node
+                let sendBackInterface = null;
+                
+                if (sendBackIp && resultNodes[dst]) {
+                    const dstNode = nodesToProcess[dst];
+                    if (dstNode) {
+                        const netIfacesSnake = dstNode.network_interfaces;
+                        const netIfacesCamel = dstNode.networkInterfaces;
+                        const interfaces = Array.isArray(netIfacesSnake) ? netIfacesSnake : (Array.isArray(netIfacesCamel) ? netIfacesCamel : []);
+                        const matchingIface = interfaces.find(intf => {
+                            const ip = intf.ip_address ?? intf.ipAddress;
+                            return ip === sendBackIp;
+                        });
+                        if (matchingIface) {
+                            sendBackInterface = matchingIface.name ?? matchingIface.interface_name ?? matchingIface.interfaceName;
+                        }
+                    }
+                }
+                
+                resultEdges.push({ 
+                    source: src, 
+                    target: dst,
+                    sendBackIp: sendBackIp,
+                    sendBackInterface: sendBackInterface,
+                    multiaddr: sendBackAddrString
+                });
             });
 
             return { nodes: resultNodes, edges: resultEdges };
@@ -2791,6 +3091,12 @@
             };
 
             function updateMockData() {
+                // Build name map for mock nodes
+                nodeIdToFriendlyName = {};
+                for (const nodeId in mockData) {
+                    nodeIdToFriendlyName[nodeId] = mockData[nodeId].friendly_name || nodeId;
+                }
+                
                 for (const nodeId in mockData) {
                     const node = mockData[nodeId];
                     node.last_addr_update = (Date.now() / 1000) - (Math.random() * 10);
