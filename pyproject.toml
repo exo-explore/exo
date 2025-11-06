@@ -63,7 +63,6 @@ dev = [
 
 [tool.uv.workspace]
 members = [
-    "scripts",
     "rust/exo_pyo3_bindings",
 ]
 
