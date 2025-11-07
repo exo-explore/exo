@@ -215,11 +215,9 @@ def generate_step(
 
         y, logprobs = _step(input_tokens=prompt, input_embeddings=input_embeddings)
 
-    prompt_progress_callback(total_prompt_tokens, total_prompt_tokens)
-
     mx.async_eval(y, logprobs)
-    next_y, next_logprobs = _step(y)
-    mx.async_eval(next_y, next_logprobs)
+    next_y: array | None = None
+    next_logprobs: array | None = None
     n = 0
 
     while True:
@@ -236,11 +234,8 @@ def generate_step(
         yield int(y.item()), logprobs
         if n % 256 == 0:
             mx.clear_cache()
-        if n == max_tokens:
-            break
-        y, logprobs = next_y, logprobs
-        next_y, next_logprobs = _step(y)
-        mx.async_eval(next_y, next_logprobs)
+        y, logprobs = next_y, next_logprobs
+        n += 1
 
 
 def stream_generate(
