@@ -595,8 +595,9 @@
                     
                     if (!resultStage) return;
                     
-                    // Format: model [prompt_len/generation_len] iterations every time_between_requests secs
-                    const name = `${modelName} [${stageConfig.prompt_length}/${stageConfig.generation_length}] ${stageConfig.iterations} iterations every ${stageConfig.time_between_requests}s`;
+                    // Format: stage_name: model [prompt_len/generation_len] iterations every time_between_requests secs
+                    const stageName = stageConfig.name || `Stage ${stageIdx + 1}`;
+                    const name = `${stageName}: ${modelName} [${stageConfig.prompt_length}/${stageConfig.generation_length}] ${stageConfig.iterations}× @ ${stageConfig.time_between_requests}s`;
                     
                     // Success Rate
                     let successRate = 'N/A';
@@ -619,15 +620,25 @@
                     let prefillTime = 'N/A';
                     if (resultStage.avg_time_to_first_token !== null && resultStage.avg_time_to_first_token !== undefined) {
                         const ttftMs = resultStage.avg_time_to_first_token * 1000;
-                        prefillTime = `${ttftMs.toFixed(0)} ms`;
+                        if (resultStage.std_time_to_first_token !== null && resultStage.std_time_to_first_token !== undefined) {
+                            const stdMs = resultStage.std_time_to_first_token * 1000;
+                            prefillTime = `${ttftMs.toFixed(0)} ± ${stdMs.toFixed(0)} ms`;
+                        } else {
+                            prefillTime = `${ttftMs.toFixed(0)} ms`;
+                        }
                     }
                     
                     // ms per token (1000 / decode_tps)
                     let msPerToken = 'N/A';
                     let msPerTokenClass = '';
-                    if (resultStage.avg_decode_tps !== null && resultStage.avg_decode_tps !== undefined && resultStage.avg_decode_tps > 0) {
-                        const ms = 1000 / resultStage.avg_decode_tps;
-                        msPerToken = `${ms.toFixed(1)} ms`;
+                    if (resultStage.avg_ms_per_token !== null && resultStage.avg_ms_per_token !== undefined) {
+                        const ms = resultStage.avg_ms_per_token;
+                        if (resultStage.std_ms_per_token !== null && resultStage.std_ms_per_token !== undefined) {
+                            const stdMs = resultStage.std_ms_per_token;
+                            msPerToken = `${ms.toFixed(1)} ± ${stdMs.toFixed(1)} ms`;
+                        } else {
+                            msPerToken = `${ms.toFixed(1)} ms`;
+                        }
                         
                         // Color code based on performance
                         if (ms < 50) {

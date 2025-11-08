@@ -58,7 +58,7 @@ def generate_step(
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] | None = None,
     max_kv_size: int | None = None,
     prompt_cache: list[KVCache] | None = None,
-    prefill_step_size: int = 2048,
+    prefill_step_size: int = 16384,
     kv_bits: int | None = None,
     kv_group_size: int = 64,
     quantized_kv_start: int = 0,
@@ -203,8 +203,8 @@ def generate_step(
             )
 
             mx.clear_cache()
-            if eval_time > 7.0:
-                prefill_step_size = prefill_step_size // 2
+            # if eval_time > 7.0:
+            #     prefill_step_size = prefill_step_size // 2
             if group is not None:
                 prefill_step_size = broadcast_from_zero(prefill_step_size)
             prefill_step_size = max(1, prefill_step_size)
@@ -351,7 +351,7 @@ async def warmup_inference(
 
     await loop.run_in_executor(mlx_executor, _generate_warmup)
     runner_print("Generated ALL warmup tokens")
-    mx_barrier()
+    await loop.run_in_executor(mlx_executor, lambda: mx_barrier(group))
 
     return tokens_generated
 

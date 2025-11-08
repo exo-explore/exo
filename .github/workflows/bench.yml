@@ -1,8 +1,6 @@
 name: bench
 
-on:
-  pull_request:
-    types: [review_requested]
+on: [push]
 
 jobs:
   plan:
@@ -139,29 +137,41 @@ jobs:
 
       - name: Configure local MLX if available
         run: |
-          RUNNER_LABELS='${{ toJSON(runner.labels) }}'
-          if echo "$RUNNER_LABELS" | grep -q "local_mlx"; then
-            echo "Runner has 'local_mlx' tag, configuring local MLX paths..."
-            MODIFIED=false
-            if [ -d "/Users/Shared/mlx" ]; then
-              echo "Found /Users/Shared/mlx, enabling local mlx path in pyproject.toml"
-              sed -i.bak 's|^# mlx = { path = "/Users/Shared/mlx", editable=true }$|mlx = { path = "/Users/Shared/mlx", editable=true }|' pyproject.toml
-              MODIFIED=true
-            fi
-            if [ -d "/Users/Shared/mlx-lm" ]; then
-              echo "Found /Users/Shared/mlx-lm, enabling local mlx-lm path in pyproject.toml"
-              sed -i.bak 's|^# mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }$|mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }|' pyproject.toml
-              MODIFIED=true
-            fi
-            if [ "$MODIFIED" = true ]; then
-              echo "Modified pyproject.toml [tool.uv.sources] section:"
-              sed -n '/\[tool\.uv\.sources\]/,/^\[/p' pyproject.toml | head -n -1
-              echo "Regenerating uv.lock with local MLX paths..."
-              nix --extra-experimental-features nix-command --extra-experimental-features flakes develop --command uv lock --upgrade-package mlx --upgrade-package mlx-lm
-            fi
+          echo "=== DEBUG: Checking for local MLX configuration ==="
+          MODIFIED=false
+          
+          echo "Checking for /Users/Shared/mlx directory..."
+          if [ -d "/Users/Shared/mlx" ]; then
+            echo "✓ Found /Users/Shared/mlx"
+            ls -la /Users/Shared/mlx | head -5
+            echo "Enabling local mlx path in pyproject.toml"
+            sed -i.bak 's|^# mlx = { path = "/Users/Shared/mlx", editable=true }$|mlx = { path = "/Users/Shared/mlx", editable=true }|' pyproject.toml
+            MODIFIED=true
           else
-            echo "Runner does not have 'local_mlx' tag, using default PyPI packages"
+            echo "✗ /Users/Shared/mlx not found, will use PyPI version"
           fi
+          
+          echo "Checking for /Users/Shared/mlx-lm directory..."
+          if [ -d "/Users/Shared/mlx-lm" ]; then
+            echo "✓ Found /Users/Shared/mlx-lm"
+            ls -la /Users/Shared/mlx-lm | head -5
+            echo "Enabling local mlx-lm path in pyproject.toml"
+            sed -i.bak 's|^# mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }$|mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }|' pyproject.toml
+            MODIFIED=true
+          else
+            echo "✗ /Users/Shared/mlx-lm not found, will use PyPI version"
+          fi
+          
+          if [ "$MODIFIED" = true ]; then
+            echo "=== Modified pyproject.toml [tool.uv.sources] section: ==="
+            sed -n '/\[tool\.uv\.sources\]/,/^\[/{/^\[tool\.uv\.sources\]/p; /^\[/!p;}' pyproject.toml
+            echo "=== Regenerating uv.lock with local MLX paths... ==="
+            nix --extra-experimental-features nix-command --extra-experimental-features flakes develop --command uv lock --upgrade-package mlx --upgrade-package mlx-lm
+            echo "✓ Lock file regenerated"
+          else
+            echo "⚠ No local MLX directories found, using PyPI packages"
+          fi
+          echo "=== DEBUG: Local MLX configuration complete ==="
         shell: bash
 
       - name: Sync dependencies

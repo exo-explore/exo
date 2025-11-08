@@ -22,16 +22,6 @@ from mlx.nn.layers.distributed import (
 )
 
 
-class IdentityLayer(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.use_sliding = False
-
-    @override
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        return x
-
-
 class _LayerCallable(Protocol):
     """Structural type that any compatible layer must satisfy.
 
@@ -64,30 +54,55 @@ class CustomMlxLayer(nn.Module):
 
 
 class PipelineFirstLayer(CustomMlxLayer):
-    def __init__(self, original_layer: _LayerCallable, r: int, s: int):
+    def __init__(
+        self,
+        original_layer: _LayerCallable,
+        r: int,
+        s: int,
+        group: mx.distributed.Group | None = None,
+    ):
         super().__init__(original_layer)
         self.r: int = r
         self.s: int = s
+        self.group = group
 
     @override
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
-            x = mx.distributed.recv_like(x, (self.r - 1))
+            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
         return self.original_layer(x, *args, **kwargs)
 
 
 class PipelineLastLayer(CustomMlxLayer):
-    def __init__(self, original_layer: _LayerCallable, r: int, s: int):
+    def __init__(
+        self,
+        original_layer: _LayerCallable,
+        r: int,
+        s: int,
+        group: mx.distributed.Group | None = None,
+    ):
         super().__init__(original_layer)
         self.r: int = r
         self.s: int = s
+        self.group = group
 
     @override
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+    def __call__(
+        self, x: mx.array, *args: object, cache: object = None, **kwargs: object
+    ) -> mx.array:
         output: mx.array = self.original_layer(x, *args, **kwargs)
         if self.r != self.s - 1:
-            output = mx.distributed.send(output, (self.r + 1) % self.s)
-        output = mx.distributed.all_gather(output)[-output.shape[0] :]
+            output = mx.distributed.send(
+                output, (self.r + 1) % self.s, group=self.group
+            )
+            if (
+                cache is not None
+                and hasattr(cache, "keys")
+                and getattr(cache, "keys", None) is not None
+            ):
+                cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+
+        output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
 
@@ -98,6 +113,9 @@ class ParallelisationShardStrategy(Protocol):
 
 
 class PipelineParallelisationStrategy(ParallelisationShardStrategy):
+    def __init__(self, group: mx.distributed.Group):
+        self.group = group
+
     def auto_parallel(
         self, model: nn.Module, model_shard_meta: ShardMetadata
     ) -> nn.Module:
@@ -124,27 +142,21 @@ class PipelineParallelisationStrategy(ParallelisationShardStrategy):
         else:
             raise ValueError("Model must have either a 'layers' or 'h' attribute")
 
-        layers[: model_shard_meta.start_layer] = [
-            IdentityLayer() for _ in range(model_shard_meta.start_layer)
-        ]
-        layers[model_shard_meta.end_layer :] = [
-            IdentityLayer() for _ in range(len(layers) - model_shard_meta.end_layer)
-        ]
-        layers[model_shard_meta.start_layer] = PipelineFirstLayer(
-            layers[model_shard_meta.start_layer],
+        layers = layers[model_shard_meta.start_layer : model_shard_meta.end_layer]
+        layers[0] = PipelineFirstLayer(
+            layers[0],
             model_shard_meta.device_rank,
             model_shard_meta.world_size,
+            group=self.group,
         )
-        layers[model_shard_meta.end_layer - 1] = PipelineLastLayer(
-            layers[model_shard_meta.end_layer - 1],
+        layers[-1] = PipelineLastLayer(
+            layers[-1],
             model_shard_meta.device_rank,
             model_shard_meta.world_size,
+            group=self.group,
         )
 
-        # At this point `layers` *must* be a concrete list.
-        assert isinstance(layers, list), (
-            "Expected a list of layers after auto-parallel initialisation"
-        )
+        PipelineParallelisationStrategy._set_layers(model, layers)
 
         return model
 
@@ -160,11 +172,28 @@ class PipelineParallelisationStrategy(ParallelisationShardStrategy):
 
         raise ValueError("Model must either have a 'model' or 'transformer' attribute")
 
+    @staticmethod
+    def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
+        inner_model_instance = PipelineParallelisationStrategy._inner_model(model)
+        if hasattr(inner_model_instance, "layers"):
+            inner_model_instance.layers = layers
+
+            # Update DeepSeek V3 specific parameters when layers are shrunk
+            if isinstance(model, DeepseekV3Model) and hasattr(
+                inner_model_instance, "num_layers"
+            ):
+                inner_model_instance.start_idx = 0
+                inner_model_instance.end_idx = len(layers)
+                inner_model_instance.num_layers = len(layers)
+        elif hasattr(inner_model_instance, "h"):
+            inner_model_instance.h = layers
+        else:
+            raise ValueError("Model must have either a 'layers' or 'h' attribute")
+
 
 class TensorParallelisationStrategy(ParallelisationShardStrategy):
     def __init__(self, group: mx.distributed.Group):
         self.group = group
-        self.N = self.group.size
 
     def auto_parallel(
         self, model: nn.Module, model_shard_meta: ShardMetadata
@@ -236,7 +265,7 @@ class TensorParallelShardingStrategy(ABC):
         self.sharded_to_all_linear = sharded_to_all_linear
         self.all_to_sharded_linear_in_place = all_to_sharded_linear_in_place
         self.sharded_to_all_linear_in_place = sharded_to_all_linear_in_place
-        self.group = group or mx.distributed.init()
+        self.group = group
         self.N = group.size()
 
     @abstractmethod

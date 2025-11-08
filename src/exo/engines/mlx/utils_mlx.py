@@ -8,23 +8,25 @@ from typing import Any, Callable, cast
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
 
+from exo.worker.runner.utils import get_weights_size
+
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
 from mlx_lm.utils import load_model
+from mlx.utils import tree_reduce
 from pydantic import RootModel
 
 import mlx.core as mx
 import mlx.nn as nn
 from exo.engines.mlx import Model, TokenizerWrapper
 from exo.engines.mlx.auto_parallel import (
-    IdentityLayer,
     PipelineParallelisationStrategy,
     TensorParallelisationStrategy,
 )
-from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
+from exo.shared.types.common import Host
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.communication import runner_print
 from exo.shared.types.worker.shards import ShardMetadata
@@ -72,6 +74,7 @@ def mlx_distributed_init(
     hosts: list[Host] | None = None,
     mlx_ibv_devices: list[list[str | None]] | None = None,
     mlx_ibv_coordinator: str | None = None,
+    strict: bool = True,
 ) -> mx.distributed.Group:
     """
     Initialize the MLX distributed (runs in thread pool).
@@ -80,10 +83,11 @@ def mlx_distributed_init(
     - hosts: traditional host-based connectivity using MLX_HOSTFILE
     - mlx_ibv_devices: RDMA connectivity matrix using MLX_IBV_DEVICES
     - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
+    - strict: if True, raise an error if the distributed backend is not available
     """
-    runner_print(f"Starting initialization for rank {rank}")
+    runner_print(f"Starting initialization for rank {rank}. Strict: {strict}")
 
-    if mlx_ibv_devices is not None:
+    if mlx_ibv_devices is not None and mlx_ibv_devices != []:
         assert mlx_ibv_coordinator is not None, (
             "To use ibv backend must set ibv coordinator"
         )
@@ -101,8 +105,7 @@ def mlx_distributed_init(
         os.environ["MLX_IBV_DEVICES"] = devices_file
         os.environ["MLX_RANK"] = str(rank)
         os.environ["MLX_IBV_COORDINATOR"] = mlx_ibv_coordinator
-
-    elif hosts is not None:
+    elif hosts is not None and hosts != []:
         # Traditional host-based connectivity
         hostfile = f"./hosts_{rank}.json"
         hosts_json = HostList.from_hosts(hosts).model_dump_json()
@@ -116,10 +119,11 @@ def mlx_distributed_init(
         os.environ["MLX_RANK"] = str(rank)
         os.environ["MLX_RING_VERBOSE"] = "1"
     else:
-        raise ValueError("Either hosts or mlx_ibv_devices must be provided")
+        runner_print("No distributed setup, using single device mode")
 
     group = mx.distributed.init(
-        backend="ring" if hosts is not None else "ibv", strict=True
+        backend="ring" if hosts is not None else "ibv",
+        strict=strict,
     )
     runner_print(f"Rank {rank} mlx distributed initialization complete")
 
@@ -147,7 +151,11 @@ def initialize_mlx(
         hosts=hosts,
         mlx_ibv_devices=mlx_ibv_devices,
         mlx_ibv_coordinator=mlx_ibv_coordinator,
+        strict=(hosts is not None and len(hosts) > 1)
+        or (mlx_ibv_devices is not None and len(mlx_ibv_devices) > 1),
     )
+
+    set_wired_limit_for_model(get_weights_size(model_shard_meta))
 
     sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
 
@@ -177,19 +185,17 @@ def shard_and_load(
 
     match model_shard_meta.strategy:
         case "auto":
-            strategy = PipelineParallelisationStrategy()
+            strategy = PipelineParallelisationStrategy(group)
         case "pipeline":
-            strategy = PipelineParallelisationStrategy()
+            strategy = PipelineParallelisationStrategy(group)
         case "pipeline_rdma":
-            strategy = PipelineParallelisationStrategy()
+            strategy = PipelineParallelisationStrategy(group)
         case "tensor":
             strategy = TensorParallelisationStrategy(group)
         case "tensor_rdma":
             strategy = TensorParallelisationStrategy(group)
 
     model = strategy.auto_parallel(model, model_shard_meta)
-
-    runner_print(f"Model after auto_parallel: {str(model)}")
 
     mx.eval(model.parameters())
     mx.eval(model)
@@ -271,11 +277,7 @@ async def make_kv_cache(
     max_kv_size: int | None = None,
 ) -> list[KVCache]:
     assert hasattr(model, "layers")
-
-    return [
-        NullKVCache() if isinstance(layer, IdentityLayer) else KVCache()
-        for layer in model.layers
-    ]
+    return [KVCache() for _ in model.layers]
 
 
 def mlx_force_oom(size: int = 40000) -> None:
@@ -315,6 +317,9 @@ def set_wired_limit_for_model(model_size: Memory):
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    runner_print(f"Setting wired limit to {max_rec_size}")
+    kv_bytes = int(0.02 * model_bytes)
+    target_cache = int(1.10 * (model_bytes + kv_bytes))
+    target_cache = min(target_cache, max_rec_size)
+    mx.set_cache_limit(target_cache)
     mx.set_wired_limit(max_rec_size)
-    runner_print(f"Wired limit set to {max_rec_size}")
+    runner_print(f"Wired limit set to {max_rec_size}. Cache limit set to {target_cache}.")

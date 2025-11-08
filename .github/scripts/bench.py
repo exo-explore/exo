@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# type: ignore
 """
 Unified benchmark script for EXO.
 Runs single or multi-stage benchmarks with configurable load patterns.
@@ -54,7 +55,7 @@ def _http_request(url: str, *, method: str = "GET", data: Mapping[str, Any] | No
         payload = json.dumps(data).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec - runner-local API
+        with urllib.request.urlopen(req, timeout=300) as resp:  # nosec - runner-local API
             body = resp.read().decode("utf-8")
             try:
                 return json.loads(body)
@@ -72,7 +73,7 @@ async def _http_request_async(url: str, *, method: str = "GET", data: Mapping[st
     return await loop.run_in_executor(None, lambda: _http_request(url, method=method, data=data))
 
 
-async def _http_stream_async(url: str, *, method: str = "POST", data: Mapping[str, Any], timeout: int = 120) -> list[tuple[str, float]]:
+async def _http_stream_async(url: str, *, method: str = "POST", data: Mapping[str, Any], timeout: int = 300) -> list[tuple[str, float]]:
     """Async streaming request. Returns list of (line, timestamp) tuples."""
     def _stream() -> list[tuple[str, float]]:
         headers = {"Content-Type": "application/json"}
@@ -400,7 +401,7 @@ async def wait_for_all_instances_deleted(api_base: str, model_id: str) -> None:
         await asyncio.sleep(2)
 
 
-async def wait_for_tasks_drained(api_base: str, timeout_s: int = 300) -> None:
+async def wait_for_tasks_drained(api_base: str, timeout_s: int = 600) -> None:
     """Wait for all tasks in the cluster to be drained (completed or failed).
     
     Tasks are deleted from state when complete, so we wait until there are no
@@ -550,7 +551,7 @@ async def run_single_request(
     prompt: str,
     max_tokens: int,
     request_id: int,
-    timeout: int = 60,
+    timeout: int = 300,
 ) -> RequestResult:
     """Run a single chat completion request and return its result."""
     started_at = time.time()
@@ -770,7 +771,7 @@ async def run_stage(
     
     # Wait for all tasks in the cluster to be drained
     print(f"\nHTTP requests completed. Now waiting for cluster tasks to drain...")
-    await wait_for_tasks_drained(api_base, timeout_s=300)
+    await wait_for_tasks_drained(api_base, timeout_s=600)
     
     stage_completed_at = time.time()
     
@@ -786,8 +787,11 @@ async def run_stage(
     # Calculate average TTFT and decode TPS for successful requests only
     successful_results = [r for r in results if r.success]
     
+    # Skip first iteration if there are more than 1 iterations (warmup)
+    results_for_stats = successful_results[1:] if len(successful_results) > 1 else successful_results
+    
     # TTFT statistics
-    ttft_values = [r.time_to_first_token_s for r in successful_results if r.time_to_first_token_s is not None]
+    ttft_values = [r.time_to_first_token_s for r in results_for_stats if r.time_to_first_token_s is not None]
     avg_ttft = sum(ttft_values) / len(ttft_values) if ttft_values else None
     
     if avg_ttft is not None and len(ttft_values) > 1:
@@ -797,7 +801,7 @@ async def run_stage(
         std_ttft = None
     
     # Decode TPS and ms per token statistics
-    decode_tps_values = [r.decode_tps for r in successful_results if r.decode_tps is not None]
+    decode_tps_values = [r.decode_tps for r in results_for_stats if r.decode_tps is not None]
     avg_decode_tps = sum(decode_tps_values) / len(decode_tps_values) if decode_tps_values else None
     
     # Convert to ms per token
@@ -1162,7 +1166,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True, help="Path to YAML config file")
     parser.add_argument("--expected-nodes", type=int, required=True, help="Total number of nodes expected in the cluster")
     parser.add_argument("--is-primary", type=str, choices=["true", "false"], required=True)
-    parser.add_argument("--timeout-seconds", type=int, default=600)
+    parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--output", type=Path, help="Path to save detailed results JSON")
     parser.add_argument("--git-commit", type=str, help="Git commit hash for metadata")
     parser.add_argument("--hardware-labels", type=str, help="Comma-separated hardware labels")

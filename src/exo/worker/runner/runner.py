@@ -5,6 +5,7 @@ from functools import partial
 from multiprocessing.connection import Connection
 
 from exo.engines.mlx.utils_mlx import (
+    mx_barrier,
     initialize_mlx,
     mlx_force_oom,
 )
@@ -25,7 +26,7 @@ from exo.shared.types.worker.communication import (
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils import ensure_type
-from exo.worker.runner.generate import mlx_generate, warmup_inference
+from exo.worker.runner.generate import mlx_generate
 
 
 async def main(raw_conn: Connection):
@@ -62,17 +63,20 @@ async def main(raw_conn: Connection):
             ),
         )
 
-        runner_print(
-            f"Warming up inference for model_shard_meta: {model_shard_meta} hosts: {hosts}"
-        )
-        toks = await warmup_inference(
-            mlx_executor=mlx_executor,
-            model=model,
-            tokenizer=tokenizer,
-            sampler=sampler,
-            group=group,
-        )
-        runner_print(f"Warmed up by generating {toks} tokens")
+        # runner_print(
+        #     f"Warming up inference for model_shard_meta: {model_shard_meta} hosts: {hosts}"
+        # )
+        # toks = await warmup_inference(
+        #     mlx_executor=mlx_executor,
+        #     model=model,
+        #     tokenizer=tokenizer,
+        #     sampler=sampler,
+        #     group=group,
+        # )
+        # runner_print(f"Warmed up by generating {toks} tokens")
+        runner_print("Synchronizing processes before generation")
+        await loop.run_in_executor(mlx_executor, lambda: mx_barrier(group))
+        runner_print("Synchronized processes before generation")
         await conn.send(InitializedResponse(time_taken=time.time() - setup_start_time))
 
         while True:
