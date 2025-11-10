@@ -6,7 +6,7 @@ import psutil
 from loguru import logger
 
 from exo.shared.types.memory import Memory
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 
 
 async def kill_process_tree(runner_process: asyncio.subprocess.Process) -> None:
@@ -58,7 +58,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
         * model_shard_meta.model_meta.storage_size.in_kb
         / (
             1
-            if model_shard_meta.strategy in ["auto", "pipeline", "pipeline_rdma"]
+            if isinstance(model_shard_meta, PipelineShardMetadata)
             else model_shard_meta.world_size
         )
     )

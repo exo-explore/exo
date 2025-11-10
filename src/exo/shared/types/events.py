@@ -1,15 +1,14 @@
 from datetime import datetime
-from enum import Enum
 
 from pydantic import Field
 
 from exo.shared.topology import Connection, NodePerformanceProfile
-from exo.shared.types.chunks import CommandId, GenerationChunk
-from exo.shared.types.common import Id, NodeId, SessionId
+from exo.shared.types.chunks import GenerationChunk
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.worker.common import InstanceId, WorkerStatus
-from exo.shared.types.worker.instances import Instance
+from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
@@ -18,45 +17,6 @@ class EventId(Id):
     """
     Newtype around `ID`
     """
-
-
-class EventType(str, Enum):
-    """
-    Here are all the unique kinds of events that can be sent over the network.
-    """
-
-    # Test Events, strictly for mocks and tests.
-    TestEvent = "TestEvent"
-
-    # Task Events
-    TaskCreated = "TaskCreated"
-    TaskStateUpdated = "TaskStateUpdated"
-    TaskFailed = "TaskFailed"
-    TaskDeleted = "TaskDeleted"
-
-    # Streaming Events
-    ChunkGenerated = "ChunkGenerated"
-
-    # Instance Events
-    InstanceCreated = "InstanceCreated"
-    InstanceDeleted = "InstanceDeleted"
-    InstanceActivated = "InstanceActivated"
-    InstanceDeactivated = "InstanceDeactivated"
-    InstanceReplacedAtomically = "InstanceReplacedAtomically"
-
-    # Runner Status Events
-    RunnerStatusUpdated = "RunnerStatusUpdated"
-    RunnerDeleted = "RunnerDeleted"
-
-    # Node Performance Events
-    WorkerStatusUpdated = "WorkerStatusUpdated"
-    NodePerformanceMeasured = "NodePerformanceMeasured"
-    NodeMemoryMeasured = "NodeMemoryMeasured"
-
-    # Topology Events
-    TopologyNodeCreated = "TopologyNodeCreated"
-    TopologyEdgeCreated = "TopologyEdgeCreated"
-    TopologyEdgeDeleted = "TopologyEdgeDeleted"
 
 
 class BaseEvent(TaggedModel):
@@ -74,11 +34,15 @@ class TaskCreated(BaseEvent):
     task: Task
 
 
+class TaskAcknowledged(BaseEvent):
+    task_id: TaskId
+
+
 class TaskDeleted(BaseEvent):
     task_id: TaskId
 
 
-class TaskStateUpdated(BaseEvent):
+class TaskStatusUpdated(BaseEvent):
     task_id: TaskId
     task_status: TaskStatus
 
@@ -91,14 +55,6 @@ class TaskFailed(BaseEvent):
 
 class InstanceCreated(BaseEvent):
     instance: Instance
-
-
-class InstanceActivated(BaseEvent):
-    instance_id: InstanceId
-
-
-class InstanceDeactivated(BaseEvent):
-    instance_id: InstanceId
 
 
 class InstanceDeleted(BaseEvent):
@@ -119,14 +75,13 @@ class NodePerformanceMeasured(BaseEvent):
     node_profile: NodePerformanceProfile
 
 
+class NodeDownloadProgress(BaseEvent):
+    download_progress: DownloadProgress
+
+
 class NodeMemoryMeasured(BaseEvent):
     node_id: NodeId
     memory: MemoryPerformanceProfile
-
-
-class WorkerStatusUpdated(BaseEvent):
-    node_id: NodeId
-    node_state: WorkerStatus
 
 
 class ChunkGenerated(BaseEvent):
@@ -149,18 +104,17 @@ class TopologyEdgeDeleted(BaseEvent):
 Event = (
     TestEvent
     | TaskCreated
-    | TaskStateUpdated
+    | TaskStatusUpdated
     | TaskFailed
     | TaskDeleted
+    | TaskAcknowledged
     | InstanceCreated
-    | InstanceActivated
-    | InstanceDeactivated
     | InstanceDeleted
     | RunnerStatusUpdated
     | RunnerDeleted
     | NodePerformanceMeasured
     | NodeMemoryMeasured
-    | WorkerStatusUpdated
+    | NodeDownloadProgress
     | ChunkGenerated
     | TopologyNodeCreated
     | TopologyEdgeCreated

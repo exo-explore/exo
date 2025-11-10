@@ -13,7 +13,7 @@ QUERY="$*"
 curl -sN -X POST "http://$HOST:8000/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "{
-        \"model\": \"mlx-community/DeepSeek-V3.1-8bit\",
+        \"model\": \"mlx-community/Llama-3.3-70B-Instruct-8bit\",
         \"stream\": true,
         \"messages\": [{ \"role\": \"user\",   \"content\": \"$QUERY\" }]
       }" |

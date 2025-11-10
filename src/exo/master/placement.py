@@ -20,8 +20,13 @@ from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.topology import NodeInfo
-from exo.shared.types.worker.common import InstanceId
-from exo.shared.types.worker.instances import Instance, InstanceStatus
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxIbvInstance,
+    MlxRingInstance,
+)
 
 
 def random_ephemeral_port() -> int:
@@ -50,7 +55,6 @@ def get_instance_placements_after_create(
         raise ValueError("No cycles found with sufficient memory")
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
-    selected_cycle = None
 
     smallest_tb_cycles = [
         cycle
@@ -82,7 +86,7 @@ def get_instance_placements_after_create(
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_meta, selected_cycle, command.strategy
+        command.model_meta, selected_cycle, command.sharding
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle)
@@ -90,36 +94,36 @@ def get_instance_placements_after_create(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
-    if command.strategy in ("tensor_rdma", "pipeline_rdma"):
-        mlx_ibv_devices = get_mlx_ibv_devices_matrix(
-            selected_cycle,
-            cycle_digraph,
-        )
-        mlx_ibv_coordinator = get_mlx_ibv_coordinator(
-            selected_cycle,
-            coordinator_port=random_ephemeral_port(),
-        )
-        target_instances[instance_id] = Instance(
-            instance_id=instance_id,
-            instance_type=InstanceStatus.Active,
-            shard_assignments=shard_assignments,
-            mlx_ibv_devices=mlx_ibv_devices,
-            mlx_ibv_coordinator=mlx_ibv_coordinator,
-        )
-    else:
-        hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
-        target_instances[instance_id] = Instance(
-            instance_id=instance_id,
-            instance_type=InstanceStatus.Active,
-            shard_assignments=shard_assignments,
-            hosts=[
-                Host(
-                    ip=host.ip,
-                    port=random_ephemeral_port(),
-                )
-                for host in hosts
-            ],
-        )
+    # TODO: Single node instances
+    match command.instance_meta:
+        case InstanceMeta.MlxIbv:
+            mlx_ibv_devices = get_mlx_ibv_devices_matrix(
+                selected_cycle,
+                cycle_digraph,
+            )
+            mlx_ibv_coordinator = get_mlx_ibv_coordinator(
+                selected_cycle,
+                coordinator_port=random_ephemeral_port(),
+            )
+            target_instances[instance_id] = MlxIbvInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                ibv_devices=mlx_ibv_devices,
+                ibv_coordinator=mlx_ibv_coordinator,
+            )
+        case InstanceMeta.MlxRing:
+            hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
+            target_instances[instance_id] = MlxRingInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                hosts=[
+                    Host(
+                        ip=host.ip,
+                        port=random_ephemeral_port(),
+                    )
+                    for host in hosts
+                ],
+            )
 
     return target_instances
 

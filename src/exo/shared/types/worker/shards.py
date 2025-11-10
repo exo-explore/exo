@@ -1,8 +1,14 @@
-from pydantic import Field
+from enum import Enum
+
+from pydantic import Field, ConfigDict
 
 from exo.shared.types.models import ModelMetadata
-from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
 from exo.utils.pydantic_ext import TaggedModel
+
+
+class Sharding(str, Enum):
+    Tensor = "Tensor"
+    Pipeline = "Pipeline"
 
 
 class BaseShardMetadata(TaggedModel):
@@ -24,8 +30,6 @@ class BaseShardMetadata(TaggedModel):
     end_layer: int = Field(ge=0)
     n_layers: int = Field(ge=0)
 
-    strategy: ParallelisationStrategyType = "auto"
-
     @property
     def is_first_layer(self) -> bool:
         return self.start_layer == 0
@@ -36,7 +40,14 @@ class BaseShardMetadata(TaggedModel):
 
     def __hash__(self) -> int:
         return hash(
-            (self.model_meta.model_id, self.start_layer, self.end_layer, self.n_layers)
+            (
+                self.model_meta.model_id,
+                self.start_layer,
+                self.end_layer,
+                self.n_layers,
+                self.device_rank,
+                self.world_size,
+            )
         )
 
 
@@ -48,11 +59,9 @@ class PipelineShardMetadata(BaseShardMetadata):
     where start_layer is inclusive and end_layer is exclusive.
     """
 
-    strategy: ParallelisationStrategyType = "pipeline"
-
 
 class TensorShardMetadata(BaseShardMetadata):
-    strategy: ParallelisationStrategyType = "tensor"
+    pass
 
 
 ShardMetadata = PipelineShardMetadata | TensorShardMetadata

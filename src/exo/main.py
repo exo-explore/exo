@@ -1,4 +1,5 @@
 import argparse
+import multiprocessing as mp
 from dataclasses import dataclass
 from typing import Self
 
@@ -15,6 +16,7 @@ from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.commands import KillCommand
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
@@ -108,6 +110,17 @@ class Node:
             if self.api:
                 tg.start_soon(self.api.run)
             tg.start_soon(self._elect_loop)
+            tg.start_soon(self._listen_for_kill_command)
+
+    async def _listen_for_kill_command(self):
+        assert self._tg
+        with self.router.receiver(topics.COMMANDS) as commands:
+            async for command in commands:
+                match command.command:
+                    case KillCommand():
+                        self._tg.cancel_scope.cancel()
+                    case _:
+                        pass
 
     async def _elect_loop(self):
         assert self._tg
@@ -185,6 +198,7 @@ class Node:
 
 def main():
     args = Args.parse()
+    mp.set_start_method("spawn")
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")

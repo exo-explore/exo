@@ -35,23 +35,25 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    # TODO: SpinUpInstance
+    KillCommand,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
 from exo.shared.types.events import ChunkGenerated, Event, ForwarderEvent, IndexedEvent
+from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
-from exo.shared.types.worker.common import InstanceId
-from exo.shared.types.worker.instances import Instance
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import OrderedBuffer
 
 
-def chunk_to_response(chunk: TokenChunk) -> ChatCompletionResponse:
+def chunk_to_response(
+    chunk: TokenChunk, command_id: CommandId
+) -> ChatCompletionResponse:
     return ChatCompletionResponse(
-        id=chunk.command_id,
+        id=command_id,
         created=int(time.time()),
         model=chunk.model,
         choices=[
@@ -117,9 +119,7 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[
-            CommandId, asyncio.Queue[ChunkGenerated]
-        ] = {}
+        self._chat_completion_queues: dict[CommandId, asyncio.Queue[TokenChunk]] = {}
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
@@ -152,23 +152,29 @@ class API:
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/v1/chat/completions")(self.chat_completions)
         self.app.get("/state")(lambda: self.state)
+        self.app.delete("/kill")(self.kill_exo)
+
+    async def kill_exo(self):
+        await self._send(KillCommand())
 
     async def create_instance(
         self, payload: CreateInstanceTaskParams
     ) -> CreateInstanceResponse:
         model_meta = await resolve_model_meta(payload.model_id)
-        strategy = payload.strategy
-        required_memory_bytes = model_meta.storage_size.in_kb
-        available_memory_bytes = self._calculate_total_available_memory()
+        required_memory = model_meta.storage_size
+        available_memory = self._calculate_total_available_memory()
 
-        if required_memory_bytes > available_memory_bytes:
+        if required_memory > available_memory:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient memory to create instance. Required: {required_memory_bytes // (1024**3):.1f}GB, Available: {available_memory_bytes // (1024**3):.1f}GB",
+                detail=f"Insufficient memory to create instance. Required: {required_memory.in_gb:.1f}GB, Available: {available_memory.in_gb:.1f}GB",
             )
 
         command = CreateInstance(
-            command_id=CommandId(), model_meta=model_meta, strategy=strategy
+            command_id=CommandId(),
+            model_meta=model_meta,
+            instance_meta=payload.instance_meta,
+            sharding=payload.sharding,
         )
         await self._send(command)
 
@@ -211,15 +217,16 @@ class API:
             chunk = await asyncio.wait_for(
                 self._chat_completion_queues[command_id].get(), timeout=60
             )
-            if chunk.command_id == command_id:
-                assert isinstance(chunk.chunk, TokenChunk)
-                chunk_response: ChatCompletionResponse = chunk_to_response(chunk.chunk)
-                logger.debug(f"chunk_response: {chunk_response}")
-                yield f"data: {chunk_response.model_dump_json()}\n\n"
+            assert isinstance(chunk, TokenChunk)
+            chunk_response: ChatCompletionResponse = chunk_to_response(
+                chunk, command_id
+            )
+            logger.debug(f"chunk_response: {chunk_response}")
+            yield f"data: {chunk_response.model_dump_json()}\n\n"
 
-                if chunk.chunk.finish_reason is not None:
-                    yield "data: [DONE]\n\n"
-                    finished = True
+            if chunk.finish_reason is not None:
+                yield "data: [DONE]\n\n"
+                finished = True
 
         command = TaskFinished(finished_command_id=command_id)
         await self._send(command)
@@ -281,13 +288,13 @@ class API:
             media_type="text/event-stream",
         )
 
-    def _calculate_total_available_memory(self) -> int:
+    def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
-        total_available = 0
+        total_available = Memory()
 
         for node in self.state.topology.list_nodes():
             if node.node_profile is not None:
-                total_available += node.node_profile.memory.ram_available.in_bytes
+                total_available += node.node_profile.memory.ram_available
 
         return total_available
 
@@ -323,15 +330,18 @@ class API:
 
     async def _apply_state(self):
         with self.global_event_receiver as events:
-            async for event in events:
-                self.event_buffer.ingest(event.origin_idx, event.event)
+            async for f_event in events:
+                self.event_buffer.ingest(f_event.origin_idx, f_event.event)
                 for idx, event in self.event_buffer.drain_indexed():
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
                     if (
                         isinstance(event, ChunkGenerated)
                         and event.command_id in self._chat_completion_queues
                     ):
-                        self._chat_completion_queues[event.command_id].put_nowait(event)
+                        assert isinstance(event.chunk, TokenChunk)
+                        self._chat_completion_queues[event.command_id].put_nowait(
+                            event.chunk
+                        )
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:

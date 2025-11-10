@@ -58,8 +58,9 @@
               # NIX
               nixpkgs-fmt
 
-              # JUST
+              # MISC
               just
+              jq
             ]
             ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
               # IFCONFIG

@@ -2,14 +2,15 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from pydantic import ConfigDict, Field, field_serializer, field_validator
+from pydantic.alias_generators import to_camel
 
 from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.tasks import Task, TaskId
-from exo.shared.types.worker.common import InstanceId, WorkerStatus
-from exo.shared.types.worker.instances import Instance
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.shared.types.worker.downloads import DownloadProgress
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
@@ -22,15 +23,19 @@ class State(CamelCaseModel):
     """
 
     model_config = ConfigDict(
+        alias_generator=to_camel,
+        validate_by_name=True,
+        extra="forbid",
+        # I want to reenable this ASAP, but it's causing an issue with TaskStatus
+        strict=True,
         arbitrary_types_allowed=True,
     )
-    node_status: Mapping[NodeId, WorkerStatus] = {}
     instances: Mapping[InstanceId, Instance] = {}
     runners: Mapping[RunnerId, RunnerStatus] = {}
+    downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {}
     tasks: Mapping[TaskId, Task] = {}
     node_profiles: Mapping[NodeId, NodePerformanceProfile] = {}
     topology: Topology = Topology()
-    history: Sequence[Topology] = []
     last_event_applied_idx: int = Field(default=-1, ge=-1)
 
     @field_serializer("topology", mode="plain")

@@ -31,8 +31,14 @@ from exo.shared.types.events import (
     TopologyEdgeDeleted,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import ChatCompletionTask, TaskId, TaskStatus
-from exo.shared.types.worker.common import InstanceId
+from exo.shared.types.tasks import (
+    ChatCompletion as ChatCompletionTask,
+)
+from exo.shared.types.tasks import (
+    TaskId,
+    TaskStatus,
+)
+from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import MultiSourceBuffer
 

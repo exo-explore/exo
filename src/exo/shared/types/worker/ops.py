@@ -1,51 +1,34 @@
-from exo.shared.types.common import Host
-from exo.shared.types.events import InstanceId
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.common import RunnerId
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.instances import BoundInstance, Instance
+from exo.shared.types.worker.runners import RunnerId
 from exo.utils.pydantic_ext import TaggedModel
 
 
 class BaseRunnerOp(TaggedModel):
-    pass
+    runner_id: RunnerId
 
 
 class AssignRunnerOp(BaseRunnerOp):
-    instance_id: InstanceId
-    runner_id: RunnerId
-    shard_metadata: ShardMetadata
-    hosts: list[Host] | None = None
-    mlx_ibv_devices: list[list[str | None]] | None = None
-    mlx_ibv_coordinator: str | None = None
+    instance: Instance
+
+    def bound_instance(self) -> BoundInstance:
+        return BoundInstance(instance=self.instance, bound_runner_id=self.runner_id)
 
 
 class UnassignRunnerOp(BaseRunnerOp):
-    runner_id: RunnerId
+    pass
 
 
 class RunnerUpOp(BaseRunnerOp):
-    runner_id: RunnerId
+    pass
 
 
 class RunnerDownOp(BaseRunnerOp):
-    runner_id: RunnerId
-
-
-class RunnerFailedOp(BaseRunnerOp):
-    runner_id: RunnerId
+    pass
 
 
 class ExecuteTaskOp(BaseRunnerOp):
-    runner_id: RunnerId
     task: Task
 
 
-# Aggregate all runner operations into a single, strictly-typed union for dispatching.
-RunnerOp = (
-    AssignRunnerOp
-    | UnassignRunnerOp
-    | RunnerUpOp
-    | RunnerDownOp
-    | RunnerFailedOp
-    | ExecuteTaskOp
-)
+RunnerOp = AssignRunnerOp | ExecuteTaskOp | UnassignRunnerOp | RunnerUpOp | RunnerDownOp

@@ -26,7 +26,6 @@ class ShardDownloader(ABC):
 
         Args:
             shard (Shard): The shard to download.
-            inference_engine_name (str): The inference engine used on the node hosting the shard
         """
 
     @abstractmethod

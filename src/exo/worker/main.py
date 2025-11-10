@@ -1,12 +1,7 @@
-import asyncio
-import time
-from asyncio import Queue
-from functools import partial
 from random import random
-from typing import AsyncGenerator
 
 import anyio
-from anyio import CancelScope, create_task_group
+from anyio import CancelScope, create_task_group, current_time
 from anyio.abc import TaskGroup
 from loguru import logger
 
@@ -15,53 +10,32 @@ from exo.shared.apply import apply
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
-    ChunkGenerated,
     Event,
     EventId,
     ForwarderEvent,
     IndexedEvent,
-    InstanceDeleted,
+    NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
-    RunnerDeleted,
-    RunnerStatusUpdated,
-    TaskFailed,
-    TaskStateUpdated,
+    TaskCreated, TaskStatusUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
-from exo.shared.types.tasks import TaskId, TaskStatus
+from exo.shared.types.tasks import CreateRunner, DownloadModel, Task, TaskStatus, Shutdown
 from exo.shared.types.topology import Connection
-from exo.shared.types.worker.common import RunnerId
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
     DownloadPending,
+    DownloadProgress,
 )
-from exo.shared.types.worker.ops import (
-    AssignRunnerOp,
-    ExecuteTaskOp,
-    RunnerDownOp,
-    RunnerFailedOp,
-    RunnerOp,
-    RunnerUpOp,
-    UnassignRunnerOp,
-)
-from exo.shared.types.worker.runners import (
-    DownloadingRunnerStatus,
-    FailedRunnerStatus,
-    InactiveRunnerStatus,
-    LoadedRunnerStatus,
-    RunningRunnerStatus,
-    StartingRunnerStatus,
-)
+from exo.shared.types.worker.runners import RunnerId
 from exo.shared.types.worker.shards import ShardMetadata
-from exo.utils.channels import Receiver, Sender
+from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
-from exo.worker.common import AssignedRunner
 from exo.worker.download.download_utils import (
     map_repo_download_progress_to_download_progress_data,
 )
@@ -80,12 +54,7 @@ class Worker:
         *,
         initial_connection_messages: list[ConnectionMessage],
         connection_message_receiver: Receiver[ConnectionMessage],
-        # Having written this pattern 3 times in the codebase:
-        # Should this be inherited??? Is this a real inheritance
-        # W????
-        # Limitation: This SHOULD be a MasterForwarderEvent, but inheritance says no :|
         global_event_receiver: Receiver[ForwarderEvent],
-        # Limitation: This SHOULD be a WorkerForwarderEvent, but inheritance says no :|
         local_event_sender: Sender[ForwarderEvent],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
@@ -93,7 +62,10 @@ class Worker:
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
+
         self.shard_downloader: ShardDownloader = shard_downloader
+        self._pending_downloads: dict[RunnerId, ShardMetadata] = {}
+
         self.global_event_receiver = global_event_receiver
         self.local_event_sender = local_event_sender
         self.local_event_index = 0
@@ -104,9 +76,12 @@ class Worker:
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
 
         self.state: State = State()
-        self.assigned_runners: dict[RunnerId, AssignedRunner] = {}
+        self.download_status: dict[ShardMetadata, DownloadProgress] = {}
+        self.runners: dict[RunnerId, RunnerSupervisor] = {}
         self._tg: TaskGroup | None = None
         self._nack_cancel_scope: CancelScope | None = None
+
+        self.event_sender, self.event_receiver = channel[Event]()
 
     async def run(self):
         logger.info("Starting Worker")
@@ -115,7 +90,7 @@ class Worker:
         async def resource_monitor_callback(
             node_performance_profile: NodePerformanceProfile,
         ) -> None:
-            await self.event_publisher(
+            await self.event_sender.send(
                 NodePerformanceMeasured(
                     node_id=self.node_id, node_profile=node_performance_profile
                 ),
@@ -124,7 +99,7 @@ class Worker:
         async def memory_monitor_callback(
             memory_profile: MemoryPerformanceProfile,
         ) -> None:
-            await self.event_publisher(
+            await self.event_sender.send(
                 NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
             )
 
@@ -132,15 +107,17 @@ class Worker:
 
         async with create_task_group() as tg:
             self._tg = tg
+            tg.start_soon(self.plan_step)
             tg.start_soon(start_polling_node_metrics, resource_monitor_callback)
 
             tg.start_soon(start_polling_memory_metrics, memory_monitor_callback)
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)
+            tg.start_soon(self._forward_events)
             # TODO: This is a little gross, but not too bad
             for msg in self._initial_connection_messages:
-                await self.event_publisher(
+                await self.event_sender.send(
                     self._convert_connection_message_to_event(msg)
                 )
             self._initial_connection_messages = []
@@ -148,9 +125,8 @@ class Worker:
         # Actual shutdown code - waits for all tasks to complete before executing.
         self.local_event_sender.close()
         self.command_sender.close()
-        for runner in self.assigned_runners.values():
-            if runner.runner:
-                await runner.runner.astop()
+        for runner in self.runners.values():
+            await runner.shutdown()
 
     async def _event_applier(self):
         with self.global_event_receiver as events:
@@ -162,14 +138,13 @@ class Worker:
 
                 # 2. for each event, apply it to the state
                 indexed_events = self.event_buffer.drain_indexed()
-                if not indexed_events:
-                    if (
-                        self._nack_cancel_scope is None
-                        or self._nack_cancel_scope.cancel_called
-                    ):
-                        assert self._tg
-                        self._tg.start_soon(self._nack_request)
-                elif self._nack_cancel_scope:
+                if not indexed_events and (
+                    self._nack_cancel_scope is None
+                    or self._nack_cancel_scope.cancel_called
+                ):
+                    assert self._tg
+                    self._tg.start_soon(self._nack_request)
+                elif indexed_events and self._nack_cancel_scope:
                     self._nack_cancel_scope.cancel()
 
                 flag = False
@@ -180,48 +155,82 @@ class Worker:
 
                 # 3. If we've found a "relevant" event, run a plan -> op -> execute cycle.
                 if flag:
-                    await self.plan_step()
+                    # await self.plan_step()
+                    pass
 
     async def plan_step(self):
-        # 3. based on the updated state, we plan & execute an operation.
-        op: RunnerOp | None = plan(
-            self.assigned_runners,
-            self.node_id,
-            self.state.instances,
-            self.state.runners,
-            self.state.tasks,
-        )
+        while True:
+            await anyio.sleep(0.1)
+            # 3. based on the updated state, we plan & execute an operation.
+            task: Task | None = plan(
+                self.node_id,
+                self.runners,
+                self.download_status,
+                self.state.downloads,
+                self.state.instances,
+                self.state.runners,
+                self.state.tasks,
+            )
+            if task is None:
+                continue
+            logger.info(f"Worker plan: {task.__class__.__name__}")
+            assert task.task_status
+            await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
 
-        # run the op, synchronously blocking for now
-        if op is not None:
-            logger.info(f"Executing op {type(op)} {str(op)[:100]}")
-            logger.debug(f"Worker executing op: {type(op)} {str(op)[:100]}")
-            try:
-                async for event in self.execute_op(op):
-                    await self.event_publisher(event)
-            except Exception as e:
-                logger.opt(exception=e).warning(
-                    "Error occurred when executing task", flush=True
-                )
+            match task:
+                case CreateRunner():
+                    self._create_supervisor(task)
+                    await self.event_sender.send(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
+                case DownloadModel(shard_metadata=shard):
+                    if shard not in self.download_status:
+                        progress = DownloadPending(
+                            shard_metadata=shard, node_id=self.node_id
+                        )
+                        self.download_status[shard] = progress
+                        await self.event_sender.send(
+                            NodeDownloadProgress(download_progress=progress)
+                        )
 
-                if isinstance(op, ExecuteTaskOp):
-                    generator = self.fail_task(
-                        e, runner_id=op.runner_id, task_id=op.task.task_id
+                    initial_progress = (
+                        await self.shard_downloader.get_shard_download_status_for_shard(
+                            shard
+                        )
                     )
-                else:
-                    generator = self.fail_runner(e, runner_id=op.runner_id)
-
-                async for event in generator:
-                    await self.event_publisher(event)
+                    if initial_progress.status == "complete":
+                        progress = DownloadCompleted(
+                            shard_metadata=shard, node_id=self.node_id
+                        )
+                        self.download_status[shard] = progress
+                        await self.event_sender.send(
+                            NodeDownloadProgress(download_progress=progress)
+                        )
+                        await self.event_sender.send(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
+                    else:
+                        self.event_sender.send_nowait(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running))
+                        await self._handle_shard_download_process(
+                            task, initial_progress
+                        )
+                case Shutdown(runner_id=runner_id):
+                    await self.runners[runner_id].shutdown()
+                    del self.runners[runner_id]
+                case task:
+                    runner = self.runners[self._task_to_runner_id(task)]
+                    event = anyio.Event()
+                    await runner.start_task(task, event)
+                    await event.wait()
 
     def shutdown(self):
         if self._tg:
             self._tg.cancel_scope.cancel()
 
+    def _task_to_runner_id(self, task: Task):
+        instance = self.state.instances[task.instance_id]
+        return instance.shard_assignments.node_to_runner[self.node_id]
+
     async def _connection_message_event_writer(self):
         with self.connection_message_receiver as connection_messages:
             async for msg in connection_messages:
-                await self.event_publisher(
+                await self.event_sender.send(
                     self._convert_connection_message_to_event(msg)
                 )
 
@@ -278,377 +287,86 @@ class Worker:
 
     ## Op Executors
 
-    def _create_assigned_runner(self, op: AssignRunnerOp) -> AssignedRunner:
+    def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
-        assigned_runner = AssignedRunner(
-            runner_id=op.runner_id,
-            instance_id=op.instance_id,
-            shard_metadata=op.shard_metadata,
-            hosts=op.hosts,
-            mlx_ibv_devices=op.mlx_ibv_devices,
-            mlx_ibv_coordinator=op.mlx_ibv_coordinator,
-            status=DownloadingRunnerStatus(
-                download_progress=DownloadPending(node_id=self.node_id)
-            ),
-            runner=None,
+        runner = RunnerSupervisor.create(
+            bound_instance=task.bound_instance,
+            event_sender=self.event_sender.clone(),
         )
-        self.assigned_runners[op.runner_id] = assigned_runner
-        return assigned_runner
-
-    async def _update_runner_status_to_completed_then_inactive(
-        self, assigned_runner: AssignedRunner
-    ) -> AsyncGenerator[Event, None]:
-        """Updates runner status from downloading to completed, then to inactive."""
-        assigned_runner.status = DownloadingRunnerStatus(
-            download_progress=DownloadCompleted(node_id=self.node_id)
-        )
-        yield assigned_runner.status_update_event()
-
-        assigned_runner.status = InactiveRunnerStatus()
-        yield assigned_runner.status_update_event()
-
-    async def _handle_already_downloaded_shard(
-        self, assigned_runner: AssignedRunner
-    ) -> AsyncGenerator[Event, None]:
-        """Handles the case where the shard is already downloaded."""
-        async for event in self._update_runner_status_to_completed_then_inactive(
-            assigned_runner
-        ):
-            yield event
+        self.runners[task.bound_instance.bound_runner_id] = runner
+        assert self._tg
+        self._tg.start_soon(runner.run)
+        return runner
 
     async def _handle_shard_download_process(
         self,
-        assigned_runner: AssignedRunner,
-        op: AssignRunnerOp,
+        task: DownloadModel,
         initial_progress: RepoDownloadProgress,
-    ) -> AsyncGenerator[Event, None]:
+    ):
         """Manages the shard download process with progress tracking."""
-        # Set initial ongoing status
-        assigned_runner.status = DownloadingRunnerStatus(
-            download_progress=DownloadOngoing(
-                node_id=self.node_id,
-                download_progress=map_repo_download_progress_to_download_progress_data(
-                    initial_progress
-                ),
-            )
+        status = DownloadOngoing(
+            node_id=self.node_id,
+            shard_metadata=task.shard_metadata,
+            download_progress=map_repo_download_progress_to_download_progress_data(
+                initial_progress
+            ),
         )
-        yield assigned_runner.status_update_event()
+        self.download_status[task.shard_metadata] = status
+        self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
 
-        # Set up download progress tracking
-        download_progress_queue: asyncio.Queue[RepoDownloadProgress] = asyncio.Queue()
-
-        def download_progress_callback(
-            shard: ShardMetadata, progress: RepoDownloadProgress
-        ) -> None:
-            download_progress_queue.put_nowait(progress)
-
-        self.shard_downloader.on_progress(download_progress_callback)
-        download_task = asyncio.create_task(
-            self.shard_downloader.ensure_shard(op.shard_metadata)
-        )
-
-        try:
-            async for event in self._monitor_download_progress(
-                assigned_runner, download_progress_queue
-            ):
-                yield event
-        finally:
-            if not download_task.done():
-                download_task.cancel()
-
-    async def _monitor_download_progress(
-        self,
-        assigned_runner: AssignedRunner,
-        download_progress_queue: asyncio.Queue[RepoDownloadProgress],
-    ) -> AsyncGenerator[Event, None]:
-        """Monitors download progress and yields status updates."""
         last_progress_time = 0.0
         throttle_interval_secs = 1.0
 
-        while True:
-            progress: RepoDownloadProgress = await asyncio.wait_for(
-                download_progress_queue.get(), timeout=15
-            )
-
+        # TODO: i hate callbacks
+        def download_progress_callback(
+            shard: ShardMetadata, progress: RepoDownloadProgress
+        ) -> None:
+            nonlocal self
+            nonlocal last_progress_time
             if progress.status == "complete":
-                async for (
-                    event
-                ) in self._update_runner_status_to_completed_then_inactive(
-                    assigned_runner
-                ):
-                    yield event
-                break
-            elif progress.status == "in_progress":
-                if time.monotonic() - last_progress_time > throttle_interval_secs:
-                    assigned_runner.status = DownloadingRunnerStatus(
-                        download_progress=DownloadOngoing(
-                            node_id=self.node_id,
-                            download_progress=map_repo_download_progress_to_download_progress_data(
-                                progress
-                            ),
-                        )
-                    )
-                    yield assigned_runner.status_update_event()
-                    last_progress_time = time.monotonic()
-
-    async def _execute_assign_op(
-        self, op: AssignRunnerOp
-    ) -> AsyncGenerator[Event, None]:
-        """
-        A runner has been assigned. We need to also ensure that it's downloaded.
-        This op assigns the runner, and moves from Downloading -> Inactive (ready to spin) state.
-        """
-        assigned_runner = self._create_assigned_runner(op)
-        initial_progress = (
-            await self.shard_downloader.get_shard_download_status_for_shard(
-                op.shard_metadata
-            )
-        )
-
-        if initial_progress.status == "complete":
-            async for event in self._handle_already_downloaded_shard(assigned_runner):
-                yield event
-        else:
-            async for event in self._handle_shard_download_process(
-                assigned_runner, op, initial_progress
-            ):
-                yield event
-
-    async def _execute_unassign_op(
-        self, op: UnassignRunnerOp
-    ) -> AsyncGenerator[Event, None]:
-        if op.runner_id not in self.assigned_runners:
-            return
-
-        # We can try to do a graceful shutdown of the runner.
-        runner: RunnerSupervisor | None = self.assigned_runners[op.runner_id].runner
-        if runner is not None:
-            await runner.astop()
-
-        # This is all we really need:
-        del self.assigned_runners[op.runner_id]
-        yield RunnerDeleted(runner_id=op.runner_id)
-
-    async def _execute_runner_up_op(
-        self, op: RunnerUpOp, initialize_timeout: float | None = None
-    ) -> AsyncGenerator[Event, None]:
-        assigned_runner = self.assigned_runners[op.runner_id]
-
-        # Emit "Starting" status right away so UI can show loading state
-        assigned_runner.status = StartingRunnerStatus()
-        yield assigned_runner.status_update_event()
-
-        assigned_runner.runner = await RunnerSupervisor.create(
-            model_shard_meta=assigned_runner.shard_metadata,
-            hosts=assigned_runner.hosts,
-            mlx_ibv_devices=assigned_runner.mlx_ibv_devices,
-            mlx_ibv_coordinator=assigned_runner.mlx_ibv_coordinator,
-            initialize_timeout=initialize_timeout,
-        )
-
-        if assigned_runner.runner.runner_process.is_alive():
-            assigned_runner.status = LoadedRunnerStatus()
-        else:
-            runner = assigned_runner.runner
-            logger.warning(
-                f"Runner status is not runner_process.is_alive(): exit code {runner.runner_process.exitcode}"
-            )
-
-            assigned_runner.status = FailedRunnerStatus()
-        yield self.assigned_runners[op.runner_id].status_update_event()
-
-    async def _execute_runner_down_op(
-        self, op: RunnerDownOp
-    ) -> AsyncGenerator[Event, None]:
-        assigned_runner = self.assigned_runners[op.runner_id]
-
-        if isinstance(assigned_runner.runner, RunnerSupervisor):
-            await assigned_runner.runner.astop()
-
-        assigned_runner.runner = None
-
-        assigned_runner.status = InactiveRunnerStatus()
-        yield assigned_runner.status_update_event()
-        return
-
-    async def _execute_runner_failed_op(
-        self, op: RunnerFailedOp
-    ) -> AsyncGenerator[Event, None]:
-        """
-        We detected that this runner has failed. So we'll put it into 'failed' state now, triggering the rest of the instance to spin down.
-        """
-        assigned_runner = self.assigned_runners[op.runner_id]
-
-        if isinstance(assigned_runner.runner, RunnerSupervisor):
-            await (
-                assigned_runner.runner.astop()
-            )  # astop the runner to ensure it clears out of memory.
-
-        assigned_runner.status = FailedRunnerStatus()
-        yield self.assigned_runners[op.runner_id].status_update_event()
-
-    async def _execute_task_op(self, op: ExecuteTaskOp) -> AsyncGenerator[Event, None]:
-        """
-        This is the entry point for a chat completion starting.
-        While there is only one execute function, it will get called in different ways for runner 0 and runner [1, 2, 3, ...].
-        Runners [1, 2, 3, ...] will run this method when a task is in 'pending' state.
-        Runner 0 will run this method when a task is in 'running' state.
-        TODO: How do we handle the logic of ensuring that n-1 nodes have started their execution before allowing the 0'th runner to start?
-        This is still a little unclear to me.
-        """
-        assigned_runner = self.assigned_runners[op.runner_id]
-
-        async def inner_execute(queue: asyncio.Queue[Event]) -> None:
-            async def running_callback(queue: asyncio.Queue[Event]) -> None:
-                # Called when the MLX process has been kicked off
-                assigned_runner.status = RunningRunnerStatus()
-                await queue.put(assigned_runner.status_update_event())
-
-                if assigned_runner.shard_metadata.device_rank == 0:
-                    await queue.put(
-                        TaskStateUpdated(
-                            task_id=op.task.task_id,
-                            task_status=TaskStatus.Running,
-                        )
-                    )
-
-            assert assigned_runner.runner is not None
-            assert assigned_runner.runner.runner_process.is_alive()
-
-            async for chunk in assigned_runner.runner.stream_response(
-                task=op.task, request_started_callback=partial(running_callback, queue)
-            ):
-                if assigned_runner.shard_metadata.device_rank == 0:
-                    await queue.put(
-                        ChunkGenerated(
-                            # TODO: at some point we will no longer have a bijection between task_id and row_id.
-                            # So we probably want to store a mapping between these two in our Worker object.
-                            command_id=chunk.command_id,
-                            chunk=chunk,
-                        )
-                    )
-
-            if op.task.task_id in self.state.tasks:
-                self.state.tasks[op.task.task_id].task_status = TaskStatus.Complete
-
-            if assigned_runner.shard_metadata.device_rank == 0:
-                # kind of hack - we don't want to wait for the round trip for this to complete
-                await queue.put(
-                    TaskStateUpdated(
-                        task_id=op.task.task_id,
-                        task_status=TaskStatus.Complete,
-                    )
+                status = DownloadCompleted(shard_metadata=shard, node_id=self.node_id)
+                self.download_status[shard] = status
+                # Footgun!
+                self.event_sender.send_nowait(
+                    NodeDownloadProgress(download_progress=status)
                 )
-
-            # After a successful inference:
-            assigned_runner.status = LoadedRunnerStatus()
-            await queue.put(assigned_runner.status_update_event())
-
-        queue: Queue[Event] = asyncio.Queue()
-        task = asyncio.create_task(inner_execute(queue))
-
-        # TODO: Initial (prefil) timeout can be dynamic
-        # model_kb = assigned_runner.shard_metadata.model_meta.storage_size_kilobytes
-
-        try:
-            # Yield items from the queue
-            while True:
-                if task.done() and (exception := task.exception()):
-                    raise exception
-
-                try:
-                    # Use a timeout to periodically check task status
-                    item: Event = await asyncio.wait_for(queue.get(), timeout=0.01)
-                except asyncio.TimeoutError:
-                    continue
-
-                yield item
-                if isinstance(item, RunnerStatusUpdated) and isinstance(
-                    item.runner_status, (LoadedRunnerStatus, FailedRunnerStatus)
-                ):
-                    if isinstance(item.runner_status, LoadedRunnerStatus):
-                        assigned_runner.failures = []
-
-                    break
-        finally:
-            # Ensure the task is cleaned up
-            try:
-                await asyncio.wait_for(task, timeout=5)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Timed out waiting for task cleanup after inference execution."
+                self.event_sender.send_nowait(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
+            elif (
+                progress.status == "in_progress"
+                and current_time() - last_progress_time > throttle_interval_secs
+            ):
+                status = DownloadOngoing(
+                    node_id=self.node_id,
+                    shard_metadata=shard,
+                    download_progress=map_repo_download_progress_to_download_progress_data(
+                        progress
+                    ),
                 )
+                self.download_status[shard] = status
+                self.event_sender.send_nowait(
+                    NodeDownloadProgress(download_progress=status)
+                )
+                last_progress_time = current_time()
 
-    ## Operation Planner
+        self.shard_downloader.on_progress(download_progress_callback)
+        assert self._tg
+        self._tg.start_soon(self.shard_downloader.ensure_shard, task.shard_metadata)
 
-    async def execute_op(self, op: RunnerOp) -> AsyncGenerator[Event, None]:
-        ## It would be great if we can get rid of this async for ... yield pattern.
-        match op:
-            case AssignRunnerOp():
-                event_generator = self._execute_assign_op(op)
-            case UnassignRunnerOp():
-                event_generator = self._execute_unassign_op(op)
-            case RunnerUpOp():
-                event_generator = self._execute_runner_up_op(op)
-            case RunnerDownOp():
-                event_generator = self._execute_runner_down_op(op)
-            case RunnerFailedOp():
-                event_generator = self._execute_runner_failed_op(op)
-            case ExecuteTaskOp():
-                event_generator = self._execute_task_op(op)
-
-        async for event in event_generator:
-            yield event
-
-    async def fail_runner(
-        self, e: Exception, runner_id: RunnerId
-    ) -> AsyncGenerator[Event]:
-        if runner_id in self.assigned_runners:
-            assigned_runner = self.assigned_runners[runner_id]
-
-            if assigned_runner.runner is not None:
-                await assigned_runner.runner.astop()
-                assigned_runner.runner = None
-            assigned_runner.status = FailedRunnerStatus(error_message=str(e))
-            assigned_runner.failures.append((time.time(), e))
-
-            # Reset failure count back to 0 when succesful
-            if len(assigned_runner.failures) >= 3:
-                # Too many retries. We will emit a DeleteInstance
-                yield InstanceDeleted(instance_id=assigned_runner.instance_id)
-
-            yield assigned_runner.status_update_event()
-
-    async def fail_task(
-        self, e: Exception, runner_id: RunnerId, task_id: TaskId
-    ) -> AsyncGenerator[Event]:
-        if runner_id in self.assigned_runners:
-            yield TaskStateUpdated(
-                task_id=task_id,
-                task_status=TaskStatus.Failed,
-            )
-
-            yield TaskFailed(
-                task_id=task_id, error_type=str(type(e)), error_message=str(e)
-            )
-
-            async for event in self.fail_runner(e, runner_id):
-                yield event
-
-    # This function is re-entrant, take care!
-    async def event_publisher(self, event: Event) -> None:
-        fe = ForwarderEvent(
-            origin_idx=self.local_event_index,
-            origin=self.node_id,
-            session=self.session_id,
-            event=event,
-        )
-        logger.debug(
-            f"Worker published event {self.local_event_index}: {str(event)[:100]}"
-        )
-        self.local_event_index += 1
-        await self.local_event_sender.send(fe)
-        self.out_for_delivery[event.event_id] = fe
+    async def _forward_events(self) -> None:
+        with self.event_receiver as events:
+            async for event in events:
+                fe = ForwarderEvent(
+                    origin_idx=self.local_event_index,
+                    origin=self.node_id,
+                    session=self.session_id,
+                    event=event,
+                )
+                logger.debug(
+                    f"Worker published event {self.local_event_index}: {str(event)[:100]}"
+                )
+                self.local_event_index += 1
+                await self.local_event_sender.send(fe)
+                self.out_for_delivery[event.event_id] = fe
 
 
 def event_relevant_to_worker(event: Event, worker: Worker):

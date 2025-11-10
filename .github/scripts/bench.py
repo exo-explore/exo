@@ -100,6 +100,23 @@ def fetch_state(api_base: str) -> dict[str, Any]:
     return _http_request(f"{api_base}/state")
 
 
+def unwrap_tagged_union(obj: Any) -> tuple[str | None, Any]:
+    """Extract tag and payload from tagged union format {Tag: {fields...}}.
+    
+    Returns (tag_name, payload) if the object is a tagged union, otherwise (None, obj).
+    """
+    if not isinstance(obj, dict):
+        return None, obj
+    
+    keys = list(obj.keys())
+    if len(keys) == 1 and isinstance(keys[0], str):
+        tag = keys[0]
+        payload = obj[tag]
+        return tag, payload
+    
+    return None, obj
+
+
 def collect_metrics_snapshot(state: Mapping[str, Any]) -> MetricsSnapshot:
     """Collect current metrics snapshot from state."""
     timestamp = time.time()
@@ -144,7 +161,9 @@ def collect_metrics_snapshot(state: Mapping[str, Any]) -> MetricsSnapshot:
     
     # Map instance_id -> node_ids (instances can span multiple nodes)
     instance_to_nodes: dict[str, set[str]] = {}
-    for instance_id, instance_data in instances.items():
+    for instance_id, instance_wrapped in instances.items():
+        # Unwrap tagged Instance union (MlxRingInstance or MlxIbvInstance)
+        _instance_tag, instance_data = unwrap_tagged_union(instance_wrapped)
         if not isinstance(instance_data, dict):
             continue
         
@@ -175,7 +194,7 @@ def collect_metrics_snapshot(state: Mapping[str, Any]) -> MetricsSnapshot:
             tasks_skipped += 1
             continue
         
-        # Extract actual task from wrapper (e.g., {"ChatCompletionTask": {...}})
+        # Extract actual task from wrapper (e.g., {"ChatCompletion": {...}})
         if len(task_wrapper) != 1:
             print(f"[DEBUG] Task wrapper has unexpected number of keys: {len(task_wrapper)}")
             tasks_skipped += 1
@@ -279,9 +298,14 @@ def count_instances_by_model(state: Mapping[str, Any], model_id: str) -> int:
     """Count how many instances exist for a given model_id."""
     instances: Mapping[str, Any] = state.get("instances", {})
     count = 0
-    for instance in instances.values():
-        shard = instance.get("shardAssignments", {})
-        if shard.get("modelId") == model_id:
+    for instance_wrapped in instances.values():
+        # Unwrap tagged Instance union
+        _instance_tag, instance_data = unwrap_tagged_union(instance_wrapped)
+        if not isinstance(instance_data, dict):
+            continue
+        
+        shard = instance_data.get("shardAssignments", {})
+        if isinstance(shard, dict) and shard.get("modelId") == model_id:
             count += 1
     return count
 
@@ -290,9 +314,14 @@ def get_all_instance_ids_for_model(state: Mapping[str, Any], model_id: str) -> l
     """Get all instance IDs for a given model_id."""
     instances: Mapping[str, Any] = state.get("instances", {})
     instance_ids = []
-    for instance_id, instance in instances.items():
-        shard = instance.get("shardAssignments", {})
-        if shard.get("modelId") == model_id:
+    for instance_id, instance_wrapped in instances.items():
+        # Unwrap tagged Instance union
+        _instance_tag, instance_data = unwrap_tagged_union(instance_wrapped)
+        if not isinstance(instance_data, dict):
+            continue
+        
+        shard = instance_data.get("shardAssignments", {})
+        if isinstance(shard, dict) and shard.get("modelId") == model_id:
             instance_ids.append(instance_id)
     return instance_ids
 
@@ -302,9 +331,14 @@ def count_ready_instances_by_model(state: Mapping[str, Any], model_id: str) -> i
     instances: Mapping[str, Any] = state.get("instances", {})
     ready_count = 0
     
-    for instance_id, instance in instances.items():
-        shard = instance.get("shardAssignments", {})
-        if shard.get("modelId") != model_id:
+    for instance_id, instance_wrapped in instances.items():
+        # Unwrap tagged Instance union
+        _instance_tag, instance_data = unwrap_tagged_union(instance_wrapped)
+        if not isinstance(instance_data, dict):
+            continue
+        
+        shard = instance_data.get("shardAssignments", {})
+        if not isinstance(shard, dict) or shard.get("modelId") != model_id:
             continue
         
         # Check if all runners for this instance are ready
@@ -312,8 +346,9 @@ def count_ready_instances_by_model(state: Mapping[str, Any], model_id: str) -> i
         if len(runner_ids) == 0:
             continue
         
+        # Fixed runner status names: RunnerReady and RunnerRunning (not LoadedRunnerStatus/RunningRunnerStatus)
         all_ready = all(
-            get_runner_status_kind(state, rid) in {"LoadedRunnerStatus", "RunningRunnerStatus"}
+            get_runner_status_kind(state, rid) in {"RunnerReady", "RunnerRunning"}
             for rid in runner_ids
         )
         
@@ -325,8 +360,18 @@ def count_ready_instances_by_model(state: Mapping[str, Any], model_id: str) -> i
 
 def get_runner_ids_for_instance(state: Mapping[str, Any], instance_id: str) -> list[str]:
     instances: Mapping[str, Any] = state.get("instances", {})
-    inst = instances.get(instance_id, {})
-    r2s = inst.get("shardAssignments", {}).get("runnerToShard", {})
+    instance_wrapped = instances.get(instance_id, {})
+    
+    # Unwrap tagged Instance union
+    _instance_tag, instance_data = unwrap_tagged_union(instance_wrapped)
+    if not isinstance(instance_data, dict):
+        return []
+    
+    shard_assignments = instance_data.get("shardAssignments", {})
+    if not isinstance(shard_assignments, dict):
+        return []
+    
+    r2s = shard_assignments.get("runnerToShard", {})
     if isinstance(r2s, dict):
         return list(r2s.keys())
     return []
@@ -860,8 +905,9 @@ async def run_benchmark(
     else:
         raise ValueError("Config must contain either 'model_id' or 'model_ids'")
     
-    # Get strategy (optional, defaults to None if not specified)
-    strategy: str | None = config.get("strategy")
+    # Get sharding and instance_meta (optional, defaults to None if not specified)
+    sharding: str | None = config.get("sharding")
+    instance_meta: str | None = config.get("instance_meta")
     
     # Get no_overlap flag (optional, defaults to False)
     no_overlap: bool = config.get("no_overlap", False)
@@ -874,7 +920,8 @@ async def run_benchmark(
     print(f"Configuration File: {config_path}")
     print(f"Model IDs:          {model_ids}")
     print(f"Instance Count:     {len(model_ids)}")
-    print(f"Strategy:           {strategy if strategy else 'not specified'}")
+    print(f"Sharding:           {sharding if sharding else 'not specified (defaults to Pipeline)'}")
+    print(f"Instance Type:      {instance_meta if instance_meta else 'not specified (defaults to MlxRing)'}")
     print(f"No Overlap:         {no_overlap}")
     print(f"Stages:             {len(stages)}")
     print(f"Expected Nodes:     {expected_nodes}")
@@ -916,8 +963,10 @@ async def run_benchmark(
                 
                 # Build instance creation request data
                 instance_data: dict[str, Any] = {"model_id": model_id}
-                if strategy is not None:
-                    instance_data["strategy"] = strategy
+                if sharding is not None:
+                    instance_data["sharding"] = sharding
+                if instance_meta is not None:
+                    instance_data["instance_meta"] = instance_meta
                 
                 response = await _http_request_async(
                     f"{api_base}/instance",
@@ -1027,7 +1076,8 @@ async def run_benchmark(
                     "instance_ids": all_instance_ids,
                     "instance_count": len(all_instance_ids),
                     "runner_count": total_runners,
-                    "strategy": strategy,
+                    "sharding": sharding,
+                    "instance_meta": instance_meta,
                 },
                 "configuration": {
                     "stages": [

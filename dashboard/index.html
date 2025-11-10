@@ -969,27 +969,29 @@
                 </select>
                 
                 <div class="strategy-selector">
-                    <label class="launch-label">Parallelization Strategy:</label>
+                    <label class="launch-label">Sharding:</label>
                     <div class="strategy-options">
                         <div class="strategy-option">
-                            <input type="radio" id="strategyAuto" name="strategy" value="auto" checked>
-                            <label for="strategyAuto">Auto</label>
+                            <input type="radio" id="shardingPipeline" name="sharding" value="Pipeline" checked>
+                            <label for="shardingPipeline">Pipeline</label>
                         </div>
                         <div class="strategy-option">
-                            <input type="radio" id="strategyPipeline" name="strategy" value="pipeline">
-                            <label for="strategyPipeline">Pipeline</label>
+                            <input type="radio" id="shardingTensor" name="sharding" value="Tensor">
+                            <label for="shardingTensor">Tensor</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="strategy-selector">
+                    <label class="launch-label">Instance Type:</label>
+                    <div class="strategy-options">
+                        <div class="strategy-option">
+                            <input type="radio" id="instanceMlxRing" name="instance_meta" value="MlxRing" checked>
+                            <label for="instanceMlxRing">MLX Ring</label>
                         </div>
                         <div class="strategy-option">
-                            <input type="radio" id="strategyTensor" name="strategy" value="tensor">
-                            <label for="strategyTensor">Tensor</label>
-                        </div>
-                        <div class="strategy-option">
-                            <input type="radio" id="strategyPipelineRdma" name="strategy" value="pipeline_rdma">
-                            <label for="strategyPipelineRdma">Pipeline RDMA</label>
-                        </div>
-                        <div class="strategy-option">
-                            <input type="radio" id="strategyTensorRdma" name="strategy" value="tensor_rdma">
-                            <label for="strategyTensorRdma">Tensor RDMA</label>
+                            <input type="radio" id="instanceMlxIbv" name="instance_meta" value="MlxIbv">
+                            <label for="instanceMlxIbv">MLX IBV</label>
                         </div>
                     </div>
                 </div>
@@ -1277,8 +1279,10 @@
                 return;
             }
 
-            const selectedStrategy = document.querySelector('input[name="strategy"]:checked').value;
-            console.log("selectedStrategy", selectedStrategy);
+            const selectedSharding = document.querySelector('input[name="sharding"]:checked').value;
+            const selectedInstanceMeta = document.querySelector('input[name="instance_meta"]:checked').value;
+            console.log("selectedSharding", selectedSharding);
+            console.log("selectedInstanceMeta", selectedInstanceMeta);
 
             try {
                 showLaunchStatus('Launching instance...', 'loading');
@@ -1291,7 +1295,8 @@
                     },
                     body: JSON.stringify({ 
                         model_id: selectedModelId,
-                        strategy: selectedStrategy
+                        sharding: selectedSharding,
+                        instance_meta: selectedInstanceMeta
                     })
                 });
 
@@ -1333,7 +1338,13 @@
         }
 
         // Calculate download status for an instance based on its runners, with detailed per-file info
-        function calculateInstanceDownloadStatus(instance, runners) {
+        function calculateInstanceDownloadStatus(instanceWrapped, runners) {
+            // Unwrap tagged Instance union (MlxRingInstance or MlxIbvInstance)
+            const [_instanceTag, instance] = getTagged(instanceWrapped);
+            if (!instance || typeof instance !== 'object') {
+                return { isDownloading: false, progress: 0, details: [] };
+            }
+            
             if (!instance.shardAssignments?.runnerToShard || !runners) {
                 return { isDownloading: false, progress: 0, details: [] };
             }
@@ -1423,28 +1434,36 @@
         }
 
 
-        // Derive a display status for an instance from its runners.
-        // Priority: FAILED > DOWNLOADING > STARTING > RUNNING > LOADED > INACTIVE
-        function deriveInstanceStatus(instance, runners = {}) {
-            const runnerIds = Object.keys(instance.shardAssignments?.runnerToShard || {});
-
-            function getTagged(obj) {
-                if (!obj || typeof obj !== 'object') return [null, null];
-                const keys = Object.keys(obj);
-                if (keys.length === 1 && typeof keys[0] === 'string') {
-                    return [keys[0], obj[keys[0]]];
-                }
-                return [null, null];
+        // Helper function to unwrap tagged unions (defined globally for reuse)
+        function getTagged(obj) {
+            if (!obj || typeof obj !== 'object') return [null, null];
+            const keys = Object.keys(obj);
+            if (keys.length === 1 && typeof keys[0] === 'string') {
+                return [keys[0], obj[keys[0]]];
             }
+            return [null, null];
+        }
+
+        // Derive a display status for an instance from its runners.
+        // Priority: FAILED > DOWNLOADING > STARTING > RUNNING > READY > LOADED > INACTIVE
+        function deriveInstanceStatus(instanceWrapped, runners = {}) {
+            // Unwrap tagged Instance union
+            const [_instanceTag, instance] = getTagged(instanceWrapped);
+            if (!instance || typeof instance !== 'object') {
+                return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+            }
+            
+            const runnerIds = Object.keys(instance.shardAssignments?.runnerToShard || {});
 
             function canonicalStatusFromKind(kind) {
                 const map = {
-                    DownloadingRunnerStatus: 'Downloading',
-                    InactiveRunnerStatus: 'Inactive',
-                    StartingRunnerStatus: 'Starting',
-                    LoadedRunnerStatus: 'Loaded',
-                    RunningRunnerStatus: 'Running',
-                    FailedRunnerStatus: 'Failed',
+                    RunnerWaitingForModel: 'WaitingForModel',
+                    RunnerLoading: 'Loading',
+                    RunnerLoaded: 'Loaded',
+                    RunnerWarmingUp: 'WarmingUp',
+                    RunnerReady: 'Ready',
+                    RunnerRunning: 'Running',
+                    RunnerFailed: 'Failed',
                 };
                 return map[kind] || null;
             }
@@ -1464,32 +1483,24 @@
             const every = (pred) => statuses.length > 0 && statuses.every(pred);
 
             if (statuses.length === 0) {
-                const it = instance.instanceType;
-                const inactive = (it === 'Inactive' || it === 'INACTIVE');
-                return { statusText: inactive ? 'INACTIVE' : 'LOADED', statusClass: inactive ? 'inactive' : 'loaded' };
+                return { statusText: 'UNKNOWN', statusClass: 'inactive' };
             }
 
             if (has('Failed')) return { statusText: 'FAILED', statusClass: 'failed' };
-            if (has('Downloading')) return { statusText: 'DOWNLOADING', statusClass: 'downloading' };
-            if (has('Starting')) return { statusText: 'LOADING', statusClass: 'starting' };
+            if (has('Loading')) return { statusText: 'LOADING', statusClass: 'starting' };
+            if (has('WarmingUp')) return { statusText: 'WARMING UP', statusClass: 'starting' };
             if (has('Running')) return { statusText: 'RUNNING', statusClass: 'running' };
+            if (has('Ready')) return { statusText: 'READY', statusClass: 'loaded' };
+            if (has('Loaded')) return { statusText: 'LOADED', statusClass: 'loaded' };
+            if (has('WaitingForModel')) return { statusText: 'WAITING', statusClass: 'starting' };
 
-            const allInactive = every(s => s === 'Inactive');
-            const loadedOrInactiveOnly = every(s => s === 'Loaded' || s === 'Inactive');
-            const anyLoaded = statuses.some(s => s === 'Loaded');
-            if (loadedOrInactiveOnly && anyLoaded) {
-                return { statusText: 'LOADED', statusClass: 'loaded' };
-            }
-            if (allInactive) {
-                return { statusText: 'INACTIVE', statusClass: 'inactive' };
-            }
-            return { statusText: 'LOADED', statusClass: 'loaded' };
+            return { statusText: 'UNKNOWN', statusClass: 'inactive' };
         }
 
         function renderInstances(instances, runners = {}) {
-            const instancesArray = Object.values(instances);
+            const instanceEntries = Object.entries(instances || {});
             
-            if (instancesArray.length === 0) {
+            if (instanceEntries.length === 0) {
                 instancesList.innerHTML = '<div class="no-instances">No instances running</div>';
                 return;
             }
@@ -1498,8 +1509,17 @@
             instanceIdToColor = {};
             connectionToInstances = {};
             
-            instancesArray.forEach(instance => {
-                const instanceId = instance.instanceId;
+            instanceEntries.forEach(([instanceId, instanceWrapped]) => {
+                // Validate instanceId
+                if (!instanceId || typeof instanceId !== 'string') {
+                    return;
+                }
+                
+                // Unwrap tagged Instance union
+                const [_instanceTag, instance] = getTagged(instanceWrapped);
+                if (!instance || typeof instance !== 'object') {
+                    return;
+                }
                 instanceIdToColor[instanceId] = generateInstanceColor(instanceId);
                 
                 // Determine which nodes this instance uses
@@ -1521,11 +1541,22 @@
                 }
             });
 
-            const instancesHTML = instancesArray.map(instance => {
+            const instancesHTML = instanceEntries.map(([instanceId, instanceWrapped]) => {
+                // Validate instanceId
+                if (!instanceId || typeof instanceId !== 'string') {
+                    return '';
+                }
+                
+                // Unwrap tagged Instance union
+                const [_instanceTag, instance] = getTagged(instanceWrapped);
+                if (!instance || typeof instance !== 'object') {
+                    return '';
+                }
+                
                 const modelId = instance.shardAssignments?.modelId || 'Unknown Model';
-                const truncatedInstanceId = instance.instanceId.length > 8 
-                    ? instance.instanceId.substring(0, 8) + '...' 
-                    : instance.instanceId;
+                const truncatedInstanceId = instanceId.length > 8 
+                    ? instanceId.substring(0, 8) + '...' 
+                    : instanceId;
                 
                 // Create reverse mapping from runnerId to nodeId using nodeToRunner
                 const nodeToRunner = instance.shardAssignments?.nodeToRunner || {};
@@ -1534,19 +1565,30 @@
                     runnerToNode[runnerId] = nodeId;
                 });
                 
-                // Extract parallelization strategy from the first shard
+                // Extract sharding strategy from the first shard
+                // Shards are tagged unions: {"PipelineShardMetadata": {...}} or {"TensorShardMetadata": {...}}
                 const runnerToShard = instance.shardAssignments?.runnerToShard || {};
-                const firstShardData = Object.values(runnerToShard)[0];
-                let parallelizationStrategy = 'Unknown';
-                if (firstShardData) {
-                    const shardKeys = Object.keys(firstShardData);
-                    if (shardKeys.length === 1) {
-                        const shardPayload = firstShardData[shardKeys[0]];
-                        parallelizationStrategy = shardPayload?.strategy || firstShardData.strategy || 'Unknown';
-                    } else {
-                        parallelizationStrategy = firstShardData.strategy || 'Unknown';
+                const firstShardWrapped = Object.values(runnerToShard)[0];
+                let shardingType = 'Unknown';
+                if (firstShardWrapped) {
+                    const [shardTag, _shardData] = getTagged(firstShardWrapped);
+                    if (shardTag === 'PipelineShardMetadata') {
+                        shardingType = 'Pipeline';
+                    } else if (shardTag === 'TensorShardMetadata') {
+                        shardingType = 'Tensor';
                     }
                 }
+                
+                // Extract instance type from the tagged union
+                // Instance is tagged as {"MlxRingInstance": {...}} or {"MlxIbvInstance": {...}}
+                let instanceType = 'Unknown';
+                if (_instanceTag === 'MlxRingInstance') {
+                    instanceType = 'MLX Ring';
+                } else if (_instanceTag === 'MlxIbvInstance') {
+                    instanceType = 'MLX IBV';
+                }
+                
+                const parallelizationStrategy = `${shardingType} (${instanceType})`;
                 
                 // Generate hosts HTML using runner IDs and friendly names
                 const runnerIds = Object.keys(runnerToShard);
@@ -1559,14 +1601,14 @@
                     return `<span class="instance-host">${friendlyName} (${shortId})</span>`;
                 }).join('') || '';
 
-                // Calculate download status for this instance
-                const downloadStatus = calculateInstanceDownloadStatus(instance, runners);
+                // Calculate download status for this instance (pass wrapped instance)
+                const downloadStatus = calculateInstanceDownloadStatus(instanceWrapped, runners);
 
                 let statusText, statusClass;
                 if (downloadStatus.isDownloading) {
                     ({ statusText, statusClass } = { statusText: 'DOWNLOADING', statusClass: 'downloading' });
                 } else {
-                    ({ statusText, statusClass } = deriveInstanceStatus(instance, runners));
+                    ({ statusText, statusClass } = deriveInstanceStatus(instanceWrapped, runners));
                 }
 
                 // Generate download progress HTML - overall + per node with file details
@@ -1660,7 +1702,7 @@
                 const shardCount = Object.keys(runnerToShard).length;
                 
                 // Use the instance's color for the indicator
-                const instanceColor = instanceIdToColor[instance.instanceId] || 'var(--exo-yellow)';
+                const instanceColor = instanceIdToColor[instanceId] || 'var(--exo-yellow)';
                 const borderStyle = `background-color: ${instanceColor};`;
                 
                 return `
@@ -1672,7 +1714,7 @@
                                 <span class="instance-status ${statusClass}">${statusText}</span>
                             </div>
                             <div class="instance-actions">
-                                <button class="instance-delete-button" data-instance-id="${instance.instanceId}" title="Delete Instance">
+                                <button class="instance-delete-button" data-instance-id="${instanceId}" title="Delete Instance">
                                     Delete
                                 </button>
                             </div>

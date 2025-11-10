@@ -1,5 +1,6 @@
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
+from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -19,6 +20,7 @@ class DownloadProgressData(CamelCaseModel):
 
 class BaseDownloadProgress(TaggedModel):
     node_id: NodeId
+    shard_metadata: ShardMetadata
 
 
 class DownloadPending(BaseDownloadProgress):

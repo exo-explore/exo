@@ -175,7 +175,7 @@ def stream_generate(
     prompt: Union[str, mx.array, List[int]],
     max_tokens: int = ...,
     draft_model: Optional[nn.Module] = ...,
-    **kwargs,
+    **kwargs: object,
 ) -> Generator[GenerationResponse, None, None]:
     """
     A generator producing text based on the given prompt from the model.

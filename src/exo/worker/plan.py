@@ -1,303 +1,197 @@
-from typing import Mapping
+# pyright: reportUnusedImport = false
+
+from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import (
-    InstanceId,
+from exo.shared.types.tasks import (
+    ChatCompletion,
+    CreateRunner,
+    DownloadModel,
+    LoadModel,
+    Shutdown,
+    StartWarmup,
+    Task,
+    TaskId,
+    TaskStatus,
 )
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.worker.common import RunnerId
-from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import Instance, InstanceStatus
-from exo.shared.types.worker.ops import (
-    AssignRunnerOp,
-    ExecuteTaskOp,
-    RunnerDownOp,
-    RunnerFailedOp,
-    RunnerOp,
-    RunnerUpOp,
-    UnassignRunnerOp,
-)
+from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress
+from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import (
-    DownloadingRunnerStatus,
-    FailedRunnerStatus,
-    InactiveRunnerStatus,
-    LoadedRunnerStatus,
+    RunnerId,
+    RunnerLoaded,
+    RunnerLoading,
+    RunnerReady,
+    RunnerRunning,
     RunnerStatus,
-    RunningRunnerStatus,
-    StartingRunnerStatus,
+    RunnerWaitingForModel,
+    RunnerWarmingUp,
 )
-from exo.worker.common import AssignedRunner
-
-
-def unassign_runners(
-    instances: Mapping[InstanceId, Instance],
-    state_runners: Mapping[RunnerId, RunnerStatus],
-    assigned_runners: dict[RunnerId, AssignedRunner],
-) -> UnassignRunnerOp | None:
-    runner_ids: set[RunnerId] = {
-        runner_id
-        for instance in instances.values()
-        for runner_id in instance.shard_assignments.runner_to_shard
-    }
-    for runner_id, _ in assigned_runners.items():
-        if runner_id not in runner_ids:
-            return UnassignRunnerOp(runner_id=runner_id)
-
-    # If our instance is in 'downloading' or 'assigned' state, then we know the runner is stale. These are part of AssignRunnerOp and should be blocking.
-    for assigned_runner_id in assigned_runners:
-        if assigned_runner_id in state_runners:
-            status = state_runners[assigned_runner_id]
-            if isinstance(status, DownloadingRunnerStatus) and not isinstance(
-                status.download_progress, DownloadCompleted
-            ):
-                return UnassignRunnerOp(runner_id=assigned_runner_id)
-
-    return None
-
-
-def failed_runners(
-    assigned_runners: dict[RunnerId, AssignedRunner],
-) -> RunnerFailedOp | None:
-    for runner_id, assigned_runner in assigned_runners.items():
-        if (
-            assigned_runner.runner is not None
-            and not assigned_runner.runner.runner_process.is_alive()
-            and not isinstance(assigned_runner.status, FailedRunnerStatus)
-        ):
-            return RunnerFailedOp(runner_id=runner_id)
-    return None
-
-
-def spin_down_runners(
-    instances: Mapping[InstanceId, Instance],
-    assigned_runners: dict[RunnerId, AssignedRunner],
-    state_runners: Mapping[RunnerId, RunnerStatus],
-    worker_node_id: NodeId,
-) -> RunnerDownOp | None:
-    for _instance_id, instance in instances.items():
-        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
-            if node_id != worker_node_id:
-                continue
-
-            # We spin down a runner if it's meant to be inactive and it's Loaded.
-            if (
-                runner_id in assigned_runners
-                and isinstance(assigned_runners[runner_id].status, LoadedRunnerStatus)
-                and instance.instance_type == InstanceStatus.Inactive
-            ):
-                return RunnerDownOp(runner_id=runner_id)
-
-    # If we are part of an instance that has a dead node - and we aren't the dead node - we should spin down
-    for _instance_id, instance in instances.items():
-        if (
-            worker_node_id in instance.shard_assignments.node_to_runner
-            and instance.shard_assignments.node_to_runner[worker_node_id]
-            in assigned_runners
-            and not isinstance(
-                assigned_runners[
-                    instance.shard_assignments.node_to_runner[worker_node_id]
-                ].status,
-                InactiveRunnerStatus,
-            )
-        ):  # make sure that our runner has not already been spun down into ready state
-            other_node_in_instance_has_failed = False
-            for runner_id in instance.shard_assignments.runner_to_shard:
-                if (
-                    runner_id in state_runners
-                    and isinstance(state_runners[runner_id], FailedRunnerStatus)
-                    and runner_id not in assigned_runners
-                ):
-                    other_node_in_instance_has_failed = True
-
-            if other_node_in_instance_has_failed:
-                # Spin down *our* runner
-                return RunnerDownOp(
-                    runner_id=instance.shard_assignments.node_to_runner[worker_node_id]
-                )
-
-    # If we are failed - and *all of the other nodes have spun down* - then we can spin down too.
-    for _instance_id, instance in instances.items():
-        if (
-            worker_node_id in instance.shard_assignments.node_to_runner
-            and instance.shard_assignments.node_to_runner[worker_node_id]
-            in state_runners
-            and instance.shard_assignments.node_to_runner[worker_node_id]
-            in assigned_runners
-            and isinstance(
-                assigned_runners[
-                    instance.shard_assignments.node_to_runner[worker_node_id]
-                ].status,
-                FailedRunnerStatus,
-            )
-        ):
-            num_spundown_nodes = 0
-            for runner_id in instance.shard_assignments.runner_to_shard:
-                if (
-                    runner_id in state_runners
-                    and isinstance(state_runners[runner_id], InactiveRunnerStatus)
-                    and runner_id not in assigned_runners
-                ):
-                    num_spundown_nodes += 1
-                # Suggested:
-                # if runner_id in state_runners and isinstance(state.runners[runner_id], InactiveRunnerStatus):
-                #     if runner_id != instance.shard_assignments.node_to_runner[worker_node_id]:
-                #         num_spundown_nodes += 1
-
-            if (
-                num_spundown_nodes
-                == next(
-                    iter(instance.shard_assignments.runner_to_shard.values())
-                ).world_size
-                - 1
-            ):
-                # All the other nodes are spun down - so now we can spin down too.
-                # This also catches the case of 1-node. If there's one node in the instance then we should spin down straight away
-                return RunnerDownOp(
-                    runner_id=instance.shard_assignments.node_to_runner[worker_node_id]
-                )
-    return None
-
-
-def assign_runners(
-    instances: Mapping[InstanceId, Instance],
-    assigned_runners: dict[RunnerId, AssignedRunner],
-    worker_node_id: NodeId,
-) -> AssignRunnerOp | None:
-    for instance_id, instance in instances.items():
-        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
-            if node_id != worker_node_id:
-                continue
-
-            if runner_id not in assigned_runners:
-                return AssignRunnerOp(
-                    runner_id=runner_id,
-                    instance_id=instance_id,
-                    shard_metadata=instance.shard_assignments.runner_to_shard[
-                        runner_id
-                    ],
-                    hosts=instance.hosts,
-                    mlx_ibv_devices=instance.mlx_ibv_devices,
-                    mlx_ibv_coordinator=instance.mlx_ibv_coordinator,
-                )
-    return None
-
-
-def spin_up_runners(
-    instances: Mapping[InstanceId, Instance],
-    assigned_runners: dict[RunnerId, AssignedRunner],
-    state_runners: Mapping[RunnerId, RunnerStatus],
-    worker_node_id: NodeId,
-) -> RunnerUpOp | None:
-    for _instance_id, instance in instances.items():
-        if (
-            worker_node_id in instance.shard_assignments.node_to_runner
-            and assigned_runners[
-                instance.shard_assignments.node_to_runner[worker_node_id]
-            ].runner
-            is None
-            and instance.instance_type == InstanceStatus.Active
-        ):
-            # We are part of this instance, we want it up but it hasn't been spun up yet.
-            # Need to assert all other runners are ready before we can spin up.
-            ready_to_spin = True
-            for runner_id in instance.shard_assignments.node_to_runner.values():
-                if runner_id in state_runners and isinstance(
-                    state_runners[runner_id],
-                    (
-                        InactiveRunnerStatus,
-                        StartingRunnerStatus,
-                    ),
-                ):
-                    ready_to_spin = False
-
-            if ready_to_spin:
-                return RunnerUpOp(
-                    runner_id=instance.shard_assignments.node_to_runner[worker_node_id]
-                )
-    return None
-
-
-def execute_task_op(
-    instances: Mapping[InstanceId, Instance],
-    assigned_runners: dict[RunnerId, AssignedRunner],
-    state_runners: Mapping[RunnerId, RunnerStatus],
-    tasks: Mapping[TaskId, Task],
-    worker_node_id: NodeId,
-) -> ExecuteTaskOp | None:
-    for instance_id, instance in instances.items():
-        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
-            if node_id != worker_node_id:
-                continue
-            assert runner_id in assigned_runners
-            runner = assigned_runners[runner_id]
-            if not isinstance(runner.status, LoadedRunnerStatus):
-                continue  # The only previous state to get to Running is from Loaded
-
-            for _, task in tasks.items():
-                if task.instance_id == instance_id and (
-                    task.task_status in (TaskStatus.Pending, TaskStatus.Failed)
-                ):
-                    if (
-                        runner.shard_metadata.device_rank >= 1
-                        or runner.shard_metadata.world_size == 1
-                    ):
-                        return ExecuteTaskOp(runner_id=runner_id, task=task)
-                    else:
-                        # We already know our own status is Loaded. We are rank 0,
-                        # so let's check that all the other runners are running - ready for us to fire the prompt.
-                        running_runner_count = 0
-                        for (
-                            other_runner_id,
-                            other_runner_status,
-                        ) in state_runners.items():
-                            if (
-                                other_runner_id
-                                in instance.shard_assignments.node_to_runner.values()
-                                and isinstance(other_runner_status, RunningRunnerStatus)
-                            ):
-                                running_runner_count += 1
-
-                        if running_runner_count == runner.shard_metadata.world_size - 1:
-                            return ExecuteTaskOp(runner_id=runner_id, task=task)
-
-    return None
+from exo.shared.types.worker.shards import ShardMetadata
+from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
 def plan(
-    assigned_runners: dict[RunnerId, AssignedRunner],
-    worker_node_id: NodeId,
+    node_id: NodeId,
+    # Runners is expected to be FRESH and so should not come from state
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    # DL_status is expected to be FRESH and so should not come from state
+    download_status: Mapping[ShardMetadata, DownloadProgress],
+    # gdls is not expected to be fresh
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     instances: Mapping[InstanceId, Instance],
-    state_runners: Mapping[RunnerId, RunnerStatus],  # all global
+    all_runners: Mapping[RunnerId, RunnerStatus],  # all global
     tasks: Mapping[TaskId, Task],
-) -> RunnerOp | None:
-    # First, unassign assigned runners that are no longer in the state.
-    if unop := unassign_runners(instances, state_runners, assigned_runners):
-        return unop
+) -> Task | None:
+    # Python short circuiting OR logic should evaluate these sequentially.
+    return (
+        _kill_runner(runners, all_runners, instances)
+        or _create_runner(node_id, runners, instances)
+        or _model_needs_download(runners, download_status)
+        or _load_model(runners, all_runners, global_download_status)
+        or _ready_to_warmup(runners, all_runners)
+        or _pending_tasks(runners, tasks, all_runners)
+    )
 
-    # mark failed runners that are not marked yet as failed
-    if failed_op := failed_runners(assigned_runners):
-        return failed_op
 
-    # spin down runners that are no longer needed
-    if down_op := spin_down_runners(
-        instances, assigned_runners, state_runners, worker_node_id
-    ):
-        return down_op
+def _kill_runner(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
+    instances: Mapping[InstanceId, Instance],
+) -> Shutdown | None:
+    for runner in runners.values():
+        if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
+            return Shutdown(instance_id=instance_id, runner_id = runner.bound_instance.bound_runner_id)
 
-    # Then assign runners we do want
-    if assign_op := assign_runners(instances, assigned_runners, worker_node_id):
-        return assign_op
+        """ --- Potential code to kill a runner if any runners in its instance have failed ---
+        global_runners_in_instance = runner.bound_instance.instance.shard_assignments.node_to_runner.values()
+        if any(isinstance(all_runners[runner_id], RunnerFailed) for runner_id in global_runners_in_instance if runner_id != runner.bound_instance.bound_runner_id):
+            Shutdown(instance_id=runner.bound_instance.instance.instance_id, runner_id=runner.bound_instance.bound_runner_id)
+        """
 
-    # Then spin up 'ready' runners that should be active
-    if runner_up_op := spin_up_runners(
-        instances, assigned_runners, state_runners, worker_node_id
-    ):
-        return runner_up_op
 
-    # Then make sure things are running based on tasks.
-    if exec_op := execute_task_op(
-        instances, assigned_runners, state_runners, tasks, worker_node_id
-    ):
-        return exec_op
+def _create_runner(
+    node_id: NodeId,
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    instances: Mapping[InstanceId, Instance],
+) -> CreateRunner | None:
+    for instance in instances.values():
+        runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
+        if runner_id is None:
+            continue
 
-    return None
+        if runner_id in runners:
+            continue
+
+        shard = instance.shard(runner_id)
+        assert shard is not None
+
+        return CreateRunner(
+            instance_id=instance.instance_id,
+            bound_instance=BoundInstance(instance=instance, bound_runner_id=runner_id),
+        )
+
+
+def _model_needs_download(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    download_status: Mapping[ShardMetadata, DownloadProgress],
+) -> DownloadModel | None:
+    for runner in runners.values():
+        if (
+            isinstance(runner.status, RunnerWaitingForModel)
+            and runner.bound_instance.bound_shard() not in download_status
+        ):
+            # We don't invalidate download_status randomly in case a file gets deleted on disk
+            return DownloadModel(
+                instance_id=runner.bound_instance.instance.instance_id,
+                shard_metadata=runner.bound_instance.bound_shard(),
+            )
+
+
+""" --- TODO!
+def _init_backend(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
+) -> LoadModel | None:
+    for runner in runner.values()
+    pass
+"""
+
+
+def _load_model(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> LoadModel | None:
+    for runner in runners.values():
+        if (
+            all(
+                isinstance(dp, DownloadCompleted)
+                if dp.shard_metadata
+                == runner.bound_instance.instance.shard_assignments.runner_to_shard[rid]
+                else True
+                for nid, rid in runner.bound_instance.instance.shard_assignments.node_to_runner.items()
+                for dp in global_download_status[nid]
+            )
+            and isinstance(runner.status, RunnerWaitingForModel)
+            and all(
+                isinstance(
+                    all_runners.get(global_runner_id, None),
+                    (RunnerWaitingForModel, RunnerLoading, RunnerLoaded),
+                )
+                for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+            )
+        ):
+            return LoadModel(instance_id=runner.bound_instance.instance.instance_id)
+
+
+def _ready_to_warmup(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    all_runners: Mapping[RunnerId, RunnerStatus],
+) -> StartWarmup | None:
+    for runner in runners.values():
+        if isinstance(runner.status, RunnerLoaded) and (
+            (
+                all(
+                    isinstance(
+                        all_runners.get(global_runner_id, None),
+                        (RunnerLoaded, RunnerWarmingUp),
+                    )
+                    for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+                )
+                and runner.bound_instance.bound_shard().device_rank != 0
+            )
+            or (
+                all(
+                    isinstance(
+                        all_runners.get(global_runner_id, None), (RunnerWarmingUp)
+                    )
+                    for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+                    if global_runner_id != runner.bound_instance.bound_runner_id
+                )
+                and runner.bound_instance.bound_shard().device_rank == 0
+            )
+        ):
+            return StartWarmup(instance_id=runner.bound_instance.instance.instance_id)
+
+
+def _pending_tasks(
+    runners: Mapping[RunnerId, RunnerSupervisor],
+    tasks: Mapping[TaskId, Task],
+    all_runners: Mapping[RunnerId, RunnerStatus],
+) -> Task | None:
+    for task in tasks.values():
+        # for now, just forward chat completions
+        if not isinstance(task, ChatCompletion):
+            continue
+        if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
+            continue
+
+        for runner in runners.values():
+            if task.instance_id != runner.bound_instance.instance.instance_id:
+                continue
+
+            if isinstance(runner.status, RunnerReady) and all(
+                isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
+                for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+            ):
+                return task

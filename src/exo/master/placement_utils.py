@@ -10,11 +10,10 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.topology import NodeInfo
-from exo.shared.types.worker.common import RunnerId
-from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
-from exo.shared.types.worker.runners import ShardAssignments
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
+    Sharding,
     ShardMetadata,
     TensorShardMetadata,
 )
@@ -53,7 +52,6 @@ def get_smallest_cycles(cycles: list[list[NodeInfo]]) -> list[list[NodeInfo]]:
 def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeInfo],
-    parallelisation_strategy: ParallelisationStrategyType,
 ):
     if not narrow_all_nodes(selected_cycle):
         raise ValueError("All nodes must have profiles to create shard assignments")
@@ -90,7 +88,6 @@ def get_shard_assignments_for_pipeline_parallel(
             start_layer=layers_assigned,
             end_layer=layers_assigned + node_layers,
             n_layers=total_layers,
-            strategy=parallelisation_strategy,
         )
 
         runner_to_shard[runner_id] = shard
@@ -109,7 +106,6 @@ def get_shard_assignments_for_pipeline_parallel(
 def get_shard_assignments_for_tensor_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeInfo],
-    parallelisation_strategy: ParallelisationStrategyType,
 ):
     if not narrow_all_nodes(selected_cycle):
         raise ValueError("All nodes must have profiles to create shard assignments")
@@ -127,7 +123,6 @@ def get_shard_assignments_for_tensor_parallel(
             start_layer=0,
             end_layer=total_layers,
             n_layers=total_layers,
-            strategy=parallelisation_strategy,
         )
 
         runner_id = RunnerId()
@@ -147,38 +142,18 @@ def get_shard_assignments_for_tensor_parallel(
 def get_shard_assignments(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeInfo],
-    parallelisation_strategy: ParallelisationStrategyType,
+    sharding: Sharding,
 ) -> ShardAssignments:
-    match parallelisation_strategy:
-        case "auto":
+    match sharding:
+        case Sharding.Pipeline:
             return get_shard_assignments_for_pipeline_parallel(
                 model_meta=model_meta,
                 selected_cycle=selected_cycle,
-                parallelisation_strategy=parallelisation_strategy,
             )
-        case "pipeline":
-            return get_shard_assignments_for_pipeline_parallel(
-                model_meta=model_meta,
-                selected_cycle=selected_cycle,
-                parallelisation_strategy=parallelisation_strategy,
-            )
-        case "pipeline_rdma":
-            return get_shard_assignments_for_pipeline_parallel(
-                model_meta=model_meta,
-                selected_cycle=selected_cycle,
-                parallelisation_strategy=parallelisation_strategy,
-            )
-        case "tensor":
+        case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
                 model_meta=model_meta,
                 selected_cycle=selected_cycle,
-                parallelisation_strategy=parallelisation_strategy,
-            )
-        case "tensor_rdma":
-            return get_shard_assignments_for_tensor_parallel(
-                model_meta=model_meta,
-                selected_cycle=selected_cycle,
-                parallelisation_strategy=parallelisation_strategy,
             )
 
 
@@ -300,17 +275,12 @@ def _find_interface_name_for_ip(
 def get_mlx_ibv_coordinator(
     selected_cycle: list[NodeInfo],
     coordinator_port: int,
-) -> str | None:
+) -> str:
     """Get the coordinator address for MLX IBV (rank 0 device).
 
     Selects a non-thunderbolt IP address from rank 0 node as a heuristic for
     ethernet accessibility. Returns address in format "X.X.X.X:PORT".
     """
-
-    if len(selected_cycle) == 0:
-        logger.warning("No nodes in selected cycle, cannot determine coordinator")
-        return None
-
     rank_0_node = selected_cycle[0]
     logger.info(f"Selecting coordinator from rank 0 node: {rank_0_node.node_id}")
     assert rank_0_node.node_profile is not None

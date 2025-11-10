@@ -37,3 +37,7 @@ class TaggedModel(CamelCaseModel):
             return handler(v[cls.__name__])
 
         return handler(v)
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}({super().__str__()})"
+

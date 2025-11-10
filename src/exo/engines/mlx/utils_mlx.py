@@ -1,12 +1,10 @@
-import asyncio
-import concurrent.futures
 import os
 import resource
-from asyncio import AbstractEventLoop
 from typing import Any, Callable, cast
 
 from mlx_lm.models.cache import KVCache
 from mlx_lm.sample_utils import make_sampler
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.runner.utils import get_weights_size
 
@@ -15,22 +13,30 @@ try:
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
 from mlx_lm.utils import load_model
-from mlx.utils import tree_reduce
 from pydantic import RootModel
 
 import mlx.core as mx
 import mlx.nn as nn
-from exo.engines.mlx import Model, TokenizerWrapper
+from exo.engines.mlx import Model
 from exo.engines.mlx.auto_parallel import (
-    PipelineParallelisationStrategy,
-    TensorParallelisationStrategy,
+    pipeline_auto_parallel,
+    tensor_auto_parallel,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.common import Host
 from exo.shared.types.tasks import ChatCompletionTaskParams
-from exo.shared.types.worker.communication import runner_print
-from exo.shared.types.worker.shards import ShardMetadata
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    MlxIbvInstance,
+    MlxRingInstance,
+)
+from exo.shared.types.worker.shards import (
+    PipelineShardMetadata,
+    ShardMetadata,
+    TensorShardMetadata,
+)
 from exo.worker.download.download_utils import build_model_path
+from exo.worker.runner.bootstrap import logger
 
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
@@ -70,11 +76,7 @@ class HostList(RootModel[list[str]]):
 
 
 def mlx_distributed_init(
-    rank: int,
-    hosts: list[Host] | None = None,
-    mlx_ibv_devices: list[list[str | None]] | None = None,
-    mlx_ibv_coordinator: str | None = None,
-    strict: bool = True,
+    bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
     """
     Initialize the MLX distributed (runs in thread pool).
@@ -85,117 +87,100 @@ def mlx_distributed_init(
     - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
     - strict: if True, raise an error if the distributed backend is not available
     """
-    runner_print(f"Starting initialization for rank {rank}. Strict: {strict}")
+    rank = bound_instance.bound_shard().device_rank
+    logger.info(f"Starting initialization for rank {rank}")
 
-    if mlx_ibv_devices is not None and mlx_ibv_devices != []:
-        assert mlx_ibv_coordinator is not None, (
-            "To use ibv backend must set ibv coordinator"
-        )
-        import json
+    # TODO: singleton instances
+    match bound_instance.instance:
+        case MlxRingInstance(hosts=hosts):
+            hostfile = f"./hosts_{rank}.json"
+            hosts_json = HostList.from_hosts(hosts).model_dump_json()
 
-        # Use RDMA connectivity matrix
-        devices_file = f"./hosts_{rank}.json"
-        ibv_devices_json = json.dumps(mlx_ibv_devices)
-        runner_print(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
-        runner_print(f"rank {rank} MLX_IBV_COORDINATOR: {mlx_ibv_coordinator}")
+            with open(hostfile, "w") as f:
+                _ = f.write(hosts_json)
 
-        with open(devices_file, "w") as f:
-            _ = f.write(ibv_devices_json)
+            logger.info(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
 
-        os.environ["MLX_IBV_DEVICES"] = devices_file
-        os.environ["MLX_RANK"] = str(rank)
-        os.environ["MLX_IBV_COORDINATOR"] = mlx_ibv_coordinator
-    elif hosts is not None and hosts != []:
-        # Traditional host-based connectivity
-        hostfile = f"./hosts_{rank}.json"
-        hosts_json = HostList.from_hosts(hosts).model_dump_json()
+            os.environ["MLX_HOSTFILE"] = hostfile
+            os.environ["MLX_RANK"] = str(rank)
+            os.environ["MLX_RING_VERBOSE"] = "1"
+            group = mx.distributed.init(backend="ring", strict=True)
 
-        runner_print(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
+        case MlxIbvInstance(ibv_devices=ibv_devices, ibv_coordinator=ibv_coordinator):
+            import json
 
-        with open(hostfile, "w") as f:
-            _ = f.write(hosts_json)
+            # Use RDMA connectivity matrix
+            devices_file = f"./hosts_{rank}.json"
+            ibv_devices_json = json.dumps(ibv_devices)
 
-        os.environ["MLX_HOSTFILE"] = hostfile
-        os.environ["MLX_RANK"] = str(rank)
-        os.environ["MLX_RING_VERBOSE"] = "1"
-    else:
-        runner_print("No distributed setup, using single device mode")
+            with open(devices_file, "w") as f:
+                _ = f.write(ibv_devices_json)
 
-    group = mx.distributed.init(
-        backend="ring" if hosts is not None else "ibv",
-        strict=strict,
-    )
-    runner_print(f"Rank {rank} mlx distributed initialization complete")
+            logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
+            logger.info(f"rank {rank} MLX_IBV_COORDINATOR: {ibv_coordinator}")
+            os.environ["MLX_IBV_DEVICES"] = devices_file
+            os.environ["MLX_RANK"] = str(rank)
+            os.environ["MLX_IBV_COORDINATOR"] = ibv_coordinator
+            group = mx.distributed.init(backend="ibv", strict=True)
+
+    logger.info(f"Rank {rank} mlx distributed initialization complete")
 
     return group
 
 
 def initialize_mlx(
-    model_shard_meta: ShardMetadata,
-    hosts: list[Host] | None = None,
-    mlx_ibv_devices: list[list[str | None]] | None = None,
-    mlx_ibv_coordinator: str | None = None,
-) -> tuple[
-    Model, TokenizerWrapper, Callable[[mx.array], mx.array], mx.distributed.Group
-]:
+    bound_instance: BoundInstance,
+) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
     """
     Initialize the MLX model, tokenizer, and sampler. Runs in the MLX thread.
-
-    Either hosts or mlx_ibv_devices must be provided for distributed setups:
-    - hosts: traditional host-based connectivity
-    - mlx_ibv_devices: RDMA connectivity matrix
     """
     mx.random.seed(42)
-    group = mlx_distributed_init(
-        model_shard_meta.device_rank,
-        hosts=hosts,
-        mlx_ibv_devices=mlx_ibv_devices,
-        mlx_ibv_coordinator=mlx_ibv_coordinator,
-        strict=(hosts is not None and len(hosts) > 1)
-        or (mlx_ibv_devices is not None and len(mlx_ibv_devices) > 1),
-    )
 
-    set_wired_limit_for_model(get_weights_size(model_shard_meta))
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard()))
 
     sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
+    logger.info("Created a sampler")
 
-    model, tokenizer = shard_and_load(model_shard_meta, group=group)
-    model = cast(Model, model)
+    if len(bound_instance.instance.shard_assignments.node_to_runner) <= 1:
+        logger.info(f"Single device used for {bound_instance.instance}")
+        model_path = build_model_path(bound_instance.bound_shard().model_meta.model_id)
+        model, _ = load_model(model_path, strict=True)
+        # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
+        tokenizer = cast(TokenizerWrapper, load_tokenizer(model_path, tokenizer_config_extra={"trust_remote_code": True}))
+        assert isinstance(tokenizer, TokenizerWrapper)
 
-    return model, tokenizer, sampler, group
+    else:
+        logger.info("Starting distributed init")
+        group = mlx_distributed_init(bound_instance)
+        model, tokenizer = shard_and_load(bound_instance.bound_shard(), group=group)
+
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard()))
+
+    return cast(Model, model), tokenizer, sampler
 
 
 def shard_and_load(
-    model_shard_meta: ShardMetadata,
+    shard_metadata: ShardMetadata,
     group: mx.distributed.Group,
 ) -> tuple[nn.Module, TokenizerWrapper]:
-    model_path = build_model_path(model_shard_meta.model_meta.model_id)
-
-    runner_print(
-        f"loading model from {model_path} with strategy {model_shard_meta.strategy}"
-    )
+    model_path = build_model_path(shard_metadata.model_meta.model_id)
 
     model, config = load_model(model_path, lazy=True, strict=False)
-    runner_print(f"{config=}")
+    logger.info(f"{config=}")
     assert isinstance(model, nn.Module)
 
-    tokenizer = cast(TokenizerWrapper, load_tokenizer(model_path))
+    # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
+    tokenizer = cast(TokenizerWrapper, load_tokenizer(model_path, tokenizer_config_extra={"trust_remote_code": True}))
 
-    runner_print(f"Group size: {group.size()}, group rank: {group.rank()}")
+    logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
-    match model_shard_meta.strategy:
-        case "auto":
-            strategy = PipelineParallelisationStrategy(group)
-        case "pipeline":
-            strategy = PipelineParallelisationStrategy(group)
-        case "pipeline_rdma":
-            strategy = PipelineParallelisationStrategy(group)
-        case "tensor":
-            strategy = TensorParallelisationStrategy(group)
-        case "tensor_rdma":
-            strategy = TensorParallelisationStrategy(group)
-
-    model = strategy.auto_parallel(model, model_shard_meta)
+    match shard_metadata:
+        case TensorShardMetadata():
+            logger.info(f"loading model from {model_path} with tensor parallelism")
+            model = tensor_auto_parallel(model, group)
+        case PipelineShardMetadata():
+            logger.info(f"loading model from {model_path} with pipeline parallelism")
+            model = pipeline_auto_parallel(model, group, shard_metadata)
 
     mx.eval(model.parameters())
     mx.eval(model)
@@ -206,13 +191,10 @@ def shard_and_load(
     return model, tokenizer
 
 
-async def apply_chat_template(
-    mlx_executor: concurrent.futures.ThreadPoolExecutor,
+def apply_chat_template(
     tokenizer: TokenizerWrapper,
     chat_task_data: ChatCompletionTaskParams,
 ) -> str:
-    loop: AbstractEventLoop = asyncio.get_running_loop()
-
     # Now we can properly access the messages
     messages = chat_task_data.messages
     messages_dicts: list[dict[str, Any]] = [msg.model_dump() for msg in messages]
@@ -237,16 +219,13 @@ async def apply_chat_template(
 
     messages_dicts = formatted_messages
 
-    prompt: str = await loop.run_in_executor(
-        executor=mlx_executor,
-        func=lambda: tokenizer.apply_chat_template(
-            messages_dicts,
-            tokenize=False,
-            add_generation_prompt=True,
-        ),
+    prompt: str = tokenizer.apply_chat_template(  # type: ignore
+        messages_dicts,
+        tokenize=False,
+        add_generation_prompt=True,
     )
 
-    return prompt
+    return prompt  # type: ignore
 
 
 class NullKVCache(KVCache):
@@ -272,7 +251,7 @@ class NullKVCache(KVCache):
         raise NotImplementedError("We should not be setting a NullKVCache.")
 
 
-async def make_kv_cache(
+def make_kv_cache(
     model: Model,
     max_kv_size: int | None = None,
 ) -> list[KVCache]:
@@ -311,8 +290,8 @@ def set_wired_limit_for_model(model_size: Memory):
     if model_bytes > 0.9 * max_rec_size:
         model_mb = model_bytes // 2**20
         max_rec_mb = max_rec_size // 2**20
-        runner_print(
-            f"[WARNING] Generating with a model that requires {model_mb} MB "
+        logger.warning(
+            f"Generating with a model that requires {model_mb} MB "
             f"which is close to the maximum recommended size of {max_rec_mb} "
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
@@ -322,4 +301,6 @@ def set_wired_limit_for_model(model_size: Memory):
     target_cache = min(target_cache, max_rec_size)
     mx.set_cache_limit(target_cache)
     mx.set_wired_limit(max_rec_size)
-    runner_print(f"Wired limit set to {max_rec_size}. Cache limit set to {target_cache}.")
+    logger.info(
+        f"Wired limit set to {max_rec_size}. Cache limit set to {target_cache}."
+    )

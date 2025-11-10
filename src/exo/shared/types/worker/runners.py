@@ -2,49 +2,61 @@ from collections.abc import Mapping
 
 from pydantic import model_validator
 
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import Id, NodeId
 from exo.shared.types.models import ModelId
-from exo.shared.types.worker.common import RunnerId
-from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
+class RunnerId(Id):
+    pass
+
+
+class RunnerError(Exception):
+    pass
+
+
 class BaseRunnerStatus(TaggedModel):
+    def is_running(self):
+        return isinstance(self, RunnerRunning)
+
+
+class RunnerWaitingForModel(BaseRunnerStatus):
     pass
 
 
-class DownloadingRunnerStatus(BaseRunnerStatus):
-    download_progress: DownloadProgress
-
-
-class InactiveRunnerStatus(BaseRunnerStatus):
+class RunnerLoading(BaseRunnerStatus):
     pass
 
 
-class StartingRunnerStatus(BaseRunnerStatus):
+class RunnerLoaded(BaseRunnerStatus):
     pass
 
 
-class LoadedRunnerStatus(BaseRunnerStatus):
+class RunnerWarmingUp(BaseRunnerStatus):
     pass
 
 
-class RunningRunnerStatus(BaseRunnerStatus):
+class RunnerReady(BaseRunnerStatus):
     pass
 
 
-class FailedRunnerStatus(BaseRunnerStatus):
+class RunnerRunning(BaseRunnerStatus):
+    pass
+
+
+class RunnerFailed(BaseRunnerStatus):
     error_message: str | None = None
 
 
 RunnerStatus = (
-    DownloadingRunnerStatus
-    | InactiveRunnerStatus
-    | StartingRunnerStatus
-    | LoadedRunnerStatus
-    | RunningRunnerStatus
-    | FailedRunnerStatus
+    RunnerWaitingForModel
+    | RunnerLoading
+    | RunnerLoaded
+    | RunnerWarmingUp
+    | RunnerReady
+    | RunnerRunning
+    | RunnerFailed
 )
 
 

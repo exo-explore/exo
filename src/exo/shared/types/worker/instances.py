@@ -1,22 +1,56 @@
 from enum import Enum
 
-from exo.shared.types.common import Host
-from exo.shared.types.worker.common import InstanceId
-from exo.shared.types.worker.runners import (
-    ShardAssignments,
-)
-from exo.utils.pydantic_ext import CamelCaseModel
+from pydantic import model_validator
+
+from exo.shared.types.common import Host, Id
+from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
+from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
-class InstanceStatus(str, Enum):
-    Active = "Active"
-    Inactive = "Inactive"
+class InstanceId(Id):
+    pass
 
 
-class Instance(CamelCaseModel):
+class InstanceMeta(str, Enum):
+    MlxRing = "MlxRing"
+    MlxIbv = "MlxIbv"
+
+
+class BaseInstance(TaggedModel):
     instance_id: InstanceId
-    instance_type: InstanceStatus
     shard_assignments: ShardAssignments
-    hosts: list[Host] | None = None
-    mlx_ibv_devices: list[list[str | None]] | None = None
-    mlx_ibv_coordinator: str | None = None
+
+    def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
+        return self.shard_assignments.runner_to_shard.get(runner_id, None)
+
+
+class MlxRingInstance(BaseInstance):
+    hosts: list[Host]
+
+
+class MlxIbvInstance(BaseInstance):
+    ibv_devices: list[list[str | None]]
+    ibv_coordinator: str
+
+
+# TODO: Single node instance
+Instance = MlxRingInstance | MlxIbvInstance
+
+
+class BoundInstance(CamelCaseModel):
+    instance: Instance
+    bound_runner_id: RunnerId
+
+    def bound_shard(self) -> ShardMetadata:
+        shard = self.instance.shard(self.bound_runner_id)
+        assert shard is not None
+        return shard
+
+    @model_validator(mode="after")
+    def validate_shard_exists(self) -> "BoundInstance":
+        assert (
+            self.bound_runner_id in self.instance.shard_assignments.runner_to_shard
+        ), (
+            "Bound Instance must be constructed with a runner_id that is in the instances assigned shards"
+        )
+        return self

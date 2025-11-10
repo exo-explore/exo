@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 from functools import partial
+from inspect import signature
 from typing import TYPE_CHECKING, Callable, Protocol, cast, override
 
+from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.llama import Model as LlamaModel
@@ -12,8 +14,6 @@ import mlx.core as mx
 import mlx.nn as nn
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
-    ShardMetadata,
-    TensorShardMetadata,
 )
 from mlx.nn.layers.distributed import (
     shard_inplace,
@@ -58,12 +58,10 @@ class PipelineFirstLayer(CustomMlxLayer):
         self,
         original_layer: _LayerCallable,
         r: int,
-        s: int,
-        group: mx.distributed.Group | None = None,
+        group: mx.distributed.Group,
     ):
         super().__init__(original_layer)
         self.r: int = r
-        self.s: int = s
         self.group = group
 
     @override
@@ -79,177 +77,167 @@ class PipelineLastLayer(CustomMlxLayer):
         original_layer: _LayerCallable,
         r: int,
         s: int,
-        group: mx.distributed.Group | None = None,
+        group: mx.distributed.Group,
     ):
         super().__init__(original_layer)
         self.r: int = r
         self.s: int = s
         self.group = group
+        self.original_layer_signature = signature(self.original_layer.__call__)
 
     @override
     def __call__(
-        self, x: mx.array, *args: object, cache: object = None, **kwargs: object
+        self, x: mx.array, *args: object, **kwargs: object
     ) -> mx.array:
+
+        cache = self.original_layer_signature.bind_partial(x, *args, **kwargs).arguments.get("cache", None)
+
+        assert cache is None or isinstance(cache, KVCache)
+
         output: mx.array = self.original_layer(x, *args, **kwargs)
+
         if self.r != self.s - 1:
             output = mx.distributed.send(
                 output, (self.r + 1) % self.s, group=self.group
             )
             if (
-                cache is not None
-                and hasattr(cache, "keys")
-                and getattr(cache, "keys", None) is not None
-            ):
-                cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+                    cache is not None
+                    and hasattr(cache, "keys")
+                    and getattr(cache, "keys", None) is not None
+                ):
+                    # This change happened upstream - check out mlx github somewhere??
+                    cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
         output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
 
-class ParallelisationShardStrategy(Protocol):
-    def auto_parallel(
-        self, model: nn.Module, model_shard_meta: ShardMetadata
-    ) -> nn.Module: ...
+def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
+    inner_model_instance = _inner_model(model)
+    if hasattr(inner_model_instance, "layers"):
+        inner_model_instance.layers = layers
+
+        # Update DeepSeek V3 specific parameters when layers are shrunk
+        if isinstance(model, DeepseekV3Model) and hasattr(
+            inner_model_instance, "num_layers"
+        ):
+            inner_model_instance.start_idx = 0
+            inner_model_instance.end_idx = len(layers)
+            inner_model_instance.num_layers = len(layers)
+    elif hasattr(inner_model_instance, "h"):
+        inner_model_instance.h = layers
+    else:
+        raise ValueError("Model must have either a 'layers' or 'h' attribute")
 
 
-class PipelineParallelisationStrategy(ParallelisationShardStrategy):
-    def __init__(self, group: mx.distributed.Group):
-        self.group = group
+def pipeline_auto_parallel(
+    model: nn.Module,
+    group: mx.distributed.Group,
+    model_shard_meta: PipelineShardMetadata,
+) -> nn.Module:
+    """
+    Automatically parallelize a model across multiple devices.
+    Args:
+    model: The model to parallelize (must have a 'layers' or 'h' property)
+    model_shard_meta: The metadata for the model shard
+    Returns:
+    The parallelized model
+    """
+    inner_model_instance: nn.Module = _inner_model(model)
 
-    def auto_parallel(
-        self, model: nn.Module, model_shard_meta: ShardMetadata
-    ) -> nn.Module:
-        """
-        Automatically parallelize a model across multiple devices.
-        Args:
-        model: The model to parallelize (must have a 'layers' or 'h' property)
-        model_shard_meta: The metadata for the model shard
-        Returns:
-        The parallelized model
-        """
-        assert isinstance(model_shard_meta, PipelineShardMetadata)
+    # Handle both model.layers and model.h cases
+    layers: list[_LayerCallable]
+    if hasattr(inner_model_instance, "layers"):
+        layers = cast(list[_LayerCallable], inner_model_instance.layers)
+    elif hasattr(inner_model_instance, "h"):
+        layers = cast(list[_LayerCallable], inner_model_instance.h)
+    else:
+        raise ValueError("Model must have either a 'layers' or 'h' attribute")
 
-        inner_model_instance: nn.Module = PipelineParallelisationStrategy._inner_model(
-            model
+    layers = layers[model_shard_meta.start_layer : model_shard_meta.end_layer]
+    layers[0] = PipelineFirstLayer(layers[0], model_shard_meta.device_rank, group=group)
+    layers[-1] = PipelineLastLayer(
+        layers[-1],
+        model_shard_meta.device_rank,
+        model_shard_meta.world_size,
+        group=group,
+    )
+
+    _set_layers(model, layers)
+
+    assert isinstance(layers, list), (
+        "Expected a list of layers after auto-parallel initialisation"
+    )
+
+    return model
+
+
+def _inner_model(model: nn.Module) -> nn.Module:
+    inner = getattr(model, "model", None)
+    if isinstance(inner, nn.Module):
+        return inner
+
+    inner = getattr(model, "transformer", None)
+    if isinstance(inner, nn.Module):
+        return inner
+
+    raise ValueError("Model must either have a 'model' or 'transformer' attribute")
+
+
+def tensor_auto_parallel(
+    model: nn.Module,
+    group: mx.distributed.Group,
+) -> nn.Module:
+    all_to_sharded_linear = partial(
+        shard_linear,
+        sharding="all-to-sharded",
+        group=group,
+    )
+    sharded_to_all_linear = partial(
+        shard_linear,
+        sharding="sharded-to-all",
+        group=group,
+    )
+
+    all_to_sharded_linear_in_place = partial(
+        shard_inplace,
+        sharding="all-to-sharded",
+        group=group,
+    )
+    sharded_to_all_linear_in_place = partial(
+        shard_inplace,
+        sharding="sharded-to-all",
+        group=group,
+    )
+
+    if isinstance(model, LlamaModel):
+        tensor_parallel_sharding_strategy = LlamaShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
         )
-
-        # Handle both model.layers and model.h cases
-        layers: list[_LayerCallable]
-        if hasattr(inner_model_instance, "layers"):
-            layers = cast(list[_LayerCallable], inner_model_instance.layers)
-        elif hasattr(inner_model_instance, "h"):
-            layers = cast(list[_LayerCallable], inner_model_instance.h)
-        else:
-            raise ValueError("Model must have either a 'layers' or 'h' attribute")
-
-        layers = layers[model_shard_meta.start_layer : model_shard_meta.end_layer]
-        layers[0] = PipelineFirstLayer(
-            layers[0],
-            model_shard_meta.device_rank,
-            model_shard_meta.world_size,
-            group=self.group,
+    elif isinstance(model, DeepseekV3Model):
+        tensor_parallel_sharding_strategy = DeepSeekShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
         )
-        layers[-1] = PipelineLastLayer(
-            layers[-1],
-            model_shard_meta.device_rank,
-            model_shard_meta.world_size,
-            group=self.group,
+    elif isinstance(model, Qwen3MoeModel):
+        tensor_parallel_sharding_strategy = QwenShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
         )
+    else:
+        raise ValueError(f"Unsupported model type: {type(model)}")
 
-        PipelineParallelisationStrategy._set_layers(model, layers)
-
-        return model
-
-    @staticmethod
-    def _inner_model(model: nn.Module) -> nn.Module:
-        inner = getattr(model, "model", None)
-        if isinstance(inner, nn.Module):
-            return inner
-
-        inner = getattr(model, "transformer", None)
-        if isinstance(inner, nn.Module):
-            return inner
-
-        raise ValueError("Model must either have a 'model' or 'transformer' attribute")
-
-    @staticmethod
-    def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
-        inner_model_instance = PipelineParallelisationStrategy._inner_model(model)
-        if hasattr(inner_model_instance, "layers"):
-            inner_model_instance.layers = layers
-
-            # Update DeepSeek V3 specific parameters when layers are shrunk
-            if isinstance(model, DeepseekV3Model) and hasattr(
-                inner_model_instance, "num_layers"
-            ):
-                inner_model_instance.start_idx = 0
-                inner_model_instance.end_idx = len(layers)
-                inner_model_instance.num_layers = len(layers)
-        elif hasattr(inner_model_instance, "h"):
-            inner_model_instance.h = layers
-        else:
-            raise ValueError("Model must have either a 'layers' or 'h' attribute")
-
-
-class TensorParallelisationStrategy(ParallelisationShardStrategy):
-    def __init__(self, group: mx.distributed.Group):
-        self.group = group
-
-    def auto_parallel(
-        self, model: nn.Module, model_shard_meta: ShardMetadata
-    ) -> nn.Module:
-        assert isinstance(model_shard_meta, TensorShardMetadata)
-
-        all_to_sharded_linear = partial(
-            shard_linear,
-            sharding="all-to-sharded",
-            group=self.group,
-        )
-        sharded_to_all_linear = partial(
-            shard_linear,
-            sharding="sharded-to-all",
-            group=self.group,
-        )
-
-        all_to_sharded_linear_in_place = partial(
-            shard_inplace,
-            sharding="all-to-sharded",
-            group=self.group,
-        )
-        sharded_to_all_linear_in_place = partial(
-            shard_inplace,
-            sharding="sharded-to-all",
-            group=self.group,
-        )
-
-        if isinstance(model, LlamaModel):
-            tensor_parallel_sharding_strategy = LlamaShardingStrategy(
-                self.group,
-                all_to_sharded_linear,
-                sharded_to_all_linear,
-                all_to_sharded_linear_in_place,
-                sharded_to_all_linear_in_place,
-            )
-        elif isinstance(model, DeepseekV3Model):
-            tensor_parallel_sharding_strategy = DeepSeekShardingStrategy(
-                self.group,
-                all_to_sharded_linear,
-                sharded_to_all_linear,
-                all_to_sharded_linear_in_place,
-                sharded_to_all_linear_in_place,
-            )
-        elif isinstance(model, Qwen3MoeModel):
-            tensor_parallel_sharding_strategy = QwenShardingStrategy(
-                self.group,
-                all_to_sharded_linear,
-                sharded_to_all_linear,
-                all_to_sharded_linear_in_place,
-                sharded_to_all_linear_in_place,
-            )
-        else:
-            raise ValueError(f"Unsupported model type: {type(model)}")
-
-        return tensor_parallel_sharding_strategy.shard_model(model)
+    return tensor_parallel_sharding_strategy.shard_model(model)
 
 
 class TensorParallelShardingStrategy(ABC):

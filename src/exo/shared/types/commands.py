@@ -3,8 +3,8 @@ from pydantic import Field
 from exo.shared.types.api import ChatCompletionTaskParams
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.models import ModelMetadata
-from exo.shared.types.worker.common import InstanceId
-from exo.shared.types.worker.parallelisation_strategy import ParallelisationStrategyType
+from exo.shared.types.worker.instances import InstanceId, InstanceMeta
+from exo.shared.types.worker.shards import Sharding
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -16,6 +16,8 @@ class BaseCommand(TaggedModel):
 class TestCommand(BaseCommand):
     pass
 
+class KillCommand(BaseCommand):
+    pass
 
 class ChatCompletion(BaseCommand):
     request_params: ChatCompletionTaskParams
@@ -23,7 +25,8 @@ class ChatCompletion(BaseCommand):
 
 class CreateInstance(BaseCommand):
     model_meta: ModelMetadata
-    strategy: ParallelisationStrategyType
+    sharding: Sharding
+    instance_meta: InstanceMeta
 
 
 class SpinUpInstance(BaseCommand):
@@ -44,6 +47,7 @@ class RequestEventLog(BaseCommand):
 
 Command = (
     TestCommand
+    | KillCommand
     | RequestEventLog
     | ChatCompletion
     | CreateInstance

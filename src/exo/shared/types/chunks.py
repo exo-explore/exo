@@ -1,7 +1,6 @@
 from enum import Enum
 
 from exo.shared.openai_compat import FinishReason
-from exo.shared.types.common import CommandId
 from exo.shared.types.models import ModelId
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -12,7 +11,6 @@ class ChunkType(str, Enum):
 
 
 class BaseChunk(TaggedModel):
-    command_id: CommandId
     idx: int
     model: ModelId
 

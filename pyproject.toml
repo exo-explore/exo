@@ -32,7 +32,7 @@ dependencies = [
     "loguru>=0.7.3",
     "textual>=5.3.0",
     "exo_pyo3_bindings", # rust bindings
-    "anyio>=4.10.0",
+    "anyio>=4.11.0",
     "bidict>=0.23.1",
     "mlx>=0.29.3",
     "mlx-lm>=0.28.3",
