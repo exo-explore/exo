@@ -19,6 +19,7 @@
 21. Make two separate things: tensor or pipeline, and ring or ibv.
 22. When downloading for the first time, stuff times out and I think the model never ends up actually loading into memory, or something.
 23. Do we need cache_limit? We went back and forth on that a lot because we thought it might be causing issues. One problem is it sets it relative to model size. So if you have multiple models loaded in it will take the most recent model size for the cache_limit. This is problematic if you launch DeepSeek -> Llama for example.
+24. Task cancellation. When API http request gets cancelled, it should cancel corresponding task.
 
 Potential refactors:
 

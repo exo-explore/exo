@@ -3,7 +3,7 @@ from functools import partial
 from inspect import signature
 from typing import TYPE_CHECKING, Callable, Protocol, cast, override
 
-from mlx_lm.models.cache import KVCache
+from mlx_lm.models.cache import KVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.llama import Model as LlamaModel
@@ -92,7 +92,7 @@ class PipelineLastLayer(CustomMlxLayer):
 
         cache = self.original_layer_signature.bind_partial(x, *args, **kwargs).arguments.get("cache", None)
 
-        assert cache is None or isinstance(cache, KVCache)
+        assert cache is None or isinstance(cache, (KVCache, RotatingKVCache))
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 

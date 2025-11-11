@@ -215,7 +215,7 @@ class API:
         while not finished:
             # TODO: how long should this timeout be?
             chunk = await asyncio.wait_for(
-                self._chat_completion_queues[command_id].get(), timeout=60
+                self._chat_completion_queues[command_id].get(), timeout=600
             )
             assert isinstance(chunk, TokenChunk)
             chunk_response: ChatCompletionResponse = chunk_to_response(

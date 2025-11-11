@@ -2,7 +2,7 @@ import os
 import resource
 from typing import Any, Callable, cast
 
-from mlx_lm.models.cache import KVCache
+from mlx_lm.models.cache import KVCache, RotatingKVCache
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -254,9 +254,14 @@ class NullKVCache(KVCache):
 def make_kv_cache(
     model: Model,
     max_kv_size: int | None = None,
-) -> list[KVCache]:
+) -> list[KVCache | RotatingKVCache]:
     assert hasattr(model, "layers")
-    return [KVCache() for _ in model.layers]
+    if max_kv_size is None:
+        logger.info("Using default KV cache")
+        return [KVCache() for _ in model.layers]
+    else:
+        logger.info(f"Using rotating KV cache with {max_kv_size=}")
+        return [RotatingKVCache(max_size=max_kv_size) for _ in model.layers]
 
 
 def mlx_force_oom(size: int = 40000) -> None:

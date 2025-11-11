@@ -36,6 +36,7 @@ dependencies = [
     "bidict>=0.23.1",
     "mlx>=0.29.3",
     "mlx-lm>=0.28.3",
+    "tiktoken>=0.12.0", # required for kimi k2 tokenizer
 ]
 
 [project.scripts]

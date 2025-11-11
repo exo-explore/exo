@@ -586,8 +586,37 @@
                 const modelIds = cluster.model_ids || ['unknown'];
                 const modelName = modelIds.length === 1 ? modelIds[0] : `${modelIds.length} models`;
                 
-                // Get strategy (default to 'N/A' if not specified)
-                const strategy = cluster.strategy || 'N/A';
+                // Get strategy (backwards compatible with old format)
+                // New format: sharding + instance_meta, e.g. "Pipeline (MLX Ring)"
+                // Old format: strategy field
+                let strategy = 'N/A';
+                if (cluster.strategy) {
+                    // Backwards compatibility: use old strategy field
+                    strategy = cluster.strategy;
+                } else if (cluster.sharding || cluster.instance_meta) {
+                    // New format: combine sharding and instance_meta
+                    const sharding = cluster.sharding || '';
+                    const instanceMeta = cluster.instance_meta || '';
+                    
+                    // Format instance_meta: convert camelCase/PascalCase to readable format
+                    const formatInstanceMeta = (meta) => {
+                        if (!meta) return '';
+                        // Insert spaces before capital letters and handle common acronyms
+                        return meta
+                            .replace(/([A-Z])/g, ' $1')
+                            .trim()
+                            .replace(/\bMlx\b/g, 'MLX')
+                            .replace(/\bIbv\b/g, 'IBV');
+                    };
+                    
+                    if (sharding && instanceMeta) {
+                        strategy = `${sharding} (${formatInstanceMeta(instanceMeta)})`;
+                    } else if (sharding) {
+                        strategy = sharding;
+                    } else if (instanceMeta) {
+                        strategy = formatInstanceMeta(instanceMeta);
+                    }
+                }
                 
                 // For each stage in the configuration, create a row
                 stages.forEach((stageConfig, stageIdx) => {

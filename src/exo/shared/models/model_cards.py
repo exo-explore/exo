@@ -93,6 +93,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
         ),
     ),
+    # kimi k2
     "kimi-k2-instruct-4bit": ModelCard(
         short_id="kimi-k2-instruct-4bit",
         model_id="mlx-community/Kimi-K2-Instruct-4bit",
@@ -102,6 +103,19 @@ MODEL_CARDS: dict[str, ModelCard] = {
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
             pretty_name="Kimi K2 Instruct (4-bit)",
+            storage_size=Memory.from_bytes(577597603840),
+            n_layers=61,
+        ),
+    ),
+    "kimi-k2-thinking": ModelCard(
+        short_id="kimi-k2-thinking",
+        model_id="mlx-community/Kimi-K2-Thinking",
+        name="Kimi K2 Thinking",
+        description="""Kimi K2 Thinking is the latest, most capable version of open-source thinking model.""",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/Kimi-K2-Thinking"),
+            pretty_name="Kimi K2 Thinking",
             storage_size=Memory.from_bytes(577597603840),
             n_layers=61,
         ),
