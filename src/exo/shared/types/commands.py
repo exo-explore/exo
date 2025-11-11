@@ -16,8 +16,10 @@ class BaseCommand(TaggedModel):
 class TestCommand(BaseCommand):
     pass
 
+
 class KillCommand(BaseCommand):
     pass
+
 
 class ChatCompletion(BaseCommand):
     request_params: ChatCompletionTaskParams
@@ -27,10 +29,6 @@ class CreateInstance(BaseCommand):
     model_meta: ModelMetadata
     sharding: Sharding
     instance_meta: InstanceMeta
-
-
-class SpinUpInstance(BaseCommand):
-    instance_id: InstanceId
 
 
 class DeleteInstance(BaseCommand):
@@ -51,7 +49,6 @@ Command = (
     | RequestEventLog
     | ChatCompletion
     | CreateInstance
-    | SpinUpInstance
     | DeleteInstance
     | TaskFinished
 )

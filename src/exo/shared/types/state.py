@@ -8,9 +8,9 @@ from exo.shared.topology import Topology, TopologySnapshot
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
-from exo.shared.types.worker.downloads import DownloadProgress
 from exo.utils.pydantic_ext import CamelCaseModel
 
 

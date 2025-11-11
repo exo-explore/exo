@@ -86,11 +86,10 @@ class PipelineLastLayer(CustomMlxLayer):
         self.original_layer_signature = signature(self.original_layer.__call__)
 
     @override
-    def __call__(
-        self, x: mx.array, *args: object, **kwargs: object
-    ) -> mx.array:
-
-        cache = self.original_layer_signature.bind_partial(x, *args, **kwargs).arguments.get("cache", None)
+    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+        cache = self.original_layer_signature.bind_partial(
+            x, *args, **kwargs
+        ).arguments.get("cache", None)
 
         assert cache is None or isinstance(cache, (KVCache, RotatingKVCache))
 
@@ -101,12 +100,12 @@ class PipelineLastLayer(CustomMlxLayer):
                 output, (self.r + 1) % self.s, group=self.group
             )
             if (
-                    cache is not None
-                    and hasattr(cache, "keys")
-                    and getattr(cache, "keys", None) is not None
-                ):
-                    # This change happened upstream - check out mlx github somewhere??
-                    cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
+                cache is not None
+                and hasattr(cache, "keys")
+                and getattr(cache, "keys", None) is not None
+            ):
+                # This change happened upstream - check out mlx github somewhere??
+                cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
         output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output

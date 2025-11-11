@@ -40,4 +40,3 @@ class TaggedModel(CamelCaseModel):
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({super().__str__()})"
-

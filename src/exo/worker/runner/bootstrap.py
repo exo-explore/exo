@@ -40,6 +40,7 @@ def entrypoint(
     faulthandler.enable(file=sys.stderr, all_threads=True)
     """
     import os
+
     os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     global logger

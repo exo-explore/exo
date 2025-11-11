@@ -15,8 +15,8 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    KillCommand,
     RequestEventLog,
-    SpinUpInstance,
     TaskFinished,
     TestCommand,
 )
@@ -104,7 +104,7 @@ class Master:
                     generated_events: list[Event] = []
                     command = forwarder_command.command
                     match command:
-                        case TestCommand():
+                        case TestCommand() | KillCommand():
                             pass
                         case ChatCompletion():
                             instance_task_counts: dict[InstanceId, int] = {}
@@ -123,10 +123,9 @@ class Master:
                                     )
 
                             if not instance_task_counts:
-                                logger.warning(
+                                raise ValueError(
                                     f"No instance found for model {command.request_params.model}"
                                 )
-                                continue
 
                             available_instance_ids = sorted(
                                 instance_task_counts.keys(),
@@ -181,8 +180,6 @@ class Master:
                                 del self.command_task_mapping[
                                     command.finished_command_id
                                 ]
-                        case SpinUpInstance():
-                            raise NotImplementedError
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             for i in range(command.since_idx, len(self._event_log)):
@@ -191,7 +188,7 @@ class Master:
                                 )
                     for event in generated_events:
                         await self.event_sender.send(event)
-                except Exception as e:
+                except ValueError as e:
                     logger.opt(exception=e).warning("Error in command processor")
 
     async def _event_processor(self) -> None:

@@ -1,6 +1,6 @@
 from enum import Enum
 
-from pydantic import Field, ConfigDict
+from pydantic import Field
 
 from exo.shared.types.models import ModelMetadata
 from exo.utils.pydantic_ext import TaggedModel

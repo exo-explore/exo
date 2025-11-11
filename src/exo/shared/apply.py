@@ -29,8 +29,8 @@ from exo.shared.types.profiling import NodePerformanceProfile, SystemPerformance
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.topology import NodeInfo
-from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 
 

@@ -1,14 +1,14 @@
-from typing import Any, Callable, Generator, get_args, cast
+from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
-from mlx_lm.models.cache import KVCache
 from mlx_lm import stream_generate
+from mlx_lm.models.cache import KVCache
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.engines.mlx import Model
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.engines.mlx.utils_mlx import (
-    make_kv_cache,
     apply_chat_template,
+    make_kv_cache,
     mx_barrier,
 )
 from exo.shared.openai_compat import FinishReason
@@ -16,7 +16,6 @@ from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.commands_runner import (
     GenerationResponse,
-    TokenizedResponse,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -36,6 +35,7 @@ def maybe_quantize_kv_cache(
             hasattr(c, "to_quantized") and c.offset >= quantized_kv_start  # type: ignore
         ):
             prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
+
 
 def warmup_inference(
     model: Model,
@@ -109,11 +109,17 @@ def mlx_generate(
         prefill_step_size=65536,
     ):
         logger.info(out.text)
-        if out.finish_reason != None and out.finish_reason not in get_args(FinishReason):
+        if out.finish_reason is not None and out.finish_reason not in get_args(
+            FinishReason
+        ):
             # We don't throw here as this failure case is really not all that bad
             # Just log the error and move on
-            logger.warning(f"Model generated unexpected finish_reason: {out.finish_reason}")
+            logger.warning(
+                f"Model generated unexpected finish_reason: {out.finish_reason}"
+            )
 
         yield GenerationResponse(
-            text=out.text, token=out.token, finish_reason=cast(FinishReason | None, out.finish_reason)
+            text=out.text,
+            token=out.token,
+            finish_reason=cast(FinishReason | None, out.finish_reason),
         )

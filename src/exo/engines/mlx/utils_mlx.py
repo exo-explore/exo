@@ -22,8 +22,8 @@ from exo.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
-from exo.shared.types.memory import Memory
 from exo.shared.types.common import Host
+from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
@@ -146,7 +146,12 @@ def initialize_mlx(
         model_path = build_model_path(bound_instance.bound_shard().model_meta.model_id)
         model, _ = load_model(model_path, strict=True)
         # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
-        tokenizer = cast(TokenizerWrapper, load_tokenizer(model_path, tokenizer_config_extra={"trust_remote_code": True}))
+        tokenizer = cast(
+            TokenizerWrapper,
+            load_tokenizer(
+                model_path, tokenizer_config_extra={"trust_remote_code": True}
+            ),
+        )
         assert isinstance(tokenizer, TokenizerWrapper)
 
     else:
@@ -170,7 +175,10 @@ def shard_and_load(
     assert isinstance(model, nn.Module)
 
     # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
-    tokenizer = cast(TokenizerWrapper, load_tokenizer(model_path, tokenizer_config_extra={"trust_remote_code": True}))
+    tokenizer = cast(
+        TokenizerWrapper,
+        load_tokenizer(model_path, tokenizer_config_extra={"trust_remote_code": True}),
+    )
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 

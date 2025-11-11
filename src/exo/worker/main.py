@@ -17,14 +17,21 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
-    TaskCreated, TaskStatusUpdated,
+    TaskCreated,
+    TaskStatusUpdated,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
-from exo.shared.types.tasks import CreateRunner, DownloadModel, Task, TaskStatus, Shutdown
+from exo.shared.types.tasks import (
+    CreateRunner,
+    DownloadModel,
+    Shutdown,
+    Task,
+    TaskStatus,
+)
 from exo.shared.types.topology import Connection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -180,7 +187,11 @@ class Worker:
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
-                    await self.event_sender.send(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
+                    await self.event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id, task_status=TaskStatus.Complete
+                        )
+                    )
                 case DownloadModel(shard_metadata=shard):
                     if shard not in self.download_status:
                         progress = DownloadPending(
@@ -204,9 +215,17 @@ class Worker:
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
-                        await self.event_sender.send(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
+                        await self.event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id, task_status=TaskStatus.Complete
+                            )
+                        )
                     else:
-                        self.event_sender.send_nowait(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running))
+                        self.event_sender.send_nowait(
+                            TaskStatusUpdated(
+                                task_id=task.task_id, task_status=TaskStatus.Running
+                            )
+                        )
                         await self._handle_shard_download_process(
                             task, initial_progress
                         )
@@ -326,7 +345,11 @@ class Worker:
                 self.event_sender.send_nowait(
                     NodeDownloadProgress(download_progress=status)
                 )
-                self.event_sender.send_nowait(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
+                self.event_sender.send_nowait(
+                    TaskStatusUpdated(
+                        task_id=task.task_id, task_status=TaskStatus.Complete
+                    )
+                )
             elif (
                 progress.status == "in_progress"
                 and current_time() - last_progress_time > throttle_interval_secs

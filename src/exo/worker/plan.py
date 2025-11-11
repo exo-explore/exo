@@ -60,7 +60,9 @@ def _kill_runner(
 ) -> Shutdown | None:
     for runner in runners.values():
         if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
-            return Shutdown(instance_id=instance_id, runner_id = runner.bound_instance.bound_runner_id)
+            return Shutdown(
+                instance_id=instance_id, runner_id=runner.bound_instance.bound_runner_id
+            )
 
         """ --- Potential code to kill a runner if any runners in its instance have failed ---
         global_runners_in_instance = runner.bound_instance.instance.shard_assignments.node_to_runner.values()
