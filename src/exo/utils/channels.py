@@ -136,7 +136,13 @@ class MpSender[T]:
         self._state.buffer.put(MP_END_OF_STREAM)
         self._state.buffer.close()
 
-    # == context manager support ==#
+    # == unique to Mp channels ==
+    def join(self) -> None:
+        """Ensure any queued messages are resolved before continuing"""
+        assert self._state.closed.is_set(), "Mp channels must be closed before being joined"
+        self._state.buffer.join_thread()
+
+    # == context manager support ==
     def __enter__(self) -> Self:
         return self
 
@@ -172,7 +178,8 @@ class MpReceiver[T]:
             if item is MP_END_OF_STREAM:
                 self.close()
                 raise EndOfStream
-            return item  # pyright: ignore[reportReturnType]
+            assert not isinstance(item, _MpEndOfStream)
+            return item
         except Empty:
             raise WouldBlock from None
         except ValueError as e:
@@ -187,8 +194,10 @@ class MpReceiver[T]:
             if item is MP_END_OF_STREAM:
                 self.close()
                 raise EndOfStream from None
-            return item  # pyright: ignore[reportReturnType]
+            assert not isinstance(item, _MpEndOfStream)
+            return item
 
+    # nb: this function will not cancel particularly well
     async def receive_async(self) -> T:
         return await to_thread.run_sync(self.receive, limiter=CapacityLimiter(1))
 
@@ -197,7 +206,13 @@ class MpReceiver[T]:
             self._state.closed.set()
         self._state.buffer.close()
 
-    # == iterator support ==#
+    # == unique to Mp channels ==
+    def join(self) -> None:
+        """Block until all enqueued messages are drained off our side of the buffer"""
+        assert self._state.closed.is_set(), "Mp channels must be closed before being joined"
+        self._state.buffer.join_thread()
+
+    # == iterator support ==
     def __iter__(self) -> Self:
         return self
 
@@ -207,7 +222,7 @@ class MpReceiver[T]:
         except EndOfStream:
             raise StopIteration from None
 
-    # == async iterator support ==#
+    # == async iterator support ==
     def __aiter__(self) -> Self:
         return self
 
@@ -217,7 +232,7 @@ class MpReceiver[T]:
         except EndOfStream:
             raise StopAsyncIteration from None
 
-    # == context manager support ==#
+    # == context manager support ==
     def __enter__(self) -> Self:
         return self
 

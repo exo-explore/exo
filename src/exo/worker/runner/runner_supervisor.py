@@ -1,18 +1,14 @@
 import contextlib
 import signal
-import sys
 from dataclasses import dataclass, field
 from multiprocessing import Process
 from typing import Self
 
 import anyio
-import psutil
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
-    EndOfStream,
     create_task_group,
-    current_time,
     to_thread,
 )
 from anyio.abc import TaskGroup
@@ -22,7 +18,6 @@ from exo.shared.types.events import Event, RunnerStatusUpdated, TaskAcknowledged
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
-    RunnerError,
     RunnerFailed,
     RunnerStatus,
     RunnerWaitingForModel,
@@ -30,9 +25,6 @@ from exo.shared.types.worker.runners import (
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
 from exo.worker.runner.bootstrap import entrypoint
-from exo.worker.runner.utils import (
-    get_weights_size,
-)
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
@@ -64,20 +56,12 @@ class RunnerSupervisor:
         # A task is kind of a runner command
         task_sender, task_recv = mp_channel[Task]()
 
-        """ --- not doing this for now
-        with tempfile.NamedTemporaryFile(
-            prefix="child_stderr_", suffix=".log", delete=False
-        ) as tmp:
-            err_path = tmp.name
-
-        """
         runner_process = Process(
             target=entrypoint,
             args=(
                 bound_instance,
                 ev_send,
                 task_recv,
-                # err_path,
                 logger,
             ),
             daemon=True,
@@ -107,42 +91,55 @@ class RunnerSupervisor:
         self._ev_recv.close()
         self._task_sender.close()
         self._event_sender.close()
-        self.runner_process.kill()
-        await to_thread.run_sync(self.runner_process.join)
+        await to_thread.run_sync(self.runner_process.join, 30)
+        if not self.runner_process.is_alive():
+            return
 
-    async def start_task(self, task: Task, event: anyio.Event):
+        # This is overkill but it's not technically bad, just unnecessary.
+        logger.warning("Runner process didn't shutdown succesfully, terminating")
+        self.runner_process.terminate()
+        await to_thread.run_sync(self.runner_process.join, 5)
+        if not self.runner_process.is_alive():
+            return
+
+        logger.critical("Runner process didn't respond to SIGTERM, killing")
+        self.runner_process.kill()
+
+        await to_thread.run_sync(self.runner_process.join, 5)
+        if not self.runner_process.is_alive():
+            return
+
+        logger.critical("Runner process didn't respond to SIGKILL. System resources may have leaked")
+
+    def shutdown(self):
+        assert self._tg
+        self._tg.cancel_scope.cancel()
+        
+
+    async def start_task(self, task: Task):
+        event = anyio.Event()
         self.pending[task.task_id] = event
-        self._task_sender.send(task)
+        try:
+            self._task_sender.send(task)
+        except ClosedResourceError:
+            logger.warning(f"Task {task} dropped, runner closed communication.")
+            return
+        await event.wait()
+
 
     async def _forward_events(self):
         with self._ev_recv as events:
-            while True:
-                try:
-                    event = await events.receive_async()
-                except (ClosedResourceError, BrokenResourceError, EndOfStream):
-                    await self._check_runner()
-                    break
-                if isinstance(event, RunnerStatusUpdated):
-                    self.status = event.runner_status
-                if isinstance(event, TaskAcknowledged):
-                    self.pending.pop(event.task_id).set()
-                    continue
-                await self._event_sender.send(event)
+            try:
+                async for event in events:
+                    if isinstance(event, RunnerStatusUpdated):
+                        self.status = event.runner_status
+                    if isinstance(event, TaskAcknowledged):
+                        self.pending.pop(event.task_id).set()
+                        continue
+                    await self._event_sender.send(event)
+            except (ClosedResourceError, BrokenResourceError) as e:
+                await self._check_runner(e)
 
-    async def shutdown(self) -> None:
-        assert self._tg
-        self._tg.cancel_scope.cancel()
-
-        required_memory_bytes = get_weights_size(self.shard_metadata).in_bytes
-        start_time = current_time()
-        while True:
-            available_memory_bytes = psutil.virtual_memory().available
-            if available_memory_bytes >= required_memory_bytes:
-                break
-            if current_time() - start_time > 30.0:
-                logger.warning("Runner memory not released after 30 seconds - exiting")
-                break
-            await anyio.sleep(1)
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():
@@ -150,19 +147,13 @@ class RunnerSupervisor:
             with contextlib.suppress(ValueError):
                 self.runner_process.kill()
 
-    async def _check_runner(self) -> RunnerError | None:
+    async def _check_runner(self, e: Exception) -> None:
+        if self.runner_process.is_alive():
+            await to_thread.run_sync(self.runner_process.join, 1)
         rc = self.runner_process.exitcode
         if rc == 0:
-            logger.warning("Runner closed communication without terminating process")
-
-        """ --- not doing this anymore
-        try:
-            with open(self.err_path, "r", errors="replace") as f:
-                captured = f.read()
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(self.err_path)
-        """
+            # 
+            return
 
         if isinstance(rc, int) and rc < 0:
             sig = -rc
@@ -173,7 +164,7 @@ class RunnerSupervisor:
         else:
             cause = f"exitcode={rc}"
 
-        logger.opt(exception=sys.exception()).error(f"Runner terminated ({cause})")
+        logger.opt(exception=e).error(f"Runner terminated ({cause})")
 
         await self._event_sender.send(
             RunnerStatusUpdated(
@@ -181,4 +172,4 @@ class RunnerSupervisor:
                 runner_status=RunnerFailed(error_message=f"Terminated ({cause})"),
             )
         )
-        await self.shutdown()
+        self.shutdown()

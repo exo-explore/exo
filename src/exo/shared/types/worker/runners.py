@@ -45,6 +45,9 @@ class RunnerRunning(BaseRunnerStatus):
     pass
 
 
+class RunnerShutdown(BaseRunnerStatus):
+    pass
+
 class RunnerFailed(BaseRunnerStatus):
     error_message: str | None = None
 
@@ -56,6 +59,7 @@ RunnerStatus = (
     | RunnerWarmingUp
     | RunnerReady
     | RunnerRunning
+    | RunnerShutdown
     | RunnerFailed
 )
 

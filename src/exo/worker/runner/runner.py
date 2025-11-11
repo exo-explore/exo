@@ -1,7 +1,6 @@
 import time
 
 from exo.engines.mlx.utils_mlx import (
-    mx_barrier,
     initialize_mlx,
     mlx_force_oom,
 )
@@ -35,8 +34,9 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWaitingForModel,
     RunnerWarmingUp,
+    RunnerShutdown
 )
-from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.channels import MpReceiver, MpSender, ClosedResourceError
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.generate import mlx_generate, warmup_inference
 
@@ -197,6 +197,12 @@ def main(
                             )
                         )
                     case Shutdown():
+                        logger.info("runner shutting down")
+                        event_sender.send(
+                            TaskStatusUpdated(
+                                task_id=task.task_id, task_status=TaskStatus.Complete
+                            )
+                        )
                         break
                     case _:
                         raise ValueError("Received task outside of state machine")
@@ -205,7 +211,13 @@ def main(
                         task_id=task.task_id, task_status=TaskStatus.Complete
                     )
                 )
-
+        event_sender.send(
+            RunnerStatusUpdated(
+                runner_id=runner_id, runner_status=RunnerShutdown()
+            )
+        )
+    except ClosedResourceError:
+        logger.warning("runner communication closed unexpectedly")
     except Exception as e:
         logger.opt(exception=e).warning(
             f"Runner {runner_id} crashed with critical exception {e}"
@@ -216,3 +228,9 @@ def main(
                 runner_status=RunnerFailed(error_message=str(e)),
             )
         )
+    finally:
+        event_sender.close()
+        task_receiver.close()
+        event_sender.join()
+        task_receiver.join()
+        logger.info("bye from the runner")

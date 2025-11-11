@@ -126,7 +126,7 @@ class Worker:
         self.local_event_sender.close()
         self.command_sender.close()
         for runner in self.runners.values():
-            await runner.shutdown()
+            runner.shutdown()
 
     async def _event_applier(self):
         with self.global_event_receiver as events:
@@ -211,13 +211,9 @@ class Worker:
                             task, initial_progress
                         )
                 case Shutdown(runner_id=runner_id):
-                    await self.runners[runner_id].shutdown()
-                    del self.runners[runner_id]
+                    await self.runners.pop(runner_id).start_task(task)
                 case task:
-                    runner = self.runners[self._task_to_runner_id(task)]
-                    event = anyio.Event()
-                    await runner.start_task(task, event)
-                    await event.wait()
+                    await self.runners[self._task_to_runner_id(task)].start_task(task)
 
     def shutdown(self):
         if self._tg:

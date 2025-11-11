@@ -1,3 +1,4 @@
+import signal
 import argparse
 import multiprocessing as mp
 from dataclasses import dataclass
@@ -5,9 +6,9 @@ from typing import Self
 
 import anyio
 from anyio.abc import TaskGroup
-from loguru import logger
 from pydantic import PositiveInt
 
+from exo.shared.logging import logger
 import exo.routing.topics as topics
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
@@ -101,6 +102,7 @@ class Node:
 
     async def run(self):
         async with anyio.create_task_group() as tg:
+            signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
             self._tg = tg
             tg.start_soon(self.router.run)
             tg.start_soon(self.worker.run)
@@ -112,13 +114,21 @@ class Node:
             tg.start_soon(self._elect_loop)
             tg.start_soon(self._listen_for_kill_command)
 
+    def shutdown(self):
+        assert self._tg
+        # if this is our second call to shutdown, just sys.exit
+        if self._tg.cancel_scope.cancel_called:
+            import sys
+            sys.exit(1)
+        self._tg.cancel_scope.cancel()
+
     async def _listen_for_kill_command(self):
         assert self._tg
         with self.router.receiver(topics.COMMANDS) as commands:
             async for command in commands:
                 match command.command:
                     case KillCommand():
-                        self._tg.cancel_scope.cancel()
+                        self.shutdown()
                     case _:
                         pass
 
@@ -198,6 +208,7 @@ class Node:
 
 def main():
     args = Args.parse()
+    
     mp.set_start_method("spawn")
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
@@ -205,7 +216,7 @@ def main():
 
     node = anyio.run(Node.create, args)
     anyio.run(node.run)
-
+    logger.info("EXO Shutdown complete")
     logger_cleanup()
 
 
