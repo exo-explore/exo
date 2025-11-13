@@ -43,41 +43,41 @@ stages:
   #   generation_length: 10
   #   time_between_requests: 2.0
   #   iterations: 5
-  - name: "pp64_g64"
-    prompt_length: 64
-    generation_length: 64
-    time_between_requests: 2.0
-    iterations: 5
+  # - name: "pp64_g64"
+  #   prompt_length: 64
+  #   generation_length: 64
+  #   time_between_requests: 2.0
+  #   iterations: 5
   # - name: "pp64_g512"
   #   prompt_length: 64
   #   generation_length: 512
   #   time_between_requests: 2.0
   #   iterations: 10
-  - name: "pp256_g64"
-    prompt_length: 256
-    generation_length: 64
-    time_between_requests: 2.0
-    iterations: 5
+  # - name: "pp256_g64"
+  #   prompt_length: 256
+  #   generation_length: 64
+  #   time_between_requests: 2.0
+  #   iterations: 5
   # - name: "pp256_g512"
   #   prompt_length: 256
   #   generation_length: 512
   #   time_between_requests: 2.0
   #   iterations: 10
-  - name: "pp1024_g64"
-    prompt_length: 1024
-    generation_length: 64
-    time_between_requests: 2.0
-    iterations: 5
+  # - name: "pp1024_g64"
+  #   prompt_length: 1024
+  #   generation_length: 64
+  #   time_between_requests: 2.0
+  #   iterations: 5
   # - name: "pp1024_g512"
   #   prompt_length: 1024
   #   generation_length: 512
   #   time_between_requests: 2.0
   #   iterations: 10
-  - name: "pp2048_g64"
-    prompt_length: 2048
-    generation_length: 64
-    time_between_requests: 2.0
-    iterations: 5
+  # - name: "pp2048_g64"
+  #   prompt_length: 2048
+  #   generation_length: 64
+  #   time_between_requests: 2.0
+  #   iterations: 5
   # - name: "pp2048_g512"
   #   prompt_length: 2048
   #   generation_length: 512
@@ -87,7 +87,7 @@ stages:
     prompt_length: 4096
     generation_length: 64
     time_between_requests: 2.0
-    iterations: 5
+    iterations: 4
   # - name: "pp4096_g512"
   #   prompt_length: 4096
   #   generation_length: 512
@@ -97,7 +97,7 @@ stages:
     prompt_length: 8192
     generation_length: 64
     time_between_requests: 2.0
-    iterations: 5
+    iterations: 4
   # - name: "pp8192_g512"
   #   prompt_length: 8192
   #   generation_length: 512

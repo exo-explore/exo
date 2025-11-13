@@ -149,7 +149,10 @@ def initialize_mlx(
         tokenizer = cast(
             TokenizerWrapper,
             load_tokenizer(
-                model_path, tokenizer_config_extra={"trust_remote_code": True}
+                model_path,
+                tokenizer_config_extra={"trust_remote_code": True},
+                # TODO: HACK for Kimi K2 wrong eos token id
+                eos_token_ids=[163586] if "kimi-k2" in bound_instance.bound_shard().model_meta.model_id.lower() else None,
             ),
         )
         assert isinstance(tokenizer, TokenizerWrapper)
@@ -177,7 +180,13 @@ def shard_and_load(
     # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
     tokenizer = cast(
         TokenizerWrapper,
-        load_tokenizer(model_path, tokenizer_config_extra={"trust_remote_code": True}),
+        # TODO: HACK for Kimi K2 wrong eos token id
+        load_tokenizer(
+            model_path,
+            tokenizer_config_extra={"trust_remote_code": True},
+            # TODO: HACK for Kimi K2 wrong eos token id
+            eos_token_ids=[163586] if "kimi-k2" in shard_metadata.model_meta.model_id.lower() else None,
+        ),
     )
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
