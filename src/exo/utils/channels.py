@@ -139,7 +139,9 @@ class MpSender[T]:
     # == unique to Mp channels ==
     def join(self) -> None:
         """Ensure any queued messages are resolved before continuing"""
-        assert self._state.closed.is_set(), "Mp channels must be closed before being joined"
+        assert self._state.closed.is_set(), (
+            "Mp channels must be closed before being joined"
+        )
         self._state.buffer.join_thread()
 
     # == context manager support ==
@@ -209,7 +211,9 @@ class MpReceiver[T]:
     # == unique to Mp channels ==
     def join(self) -> None:
         """Block until all enqueued messages are drained off our side of the buffer"""
-        assert self._state.closed.is_set(), "Mp channels must be closed before being joined"
+        assert self._state.closed.is_set(), (
+            "Mp channels must be closed before being joined"
+        )
         self._state.buffer.join_thread()
 
     # == iterator support ==

@@ -6,6 +6,9 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.engines.mlx import Model
+
+# from exo.engines.mlx.cache import KVPrefixCache
+from exo.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.engines.mlx.utils_mlx import (
     apply_chat_template,
     make_kv_cache,
@@ -70,6 +73,8 @@ def warmup_inference(
         sampler=sampler,
         prompt_cache=cache,
         prefill_step_size=65536,
+        kv_group_size=KV_GROUP_SIZE,
+        kv_bits=KV_BITS,
     ):
         logger.info("Generated warmup token: " + str(_r.text))
         tokens_generated += 1
@@ -94,19 +99,19 @@ def mlx_generate(
         chat_task_data=task,
     )
 
-    cache = make_kv_cache(
-        model=model,
-    )
+    caches = make_kv_cache(model=model)
 
-    max_tokens = task.max_tokens or 1000
+    max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
         max_tokens=max_tokens,
         sampler=sampler,
-        prompt_cache=cache,
+        prompt_cache=caches,
         prefill_step_size=65536,
+        kv_group_size=KV_GROUP_SIZE,
+        kv_bits=KV_BITS,
     ):
         logger.info(out.text)
         if out.finish_reason is not None and out.finish_reason not in get_args(

@@ -14,32 +14,32 @@ class ModelCard(CamelCaseModel):
 
 MODEL_CARDS: dict[str, ModelCard] = {
     # deepseek v3
-    "deepseek-v3-0324:4bit": ModelCard(
-        short_id="deepseek-v3-0324:4bit",
-        model_id="mlx-community/DeepSeek-V3-0324-4bit",
-        name="DeepSeek V3 0324 (4-bit)",
-        description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/DeepSeek-V3-0324-4bit"),
-            pretty_name="DeepSeek V3 0324 (4-bit)",
-            storage_size=Memory.from_kb(409706307),
-            n_layers=61,
-        ),
-    ),
-    "deepseek-v3-0324": ModelCard(
-        short_id="deepseek-v3-0324",
-        model_id="mlx-community/DeepSeek-v3-0324-8bit",
-        name="DeepSeek V3 0324 (8-bit)",
-        description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/DeepSeek-v3-0324-8bit"),
-            pretty_name="DeepSeek V3 0324 (8-bit)",
-            storage_size=Memory.from_kb(754706307),
-            n_layers=61,
-        ),
-    ),
+    # "deepseek-v3-0324:4bit": ModelCard(
+    #     short_id="deepseek-v3-0324:4bit",
+    #     model_id="mlx-community/DeepSeek-V3-0324-4bit",
+    #     name="DeepSeek V3 0324 (4-bit)",
+    #     description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/DeepSeek-V3-0324-4bit"),
+    #         pretty_name="DeepSeek V3 0324 (4-bit)",
+    #         storage_size=Memory.from_kb(409706307),
+    #         n_layers=61,
+    #     ),
+    # ),
+    # "deepseek-v3-0324": ModelCard(
+    #     short_id="deepseek-v3-0324",
+    #     model_id="mlx-community/DeepSeek-v3-0324-8bit",
+    #     name="DeepSeek V3 0324 (8-bit)",
+    #     description="""DeepSeek V3 is a large language model trained on the DeepSeek V3 dataset.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/DeepSeek-v3-0324-8bit"),
+    #         pretty_name="DeepSeek V3 0324 (8-bit)",
+    #         storage_size=Memory.from_kb(754706307),
+    #         n_layers=61,
+    #     ),
+    # ),
     "deepseek-v3.1": ModelCard(
         short_id="deepseek-v3.1",
         model_id="mlx-community/DeepSeek-V3.1-8bit",
@@ -67,32 +67,32 @@ MODEL_CARDS: dict[str, ModelCard] = {
         ),
     ),
     # deepseek r1
-    "deepseek-r1-0528:4bit": ModelCard(
-        short_id="deepseek-r1-0528:4bit",
-        model_id="mlx-community/DeepSeek-R1-0528-4bit",
-        name="DeepSeek-R1-0528 (4-bit)",
-        description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/DeepSeek-R1-0528-4bit"),
-            pretty_name="DeepSeek R1 671B (4-bit)",
-            storage_size=Memory.from_kb(409706307),
-            n_layers=61,
-        ),
-    ),
-    "deepseek-r1-0528": ModelCard(
-        short_id="deepseek-r1-0528",
-        model_id="mlx-community/DeepSeek-R1-0528-8bit",
-        name="DeepSeek-R1-0528 (8-bit)",
-        description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/DeepSeek-R1-0528-8bit"),
-            pretty_name="DeepSeek R1 671B (8-bit)",
-            storage_size=Memory.from_bytes(754998771712),
-            n_layers=61,
-        ),
-    ),
+    # "deepseek-r1-0528:4bit": ModelCard(
+    #     short_id="deepseek-r1-0528:4bit",
+    #     model_id="mlx-community/DeepSeek-R1-0528-4bit",
+    #     name="DeepSeek-R1-0528 (4-bit)",
+    #     description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/DeepSeek-R1-0528-4bit"),
+    #         pretty_name="DeepSeek R1 671B (4-bit)",
+    #         storage_size=Memory.from_kb(409706307),
+    #         n_layers=61,
+    #     ),
+    # ),
+    # "deepseek-r1-0528": ModelCard(
+    #     short_id="deepseek-r1-0528",
+    #     model_id="mlx-community/DeepSeek-R1-0528-8bit",
+    #     name="DeepSeek-R1-0528 (8-bit)",
+    #     description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/DeepSeek-R1-0528-8bit"),
+    #         pretty_name="DeepSeek R1 671B (8-bit)",
+    #         storage_size=Memory.from_bytes(754998771712),
+    #         n_layers=61,
+    #     ),
+    # ),
     # kimi k2
     "kimi-k2-instruct-4bit": ModelCard(
         short_id="kimi-k2-instruct-4bit",
@@ -228,19 +228,19 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=32,
         ),
     ),
-    "phi-3-mini:128k": ModelCard(
-        short_id="phi-3-mini:128k",
-        model_id="mlx-community/Phi-3-mini-128k-instruct-4bit",
-        name="Phi 3 Mini 128k",
-        description="""Phi 3 Mini is a large language model trained on the Phi 3 Mini dataset.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/Phi-3-mini-128k-instruct-4bit"),
-            pretty_name="Phi 3 Mini 128k",
-            storage_size=Memory.from_kb(2099262),
-            n_layers=32,
-        ),
-    ),
+    # "phi-3-mini:128k": ModelCard(
+    #     short_id="phi-3-mini:128k",
+    #     model_id="mlx-community/Phi-3-mini-128k-instruct-4bit",
+    #     name="Phi 3 Mini 128k",
+    #     description="""Phi 3 Mini is a large language model trained on the Phi 3 Mini dataset.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/Phi-3-mini-128k-instruct-4bit"),
+    #         pretty_name="Phi 3 Mini 128k",
+    #         storage_size=Memory.from_kb(2099262),
+    #         n_layers=32,
+    #     ),
+    # ),
     # qwen3
     "qwen3-0.6b": ModelCard(
         short_id="qwen3-0.6b",
@@ -268,19 +268,19 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
         ),
     ),
-    "qwen3-235b-a22b": ModelCard(
-        short_id="qwen3-235b-a22b",
-        model_id="mlx-community/Qwen3-235B-A22B-4bit",
-        name="Qwen3 235B, Active 22B (4-bit)",
-        description="""Qwen3 235B (Active 22B) is a large language model trained on the Qwen3 235B dataset.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/Qwen3-235B-A22B-4bit"),
-            pretty_name="Qwen3 235B, Active 22B (4-bit)",
-            storage_size=Memory.from_kb(123207680),
-            n_layers=94,
-        ),
-    ),
+    # "qwen3-235b-a22b": ModelCard(
+    #     short_id="qwen3-235b-a22b",
+    #     model_id="mlx-community/Qwen3-235B-A22B-4bit",
+    #     name="Qwen3 235B, Active 22B (4-bit)",
+    #     description="""Qwen3 235B (Active 22B) is a large language model trained on the Qwen3 235B dataset.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/Qwen3-235B-A22B-4bit"),
+    #         pretty_name="Qwen3 235B, Active 22B (4-bit)",
+    #         storage_size=Memory.from_kb(123207680),
+    #         n_layers=94,
+    #     ),
+    # ),
     "qwen3-235b-a22b-8bit": ModelCard(
         short_id="qwen3-235b-a22b-8bit",
         model_id="mlx-community/Qwen3-235B-A22B-Instruct-2507-8bit",
@@ -308,31 +308,31 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=40,
         ),
     ),
-    "granite-3.3-8b": ModelCard(
-        short_id="granite-3.3-8b",
-        model_id="mlx-community/granite-3.3-8b-instruct-fp16",
-        name="Granite 3.3 8B",
-        description="""Granite-3.3-8B-Instruct is a 8-billion parameter 128K context length language model fine-tuned for improved reasoning and instruction-following capabilities.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/granite-3.3-8b-instruct-fp16"),
-            pretty_name="Granite 3.3 8B",
-            storage_size=Memory.from_kb(15958720),
-            n_layers=40,
-        ),
-    ),
+    # "granite-3.3-8b": ModelCard(
+    #     short_id="granite-3.3-8b",
+    #     model_id="mlx-community/granite-3.3-8b-instruct-fp16",
+    #     name="Granite 3.3 8B",
+    #     description="""Granite-3.3-8B-Instruct is a 8-billion parameter 128K context length language model fine-tuned for improved reasoning and instruction-following capabilities.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/granite-3.3-8b-instruct-fp16"),
+    #         pretty_name="Granite 3.3 8B",
+    #         storage_size=Memory.from_kb(15958720),
+    #         n_layers=40,
+    #     ),
+    # ),
     # smol-lm
-    "smol-lm-135m": ModelCard(
-        short_id="smol-lm-135m",
-        model_id="mlx-community/SmolLM-135M-4bit",
-        name="Smol LM 135M",
-        description="""SmolLM is a series of state-of-the-art small language models available in three sizes: 135M, 360M, and 1.7B parameters. """,
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/SmolLM-135M-4bit"),
-            pretty_name="Smol LM 135M",
-            storage_size=Memory.from_kb(73940),
-            n_layers=30,
-        ),
-    ),
+    # "smol-lm-135m": ModelCard(
+    #     short_id="smol-lm-135m",
+    #     model_id="mlx-community/SmolLM-135M-4bit",
+    #     name="Smol LM 135M",
+    #     description="""SmolLM is a series of state-of-the-art small language models available in three sizes: 135M, 360M, and 1.7B parameters. """,
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/SmolLM-135M-4bit"),
+    #         pretty_name="Smol LM 135M",
+    #         storage_size=Memory.from_kb(73940),
+    #         n_layers=30,
+    #     ),
+    # ),
 }

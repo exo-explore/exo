@@ -41,6 +41,7 @@ class BoundInstance(CamelCaseModel):
     instance: Instance
     bound_runner_id: RunnerId
 
+    @property
     def bound_shard(self) -> ShardMetadata:
         shard = self.instance.shard(self.bound_runner_id)
         assert shard is not None

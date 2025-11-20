@@ -22,7 +22,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.commands_runner import (
     GenerationResponse,
-    TokenizedResponse,
+    # TokenizedResponse,
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
@@ -31,12 +31,12 @@ from exo.shared.types.worker.runners import (
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
+    RunnerShutdown,
     RunnerStatus,
     RunnerWaitingForModel,
     RunnerWarmingUp,
-    RunnerShutdown
 )
-from exo.utils.channels import MpReceiver, MpSender, ClosedResourceError
+from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.generate import mlx_generate, warmup_inference
 
@@ -49,7 +49,7 @@ def main(
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
         bound_instance.bound_runner_id,
-        bound_instance.bound_shard(),
+        bound_instance.bound_shard,
     )
     try:
         logger.info("hello from the runner")
@@ -115,6 +115,7 @@ def main(
                             model=model,
                             tokenizer=tokenizer,
                             sampler=sampler,
+                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
                         logger.info(
@@ -185,9 +186,9 @@ def main(
                                                 ),
                                             )
                                         )
-                                case TokenizedResponse():
-                                    # TODO: something here ig
-                                    logger.info("Finished tokenizing?")
+                                # case TokenizedResponse():
+                                # TODO: something here ig
+                                # logger.info("Finished tokenizing?")
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
@@ -212,9 +213,7 @@ def main(
                     )
                 )
         event_sender.send(
-            RunnerStatusUpdated(
-                runner_id=runner_id, runner_status=RunnerShutdown()
-            )
+            RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerShutdown())
         )
     except ClosedResourceError:
         logger.warning("runner communication closed unexpectedly")

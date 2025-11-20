@@ -210,27 +210,19 @@ def get_mlx_ibv_devices_matrix(
             if i == j:
                 continue
 
-            # just for debugging for now...
-            for connection_ip in _find_connection_ip(node_i, node_j, cycle_digraph):
-                interface_name = _find_interface_name_for_ip(connection_ip, node_i)
-                logger.info(
-                    f"Interface name for {connection_ip} on {node_i.node_id}: {interface_name}"
-                )
-
-            matrix[i][j] = "rdma_en3"  # TODO: hack, for now it's always en3
-            continue
-
-            for connection_ip in _find_connection_ip(node_i, node_j, cycle_digraph):
-                # Set the first valid rmda i -> j connection - if there are multiple, we set essentially randomly - this is fine, the connection doesn't appear to have to be bidirectional
-                if (
-                    interface_name := _find_interface_name_for_ip(
-                        connection_ip,
-                        node_i,
-                    )
-                ) is not None:
+            # Find the IP J uses to talk to I
+            for connection_ip in _find_connection_ip(node_j, node_i, cycle_digraph):
+                # This is a local IP on I, which is attached to an interface: find that interface
+                if interface_name := _find_interface_name_for_ip(connection_ip, node_i):
                     matrix[i][j] = interface_name
+                    logger.info(
+                        f"Interface name for {connection_ip} on {node_i.node_id}: {interface_name}"
+                    )
                     break
             else:
+                logger.warning(
+                    f"Failed to find interface name between {node_i.node_id} and {node_j.node_id}"
+                )
                 raise ValueError(
                     "Current ibv backend requires all-to-all rdma connections"
                 )
@@ -246,8 +238,9 @@ def _find_connection_ip(
     """Find all IP addresses that connect node i to node j."""
     for connection in cycle_digraph.list_connections():
         if (
-            connection.local_node_id == node_j.node_id
-            and connection.send_back_node_id == node_i.node_id
+            connection.local_node_id == node_i.node_id
+            and connection.send_back_node_id == node_j.node_id
+            # TODO: Check if we need this.
             and connection.send_back_multiaddr is not None
         ):
             yield connection.send_back_multiaddr.ip_address
@@ -260,13 +253,13 @@ def _find_interface_name_for_ip(
     if node_info.node_profile is None:
         return None
 
+    logger.info(f"Searching {node_info.node_id} for ip {ip_address}:")
     for interface in node_info.node_profile.network_interfaces:
-        logger.info(
-            f"Checking interface {interface.name} for IP {interface.ip_address} == {ip_address}: {interface.ip_address == ip_address}"
-        )
         if interface.name not in ["en2", "en3", "en4", "en5", "en6", "en7"]:
             continue
+        logger.info(f" | {interface.name}: {interface.ip_address}")
         if interface.ip_address == ip_address:
+            logger.info("Found")
             return f"rdma_{interface.name}"
 
     return None

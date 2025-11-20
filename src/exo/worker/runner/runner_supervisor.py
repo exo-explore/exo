@@ -67,7 +67,7 @@ class RunnerSupervisor:
             daemon=True,
         )
 
-        shard_metadata = bound_instance.bound_shard()
+        shard_metadata = bound_instance.bound_shard
 
         self = cls(
             bound_instance=bound_instance,
@@ -109,12 +109,13 @@ class RunnerSupervisor:
         if not self.runner_process.is_alive():
             return
 
-        logger.critical("Runner process didn't respond to SIGKILL. System resources may have leaked")
+        logger.critical(
+            "Runner process didn't respond to SIGKILL. System resources may have leaked"
+        )
 
     def shutdown(self):
         assert self._tg
         self._tg.cancel_scope.cancel()
-        
 
     async def start_task(self, task: Task):
         event = anyio.Event()
@@ -125,7 +126,6 @@ class RunnerSupervisor:
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
-
 
     async def _forward_events(self):
         with self._ev_recv as events:
@@ -140,7 +140,6 @@ class RunnerSupervisor:
             except (ClosedResourceError, BrokenResourceError) as e:
                 await self._check_runner(e)
 
-
     def __del__(self) -> None:
         if self.runner_process.is_alive():
             logger.warning("RunnerSupervisor was not stopped cleanly.")
@@ -152,7 +151,7 @@ class RunnerSupervisor:
             await to_thread.run_sync(self.runner_process.join, 1)
         rc = self.runner_process.exitcode
         if rc == 0:
-            # 
+            #
             return
 
         if isinstance(rc, int) and rc < 0:

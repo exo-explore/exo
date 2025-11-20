@@ -31,10 +31,10 @@
             max-width: 1200px;
             margin-bottom: 15px;
             margin-top: 20px;
-            text-align: left;
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
             align-items: flex-end;
+            gap: 20px;
         }
 
         .dashboard-header h1 {
@@ -65,6 +65,18 @@
         .header-left {
             display: flex;
             flex-direction: column;
+        }
+
+        .header-center {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .header-right {
+            display: flex;
+            justify-content: flex-end;
         }
 
         .header-instances-button {
@@ -972,11 +984,11 @@
                     <label class="launch-label">Sharding:</label>
                     <div class="strategy-options">
                         <div class="strategy-option">
-                            <input type="radio" id="shardingPipeline" name="sharding" value="Pipeline" checked>
+                            <input type="radio" id="shardingPipeline" name="sharding" value="Pipeline">
                             <label for="shardingPipeline">Pipeline</label>
                         </div>
                         <div class="strategy-option">
-                            <input type="radio" id="shardingTensor" name="sharding" value="Tensor">
+                            <input type="radio" id="shardingTensor" name="sharding" value="Tensor" checked>
                             <label for="shardingTensor">Tensor</label>
                         </div>
                     </div>
@@ -986,12 +998,22 @@
                     <label class="launch-label">Instance Type:</label>
                     <div class="strategy-options">
                         <div class="strategy-option">
-                            <input type="radio" id="instanceMlxRing" name="instance_meta" value="MlxRing" checked>
+                            <input type="radio" id="instanceMlxRing" name="instance_meta" value="MlxRing">
                             <label for="instanceMlxRing">MLX Ring</label>
                         </div>
                         <div class="strategy-option">
-                            <input type="radio" id="instanceMlxIbv" name="instance_meta" value="MlxIbv">
+                            <input type="radio" id="instanceMlxIbv" name="instance_meta" value="MlxIbv" checked>
                             <label for="instanceMlxIbv">MLX IBV</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="strategy-selector">
+                    <label class="launch-label">Minimum Nodes:</label>
+                    <div class="strategy-options" id="minNodesOptions">
+                        <div class="strategy-option">
+                            <input type="radio" id="minNodes1" name="min_nodes" value="1" checked>
+                            <label for="minNodes1">1</label>
                         </div>
                     </div>
                 </div>
@@ -1004,10 +1026,15 @@
 
     <div class="dashboard-header">
         <div class="header-left">
+            <!-- Left section: empty or can be used for future content -->
+        </div>
+        <div class="header-center">
             <h1><img src="exo-logo.png" alt="EXO logo" height="48" /></h1>
             <p class="last-updated" id="lastUpdated">Fetching data...</p>
         </div>
-        <button class="header-instances-button" id="instancesMenuButton">Instances</button>
+        <div class="header-right">
+            <button class="header-instances-button" id="instancesMenuButton">Instances</button>
+        </div>
     </div>
 
     <!-- Replaced node-grid with SVG container for topology graph -->
@@ -1068,12 +1095,14 @@
         const modelSelect = document.getElementById('modelSelect');
         const launchInstanceButton = document.getElementById('launchInstanceButton');
         const launchStatus = document.getElementById('launchStatus');
+        const minNodesOptions = document.getElementById('minNodesOptions');
 
         const USE_MOCK_DATA = false; // <<< FLAG TO TOGGLE MOCK DATA
         let currentlySelectedNodeId = null; // To store the ID of the currently selected node
         let nodeIdToFriendlyName = {}; // Map nodeId -> friendly name for download sections
         let instanceIdToColor = {}; // Map instanceId -> color for visual coding
         let connectionToInstances = {}; // Map "nodeA|nodeB" -> [instanceIds] using that connection
+        let currentNodeCount = 1; // Track the current number of nodes in topology
 
         const API_ENDPOINT = window.location.origin + window.location.pathname.replace(/\/$/, "") + '/state';
         const REFRESH_INTERVAL = 1000; // 1 second
@@ -1218,6 +1247,16 @@
             instancesMenuButton.classList.toggle('active', sidebarOpen);
         }
 
+        // Edge IP display flag (can be toggled from console)
+        window.exoShowEdgeIPs = false;
+        
+        // Helper function to toggle IP display (accessible from console)
+        window.toggleEdgeIPs = function() {
+            window.exoShowEdgeIPs = !window.exoShowEdgeIPs;
+            console.log(`Edge IP display ${window.exoShowEdgeIPs ? 'enabled' : 'disabled'}`);
+            return window.exoShowEdgeIPs;
+        };
+
         // Fetch available models and populate dropdown
         async function fetchAndPopulateModels() {
             try {
@@ -1281,8 +1320,11 @@
 
             const selectedSharding = document.querySelector('input[name="sharding"]:checked').value;
             const selectedInstanceMeta = document.querySelector('input[name="instance_meta"]:checked').value;
+            const minNodesRadio = document.querySelector('input[name="min_nodes"]:checked');
+            const minNodes = minNodesRadio ? parseInt(minNodesRadio.value, 10) : 1;
             console.log("selectedSharding", selectedSharding);
             console.log("selectedInstanceMeta", selectedInstanceMeta);
+            console.log("minNodes", minNodes);
 
             try {
                 showLaunchStatus('Launching instance...', 'loading');
@@ -1296,7 +1338,8 @@
                     body: JSON.stringify({ 
                         model_id: selectedModelId,
                         sharding: selectedSharding,
-                        instance_meta: selectedInstanceMeta
+                        instance_meta: selectedInstanceMeta,
+                        min_nodes: minNodes
                     })
                 });
 
@@ -1858,6 +1901,39 @@
             const edgesData = (topologyData && Array.isArray(topologyData.edges)) ? topologyData.edges : [];
             const nodeIds = Object.keys(nodesData);
 
+            // Update min nodes radio buttons based on current topology
+            currentNodeCount = Math.max(1, nodeIds.length);
+            if (minNodesOptions) {
+                // Get currently selected value before regenerating
+                const currentlySelected = document.querySelector('input[name="min_nodes"]:checked');
+                const hasOnlyDefaultOption = minNodesOptions.children.length === 1;
+                // Default to maximum nodes on initial load, otherwise preserve user selection
+                const selectedValue = (currentlySelected && !hasOnlyDefaultOption) ? parseInt(currentlySelected.value, 10) : currentNodeCount;
+                
+                // Clear and regenerate radio buttons
+                minNodesOptions.innerHTML = '';
+                for (let i = 1; i <= currentNodeCount; i++) {
+                    const optionDiv = document.createElement('div');
+                    optionDiv.className = 'strategy-option';
+                    
+                    const radio = document.createElement('input');
+                    radio.type = 'radio';
+                    radio.id = `minNodes${i}`;
+                    radio.name = 'min_nodes';
+                    radio.value = i.toString();
+                    // Check if this should be selected (preserve selection or default to maximum)
+                    radio.checked = (i === Math.min(selectedValue, currentNodeCount));
+                    
+                    const label = document.createElement('label');
+                    label.htmlFor = `minNodes${i}`;
+                    label.textContent = i.toString();
+                    
+                    optionDiv.appendChild(radio);
+                    optionDiv.appendChild(label);
+                    minNodesOptions.appendChild(optionDiv);
+                }
+            }
+
             if (nodeIds.length === 0) {
                 const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 textEl.setAttribute('x', '50%');
@@ -2002,7 +2078,7 @@
                     arrowsGroup.appendChild(arrowSeg);
                     
                     // Add label for A->B direction (show all connections)
-                    if (entry.aToBEdges && entry.aToBEdges.length > 0) {
+                    if (window.exoShowEdgeIPs && entry.aToBEdges && entry.aToBEdges.length > 0) {
                         // Count occurrences of each IP/interface combination
                         const connectionCounts = new Map();
                         
@@ -2067,7 +2143,7 @@
                     arrowsGroup.appendChild(arrowSeg);
                     
                     // Add label for B->A direction (show all connections)
-                    if (entry.bToAEdges && entry.bToAEdges.length > 0) {
+                    if (window.exoShowEdgeIPs && entry.bToAEdges && entry.bToAEdges.length > 0) {
                         // Count occurrences of each IP/interface combination
                         const connectionCounts = new Map();
                         

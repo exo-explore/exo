@@ -29,6 +29,7 @@ class CreateInstance(BaseCommand):
     model_meta: ModelMetadata
     sharding: Sharding
     instance_meta: InstanceMeta
+    min_nodes: int
 
 
 class DeleteInstance(BaseCommand):

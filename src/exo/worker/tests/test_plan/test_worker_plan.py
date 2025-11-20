@@ -1,4 +1,5 @@
 import pytest
+from exo.worker.common import AssignedRunner
 
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.state import State
@@ -27,7 +28,6 @@ from exo.shared.types.worker.runners import (
     RunningRunnerStatus,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.common import AssignedRunner
 from exo.worker.main import Worker
 from exo.worker.plan import plan
 from exo.worker.tests.constants import (

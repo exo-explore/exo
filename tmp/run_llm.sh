@@ -13,9 +13,9 @@ QUERY="$*"
 curl -sN -X POST "http://$HOST:8000/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "{
-        \"model\": \"mlx-community/Llama-3.3-70B-Instruct-8bit\",
+        \"model\": \"mlx-community/Kimi-K2-Thinking\",
         \"stream\": true,
-        \"messages\": [{ \"role\": \"user\",   \"content\": \"$QUERY\" }]
+        \"messages\": [{ \"role\": \"user\",   \"content\": \"$QUERY\"}]
       }" |
   grep --line-buffered '^data:' |
   grep --line-buffered -v 'data: \[DONE\]' |

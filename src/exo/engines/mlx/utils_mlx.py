@@ -1,8 +1,10 @@
 import os
 import resource
+import time
 from typing import Any, Callable, cast
 
-from mlx_lm.models.cache import KVCache, RotatingKVCache
+from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
+from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -22,6 +24,14 @@ from exo.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.engines.mlx.constants import (
+    CACHE_GROUP_SIZE,
+    KV_CACHE_BITS,
+    PATCH_SYSTEM_PROMPT,
+    TEMPERATURE,
+    TRUST_REMOTE_CODE,
+)
+from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
@@ -43,7 +53,6 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
 mlx_rank: None | int = None
 mlx_world_size: None | int = None
-
 
 def mx_barrier(group: mx.distributed.Group | None = None):
     mx.eval(
@@ -87,7 +96,7 @@ def mlx_distributed_init(
     - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
     - strict: if True, raise an error if the distributed backend is not available
     """
-    rank = bound_instance.bound_shard().device_rank
+    rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
 
     # TODO: singleton instances
@@ -136,33 +145,40 @@ def initialize_mlx(
     """
     mx.random.seed(42)
 
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard()))
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
+    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=TEMPERATURE)
     logger.info("Created a sampler")
 
     if len(bound_instance.instance.shard_assignments.node_to_runner) <= 1:
         logger.info(f"Single device used for {bound_instance.instance}")
-        model_path = build_model_path(bound_instance.bound_shard().model_meta.model_id)
-        model, _ = load_model(model_path, strict=True)
-        # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
-        tokenizer = cast(
-            TokenizerWrapper,
-            load_tokenizer(
-                model_path,
-                tokenizer_config_extra={"trust_remote_code": True},
-                # TODO: HACK for Kimi K2 wrong eos token id
-                eos_token_ids=[163586] if "kimi-k2" in bound_instance.bound_shard().model_meta.model_id.lower() else None,
-            ),
-        )
-        assert isinstance(tokenizer, TokenizerWrapper)
+        model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
+        start_time = time.perf_counter()
+        model, config = load_model(model_path, strict=True)
+        end_time = time.perf_counter()
+        logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
+        if isinstance(model.model, DeepseekV3Model):
+            pass
+            # model, config = quantize_model(
+            #    model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
+            # )
+
+        tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
         logger.info("Starting distributed init")
         group = mlx_distributed_init(bound_instance)
-        model, tokenizer = shard_and_load(bound_instance.bound_shard(), group=group)
 
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard()))
+        start_time = time.perf_counter()
+        model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
+        end_time = time.perf_counter()
+        logger.info(
+            f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
+        )
+
+    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+
+    logger.debug(model)
 
     return cast(Model, model), tokenizer, sampler
 
@@ -174,20 +190,28 @@ def shard_and_load(
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 
     model, config = load_model(model_path, lazy=True, strict=False)
-    logger.info(f"{config=}")
+    logger.debug(model)
+    if isinstance(model.model, DeepseekV3Model):
+        pass
+        # TODO: See if we should quantize the model.
+        # def is_attention_layer(path: str) -> bool:
+        #     path = path.lower()
+
+        #     return "self_attn" in path and "layernorm" not in path
+
+
+        # def quant_predicate(path: str, module: nn.Module):
+        #     if not isinstance(module, nn.Linear):
+        #         return False
+
+        #     return is_attention_layer(path)
+        # model, config = quantize_model(
+        #        model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
+        #    )
+
     assert isinstance(model, nn.Module)
 
-    # TODO: we should really make this opt-in, but Kimi requires trust_remote_code=True
-    tokenizer = cast(
-        TokenizerWrapper,
-        # TODO: HACK for Kimi K2 wrong eos token id
-        load_tokenizer(
-            model_path,
-            tokenizer_config_extra={"trust_remote_code": True},
-            # TODO: HACK for Kimi K2 wrong eos token id
-            eos_token_ids=[163586] if "kimi-k2" in shard_metadata.model_meta.model_id.lower() else None,
-        ),
-    )
+    tokenizer = get_tokenizer(model_path, shard_metadata)
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
@@ -200,12 +224,34 @@ def shard_and_load(
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
     mx.eval(model.parameters())
+
+    # TODO: Do we need this?
     mx.eval(model)
+
+    logger.debug("SHARDED")
+    logger.debug(model)
 
     # Synchronize processes before generation to avoid timeout
     mx_barrier(group)
 
     return model, tokenizer
+
+
+def get_tokenizer(model_path: str, shard_metadata: ShardMetadata):
+    tokenizer = cast(
+        TokenizerWrapper,
+        load_tokenizer(
+            model_path,
+            tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
+            # TODO: HACK for Kimi K2 wrong eos token id
+            eos_token_ids=[163586]
+            if "kimi-k2" in shard_metadata.model_meta.model_id.lower()
+            else None,
+        ),
+    )
+    assert isinstance(tokenizer, TokenizerWrapper)
+
+    return tokenizer
 
 
 def apply_chat_template(
@@ -214,30 +260,27 @@ def apply_chat_template(
 ) -> str:
     # Now we can properly access the messages
     messages = chat_task_data.messages
-    messages_dicts: list[dict[str, Any]] = [msg.model_dump() for msg in messages]
 
-    # Filter out None values, keeping relevant keys for the model
     formatted_messages: list[dict[str, Any]] = []
-    for message in messages_dicts:
-        filtered_message: dict[str, Any] = {
-            k: v
-            for k, v in message.items()  # pyright: ignore[reportAny]
-            if v is not None
-        }
+    for i, message in enumerate(messages):
+        if isinstance(message.content, ChatCompletionMessageText):
+            message.content = message.content.text
+        if isinstance(message.content, list):
+            if len(message.content) != 1:
+                logger.warning("Received malformed prompt")
+                continue
 
-        # Verify we have required fields
-        if "role" not in filtered_message:
-            raise ValueError(f"Message missing 'role' field: {filtered_message}")
-        if "content" not in filtered_message and "thinking" not in filtered_message:
-            # If neither content nor thinking is present, skip this message
+            message.content = message.content[0].text
+        if message.content is None and message.thinking is None:
             continue
 
-        formatted_messages.append(filtered_message)
-
-    messages_dicts = formatted_messages
+        # Null values are not valid when applying templates in tokenizer
+        formatted_messages.append(
+            {k: v for k, v in message.model_dump().items() if v is not None}
+        )
 
     prompt: str = tokenizer.apply_chat_template(  # type: ignore
-        messages_dicts,
+        formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
     )
@@ -269,16 +312,23 @@ class NullKVCache(KVCache):
 
 
 def make_kv_cache(
-    model: Model,
-    max_kv_size: int | None = None,
-) -> list[KVCache | RotatingKVCache]:
+    model: Model, max_kv_size: int | None = None, keep: int = 0
+) -> list[KVCache | RotatingKVCache | QuantizedKVCache]:
     assert hasattr(model, "layers")
+
     if max_kv_size is None:
-        logger.info("Using default KV cache")
-        return [KVCache() for _ in model.layers]
+        if KV_CACHE_BITS is None:
+            logger.info("Using default KV cache")
+            return [KVCache() for _ in model.layers]
+        else:
+            logger.info("Using quantized KV cache")
+            return [
+                QuantizedKVCache(group_size=CACHE_GROUP_SIZE, bits=KV_CACHE_BITS)
+                for _ in model.layers
+            ]
     else:
-        logger.info(f"Using rotating KV cache with {max_kv_size=}")
-        return [RotatingKVCache(max_size=max_kv_size) for _ in model.layers]
+        logger.info(f"Using rotating KV cache with {max_kv_size=} with {keep=}")
+        return [RotatingKVCache(max_size=max_kv_size, keep=keep) for _ in model.layers]
 
 
 def mlx_force_oom(size: int = 40000) -> None:

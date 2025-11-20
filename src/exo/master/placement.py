@@ -3,6 +3,8 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Sequence
 
+from loguru import logger
+
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_hosts_from_subgraph,
@@ -41,13 +43,13 @@ def get_instance_placements_after_create(
     tb_only: bool = False,
 ) -> dict[InstanceId, Instance]:
     all_nodes = list(topology.list_nodes())
-    from loguru import logger
 
     logger.info("finding cycles:")
     cycles = topology.get_cycles()
-    logger.info(f"{cycles=}")
     singleton_cycles = [[node] for node in all_nodes]
-    candidate_cycles = cycles + singleton_cycles
+    candidate_cycles = list(
+        filter(lambda it: len(it) >= command.min_nodes, cycles + singleton_cycles)
+    )
     cycles_with_sufficient_memory = filter_cycles_by_memory(
         candidate_cycles, command.model_meta.storage_size
     )

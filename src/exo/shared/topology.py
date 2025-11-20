@@ -70,6 +70,9 @@ class Topology:
         if connection.send_back_node_id not in self._node_id_to_rx_id_map:
             self.add_node(NodeInfo(node_id=connection.send_back_node_id))
 
+        if connection in self._edge_id_to_rx_id_map:
+            return
+
         src_id = self._node_id_to_rx_id_map[connection.local_node_id]
         sink_id = self._node_id_to_rx_id_map[connection.send_back_node_id]
 

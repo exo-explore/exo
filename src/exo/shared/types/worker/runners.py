@@ -48,6 +48,7 @@ class RunnerRunning(BaseRunnerStatus):
 class RunnerShutdown(BaseRunnerStatus):
     pass
 
+
 class RunnerFailed(BaseRunnerStatus):
     error_message: str | None = None
 

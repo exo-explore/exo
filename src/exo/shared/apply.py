@@ -252,9 +252,5 @@ def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> Sta
     if not topology.contains_connection(event.edge):
         return state
     topology.remove_connection(event.edge)
-    if not topology.contains_connection(event.edge) and topology.contains_connection(
-        event.edge.reverse()
-    ):
-        topology.remove_connection(event.edge.reverse())
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})

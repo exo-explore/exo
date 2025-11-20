@@ -36,9 +36,7 @@ def save_prompt_cache(
             state.
     """
 
-def load_prompt_cache(
-    file_name, return_metadata=...
-):  # -> tuple[list[Any], Any] | list[Any]:
+def load_prompt_cache(file_name: str, return_metadata=...) -> array:
     """
     Load a prompt cache from a file.
 

@@ -24,13 +24,20 @@ class ModelListModel(BaseModel):
 
 
 class ModelList(BaseModel):
-    object: str = "list"
+    object: Literal["list"] = "list"
     data: list[ModelListModel]
+
+
+class ChatCompletionMessageText(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
 
 
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
-    content: str | None = None
+    content: (
+        str | ChatCompletionMessageText | list[ChatCompletionMessageText] | None
+    ) = None
     thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
@@ -55,20 +62,6 @@ class Logprobs(BaseModel):
     content: list[LogprobsContentItem] | None = None
 
 
-class StreamingChoiceResponse(BaseModel):
-    index: int
-    delta: ChatCompletionMessage
-    logprobs: Logprobs | None = None
-    finish_reason: FinishReason | None = None
-
-
-class ChatCompletionChoice(BaseModel):
-    index: int
-    message: ChatCompletionMessage
-    logprobs: Logprobs | None = None
-    finish_reason: FinishReason | None = None
-
-
 class PromptTokensDetails(BaseModel):
     cached_tokens: int = 0
     audio_tokens: int = 0
@@ -87,6 +80,21 @@ class Usage(BaseModel):
     total_tokens: int
     prompt_tokens_details: PromptTokensDetails | None = None
     completion_tokens_details: CompletionTokensDetails | None = None
+
+
+class StreamingChoiceResponse(BaseModel):
+    index: int
+    delta: ChatCompletionMessage
+    logprobs: Logprobs | None = None
+    finish_reason: FinishReason | None = None
+    usage: Usage | None = None
+
+
+class ChatCompletionChoice(BaseModel):
+    index: int
+    message: ChatCompletionMessage
+    logprobs: Logprobs | None = None
+    finish_reason: FinishReason | None = None
 
 
 class ChatCompletionResponse(BaseModel):
@@ -125,8 +133,8 @@ class CreateInstanceTaskParams(BaseModel):
     # TODO: in future the user could specify a specific Instance, not just a model_id
     model_id: str
     sharding: Sharding = Sharding.Pipeline
-    # TODO: fix
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
+    min_nodes: int = 1
 
 
 class DeleteInstanceTaskParams(BaseModel):

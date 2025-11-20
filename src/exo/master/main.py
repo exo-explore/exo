@@ -209,7 +209,7 @@ class Master:
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
 
-                    # TODO: SQL
+                    # TODO: SQL <- What does this mean?
                     self._event_log.append(event)
                     await self._send_event(indexed)
 

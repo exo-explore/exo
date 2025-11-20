@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from exo.engines.mlx.constants import HIDE_THINKING
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.models.model_cards import MODEL_CARDS
@@ -45,6 +46,7 @@ from exo.shared.types.models import ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import OrderedBuffer
 
@@ -171,9 +173,9 @@ class API:
             )
 
         command = CreateInstance(
-            command_id=CommandId(),
             model_meta=model_meta,
             instance_meta=payload.instance_meta,
+            min_nodes=payload.min_nodes,
             sharding=payload.sharding,
         )
         await self._send(command)
@@ -194,7 +196,6 @@ class API:
             raise HTTPException(status_code=404, detail="Instance not found")
 
         command = DeleteInstance(
-            command_id=CommandId(),
             instance_id=instance_id,
         )
         await self._send(command)
@@ -212,17 +213,26 @@ class API:
         self._chat_completion_queues[command_id] = asyncio.Queue()
 
         finished = False
+        is_thinking = False
         while not finished:
             # TODO: how long should this timeout be?
             chunk = await asyncio.wait_for(
                 self._chat_completion_queues[command_id].get(), timeout=600
             )
             assert isinstance(chunk, TokenChunk)
+            # TODO: Do we want this?
+            if HIDE_THINKING:
+                if chunk.text == "<think>":
+                    chunk.text = "\n"
+                if chunk.text == "</think>":
+                    chunk.text = "\n"
             chunk_response: ChatCompletionResponse = chunk_to_response(
                 chunk, command_id
             )
             logger.debug(f"chunk_response: {chunk_response}")
-            yield f"data: {chunk_response.model_dump_json()}\n\n"
+
+            if not HIDE_THINKING or not is_thinking:
+                yield f"data: {chunk_response.model_dump_json()}\n\n"
 
             if chunk.finish_reason is not None:
                 yield "data: [DONE]\n\n"
@@ -244,31 +254,6 @@ class API:
         model_meta = await resolve_model_meta(payload.model)
         payload.model = model_meta.model_id
 
-        # Preprocess messages for GPT-OSS harmony format if needed
-        # TODO: This is slop surely we get rid
-        if "gpt-oss" in payload.model.lower():
-            import re
-
-            for message in payload.messages:
-                if message.content and "<|channel|>" in message.content:
-                    # Parse harmony format tags
-                    thinking_pattern = r"<\|channel\|>(.*?)(?=<\|message\|>|$)"
-                    content_pattern = r"<\|message\|>(.*?)(?=<\|end\|>|$)"
-
-                    thinking_match = re.search(
-                        thinking_pattern, message.content, re.DOTALL
-                    )
-                    content_match = re.search(
-                        content_pattern, message.content, re.DOTALL
-                    )
-
-                    if content_match:
-                        # Extract the actual content
-                        message.content = content_match.group(1).strip()
-                    if thinking_match:
-                        # Store thinking in the thinking field
-                        message.thinking = thinking_match.group(1).strip()
-
         if not any(
             instance.shard_assignments.model_id == payload.model
             for instance in self.state.instances.values()
@@ -279,7 +264,6 @@ class API:
             )
 
         command = ChatCompletion(
-            command_id=CommandId(),
             request_params=payload,
         )
         await self._send(command)
@@ -325,8 +309,18 @@ class API:
             tg.start_soon(uvicorn_server.serve)
             tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
+            tg.start_soon(self._print_banner_when_ready, uvicorn_server)
         self.command_sender.close()
         self.global_event_receiver.close()
+
+    async def _print_banner_when_ready(self, uvicorn_server: uvicorn.Server):
+        """Wait for the uvicorn server to be ready, then print the startup banner."""
+        # TODO: Is this the best condition to check for?
+        #  The point is this should log when exo is ready.
+        while not uvicorn_server.started:
+            await asyncio.sleep(0.1)
+
+        print_startup_banner(self.port)
 
     async def _apply_state(self):
         with self.global_event_receiver as events:

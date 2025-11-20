@@ -100,12 +100,12 @@ def _model_needs_download(
     for runner in runners.values():
         if (
             isinstance(runner.status, RunnerWaitingForModel)
-            and runner.bound_instance.bound_shard() not in download_status
+            and runner.bound_instance.bound_shard not in download_status
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
-                shard_metadata=runner.bound_instance.bound_shard(),
+                shard_metadata=runner.bound_instance.bound_shard,
             )
 
 
@@ -160,7 +160,7 @@ def _ready_to_warmup(
                     )
                     for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
                 )
-                and runner.bound_instance.bound_shard().device_rank != 0
+                and runner.bound_instance.bound_shard.device_rank != 0
             )
             or (
                 all(
@@ -170,7 +170,7 @@ def _ready_to_warmup(
                     for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
                     if global_runner_id != runner.bound_instance.bound_runner_id
                 )
-                and runner.bound_instance.bound_shard().device_rank == 0
+                and runner.bound_instance.bound_shard.device_rank == 0
             )
         ):
             return StartWarmup(instance_id=runner.bound_instance.instance.instance_id)
