@@ -5,6 +5,10 @@ from typing import Generator
 
 import pytest
 
+from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
+
 
 @pytest.fixture(scope="session")
 def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
@@ -19,3 +23,21 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 def reset_event_loop():
     """Reset the event loop for each test to ensure clean state."""
     # This ensures each test gets a fresh event loop state
+
+
+def get_pipeline_shard_metadata(
+    model_id: ModelId, device_rank: int, world_size: int = 1
+) -> ShardMetadata:
+    return PipelineShardMetadata(
+        model_meta=ModelMetadata(
+            model_id=model_id,
+            pretty_name=str(model_id),
+            storage_size=Memory.from_mb(100000),
+            n_layers=32,
+        ),
+        device_rank=device_rank,
+        world_size=world_size,
+        start_layer=0,
+        end_layer=32,
+        n_layers=32,
+    )
