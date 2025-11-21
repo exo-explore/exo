@@ -10,6 +10,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InstanceCreated,
     InstanceDeleted,
+    NodeCreated,
     NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
@@ -23,7 +24,6 @@ from exo.shared.types.events import (
     TestEvent,
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
-    TopologyNodeCreated,
 )
 from exo.shared.types.profiling import NodePerformanceProfile, SystemPerformanceProfile
 from exo.shared.types.state import State
@@ -41,14 +41,14 @@ def event_apply(event: Event, state: State) -> State:
             TestEvent() | ChunkGenerated() | TaskAcknowledged()
         ):  # TaskAcknowledged should never be sent by a worker but i dont mind if it just gets ignored
             return state
-        case NodeDownloadProgress():
-            return apply_node_download_progress(event, state)
         case InstanceCreated():
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
         case NodePerformanceMeasured():
             return apply_node_performance_measured(event, state)
+        case NodeDownloadProgress():
+            return apply_node_download_progress(event, state)
         case NodeMemoryMeasured():
             return apply_node_memory_measured(event, state)
         case RunnerDeleted():
@@ -63,7 +63,7 @@ def event_apply(event: Event, state: State) -> State:
             return apply_task_failed(event, state)
         case TaskStatusUpdated():
             return apply_task_status_updated(event, state)
-        case TopologyNodeCreated():
+        case NodeCreated():
             return apply_topology_node_created(event, state)
         case TopologyEdgeCreated():
             return apply_topology_edge_created(event, state)
@@ -173,7 +173,6 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
     return state.model_copy(update={"runners": new_runners})
 
 
-# TODO: This whole function needs fixing
 def apply_node_performance_measured(
     event: NodePerformanceMeasured, state: State
 ) -> State:
@@ -183,8 +182,8 @@ def apply_node_performance_measured(
     }
     state = state.model_copy(update={"node_profiles": new_profiles})
     topology = copy.copy(state.topology)
+    # TODO: NodeCreated
     if not topology.contains_node(event.node_id):
-        # TODO: figure out why this is happening in the first place
         topology.add_node(NodeInfo(node_id=event.node_id))
     topology.update_node_profile(event.node_id, event.node_profile)
     return state.model_copy(update={"topology": topology})
@@ -202,7 +201,7 @@ def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State
             memory=event.memory,
             network_interfaces=[],
             system=SystemPerformanceProfile(
-                flops_fp16=0.0,
+                # TODO: flops_fp16=0.0,
                 gpu_usage=0.0,
                 temp=0.0,
                 sys_power=0.0,
@@ -217,6 +216,7 @@ def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State
         }
         if not topology.contains_node(event.node_id):
             topology.add_node(NodeInfo(node_id=event.node_id))
+            # TODO: NodeCreated
         topology.update_node_profile(event.node_id, created)
         return state.model_copy(
             update={"node_profiles": created_profiles, "topology": topology}
@@ -227,6 +227,7 @@ def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State
         **state.node_profiles,
         event.node_id: updated,
     }
+    # TODO: NodeCreated
     if not topology.contains_node(event.node_id):
         topology.add_node(NodeInfo(node_id=event.node_id))
     topology.update_node_profile(event.node_id, updated)
@@ -235,7 +236,7 @@ def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State
     )
 
 
-def apply_topology_node_created(event: TopologyNodeCreated, state: State) -> State:
+def apply_topology_node_created(event: NodeCreated, state: State) -> State:
     topology = copy.copy(state.topology)
     topology.add_node(NodeInfo(node_id=event.node_id))
     return state.model_copy(update={"topology": topology})

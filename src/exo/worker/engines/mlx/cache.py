@@ -1,14 +1,16 @@
+# type: ignore
+# TODO: Fix this file, including types!
 from copy import deepcopy
 from typing import Callable
 
+import mlx.core as mx
 from mlx_lm import stream_generate
 from mlx_lm.models.cache import _BaseCache, trim_prompt_cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-import mlx.core as mx
-from exo.engines.mlx import Model
-from exo.engines.mlx.constants import KEEP_KV_SIZE, KV_BITS, KV_GROUP_SIZE
-from exo.engines.mlx.utils_mlx import make_kv_cache
+from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.constants import KEEP_KV_SIZE, KV_BITS, KV_GROUP_SIZE
+from exo.worker.engines.mlx.utils_mlx import make_kv_cache
 
 
 class KVPrefixCache:

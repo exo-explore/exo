@@ -23,9 +23,7 @@ from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
 
 
-# TODO: Entrypoint refactor
 # I marked this as a dataclass as I want trivial constructors.
-# This is the collection of systems for our entire application.
 @dataclass
 class Node:
     router: Router

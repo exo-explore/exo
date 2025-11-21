@@ -177,7 +177,7 @@ class MpReceiver[T]:
 
         try:
             item = self._state.buffer.get(block=False)
-            if item is MP_END_OF_STREAM:
+            if item == MP_END_OF_STREAM:
                 self.close()
                 raise EndOfStream
             assert not isinstance(item, _MpEndOfStream)
@@ -193,7 +193,7 @@ class MpReceiver[T]:
             return self.receive_nowait()
         except WouldBlock:
             item = self._state.buffer.get()
-            if item is MP_END_OF_STREAM:
+            if item == MP_END_OF_STREAM:
                 self.close()
                 raise EndOfStream from None
             assert not isinstance(item, _MpEndOfStream)

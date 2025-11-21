@@ -3,8 +3,14 @@ from functools import partial
 from inspect import signature
 from typing import TYPE_CHECKING, Callable, Protocol, cast, override
 
+import mlx.core as mx
+import mlx.nn as nn
+from mlx.nn.layers.distributed import (
+    shard_inplace,
+    shard_linear,
+    sum_gradients,
+)
 from mlx_lm.models.cache import (
-    KVCache,
     _BaseCache,  # pyright: ignore[reportPrivateUsage]
 )
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
@@ -13,15 +19,8 @@ from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_moe import Qwen3MoeSparseMoeBlock
 
-import mlx.core as mx
-import mlx.nn as nn
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
-)
-from mlx.nn.layers.distributed import (
-    shard_inplace,
-    shard_linear,
-    sum_gradients,
 )
 
 
@@ -94,7 +93,7 @@ class PipelineLastLayer(CustomMlxLayer):
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
-        assert cache is None or issubclass(type(cache), _BaseCache) # type: ignore
+        assert cache is None or issubclass(type(cache), _BaseCache)  # type: ignore
 
         output: mx.array = self.original_layer(x, *args, **kwargs)
 

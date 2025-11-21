@@ -1,6 +1,7 @@
 import os
 import resource
 import time
+from pathlib import Path
 from typing import Any, Callable, cast
 
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
@@ -8,29 +9,22 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.worker.runner.utils import get_weights_size
+from exo.worker.engines.mlx.constants import (
+    CACHE_GROUP_SIZE,
+    KV_CACHE_BITS,
+    TEMPERATURE,
+    TRUST_REMOTE_CODE,
+)
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
+import mlx.core as mx
+import mlx.nn as nn
 from mlx_lm.utils import load_model
 from pydantic import RootModel
 
-import mlx.core as mx
-import mlx.nn as nn
-from exo.engines.mlx import Model
-from exo.engines.mlx.auto_parallel import (
-    pipeline_auto_parallel,
-    tensor_auto_parallel,
-)
-from exo.engines.mlx.constants import (
-    CACHE_GROUP_SIZE,
-    KV_CACHE_BITS,
-    PATCH_SYSTEM_PROMPT,
-    TEMPERATURE,
-    TRUST_REMOTE_CODE,
-)
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
@@ -46,13 +40,31 @@ from exo.shared.types.worker.shards import (
     TensorShardMetadata,
 )
 from exo.worker.download.download_utils import build_model_path
+from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.auto_parallel import (
+    pipeline_auto_parallel,
+    tensor_auto_parallel,
+)
 from exo.worker.runner.bootstrap import logger
 
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
-mlx_rank: None | int = None
-mlx_world_size: None | int = None
+
+# TODO: Test this
+#  ALSO https://github.com/exo-explore/exo/pull/233#discussion_r2549683673
+def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
+    return Memory.from_float_kb(
+        (model_shard_meta.end_layer - model_shard_meta.start_layer)
+        / model_shard_meta.n_layers
+        * model_shard_meta.model_meta.storage_size.in_kb
+        / (
+            1
+            if isinstance(model_shard_meta, PipelineShardMetadata)
+            else model_shard_meta.world_size
+        )
+    )
+
 
 def mx_barrier(group: mx.distributed.Group | None = None):
     mx.eval(
@@ -65,10 +77,10 @@ def mx_barrier(group: mx.distributed.Group | None = None):
 
 
 def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None):
-    if mlx_rank is None:
+    if group is None:
         return value
 
-    if mlx_rank == 0:
+    if group.rank() == 0:
         a = mx.array([value], dtype=mx.int32)
     else:
         a = mx.array([0], dtype=mx.int32)
@@ -154,10 +166,10 @@ def initialize_mlx(
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
         start_time = time.perf_counter()
-        model, config = load_model(model_path, strict=True)
+        model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
-        if isinstance(model.model, DeepseekV3Model):
+        if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
             pass
             # model, config = quantize_model(
             #    model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
@@ -189,16 +201,15 @@ def shard_and_load(
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 
-    model, config = load_model(model_path, lazy=True, strict=False)
+    model, _ = load_model(model_path, lazy=True, strict=False)
     logger.debug(model)
-    if isinstance(model.model, DeepseekV3Model):
+    if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
         # TODO: See if we should quantize the model.
         # def is_attention_layer(path: str) -> bool:
         #     path = path.lower()
 
         #     return "self_attn" in path and "layernorm" not in path
-
 
         # def quant_predicate(path: str, module: nn.Module):
         #     if not isinstance(module, nn.Linear):
@@ -237,7 +248,7 @@ def shard_and_load(
     return model, tokenizer
 
 
-def get_tokenizer(model_path: str, shard_metadata: ShardMetadata):
+def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
     tokenizer = cast(
         TokenizerWrapper,
         load_tokenizer(
@@ -262,7 +273,7 @@ def apply_chat_template(
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for i, message in enumerate(messages):
+    for _, message in enumerate(messages):
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
@@ -276,7 +287,7 @@ def apply_chat_template(
 
         # Null values are not valid when applying templates in tokenizer
         formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}
+            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
         )
 
     prompt: str = tokenizer.apply_chat_template(  # type: ignore

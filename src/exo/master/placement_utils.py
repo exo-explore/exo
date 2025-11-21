@@ -240,8 +240,6 @@ def _find_connection_ip(
         if (
             connection.local_node_id == node_i.node_id
             and connection.send_back_node_id == node_j.node_id
-            # TODO: Check if we need this.
-            and connection.send_back_multiaddr is not None
         ):
             yield connection.send_back_multiaddr.ip_address
 

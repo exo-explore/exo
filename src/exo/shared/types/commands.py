@@ -8,7 +8,6 @@ from exo.shared.types.worker.shards import Sharding
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
-# TODO: We need to have a distinction between create instance and spin up instance.
 class BaseCommand(TaggedModel):
     command_id: CommandId = Field(default_factory=CommandId)
 

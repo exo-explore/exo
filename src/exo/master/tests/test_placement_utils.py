@@ -13,6 +13,7 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.topology import Connection, NodeInfo
+from exo.shared.types.worker.shards import Sharding
 
 
 @pytest.fixture
@@ -200,7 +201,9 @@ def test_get_shard_assignments(
     selected_cycle = cycles[0]
 
     # act
-    shard_assignments = get_shard_assignments(model_meta, selected_cycle, "pipeline")
+    shard_assignments = get_shard_assignments(
+        model_meta, selected_cycle, Sharding.Pipeline
+    )
 
     # assert
     runner_id_a = shard_assignments.node_to_runner[node_a_id]

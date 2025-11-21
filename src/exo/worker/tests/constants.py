@@ -3,7 +3,7 @@ from typing import Final
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import TaskId
-from exo.shared.types.worker.common import InstanceId, RunnerId
+from exo.shared.types.worker.instances import InstanceId, RunnerId
 
 MASTER_NODE_ID = NodeId("ffffffff-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 

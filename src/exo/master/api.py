@@ -14,7 +14,6 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from exo.engines.mlx.constants import HIDE_THINKING
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.models.model_cards import MODEL_CARDS
@@ -49,6 +48,7 @@ from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import OrderedBuffer
+from exo.worker.engines.mlx.constants import HIDE_THINKING
 
 
 def chunk_to_response(

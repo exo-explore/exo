@@ -70,6 +70,11 @@ class RunnerDeleted(BaseEvent):
     runner_id: RunnerId
 
 
+# TODO
+class NodeCreated(BaseEvent):
+    node_id: NodeId
+
+
 class NodePerformanceMeasured(BaseEvent):
     node_id: NodeId
     node_profile: NodePerformanceProfile
@@ -87,10 +92,6 @@ class NodeMemoryMeasured(BaseEvent):
 class ChunkGenerated(BaseEvent):
     command_id: CommandId
     chunk: GenerationChunk
-
-
-class TopologyNodeCreated(BaseEvent):
-    node_id: NodeId
 
 
 class TopologyEdgeCreated(BaseEvent):
@@ -116,7 +117,7 @@ Event = (
     | NodeMemoryMeasured
     | NodeDownloadProgress
     | ChunkGenerated
-    | TopologyNodeCreated
+    | NodeCreated
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
 )

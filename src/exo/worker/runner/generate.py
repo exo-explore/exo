@@ -5,20 +5,18 @@ from mlx_lm import stream_generate
 from mlx_lm.models.cache import KVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.engines.mlx import Model
-
 # from exo.engines.mlx.cache import KVPrefixCache
-from exo.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
-from exo.engines.mlx.utils_mlx import (
+from exo.shared.types.api import ChatCompletionMessage, FinishReason
+from exo.shared.types.tasks import ChatCompletionTaskParams
+from exo.shared.types.worker.runner_response import (
+    GenerationResponse,
+)
+from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
+from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     make_kv_cache,
     mx_barrier,
-)
-from exo.shared.openai_compat import FinishReason
-from exo.shared.types.api import ChatCompletionMessage
-from exo.shared.types.tasks import ChatCompletionTaskParams
-from exo.shared.types.worker.commands_runner import (
-    GenerationResponse,
 )
 from exo.worker.runner.bootstrap import logger
 

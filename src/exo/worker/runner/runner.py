@@ -1,9 +1,6 @@
 import time
 
-from exo.engines.mlx.utils_mlx import (
-    initialize_mlx,
-    mlx_force_oom,
-)
+from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -20,11 +17,10 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.worker.commands_runner import (
-    GenerationResponse,
-    # TokenizedResponse,
-)
 from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.runner_response import (
+    GenerationResponse,
+)
 from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerLoaded,
@@ -37,6 +33,10 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mlx.utils_mlx import (
+    initialize_mlx,
+    mlx_force_oom,
+)
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.generate import mlx_generate, warmup_inference
 
@@ -142,27 +142,8 @@ def main(
                                 runner_id=runner_id, runner_status=current_status
                             )
                         )
-                        # Ensure we have a chat-completion task subtype
-                        # TODO: this is a hack, why are we only looking at the first message? should have a tokenizer
-                        prompt = task_params.messages[0]
-                        if (
-                            prompt.content is not None
-                            and "EXO RUNNER MUST FAIL" in prompt.content
-                        ):
-                            logger.info("raising exception")
-                            raise Exception(
-                                "Artificial runner exception - for testing purposes only."
-                            )
-                        if (
-                            prompt.content is not None
-                            and "EXO RUNNER MUST OOM" in prompt.content
-                        ):
-                            mlx_force_oom()
-                        if (
-                            prompt.content is not None
-                            and "EXO RUNNER MUST TIMEOUT" in prompt.content
-                        ):
-                            time.sleep(100)
+                        assert task_params.messages[0].content is not None
+                        _check_for_debug_prompts(task_params.messages[0].content)
 
                         # Generate responses using the actual MLX generation
                         for response in mlx_generate(
@@ -186,9 +167,9 @@ def main(
                                                 ),
                                             )
                                         )
-                                # case TokenizedResponse():
-                                # TODO: something here ig
-                                # logger.info("Finished tokenizing?")
+                                    # case TokenizedResponse():
+                                    # TODO: something here ig
+                                    logger.info("Finished tokenizing?")
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
@@ -233,3 +214,29 @@ def main(
         event_sender.join()
         task_receiver.join()
         logger.info("bye from the runner")
+
+
+EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
+EXO_RUNNER_MUST_OOM = "EXO RUNNER MUST OOM"
+EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
+
+
+def _check_for_debug_prompts(
+    prompt: str | ChatCompletionMessageText | list[ChatCompletionMessageText],
+):
+    if isinstance(prompt, list):
+        if len(prompt) == 0:
+            logger.debug("Empty message prompt received in debug prompt")
+            return
+        prompt = prompt[0]
+
+    if isinstance(prompt, ChatCompletionMessageText):
+        prompt = prompt.text
+
+    if EXO_RUNNER_MUST_FAIL in prompt:
+        logger.info("raising exception")
+        raise Exception("Artificial runner exception - for testing purposes only.")
+    if EXO_RUNNER_MUST_OOM in prompt:
+        mlx_force_oom()
+    if EXO_RUNNER_MUST_TIMEOUT in prompt:
+        time.sleep(100)

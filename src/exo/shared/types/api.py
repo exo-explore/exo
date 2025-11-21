@@ -3,11 +3,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from exo.shared.openai_compat import FinishReason
 from exo.shared.types.common import CommandId
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.worker.instances import InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
+
+FinishReason = Literal[
+    "stop", "length", "tool_calls", "content_filter", "function_call"
+]
 
 
 class ModelListModel(BaseModel):

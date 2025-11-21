@@ -32,7 +32,7 @@ def node_profile() -> NodePerformanceProfile:
     memory_profile = MemoryPerformanceProfile.from_bytes(
         ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000
     )
-    system_profile = SystemPerformanceProfile(flops_fp16=1000)
+    system_profile = SystemPerformanceProfile()
     return NodePerformanceProfile(
         model_id="test",
         chip_id="test",
@@ -99,7 +99,7 @@ def test_update_node_profile(
             ram_total=1000, ram_available=1000, swap_total=1000, swap_available=1000
         ),
         network_interfaces=[],
-        system=SystemPerformanceProfile(flops_fp16=1000),
+        system=SystemPerformanceProfile(),
     )
 
     # act

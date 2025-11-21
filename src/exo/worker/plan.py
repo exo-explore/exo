@@ -17,6 +17,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import (
+    RunnerFailed,
     RunnerId,
     RunnerLoaded,
     RunnerLoading,
@@ -59,16 +60,21 @@ def _kill_runner(
     instances: Mapping[InstanceId, Instance],
 ) -> Shutdown | None:
     for runner in runners.values():
+        runner_id = runner.bound_instance.bound_runner_id
         if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
-            return Shutdown(
-                instance_id=instance_id, runner_id=runner.bound_instance.bound_runner_id
-            )
+            return Shutdown(instance_id=instance_id, runner_id=runner_id)
 
-        """ --- Potential code to kill a runner if any runners in its instance have failed ---
-        global_runners_in_instance = runner.bound_instance.instance.shard_assignments.node_to_runner.values()
-        if any(isinstance(all_runners[runner_id], RunnerFailed) for runner_id in global_runners_in_instance if runner_id != runner.bound_instance.bound_runner_id):
-            Shutdown(instance_id=runner.bound_instance.instance.instance_id, runner_id=runner.bound_instance.bound_runner_id)
-        """
+        for (
+            global_runner_id
+        ) in runner.bound_instance.instance.shard_assignments.node_to_runner.values():
+            if runner_id == global_runner_id:
+                continue
+
+            if isinstance(all_runners.get(global_runner_id, None), RunnerFailed):
+                return Shutdown(
+                    instance_id=instance_id,
+                    runner_id=runner_id,
+                )
 
 
 def _create_runner(
@@ -125,25 +131,36 @@ def _load_model(
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ) -> LoadModel | None:
     for runner in runners.values():
-        if (
-            all(
+        instance = runner.bound_instance.instance
+        shard_assignments = instance.shard_assignments
+
+        all_downloads_complete_local = all(
+            any(
                 isinstance(dp, DownloadCompleted)
-                if dp.shard_metadata
-                == runner.bound_instance.instance.shard_assignments.runner_to_shard[rid]
-                else True
-                for nid, rid in runner.bound_instance.instance.shard_assignments.node_to_runner.items()
+                and dp.shard_metadata == shard_assignments.runner_to_shard[rid]
                 for dp in global_download_status[nid]
             )
-            and isinstance(runner.status, RunnerWaitingForModel)
-            and all(
-                isinstance(
-                    all_runners.get(global_runner_id, None),
-                    (RunnerWaitingForModel, RunnerLoading, RunnerLoaded),
-                )
-                for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
+            for nid, rid in shard_assignments.node_to_runner.items()
+        )
+
+        runner_is_waiting = isinstance(runner.status, RunnerWaitingForModel)
+
+        all_runners_expecting_model = all(
+            isinstance(
+                all_runners.get(global_runner_id),
+                (RunnerWaitingForModel, RunnerLoading, RunnerLoaded),
             )
+            for global_runner_id in shard_assignments.runner_to_shard
+        )
+
+        if (
+            all_downloads_complete_local
+            and runner_is_waiting
+            and all_runners_expecting_model
         ):
-            return LoadModel(instance_id=runner.bound_instance.instance.instance_id)
+            return LoadModel(instance_id=instance.instance_id)
+
+    return None
 
 
 def _ready_to_warmup(
@@ -151,29 +168,37 @@ def _ready_to_warmup(
     all_runners: Mapping[RunnerId, RunnerStatus],
 ) -> StartWarmup | None:
     for runner in runners.values():
-        if isinstance(runner.status, RunnerLoaded) and (
-            (
-                all(
-                    isinstance(
-                        all_runners.get(global_runner_id, None),
-                        (RunnerLoaded, RunnerWarmingUp),
-                    )
-                    for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
-                )
-                and runner.bound_instance.bound_shard.device_rank != 0
+        instance = runner.bound_instance.instance
+        shard_assignments = instance.shard_assignments
+        shard = runner.bound_instance.bound_shard
+        device_rank = shard.device_rank
+        runner_id = runner.bound_instance.bound_runner_id
+
+        is_runner_loaded = isinstance(runner.status, RunnerLoaded)
+
+        # Rank != 0
+        all_runners_loaded_or_warming_up = all(
+            isinstance(
+                all_runners.get(global_runner_id, None),
+                (RunnerLoaded, RunnerWarmingUp),
             )
-            or (
-                all(
-                    isinstance(
-                        all_runners.get(global_runner_id, None), (RunnerWarmingUp)
-                    )
-                    for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
-                    if global_runner_id != runner.bound_instance.bound_runner_id
-                )
-                and runner.bound_instance.bound_shard.device_rank == 0
-            )
-        ):
-            return StartWarmup(instance_id=runner.bound_instance.instance.instance_id)
+            for global_runner_id in shard_assignments.runner_to_shard
+        )
+
+        # Rank= 0
+        all_other_runners_warming_up = all(
+            isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
+            for global_runner_id in shard_assignments.runner_to_shard
+            if global_runner_id != runner_id
+        )
+
+        nonzero_rank_ready = device_rank != 0 and all_runners_loaded_or_warming_up
+        zero_rank_ready = device_rank == 0 and all_other_runners_warming_up
+
+        if is_runner_loaded and (nonzero_rank_ready or zero_rank_ready):
+            return StartWarmup(instance_id=instance.instance_id)
+
+    return None
 
 
 def _pending_tasks(

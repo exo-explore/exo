@@ -1,7 +1,7 @@
 import os
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Callable, Generator, Iterable, TypeVar
+from typing import Callable, Generator, Iterable
 
 import aiofiles
 import aiofiles.os as aios
@@ -9,10 +9,8 @@ from loguru import logger
 
 from exo.shared.types.worker.shards import ShardMetadata
 
-T = TypeVar("T")
 
-
-def filter_repo_objects(
+def filter_repo_objects[T](
     items: Iterable[T],
     *,
     allow_patterns: list[str] | str | None = None,

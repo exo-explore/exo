@@ -226,9 +226,7 @@ class Worker:
                                 task_id=task.task_id, task_status=TaskStatus.Running
                             )
                         )
-                        await self._handle_shard_download_process(
-                            task, initial_progress
-                        )
+                        self._handle_shard_download_process(task, initial_progress)
                 case Shutdown(runner_id=runner_id):
                     await self.runners.pop(runner_id).start_task(task)
                 case task:
@@ -313,7 +311,7 @@ class Worker:
         self._tg.start_soon(runner.run)
         return runner
 
-    async def _handle_shard_download_process(
+    def _handle_shard_download_process(
         self,
         task: DownloadModel,
         initial_progress: RepoDownloadProgress,

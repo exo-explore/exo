@@ -28,9 +28,14 @@ from exo.shared.types.profiling import (
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
-from exo.shared.types.tasks import ChatCompletionTask, TaskStatus
-from exo.shared.types.worker.instances import Instance, InstanceStatus, ShardAssignments
-from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.shared.types.tasks import ChatCompletion as ChatCompletionTask
+from exo.shared.types.tasks import TaskStatus
+from exo.shared.types.worker.instances import (
+    InstanceMeta,
+    MlxRingInstance,
+    ShardAssignments,
+)
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import channel
 
 
@@ -91,7 +96,7 @@ async def test_master():
                                 swap_available=Memory.from_bytes(0),
                             ),
                             network_interfaces=[],
-                            system=SystemPerformanceProfile(flops_fp16=0),
+                            system=SystemPerformanceProfile(),
                         ),
                     )
                 ),
@@ -118,7 +123,8 @@ async def test_master():
                             n_layers=16,
                             storage_size=Memory.from_bytes(678948),
                         ),
-                        strategy="auto",
+                        sharding=Sharding.Pipeline,
+                        instance_meta=InstanceMeta.MlxRing,
                     )
                 ),
             )
@@ -160,9 +166,8 @@ async def test_master():
         )[0]
         assert events[1].event == InstanceCreated(
             event_id=events[1].event.event_id,
-            instance=Instance(
+            instance=MlxRingInstance(
                 instance_id=events[1].event.instance.instance_id,
-                instance_type=InstanceStatus.Active,
                 shard_assignments=ShardAssignments(
                     model_id=ModelId("llama-3.2-1b"),
                     runner_to_shard={
@@ -186,22 +191,13 @@ async def test_master():
             ),
         )
         assert isinstance(events[2].event, TaskCreated)
-        assert events[2].event == TaskCreated(
-            event_id=events[2].event.event_id,
-            task_id=events[2].event.task_id,
-            task=ChatCompletionTask(
-                task_id=events[2].event.task_id,
-                command_id=events[2].event.task.command_id,
-                instance_id=events[2].event.task.instance_id,
-                task_status=TaskStatus.Pending,
-                task_params=ChatCompletionTaskParams(
-                    model="llama-3.2-1b",
-                    messages=[
-                        ChatCompletionMessage(
-                            role="user", content="Hello, how are you?"
-                        )
-                    ],
-                ),
-            ),
+        assert events[2].event.task.task_status == TaskStatus.Pending
+        assert isinstance(events[2].event.task, ChatCompletionTask)
+        assert events[2].event.task.task_params == ChatCompletionTaskParams(
+            model="llama-3.2-1b",
+            messages=[
+                ChatCompletionMessage(role="user", content="Hello, how are you?")
+            ],
         )
+
         await master.shutdown()

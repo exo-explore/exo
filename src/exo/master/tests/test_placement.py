@@ -1,7 +1,6 @@
 from typing import Callable
 
 import pytest
-from loguru import logger
 
 from exo.master.placement import (
     get_instance_placements_after_create,
@@ -15,9 +14,15 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
 from exo.shared.types.topology import Connection, NodeInfo
-from exo.shared.types.worker.common import InstanceId
-from exo.shared.types.worker.instances import Instance, InstanceStatus
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    MlxIbvInstance,
+    MlxRingInstance,
+)
 from exo.shared.types.worker.runners import ShardAssignments
+from exo.shared.types.worker.shards import Sharding
 
 
 @pytest.fixture
@@ -27,9 +32,8 @@ def topology() -> Topology:
 
 @pytest.fixture
 def instance() -> Instance:
-    return Instance(
+    return MlxRingInstance(
         instance_id=InstanceId(),
-        instance_type=InstanceStatus.Active,
         shard_assignments=ShardAssignments(
             model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
         ),
@@ -51,7 +55,8 @@ def create_instance_command(model_meta: ModelMetadata) -> CreateInstance:
     return CreateInstance(
         command_id=CommandId(),
         model_meta=model_meta,
-        strategy="auto",
+        sharding=Sharding.Pipeline,
+        instance_meta=InstanceMeta.MlxRing,
     )
 
 
@@ -78,11 +83,7 @@ def test_get_instance_placements_create_instance(
         available_memory
     )  # make it exactly fit across all nodes
 
-    create_instance_command = CreateInstance(
-        command_id=CommandId(),
-        model_meta=model_meta,
-        strategy="auto",
-    )
+    cic = create_instance_command(model_meta)
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
@@ -94,9 +95,7 @@ def test_get_instance_placements_create_instance(
     topology.add_connection(create_connection(node_id_c, node_id_a))
 
     # act
-    placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
-    )
+    placements = get_instance_placements_after_create(cic, topology, {})
 
     # assert
     assert len(placements) == 1
@@ -128,19 +127,15 @@ def test_get_instance_placements_one_node_exact_fit(
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
-    create_instance_command = CreateInstance(
-        command_id=CommandId(),
-        model_meta=ModelMetadata(
+    cic = create_instance_command(
+        ModelMetadata(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
         ),
-        strategy="auto",
     )
-    placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
-    )
+    placements = get_instance_placements_after_create(cic, topology, {})
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -157,19 +152,15 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1001 * 1024, node_id))
-    create_instance_command = CreateInstance(
-        command_id=CommandId(),
-        model_meta=ModelMetadata(
+    cic = create_instance_command(
+        ModelMetadata(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
         ),
-        strategy="auto",
     )
-    placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
-    )
+    placements = get_instance_placements_after_create(cic, topology, {})
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -186,19 +177,17 @@ def test_get_instance_placements_one_node_not_fit(
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
-    create_instance_command = CreateInstance(
-        command_id=CommandId(),
+    cic = create_instance_command(
         model_meta=ModelMetadata(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1001),
             pretty_name="Test Model",
             n_layers=10,
         ),
-        strategy="auto",
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        get_instance_placements_after_create(create_instance_command, topology, {})
+        get_instance_placements_after_create(cic, topology, {})
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -301,16 +290,12 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     topology.add_connection(create_connection(node_id_e, node_id_y))
     topology.add_connection(create_connection(node_id_f, node_id_z))
 
-    create_instance_command = CreateInstance(
-        command_id=CommandId(),
+    cic = create_instance_command(
         model_meta=model_meta,
-        strategy="auto",
     )
 
     # Act
-    placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
-    )
+    placements = get_instance_placements_after_create(cic, topology, {})
 
     # Assert the chosen cycle is A-B-C (contains at least one leaf node), even though
     # D-E-F has more total memory.
@@ -346,7 +331,6 @@ def test_tensor_rdma_backend_connectivity_matrix(
     ethernet_interface = NetworkInterfaceInfo(
         name="en0",
         ip_address="192.168.1.100",
-        type="ethernet",
     )
 
     assert node_a.node_profile is not None
@@ -377,13 +361,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_c_a.send_back_multiaddr.ip_address,
-                type="rdma",
-            ),
-            NetworkInterfaceInfo(
-                name="en4",
-                ip_address=conn_b_a.send_back_multiaddr.ip_address,
-                type="rdma",
+                ip_address=conn_a_b.send_back_multiaddr.ip_address,
             ),
             ethernet_interface,
         ],
@@ -396,14 +374,8 @@ def test_tensor_rdma_backend_connectivity_matrix(
         memory=node_b.node_profile.memory,
         network_interfaces=[
             NetworkInterfaceInfo(
-                name="en3",
-                ip_address=conn_c_b.send_back_multiaddr.ip_address,
-                type="rdma",
-            ),
-            NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_a_b.send_back_multiaddr.ip_address,
-                type="rdma",
+                ip_address=conn_b_c.send_back_multiaddr.ip_address,
             ),
             ethernet_interface,
         ],
@@ -416,14 +388,8 @@ def test_tensor_rdma_backend_connectivity_matrix(
         memory=node_c.node_profile.memory,
         network_interfaces=[
             NetworkInterfaceInfo(
-                name="en3",
-                ip_address=conn_a_c.send_back_multiaddr.ip_address,
-                type="rdma",
-            ),
-            NetworkInterfaceInfo(
-                name="en4",
-                ip_address=conn_b_c.send_back_multiaddr.ip_address,
-                type="rdma",
+                name="en5",
+                ip_address=conn_c_a.send_back_multiaddr.ip_address,
             ),
             ethernet_interface,
         ],
@@ -436,29 +402,26 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_connection(conn_a_b)
     topology.add_connection(conn_b_c)
     topology.add_connection(conn_c_a)
-    topology.add_connection(conn_b_a)
-    topology.add_connection(conn_c_b)
-    topology.add_connection(conn_a_c)
 
-    create_instance_command = CreateInstance(
+    cic = CreateInstance(
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxIbv,
         command_id=CommandId(),
         model_meta=model_meta,
-        strategy="tensor_rdma",
     )
 
-    placements = get_instance_placements_after_create(
-        create_instance_command, topology, {}
-    )
+    placements = get_instance_placements_after_create(cic, topology, {})
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
 
-    assert instance.hosts is None
-    assert instance.mlx_ibv_devices is not None
-    assert instance.mlx_ibv_coordinator is not None
+    assert isinstance(instance, MlxIbvInstance)
 
-    matrix = instance.mlx_ibv_devices
+    assert instance.ibv_devices is not None
+    assert instance.ibv_coordinator is not None
+
+    matrix = instance.ibv_devices
     assert len(matrix) == 3
 
     for i in range(3):
@@ -471,11 +434,9 @@ def test_tensor_rdma_backend_connectivity_matrix(
     idx_b = node_to_idx[node_id_b]
     idx_c = node_to_idx[node_id_c]
 
-    logger.info(matrix)
+    assert matrix[idx_a][idx_b] == "rdma_en3"
+    assert matrix[idx_b][idx_c] == "rdma_en4"
+    assert matrix[idx_c][idx_a] == "rdma_en5"
 
-    assert matrix[idx_a][idx_b] == "rdma_en4"
-    assert matrix[idx_b][idx_c] == "rdma_en3"
-    assert matrix[idx_c][idx_a] == "rdma_en3"
-
-    assert ":" in instance.mlx_ibv_coordinator
-    assert not instance.mlx_ibv_coordinator.startswith("169.254")
+    assert ":" in instance.ibv_coordinator
+    assert not instance.ibv_coordinator.startswith("169.254")
