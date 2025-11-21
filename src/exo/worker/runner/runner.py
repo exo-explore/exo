@@ -33,12 +33,12 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
-from exo.worker.runner.generate import mlx_generate, warmup_inference
 
 
 def main(

@@ -17,8 +17,7 @@ from exo.worker.tests.constants import (
     RUNNER_1_ID,
     RUNNER_2_ID,
 )
-
-from .conftest import (
+from exo.worker.tests.unittests.conftest import (
     FakeRunnerSupervisor,
     get_mlx_ring_instance,
     get_pipeline_shard_metadata,

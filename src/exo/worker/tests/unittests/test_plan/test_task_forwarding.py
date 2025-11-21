@@ -19,8 +19,7 @@ from exo.worker.tests.constants import (
     RUNNER_2_ID,
     TASK_1_ID,
 )
-
-from .conftest import (
+from exo.worker.tests.unittests.conftest import (
     FakeRunnerSupervisor,
     OtherTask,
     get_mlx_ring_instance,
