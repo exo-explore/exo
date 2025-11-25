@@ -38,7 +38,7 @@ pyo3 = { version = "0.27.1", features = [
     "ordered-float", "rust_decimal", "smallvec",
     # "anyhow", "chrono", "chrono-local", "chrono-tz", "eyre", "jiff-02", "lock_api", "parking-lot", "time",  "serde",
 ] }
-pyo3-stub-gen = { version = "0.16.1" }
+pyo3-stub-gen = { version = "0.17.2" }
 pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime", "testing"] }
 pyo3-log = "0.13.2"
 
