@@ -169,7 +169,6 @@ def main(
                                         )
                                     # case TokenizedResponse():
                                     # TODO: something here ig
-                                    logger.info("Finished tokenizing?")
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
