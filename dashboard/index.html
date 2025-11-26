@@ -1250,11 +1250,21 @@
         // Edge IP display flag (can be toggled from console)
         window.exoShowEdgeIPs = false;
         
+        // Debug flag for download tracking (can be toggled from console)
+        window.exoDebugDownloads = false;
+        
         // Helper function to toggle IP display (accessible from console)
         window.toggleEdgeIPs = function() {
             window.exoShowEdgeIPs = !window.exoShowEdgeIPs;
             console.log(`Edge IP display ${window.exoShowEdgeIPs ? 'enabled' : 'disabled'}`);
             return window.exoShowEdgeIPs;
+        };
+        
+        // Helper function to toggle download debugging (accessible from console)
+        window.toggleDownloadDebug = function() {
+            window.exoDebugDownloads = !window.exoDebugDownloads;
+            console.log(`Download debugging ${window.exoDebugDownloads ? 'enabled' : 'disabled'}`);
+            return window.exoDebugDownloads;
         };
 
         // Fetch available models and populate dropdown
@@ -1373,22 +1383,32 @@
                     throw new Error(`Failed to fetch state: ${response.status}`);
                 }
                 const data = await response.json();
-                renderInstances(data.instances || {}, data.runners || {});
+                
+                if (window.exoDebugDownloads && data.downloads) {
+                    console.log('[Download Debug] State downloads:', data.downloads);
+                    console.log('[Download Debug] Number of nodes with downloads:', Object.keys(data.downloads).length);
+                }
+                
+                renderInstances(data.instances || {}, data.runners || {}, data.downloads || {});
             } catch (error) {
                 console.error('Error fetching instances:', error);
                 instancesList.innerHTML = '<div class="no-instances">Error loading instances</div>';
             }
         }
 
-        // Calculate download status for an instance based on its runners, with detailed per-file info
-        function calculateInstanceDownloadStatus(instanceWrapped, runners) {
+        // Calculate download status for an instance based on the new downloads structure
+        function calculateInstanceDownloadStatus(instanceWrapped, runners, downloads) {
             // Unwrap tagged Instance union (MlxRingInstance or MlxIbvInstance)
             const [_instanceTag, instance] = getTagged(instanceWrapped);
             if (!instance || typeof instance !== 'object') {
                 return { isDownloading: false, progress: 0, details: [] };
             }
             
-            if (!instance.shardAssignments?.runnerToShard || !runners) {
+            if (!instance.shardAssignments?.runnerToShard) {
+                return { isDownloading: false, progress: 0, details: [] };
+            }
+            
+            if (!downloads || Object.keys(downloads).length === 0) {
                 return { isDownloading: false, progress: 0, details: [] };
             }
 
@@ -1398,16 +1418,6 @@
                 if (obj[camel] !== undefined) return obj[camel];
                 return fallback;
             };
-
-            // Returns [tag, payload] for objects serialized as {Tag: {...}}, else [null, null]
-            function getTagged(obj) {
-                if (!obj || typeof obj !== 'object') return [null, null];
-                const keys = Object.keys(obj);
-                if (keys.length === 1 && typeof keys[0] === 'string') {
-                    return [keys[0], obj[keys[0]]];
-                }
-                return [null, null];
-            }
 
             function normalizeProgress(progressRaw) {
                 if (!progressRaw) return null;
@@ -1434,41 +1444,112 @@
                 return { totalBytes, downloadedBytes, downloadedBytesThisSession, completedFiles, totalFiles, speed, etaMs, files, percentage };
             }
 
-            const runnerIds = Object.keys(instance.shardAssignments.runnerToShard);
+            // Build reverse mapping from runnerId to nodeId
+            const nodeToRunner = instance.shardAssignments.nodeToRunner || {};
+            const runnerToNode = {};
+            Object.entries(nodeToRunner).forEach(([nodeId, runnerId]) => {
+                runnerToNode[runnerId] = nodeId;
+            });
+
+            const runnerToShard = instance.shardAssignments.runnerToShard || {};
+            const runnerIds = Object.keys(runnerToShard);
             const details = [];
             let totalBytes = 0;
             let downloadedBytes = 0;
 
+            if (window.exoDebugDownloads) {
+                console.log('[Download Debug] Checking downloads for instance:', {
+                    runnerIds,
+                    availableDownloads: Object.keys(downloads),
+                    nodeToRunner
+                });
+            }
+
             for (const runnerId of runnerIds) {
-                const runner = runners[runnerId];
-                if (!runner) continue;
-
-                // New tagged format: { "DownloadingRunnerStatus": { downloadProgress: { "DownloadOngoing": { ... } } } }
-                const [statusKind, statusPayload] = getTagged(runner);
-                let nodeId;
-                let rawProg;
-
-                if (statusKind === 'DownloadingRunnerStatus') {
-                    const dpTagged = statusPayload && (statusPayload.downloadProgress || statusPayload.download_progress);
-                    const [dpKind, dpPayload] = getTagged(dpTagged);
-                    if (dpKind !== 'DownloadOngoing') continue;
-                    nodeId = (dpPayload && (dpPayload.nodeId || dpPayload.node_id)) || undefined;
-                    rawProg = pick(dpPayload, 'download_progress', 'downloadProgress', null);
-                } else {
-                    // Backward compatibility with old flat shape
-                    if (runner.runnerStatus !== 'Downloading' || !runner.downloadProgress) continue;
-                    const dp = runner.downloadProgress;
-                    const isDownloading = (dp.downloadStatus === 'Downloading') || (dp.download_status === 'Downloading');
-                    if (!isDownloading) continue;
-                    nodeId = (dp && (dp.nodeId || dp.node_id)) || undefined;
-                    rawProg = pick(dp, 'download_progress', 'downloadProgress', null);
+                const nodeId = runnerToNode[runnerId];
+                if (!nodeId) {
+                    if (window.exoDebugDownloads) console.log('[Download Debug] No nodeId for runner:', runnerId);
+                    continue;
                 }
 
-                const normalized = normalizeProgress(rawProg);
-                if (!normalized) continue;
-                details.push({ runnerId, nodeId, progress: normalized });
-                totalBytes += normalized.totalBytes || 0;
-                downloadedBytes += normalized.downloadedBytes || 0;
+                const nodeDownloads = downloads[nodeId];
+                if (!nodeDownloads || !Array.isArray(nodeDownloads)) {
+                    if (window.exoDebugDownloads) console.log('[Download Debug] No downloads for node:', nodeId);
+                    continue;
+                }
+
+                if (window.exoDebugDownloads) {
+                    console.log('[Download Debug] Found downloads for node:', nodeId, nodeDownloads);
+                }
+
+                // Get the shard metadata for this runner to match against downloads
+                const shardWrapped = runnerToShard[runnerId];
+                if (!shardWrapped) continue;
+                
+                // Extract the shard metadata from the wrapped shard
+                const [_shardTag, shardMetadata] = getTagged(shardWrapped);
+                if (!shardMetadata) continue;
+
+                // Find matching download entry for this shard
+                for (const downloadWrapped of nodeDownloads) {
+                    const [downloadKind, downloadPayload] = getTagged(downloadWrapped);
+                    
+                    if (window.exoDebugDownloads) {
+                        console.log('[Download Debug] Processing download:', { downloadKind, downloadPayload });
+                    }
+                    
+                    // Check for any ongoing download
+                    if (downloadKind !== 'DownloadOngoing') {
+                        if (window.exoDebugDownloads) console.log('[Download Debug] Skipping non-ongoing download:', downloadKind);
+                        continue;
+                    }
+                    
+                    // Match by shard metadata - compare the actual shard metadata objects
+                    const downloadShardMetadata = pick(downloadPayload, 'shard_metadata', 'shardMetadata', null);
+                    if (!downloadShardMetadata) {
+                        if (window.exoDebugDownloads) console.log('[Download Debug] No shard metadata in download');
+                        continue;
+                    }
+                    
+                    // Extract the actual shard data from tagged union if needed
+                    let actualDownloadShard = downloadShardMetadata;
+                    if (typeof downloadShardMetadata === 'object') {
+                        const [_downloadShardTag, downloadShardData] = getTagged(downloadShardMetadata);
+                        if (downloadShardData) {
+                            actualDownloadShard = downloadShardData;
+                        }
+                    }
+                    
+                    // Get modelId from modelMeta (nested structure: shard.modelMeta.modelId)
+                    const downloadModelMeta = pick(actualDownloadShard, 'model_meta', 'modelMeta', null);
+                    const shardModelMeta = pick(shardMetadata, 'model_meta', 'modelMeta', null);
+                    const downloadModelId = downloadModelMeta ? pick(downloadModelMeta, 'model_id', 'modelId', null) : null;
+                    const shardModelId = shardModelMeta ? pick(shardModelMeta, 'model_id', 'modelId', null) : null;
+                    
+                    if (window.exoDebugDownloads) {
+                        console.log('[Download Debug] Comparing models:', { 
+                            downloadModelId, 
+                            shardModelId,
+                            downloadModelMeta,
+                            shardModelMeta
+                        });
+                    }
+                    
+                    if (downloadModelId && shardModelId && downloadModelId === shardModelId) {
+                        const rawProg = pick(downloadPayload, 'download_progress', 'downloadProgress', null);
+                        const normalized = normalizeProgress(rawProg);
+                        
+                        if (normalized) {
+                            if (window.exoDebugDownloads) {
+                                console.log('[Download Debug] Found matching download progress:', normalized);
+                            }
+                            details.push({ runnerId, nodeId, progress: normalized });
+                            totalBytes += normalized.totalBytes || 0;
+                            downloadedBytes += normalized.downloadedBytes || 0;
+                        }
+                        break;
+                    }
+                }
             }
 
             const isDownloadingAny = details.length > 0;
@@ -1488,8 +1569,8 @@
         }
 
         // Derive a display status for an instance from its runners.
-        // Priority: FAILED > DOWNLOADING > STARTING > RUNNING > READY > LOADED > INACTIVE
-        function deriveInstanceStatus(instanceWrapped, runners = {}) {
+        // Priority: FAILED > DOWNLOADING > LOADING > STARTING > RUNNING > READY > LOADED > WAITING > INACTIVE
+        function deriveInstanceStatus(instanceWrapped, runners = {}, downloads = {}) {
             // Unwrap tagged Instance union
             const [_instanceTag, instance] = getTagged(instanceWrapped);
             if (!instance || typeof instance !== 'object') {
@@ -1518,12 +1599,11 @@
                     const [kind] = getTagged(r);
                     if (kind) return canonicalStatusFromKind(kind);
                     const s = r.runnerStatus;
-                    return (typeof s === 'string') ? s : null; // backward compatibility
+                    return (typeof s === 'string') ? s : null;
                 })
                 .filter(s => typeof s === 'string');
 
             const has = (s) => statuses.includes(s);
-            const every = (pred) => statuses.length > 0 && statuses.every(pred);
 
             if (statuses.length === 0) {
                 return { statusText: 'UNKNOWN', statusClass: 'inactive' };
@@ -1535,12 +1615,12 @@
             if (has('Running')) return { statusText: 'RUNNING', statusClass: 'running' };
             if (has('Ready')) return { statusText: 'READY', statusClass: 'loaded' };
             if (has('Loaded')) return { statusText: 'LOADED', statusClass: 'loaded' };
-            if (has('WaitingForModel')) return { statusText: 'WAITING', statusClass: 'starting' };
+            if (has('WaitingForModel')) return { statusText: 'WAITING FOR MODEL', statusClass: 'starting' };
 
             return { statusText: 'UNKNOWN', statusClass: 'inactive' };
         }
 
-        function renderInstances(instances, runners = {}) {
+        function renderInstances(instances, runners = {}, downloads = {}) {
             const instanceEntries = Object.entries(instances || {});
             
             if (instanceEntries.length === 0) {
@@ -1645,13 +1725,13 @@
                 }).join('') || '';
 
                 // Calculate download status for this instance (pass wrapped instance)
-                const downloadStatus = calculateInstanceDownloadStatus(instanceWrapped, runners);
+                const downloadStatus = calculateInstanceDownloadStatus(instanceWrapped, runners, downloads);
 
                 let statusText, statusClass;
                 if (downloadStatus.isDownloading) {
                     ({ statusText, statusClass } = { statusText: 'DOWNLOADING', statusClass: 'downloading' });
                 } else {
-                    ({ statusText, statusClass } = deriveInstanceStatus(instanceWrapped, runners));
+                    ({ statusText, statusClass } = deriveInstanceStatus(instanceWrapped, runners, downloads));
                 }
 
                 // Generate download progress HTML - overall + per node with file details
