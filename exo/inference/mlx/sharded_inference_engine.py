@@ -95,9 +95,18 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
       output_data, inference_state = result
 
     await self._eval_mlx(output_data)
+    def to_numpy(): #needed for qwen3-coder extension due to RuntimeError: Item size 2 for PEP 3118 buffer format string B does not match the dtype B item size 1. ChatGPT helped to fix the error
+      arr = output_data
+      # Only cast when needed, to avoid unnecessary copies
+      if getattr(arr, "dtype", None) == mx.bfloat16:
+          arr = arr.astype(mx.float32)
+      # For bfloat16 this will copy; for others it can still be zero-copy
+      return np.array(arr, copy=False)
+
     output_data = await asyncio.get_running_loop().run_in_executor(
       self._mlx_thread,
-      lambda: np.array(output_data, copy=False)
+      #lambda: np.array(output_data, copy=False)
+      to_numpy,
     )
     return output_data, inference_state
 
