@@ -16,6 +16,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    ImageGeneration,
     PlaceInstance,
     RequestEventLog,
     TaskFinished,
@@ -34,6 +35,9 @@ from exo.shared.types.events import (
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ChatCompletion as ChatCompletionTask,
+)
+from exo.shared.types.tasks import (
+    ImageGeneration as ImageGenerationTask,
 )
 from exo.shared.types.tasks import (
     TaskId,
@@ -137,6 +141,50 @@ class Master:
                                 TaskCreated(
                                     task_id=task_id,
                                     task=ChatCompletionTask(
+                                        task_id=task_id,
+                                        command_id=command.command_id,
+                                        instance_id=available_instance_ids[0],
+                                        task_status=TaskStatus.Pending,
+                                        task_params=command.request_params,
+                                    ),
+                                )
+                            )
+
+                            self.command_task_mapping[command.command_id] = task_id
+                        case ImageGeneration():
+                            # TODO: refactor with ChatCompletion
+                            instance_task_counts: dict[InstanceId, int] = {}
+                            for instance in self.state.instances.values():
+                                if (
+                                    instance.shard_assignments.model_id
+                                    == command.request_params.model
+                                ):
+                                    task_count = sum(
+                                        1
+                                        for task in self.state.tasks.values()
+                                        if task.instance_id == instance.instance_id
+                                    )
+                                    instance_task_counts[instance.instance_id] = (
+                                        task_count
+                                    )
+
+                            if not instance_task_counts:
+                                raise ValueError(
+                                    f"No instance found for model {command.request_params.model}"
+                                )
+
+                            available_instance_ids = sorted(
+                                instance_task_counts.keys(),
+                                key=lambda instance_id: instance_task_counts[
+                                    instance_id
+                                ],
+                            )
+
+                            task_id = TaskId()
+                            generated_events.append(
+                                TaskCreated(
+                                    task_id=task_id,
+                                    task=ImageGenerationTask(
                                         task_id=task_id,
                                         command_id=command.command_id,
                                         instance_id=available_instance_ids[0],
