@@ -1,7 +1,7 @@
 from pydantic import Field
 
 from exo.shared.models.model_cards import ModelCard
-from exo.shared.types.api import ChatCompletionTaskParams
+from exo.shared.types.api import ChatCompletionTaskParams, ImageGenerationTaskParams
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -18,6 +18,10 @@ class TestCommand(BaseCommand):
 
 class ChatCompletion(BaseCommand):
     request_params: ChatCompletionTaskParams
+
+
+class ImageGeneration(BaseCommand):
+    request_params: ImageGenerationTaskParams
 
 
 class PlaceInstance(BaseCommand):
@@ -47,6 +51,7 @@ Command = (
     TestCommand
     | RequestEventLog
     | ChatCompletion
+    | ImageGeneration
     | PlaceInstance
     | CreateInstance
     | DeleteInstance
