@@ -1,3 +1,4 @@
+import base64
 import time
 
 from exo.worker.engines.mlx.generator.generate_image import mlx_generate_image
@@ -223,13 +224,16 @@ def main(
                             match response:
                                 case ImageGenerationResponse():
                                     if shard_metadata.device_rank == 0:
+                                        encoded_data = base64.b64encode(
+                                            response.image_data
+                                        ).decode("utf-8")
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
                                                 chunk=ImageChunk(
-                                                    idx=0,  # TODO: chunk index?
+                                                    idx=0,
                                                     model=shard_metadata.model_meta.model_id,
-                                                    data=response.image_data,
+                                                    data=encoded_data,
                                                     finish_reason=response.finish_reason,
                                                 ),
                                             )
