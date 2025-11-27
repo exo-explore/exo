@@ -1,3 +1,5 @@
+from typing import Literal
+
 from exo.shared.types.api import FinishReason, GenerationStats
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -16,6 +18,12 @@ class GenerationResponse(BaseRunnerResponse):
     # logprobs: list[float] | None = None # too big. we can change to be top-k
     finish_reason: FinishReason | None = None
     stats: GenerationStats | None = None
+
+
+class ImageGenerationResponse(BaseRunnerResponse):
+    image_data: bytes
+    format: Literal["png", "jpeg", "webp"] = "png"
+    finish_reason: FinishReason | None = None
 
 
 class FinishedResponse(BaseRunnerResponse):
