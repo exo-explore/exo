@@ -34,6 +34,9 @@ from exo.shared.types.api import (
     CreateInstanceResponse,
     DeleteInstanceResponse,
     FinishReason,
+    ImageData,
+    ImageGenerationResponse,
+    ImageGenerationTaskParams,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -41,7 +44,7 @@ from exo.shared.types.api import (
     PlacementPreviewResponse,
     StreamingChoiceResponse,
 )
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.commands import (
     ChatCompletion,
     Command,
@@ -49,6 +52,7 @@ from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
     PlaceInstance,
+    ImageGeneration,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
@@ -133,6 +137,7 @@ class API:
         )
 
         self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
+        self._image_generation_queues: dict[CommandId, Sender[ImageChunk]] = {}
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
@@ -141,6 +146,7 @@ class API:
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._chat_completion_queues = {}
+        self._image_generation_queues = {}
         self.unpause(result_clock)
 
     def unpause(self, result_clock: int):
@@ -172,6 +178,7 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
+        self.app.post("/v1/images/generations")(self.image_generations)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -525,6 +532,60 @@ class API:
 
         return await self._collect_chat_completion(command.command_id, parse_gpt_oss)
 
+    async def image_generations(
+        self, payload: ImageGenerationTaskParams
+    ) -> ImageGenerationResponse:
+        """Handle image generation requests."""
+        model_meta = await resolve_model_meta(payload.model)
+        payload.model = model_meta.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == payload.model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(payload.model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {payload.model}"
+            )
+
+        command = ImageGeneration(
+            request_params=payload,
+        )
+        await self._send(command)
+
+        # Collect all image chunks (non-streaming)
+        self._image_generation_queues[command.command_id] = asyncio.Queue()
+
+        images: list[ImageData] = []
+        num_images = payload.n or 1
+
+        for _ in range(num_images):
+            # Wait for each image chunk with timeout
+            chunk = await asyncio.wait_for(
+                self._image_generation_queues[command.command_id].get(), timeout=600
+            )
+            assert isinstance(chunk, ImageChunk)
+
+            # Convert image bytes to base64
+            import base64
+
+            b64_image = base64.b64encode(chunk.data).decode("utf-8")
+
+            images.append(
+                ImageData(
+                    b64_json=b64_image
+                    if payload.response_format == "b64_json"
+                    else None,
+                    url=None,  # URL format not implemented yet
+                )
+            )
+
+        # Send TaskFinished command
+        await self._send(TaskFinished(finished_command_id=command.command_id))
+        del self._image_generation_queues[command.command_id]
+
+        return ImageGenerationResponse(data=images)
+
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
@@ -584,14 +645,17 @@ class API:
                 for idx, event in self.event_buffer.drain_indexed():
                     self._event_log.append(event)
                     self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
-                    if (
-                        isinstance(event, ChunkGenerated)
-                        and event.command_id in self._chat_completion_queues
-                    ):
-                        assert isinstance(event.chunk, TokenChunk)
-                        await self._chat_completion_queues[event.command_id].send(
-                            event.chunk
-                        )
+                    if isinstance(event, ChunkGenerated):
+                        if event.command_id in self._chat_completion_queues:
+                            assert isinstance(event.chunk, TokenChunk)
+                            await self._chat_completion_queues[event.command_id].send(
+                                event.chunk
+                            )
+                        elif event.command_id in self._image_generation_queues:
+                            assert isinstance(event.chunk, ImageChunk)
+                            await self._image_generation_queues[event.command_id].send(
+                                event.chunk
+                            )
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
