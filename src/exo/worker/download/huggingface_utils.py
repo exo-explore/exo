@@ -105,6 +105,9 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
             ):
                 shard_specific_patterns.add(filename)
         sorted_file_names = sorted(weight_map.values())
+        # TODO: if the model needs any "layer-independent" parameters,
+        # we might want to always add files that correspond to them
+        # e.g. lm_head
         if shard.is_first_layer:
             shard_specific_patterns.add(sorted_file_names[0])
         elif shard.is_last_layer:
