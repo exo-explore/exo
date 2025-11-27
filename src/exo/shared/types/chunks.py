@@ -27,6 +27,7 @@ class TokenChunk(BaseChunk):
 
 class ImageChunk(BaseChunk):
     data: bytes
+    finish_reason: FinishReason | None = None
 
 
 GenerationChunk = TokenChunk | ImageChunk
