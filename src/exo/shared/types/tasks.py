@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import Field
 
-from exo.shared.types.api import ChatCompletionTaskParams
+from exo.shared.types.api import ChatCompletionTaskParams, ImageGenerationTaskParams
 from exo.shared.types.common import CommandId, Id
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId
@@ -56,6 +56,14 @@ class ChatCompletion(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
+class ImageGeneration(BaseTask):  # emitted by Master
+    command_id: CommandId
+    task_params: ImageGenerationTaskParams
+
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+
+
 class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
@@ -67,5 +75,6 @@ Task = (
     | LoadModel
     | StartWarmup
     | ChatCompletion
+    | ImageGeneration
     | Shutdown
 )
