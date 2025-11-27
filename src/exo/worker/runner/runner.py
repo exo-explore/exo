@@ -1,7 +1,9 @@
 import time
 
+from exo.worker.engines.mlx.generator.generate_image import mlx_generate_image
+
 from exo.shared.types.api import ChatCompletionMessageText
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -12,6 +14,7 @@ from exo.shared.types.events import (
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -21,6 +24,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
+    ImageGenerationResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -187,6 +191,57 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=RunnerReady()
+                            )
+                        )
+                    case ImageGeneration(
+                        task_params=task_params, command_id=command_id
+                    ) if isinstance(current_status, RunnerReady):
+                        # TODO: refactor with ChatCompletion
+                        assert model
+                        assert tokenizer
+                        assert sampler
+                        logger.info(
+                            f"received image generation request: {str(task)[:500]}"
+                        )
+                        current_status = RunnerRunning()
+                        logger.info("runner running")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+
+                        # Generate images using MLX diffusion
+                        # Note: Diffusion models handle text encoding internally
+                        for response in mlx_generate_image(
+                            model=model,
+                            task=task_params,
+                        ):
+                            match response:
+                                case ImageGenerationResponse():
+                                    if shard_metadata.device_rank == 0:
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=ImageChunk(
+                                                    idx=0,  # TODO: chunk index?
+                                                    model=shard_metadata.model_meta.model_id,
+                                                    data=response.image_data,
+                                                    finish_reason=response.finish_reason,
+                                                ),
+                                            )
+                                        )
+
+                        current_status = RunnerReady()
+                        logger.info("runner ready")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=RunnerReady()
+                            )
+                        )
                     case Shutdown():
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
