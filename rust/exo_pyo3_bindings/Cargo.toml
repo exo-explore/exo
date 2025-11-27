@@ -5,8 +5,6 @@ edition = { workspace = true }
 publish = false
 
 [lib]
-doctest = false
-path = "src/lib.rs"
 name = "exo_pyo3_bindings"
 
 # "cdylib" needed to produce shared library for Python to import
@@ -22,46 +20,25 @@ doc = false
 workspace = true
 
 [dependencies]
-networking = { workspace = true }
+iroh_networking = { workspace = true }
 
 # interop
-pyo3 = { version = "0.27.1", features = [
-    # "abi3-py311", # tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.11
-    "nightly", # enables better-supported GIL integration
-    "experimental-async", # async support in #[pyfunction] & #[pymethods]
-    #"experimental-inspect", # inspection of generated binary => easier to automate type-hint generation
-    #"py-clone", # adding Clone-ing of `Py<T>` without GIL (may cause panics - remove if panics happen)
-    "multiple-pymethods", # allows multiple #[pymethods] sections per class
-
-    # integrations with other libraries
-    "arc_lock", "bigdecimal", "either", "hashbrown", "indexmap", "num-bigint", "num-complex", "num-rational",
-    "ordered-float", "rust_decimal", "smallvec",
-    # "anyhow", "chrono", "chrono-local", "chrono-tz", "eyre", "jiff-02", "lock_api", "parking-lot", "time",  "serde",
-] }
-pyo3-stub-gen = { version = "0.17.2" }
-pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime", "testing"] }
-pyo3-log = "0.13.2"
+pyo3 = { workspace = true, features = ["experimental-async"] }
+pyo3-stub-gen = { workspace = true }
+pyo3-async-runtimes = { workspace = true, features = ["attributes", "tokio-runtime", "testing"] }
+pyo3-log = { workspace = true }
 
 # macro dependencies
 extend = { workspace = true }
-delegate = { workspace = true }
-impl-trait-for-tuples = { workspace = true }
-derive_more = { workspace = true }
-pin-project = { workspace = true }
 
 # async runtime
 tokio = { workspace = true, features = ["full", "tracing"] }
-futures = { workspace = true }
 
 # utility dependencies
-once_cell = "1.21.3"
-thread_local = "1.1.9"
-util = { workspace = true }
+postcard = { workspace = true, features = ["use-std"] }
 thiserror = { workspace = true }
-#internment = { workspace = true }
-#recursion = { workspace = true }
-#generativity = { workspace = true }
-#itertools = { workspace = true }
+rand = { workspace = true }
+n0-future = { workspace = true }
 
 
 # Tracing
@@ -70,8 +47,9 @@ thiserror = { workspace = true }
 #console-subscriber = "0.1.5"
 #tracing-log = "0.2.0"
 log = { workspace = true }
-env_logger = "0.11"
+env_logger = { workspace = true }
 
 
 # Networking
-libp2p = { workspace = true, features = ["full"] }
+iroh = { workspace = true }
+iroh-gossip = { workspace = true }

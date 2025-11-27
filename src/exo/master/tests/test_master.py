@@ -11,6 +11,7 @@ from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import (
     ChatCompletion,
     CommandId,
+    CreateInstance,
     ForwarderCommand,
     PlaceInstance,
 )
@@ -140,7 +141,6 @@ async def test_master():
                 origin=node_id,
                 command=(
                     ChatCompletion(
-                        command_id=CommandId(),
                         request_params=ChatCompletionTaskParams(
                             model="llama-3.2-1b",
                             messages=[

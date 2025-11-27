@@ -2,7 +2,7 @@ use crate::ext::MultiaddrExt;
 use crate::keep_alive;
 use delegate::delegate;
 use either::Either;
-use futures::FutureExt;
+use futures::FutureExt as _;
 use futures_timer::Delay;
 use libp2p::core::transport::PortUse;
 use libp2p::core::{ConnectedPoint, Endpoint};
@@ -62,8 +62,7 @@ mod managed {
             ..Default::default()
         };
 
-        let mdns_behaviour = tokio::Behaviour::new(mdns_config, keypair.public().to_peer_id());
-        Ok(mdns_behaviour?)
+        tokio::Behaviour::new(mdns_config, keypair.public().to_peer_id())
     }
 
     fn ping_behaviour() -> ping::Behaviour {
@@ -125,7 +124,7 @@ impl Behaviour {
     fn dial(&mut self, peer_id: PeerId, addr: Multiaddr) {
         self.pending_events.push_back(ToSwarm::Dial {
             opts: DialOpts::peer_id(peer_id).addresses(vec![addr]).build(),
-        })
+        });
     }
 
     fn close_connection(&mut self, peer_id: PeerId, connection: ConnectionId) {
@@ -133,7 +132,7 @@ impl Behaviour {
         self.pending_events.push_front(ToSwarm::CloseConnection {
             peer_id,
             connection: CloseConnection::One(connection),
-        })
+        });
     }
 
     fn handle_mdns_discovered(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
@@ -294,7 +293,7 @@ impl NetworkBehaviour for Behaviour {
 
                 if let Some((ip, port)) = remote_address.try_to_tcp_addr() {
                     // handle connection established event which is filtered correctly
-                    self.on_connection_established(peer_id, connection_id, ip, port)
+                    self.on_connection_established(peer_id, connection_id, ip, port);
                 }
             }
             FromSwarm::ConnectionClosed(ConnectionClosed {
@@ -310,7 +309,7 @@ impl NetworkBehaviour for Behaviour {
 
                 if let Some((ip, port)) = remote_address.try_to_tcp_addr() {
                     // handle connection closed event which is filtered correctly
-                    self.on_connection_closed(peer_id, connection_id, ip, port)
+                    self.on_connection_closed(peer_id, connection_id, ip, port);
                 }
             }
 
@@ -329,7 +328,7 @@ impl NetworkBehaviour for Behaviour {
             Poll::Ready(ToSwarm::GenerateEvent(e)) => {
                 match e {
                     // handle discovered and expired events from mDNS
-                    managed::BehaviourEvent::Mdns(e) => match e.clone() {
+                    managed::BehaviourEvent::Mdns(e) => match e {
                         mdns::Event::Discovered(peers) => {
                             self.handle_mdns_discovered(peers);
                         }
@@ -340,8 +339,8 @@ impl NetworkBehaviour for Behaviour {
 
                     // handle ping events => if error then disconnect
                     managed::BehaviourEvent::Ping(e) => {
-                        if let Err(_) = e.result {
-                            self.close_connection(e.peer, e.connection.clone())
+                        if e.result.is_err() {
+                            self.close_connection(e.peer, e.connection);
                         }
                     }
                 }
@@ -366,10 +365,10 @@ impl NetworkBehaviour for Behaviour {
         if self.retry_delay.poll_unpin(cx).is_ready() {
             for (p, mas) in self.mdns_discovered.clone() {
                 for ma in mas {
-                    self.dial(p, ma)
+                    self.dial(p, ma);
                 }
             }
-            self.retry_delay.reset(RETRY_CONNECT_INTERVAL) // reset timeout
+            self.retry_delay.reset(RETRY_CONNECT_INTERVAL); // reset timeout
         }
 
         // send out any pending events from our own service

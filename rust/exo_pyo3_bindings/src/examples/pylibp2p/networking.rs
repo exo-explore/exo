@@ -1,9 +1,4 @@
-#![allow(
-    clippy::multiple_inherent_impl,
-    clippy::unnecessary_wraps,
-    clippy::unused_self,
-    clippy::needless_pass_by_value
-)]
+#![allow(clippy::multiple_inherent_impl, clippy::missing_const_for_fn)]
 
 use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
@@ -21,6 +16,7 @@ use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use std::net::IpAddr;
+use std::pin::pin;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use util::ext::VecExt as _;
 
@@ -393,11 +389,14 @@ impl PyNetworkingHandle {
 
     /// Receives the next `ConnectionUpdate` from networking.
     async fn connection_update_recv(&self) -> PyResult<PyConnectionUpdate> {
-        self.connection_update_rx
-            .lock()
+        let mg_fut = self.connection_update_rx.lock();
+
+        let mut mg = pin!(mg_fut)
             .allow_threads_py() // allow-threads-aware async call
-            .await
-            .recv_py()
+            .await;
+
+        let recv_fut = mg.recv_py();
+        pin!(recv_fut)
             .allow_threads_py() // allow-threads-aware async call
             .await
     }
@@ -486,7 +485,7 @@ impl PyNetworkingHandle {
         let (tx, rx) = oneshot::channel();
 
         // send off request to subscribe
-        let data = Python::with_gil(|py| Vec::from(data.as_bytes(py)));
+        let data = Python::attach(|py| Vec::from(data.as_bytes(py)));
         self.to_task_tx()
             .send_py(ToTask::GossipsubPublish {
                 topic,

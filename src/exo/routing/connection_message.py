@@ -1,37 +1,37 @@
-from enum import Enum
+from ipaddress import IPv4Address, IPv6Address, ip_address
 
-from exo_pyo3_bindings import ConnectionUpdate, ConnectionUpdateType
+from exo_pyo3_bindings import RustConnectionMessage
 
 from exo.shared.types.common import NodeId
 from exo.utils.pydantic_ext import CamelCaseModel
 
 """Serialisable types for Connection Updates/Messages"""
 
+IpAddress = IPv4Address | IPv6Address
 
-class ConnectionMessageType(Enum):
-    Connected = 0
-    Disconnected = 1
 
-    @staticmethod
-    def from_update_type(update_type: ConnectionUpdateType):
-        match update_type:
-            case ConnectionUpdateType.Connected:
-                return ConnectionMessageType.Connected
-            case ConnectionUpdateType.Disconnected:
-                return ConnectionMessageType.Disconnected
+class SocketAddress(CamelCaseModel):
+    # could be the python IpAddress type if we're feeling fancy
+    ip: IpAddress
+    port: int
+    zone_id: int | None
 
 
 class ConnectionMessage(CamelCaseModel):
     node_id: NodeId
-    connection_type: ConnectionMessageType
-    remote_ipv4: str
-    remote_tcp_port: int
+    ips: set[SocketAddress]
 
     @classmethod
-    def from_update(cls, update: ConnectionUpdate) -> "ConnectionMessage":
+    def from_rust(cls, message: RustConnectionMessage) -> "ConnectionMessage":
         return cls(
-            node_id=NodeId(update.peer_id.to_base58()),
-            connection_type=ConnectionMessageType.from_update_type(update.update_type),
-            remote_ipv4=update.remote_ipv4,
-            remote_tcp_port=update.remote_tcp_port,
+            node_id=NodeId(str(message.endpoint_id)),
+            ips=set(
+                # TODO: better handle fallible conversion
+                SocketAddress(
+                    ip=ip_address(addr.ip_addr()),
+                    port=addr.port(),
+                    zone_id=addr.zone_id(),
+                )
+                for addr in message.current_transport_addrs
+            ),
         )

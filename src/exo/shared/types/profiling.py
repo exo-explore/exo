@@ -2,6 +2,7 @@ from typing import Self
 
 import psutil
 
+from exo.routing.connection_message import IpAddress
 from exo.shared.types.memory import Memory
 from exo.utils.pydantic_ext import CamelCaseModel
 
@@ -49,7 +50,7 @@ class SystemPerformanceProfile(CamelCaseModel):
 
 class NetworkInterfaceInfo(CamelCaseModel):
     name: str
-    ip_address: str
+    ip_address: IpAddress
 
 
 class NodePerformanceProfile(CamelCaseModel):

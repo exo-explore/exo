@@ -81,16 +81,16 @@ class Topology:
         self,
         connection: Connection,
     ) -> None:
-        if connection.local_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(NodeInfo(node_id=connection.local_node_id))
-        if connection.send_back_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(NodeInfo(node_id=connection.send_back_node_id))
+        if connection.source_id not in self._node_id_to_rx_id_map:
+            self.add_node(NodeInfo(node_id=connection.source_id))
+        if connection.sink_id not in self._node_id_to_rx_id_map:
+            self.add_node(NodeInfo(node_id=connection.sink_id))
 
         if connection in self._edge_id_to_rx_id_map:
             return
 
-        src_id = self._node_id_to_rx_id_map[connection.local_node_id]
-        sink_id = self._node_id_to_rx_id_map[connection.send_back_node_id]
+        src_id = self._node_id_to_rx_id_map[connection.source_id]
+        sink_id = self._node_id_to_rx_id_map[connection.sink_id]
 
         rx_id = self._graph.add_edge(src_id, sink_id, connection)
         self._edge_id_to_rx_id_map[connection] = rx_id
@@ -188,10 +188,7 @@ class Topology:
         for rx_idx in rx_idxs:
             topology.add_node(self._graph[rx_idx])
         for connection in self.list_connections():
-            if (
-                connection.local_node_id in node_idxs
-                and connection.send_back_node_id in node_idxs
-            ):
+            if connection.source_id in node_idxs and connection.sink_id in node_idxs:
                 topology.add_connection(connection)
         return topology
 

@@ -1,0 +1,18 @@
+[package]
+name = "iroh_networking"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+blake3 = { workspace = true, features = ["neon", "rayon"] }
+iroh = { workspace = true, features = ["discovery-local-network"] }
+iroh-gossip = { workspace = true }
+n0-error = { workspace = true }
+n0-future = { workspace = true }
+rand = { workspace = true }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[lints]
+workspace = true

@@ -39,9 +39,9 @@ class Node:
     @classmethod
     async def create(cls, args: "Args") -> "Self":
         keypair = get_node_id_keypair()
-        node_id = NodeId(keypair.to_peer_id().to_base58())
+        node_id = NodeId(str(keypair.endpoint_id()))
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(keypair)
+        router = await Router.create(keypair)
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)

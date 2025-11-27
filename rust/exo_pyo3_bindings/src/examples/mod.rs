@@ -158,7 +158,7 @@ impl PyAsyncTaskHandle {
         // blocking call to async method -> can do non-blocking if needed
         self.sender()
             .send(AsyncTaskMessage::SyncCallback(Box::new(move || {
-                _ = Python::with_gil(|py| callback.call0(py).write_unraisable_with(py));
+                _ = Python::attach(|py| callback.call0(py).write_unraisable_with(py));
             })))
             .pyerr()?;
         Ok(())
@@ -176,9 +176,9 @@ impl PyAsyncTaskHandle {
         // blocking call to async method -> can do non-blocking if needed
         self.sender()
             .send(AsyncTaskMessage::AsyncCallback(Box::new(move || {
-                let c = Python::with_gil(|py| callback.clone_ref(py));
+                let c = Python::attach(|py| callback.clone_ref(py));
                 async move {
-                    if let Some(f) = Python::with_gil(|py| {
+                    if let Some(f) = Python::attach(|py| {
                         let coroutine = c.call0(py).write_unraisable_with(py)?;
                         pyo3_async_runtimes::tokio::into_future(coroutine.into_bound(py))
                             .write_unraisable_with(py)
@@ -237,4 +237,14 @@ pub fn examples_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAsyncTaskHandle>()?;
 
     Ok(())
+}
+
+/// A wrapper around [`Py`] that implements [`Clone`] using [`Python::with_gil`].
+#[repr(transparent)]
+pub(crate) struct ClonePy<T>(pub Py<T>);
+
+impl<T> Clone for ClonePy<T> {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self(self.0.clone_ref(py)))
+    }
 }

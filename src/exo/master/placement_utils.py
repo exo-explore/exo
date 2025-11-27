@@ -154,6 +154,7 @@ def get_shard_assignments(
 
 
 def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
+    # this function is wrong.
     cycles = cycle_digraph.get_cycles()
     expected_length = len(list(cycle_digraph.list_nodes()))
     cycles = [cycle for cycle in cycles if len(cycle) == expected_length]
@@ -178,15 +179,15 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
 
         for connection in cycle_digraph.list_connections():
             if (
-                connection.local_node_id == current_node.node_id
-                and connection.send_back_node_id == next_node.node_id
+                connection.source_id == current_node.node_id
+                and connection.sink_id == next_node.node_id
             ):
                 if get_thunderbolt and not connection.is_thunderbolt():
                     continue
-                assert connection.send_back_multiaddr is not None
+                assert connection.sink_addr is not None
                 host = Host(
-                    ip=connection.send_back_multiaddr.ip_address,
-                    port=connection.send_back_multiaddr.port,
+                    ip=str(connection.sink_addr.ip),
+                    port=connection.sink_addr.port,
                 )
                 hosts.append(host)
                 break
@@ -242,10 +243,10 @@ def _find_connection_ip(
     """Find all IP addresses that connect node i to node j."""
     for connection in cycle_digraph.list_connections():
         if (
-            connection.local_node_id == node_i.node_id
-            and connection.send_back_node_id == node_j.node_id
+            connection.source_id == node_i.node_id
+            and connection.sink_id == node_j.node_id
         ):
-            yield connection.send_back_multiaddr.ip_address
+            yield str(connection.sink_addr.ip)
 
 
 def _find_interface_name_for_ip(

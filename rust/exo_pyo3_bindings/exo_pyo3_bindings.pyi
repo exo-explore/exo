@@ -2,220 +2,63 @@
 # ruff: noqa: E501, F401
 
 import builtins
-import enum
 import typing
 
 @typing.final
-class AllQueuesFullError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> AllQueuesFullError: ...
-    def __repr__(self) -> builtins.str: ...
+class EndpointId:
     def __str__(self) -> builtins.str: ...
 
 @typing.final
-class ConnectionUpdate:
-    @property
-    def update_type(self) -> ConnectionUpdateType:
-        r"""
-        Whether this is a connection or disconnection event
-        """
-    @property
-    def peer_id(self) -> PeerId:
-        r"""
-        Identity of the peer that we have connected to or disconnected from.
-        """
-    @property
-    def remote_ipv4(self) -> builtins.str:
-        r"""
-        Remote connection's IPv4 address.
-        """
-    @property
-    def remote_tcp_port(self) -> builtins.int:
-        r"""
-        Remote connection's TCP port.
-        """
+class IpAddress:
+    def __str__(self) -> builtins.str: ...
+    def ip_addr(self) -> builtins.str: ...
+    def port(self) -> builtins.int: ...
+    def zone_id(self) -> typing.Optional[builtins.int]: ...
 
 @typing.final
 class Keypair:
-    r"""
-    Identity keypair of a node.
-    """
     @staticmethod
     def generate_ed25519() -> Keypair:
         r"""
         Generate a new Ed25519 keypair.
         """
     @staticmethod
-    def generate_ecdsa() -> Keypair:
+    def from_postcard_encoding(bytes: bytes) -> Keypair:
         r"""
-        Generate a new ECDSA keypair.
+        Decode a postcard structure into a keypair
         """
-    @staticmethod
-    def generate_secp256k1() -> Keypair:
+    def to_postcard_encoding(self) -> bytes:
         r"""
-        Generate a new Secp256k1 keypair.
+        Encode a private key with the postcard format
         """
-    @staticmethod
-    def from_protobuf_encoding(bytes: bytes) -> Keypair:
+    def endpoint_id(self) -> EndpointId:
         r"""
-        Decode a private key from a protobuf structure and parse it as a `Keypair`.
-        """
-    @staticmethod
-    def rsa_from_pkcs8(bytes: bytes) -> Keypair:
-        r"""
-        Decode an keypair from a DER-encoded secret key in PKCS#8 `PrivateKeyInfo`
-        format (i.e. unencrypted) as defined in [RFC5208].
-        
-        [RFC5208]: https://tools.ietf.org/html/rfc5208#section-5
-        """
-    @staticmethod
-    def secp256k1_from_der(bytes: bytes) -> Keypair:
-        r"""
-        Decode a keypair from a DER-encoded Secp256k1 secret key in an `ECPrivateKey`
-        structure as defined in [RFC5915].
-        
-        [RFC5915]: https://tools.ietf.org/html/rfc5915
-        """
-    @staticmethod
-    def ed25519_from_bytes(bytes: bytes) -> Keypair: ...
-    def to_protobuf_encoding(self) -> bytes:
-        r"""
-        Encode a private key as protobuf structure.
-        """
-    def to_peer_id(self) -> PeerId:
-        r"""
-        Convert the `Keypair` into the corresponding `PeerId`.
+        Read out the endpoint id corresponding to this keypair
         """
 
 @typing.final
-class Multiaddr:
-    r"""
-    Representation of a Multiaddr.
-    """
-    @staticmethod
-    def empty() -> Multiaddr:
-        r"""
-        Create a new, empty multiaddress.
-        """
-    @staticmethod
-    def with_capacity(n: builtins.int) -> Multiaddr:
-        r"""
-        Create a new, empty multiaddress with the given capacity.
-        """
-    @staticmethod
-    def from_bytes(bytes: bytes) -> Multiaddr:
-        r"""
-        Parse a `Multiaddr` value from its byte slice representation.
-        """
-    @staticmethod
-    def from_string(string: builtins.str) -> Multiaddr:
-        r"""
-        Parse a `Multiaddr` value from its string representation.
-        """
-    def len(self) -> builtins.int:
-        r"""
-        Return the length in bytes of this multiaddress.
-        """
-    def is_empty(self) -> builtins.bool:
-        r"""
-        Returns true if the length of this multiaddress is 0.
-        """
-    def to_bytes(self) -> bytes:
-        r"""
-        Return a copy of this [`Multiaddr`]'s byte representation.
-        """
-    def to_string(self) -> builtins.str:
-        r"""
-        Convert a Multiaddr to a string.
-        """
+class RustConnectionMessage:
+    @property
+    def endpoint_id(self) -> EndpointId: ...
+    @property
+    def current_transport_addrs(self) -> builtins.set[IpAddress]: ...
 
 @typing.final
-class NetworkingHandle:
-    def __new__(cls, identity: Keypair) -> NetworkingHandle: ...
-    async def connection_update_recv(self) -> ConnectionUpdate:
-        r"""
-        Receives the next `ConnectionUpdate` from networking.
-        """
-    async def connection_update_recv_many(self, limit: builtins.int) -> builtins.list[ConnectionUpdate]:
-        r"""
-        Receives at most `limit` `ConnectionUpdate`s from networking and returns them.
-        
-        For `limit = 0`, an empty collection of `ConnectionUpdate`s will be returned immediately.
-        For `limit > 0`, if there are no `ConnectionUpdate`s in the channel's queue this method
-        will sleep until a `ConnectionUpdate`s is sent.
-        """
-    async def gossipsub_subscribe(self, topic: builtins.str) -> builtins.bool:
-        r"""
-        Subscribe to a `GossipSub` topic.
-        
-        Returns `True` if the subscription worked. Returns `False` if we were already subscribed.
-        """
-    async def gossipsub_unsubscribe(self, topic: builtins.str) -> builtins.bool:
-        r"""
-        Unsubscribes from a `GossipSub` topic.
-        
-        Returns `True` if we were subscribed to this topic. Returns `False` if we were not subscribed.
-        """
-    async def gossipsub_publish(self, topic: builtins.str, data: bytes) -> None:
-        r"""
-        Publishes a message with multiple topics to the `GossipSub` network.
-        
-        If no peers are found that subscribe to this topic, throws `NoPeersSubscribedToTopicError` exception.
-        """
-    async def gossipsub_recv(self) -> tuple[builtins.str, bytes]:
-        r"""
-        Receives the next message from the `GossipSub` network.
-        """
-    async def gossipsub_recv_many(self, limit: builtins.int) -> builtins.list[tuple[builtins.str, bytes]]:
-        r"""
-        Receives at most `limit` messages from the `GossipSub` network and returns them.
-        
-        For `limit = 0`, an empty collection of messages will be returned immediately.
-        For `limit > 0`, if there are no messages in the channel's queue this method
-        will sleep until a message is sent.
-        """
+class RustConnectionReceiver:
+    async def receive(self) -> RustConnectionMessage: ...
 
 @typing.final
-class NoPeersSubscribedToTopicError(builtins.Exception):
-    def __new__(cls, *args: typing.Any) -> NoPeersSubscribedToTopicError: ...
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
-
-@typing.final
-class PeerId:
-    r"""
-    Identifier of a peer of the network.
-    
-    The data is a `CIDv0` compatible multihash of the protobuf encoded public key of the peer
-    as specified in [specs/peer-ids](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md).
-    """
+class RustNetworkingHandle:
     @staticmethod
-    def random() -> PeerId:
-        r"""
-        Generates a random peer ID from a cryptographically secure PRNG.
-        
-        This is useful for randomly walking on a DHT, or for testing purposes.
-        """
-    @staticmethod
-    def from_bytes(bytes: bytes) -> PeerId:
-        r"""
-        Parses a `PeerId` from bytes.
-        """
-    def to_bytes(self) -> bytes:
-        r"""
-        Returns a raw bytes representation of this `PeerId`.
-        """
-    def to_base58(self) -> builtins.str:
-        r"""
-        Returns a base-58 encoded string of this `PeerId`.
-        """
-    def __repr__(self) -> builtins.str: ...
-    def __str__(self) -> builtins.str: ...
+    async def create(identity: Keypair, namespace: builtins.str) -> RustNetworkingHandle: ...
+    async def subscribe(self, topic: builtins.str) -> tuple[RustSender, RustReceiver]: ...
+    async def get_connection_receiver(self) -> RustConnectionReceiver: ...
 
 @typing.final
-class ConnectionUpdateType(enum.Enum):
-    r"""
-    Connection or disconnection event discriminant type.
-    """
-    Connected = ...
-    Disconnected = ...
+class RustReceiver:
+    async def receive(self) -> builtins.list[builtins.int]: ...
+
+@typing.final
+class RustSender:
+    async def send(self, message: typing.Sequence[builtins.int]) -> None: ...
 

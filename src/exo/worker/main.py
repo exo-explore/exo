@@ -6,7 +6,7 @@ from anyio import CancelScope, create_task_group, current_time, fail_after
 from anyio.abc import TaskGroup
 from loguru import logger
 
-from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
+from exo.routing.connection_message import ConnectionMessage
 from exo.shared.apply import apply
 from exo.shared.types.commands import ForwarderCommand, RequestEventLog
 from exo.shared.types.common import NodeId, SessionId
@@ -20,10 +20,7 @@ from exo.shared.types.events import (
     NodePerformanceMeasured,
     TaskCreated,
     TaskStatusUpdated,
-    TopologyEdgeCreated,
-    TopologyEdgeDeleted,
 )
-from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -33,7 +30,6 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.topology import Connection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
@@ -258,33 +254,13 @@ class Worker:
     async def _connection_message_event_writer(self):
         with self.connection_message_receiver as connection_messages:
             async for msg in connection_messages:
-                await self.event_sender.send(
-                    self._convert_connection_message_to_event(msg)
-                )
+                for event in self._convert_connection_message_to_event(msg):
+                    await self.event_sender.send(event)
 
-    def _convert_connection_message_to_event(self, msg: ConnectionMessage):
-        match msg.connection_type:
-            case ConnectionMessageType.Connected:
-                return TopologyEdgeCreated(
-                    edge=Connection(
-                        local_node_id=self.node_id,
-                        send_back_node_id=msg.node_id,
-                        send_back_multiaddr=Multiaddr(
-                            address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
-                        ),
-                    )
-                )
-
-            case ConnectionMessageType.Disconnected:
-                return TopologyEdgeDeleted(
-                    edge=Connection(
-                        local_node_id=self.node_id,
-                        send_back_node_id=msg.node_id,
-                        send_back_multiaddr=Multiaddr(
-                            address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
-                        ),
-                    )
-                )
+    def _convert_connection_message_to_event(
+        self, msg: ConnectionMessage
+    ) -> list[Event]:
+        return check_connections(self.node_id, msg, self.state)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.

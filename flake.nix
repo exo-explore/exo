@@ -69,14 +69,11 @@
               basedpyright
 
               # RUST
-              ((fenixToolchain system).withComponents [
-                "cargo"
-                "rustc"
-                "clippy"
-                "rustfmt"
-                "rust-src"
-              ])
-              rustup # Just here to make RustRover happy
+              cargo
+              bacon
+              rust-analyzer
+              rustc
+              rustfmt
 
               # NIX
               nixpkgs-fmt

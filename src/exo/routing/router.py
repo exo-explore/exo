@@ -13,14 +13,15 @@ from anyio import (
 )
 from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
-    AllQueuesFullError,
     Keypair,
-    NetworkingHandle,
-    NoPeersSubscribedToTopicError,
+    RustNetworkingHandle,
+    RustReceiver,
+    RustSender,
 )
 from filelock import FileLock
 from loguru import logger
 
+from exo import __version__
 from exo.shared.constants import EXO_NODE_ID_KEYPAIR
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -37,7 +38,8 @@ class TopicRouter[T: CamelCaseModel]:
     def __init__(
         self,
         topic: TypedTopic[T],
-        networking_sender: Sender[tuple[str, bytes]],
+        networking_sender: RustSender,
+        networking_receiver: RustReceiver,
         max_buffer_size: float = inf,
     ):
         self.topic: TypedTopic[T] = topic
@@ -45,7 +47,7 @@ class TopicRouter[T: CamelCaseModel]:
         send, recv = channel[T]()
         self.receiver: Receiver[T] = recv
         self._sender: Sender[T] = send
-        self.networking_sender: Sender[tuple[str, bytes]] = networking_sender
+        self.networking_sender: RustSender = networking_sender
 
     async def run(self):
         logger.debug(f"Topic Router {self.topic} ready to send")
@@ -93,35 +95,24 @@ class TopicRouter[T: CamelCaseModel]:
 
     async def _send_out(self, item: T):
         logger.trace(f"TopicRouter {self.topic.topic} sending {item}")
-        await self.networking_sender.send(
-            (str(self.topic.topic), self.topic.serialize(item))
-        )
+        await self.networking_sender.send(self.topic.serialize(item))
 
 
 class Router:
     @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    async def create(cls, identity: Keypair) -> "Router":
+        return cls(handle=await RustNetworkingHandle.create(identity, __version__))
 
-    def __init__(self, handle: NetworkingHandle):
+    def __init__(self, handle: RustNetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
-        send, recv = channel[tuple[str, bytes]]()
-        self.networking_receiver: Receiver[tuple[str, bytes]] = recv
-        self._net: NetworkingHandle = handle
-        self._tmp_networking_sender: Sender[tuple[str, bytes]] | None = send
+        self._net: RustNetworkingHandle = handle
         self._id_count = count()
         self._tg: TaskGroup | None = None
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
         assert self._tg is None, "Attempted to register topic after setup time"
-        send = self._tmp_networking_sender
-        if send:
-            self._tmp_networking_sender = None
-        else:
-            send = self.networking_receiver.clone_sender()
-        router = TopicRouter[T](topic, send)
+        router = TopicRouter[T](topic, *await self._net.subscribe(str(topic.topic)))
         self.topic_routers[topic.topic] = cast(TopicRouter[CamelCaseModel], router)
-        await self._networking_subscribe(str(topic.topic))
 
     def sender[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
@@ -151,13 +142,9 @@ class Router:
             for topic in self.topic_routers:
                 router = self.topic_routers[topic]
                 tg.start_soon(router.run)
-            tg.start_soon(self._networking_recv)
             tg.start_soon(self._networking_recv_connection_messages)
-            tg.start_soon(self._networking_publish)
             # Router only shuts down if you cancel it.
             await sleep_forever()
-        for topic in self.topic_routers:
-            await self._networking_unsubscribe(str(topic))
 
     async def shutdown(self):
         logger.debug("Shutting down Router")
@@ -165,29 +152,10 @@ class Router:
             return
         self._tg.cancel_scope.cancel()
 
-    async def _networking_subscribe(self, topic: str):
-        logger.info(f"Subscribing to {topic}")
-        await self._net.gossipsub_subscribe(topic)
-
-    async def _networking_unsubscribe(self, topic: str):
-        logger.info(f"Unsubscribing from {topic}")
-        await self._net.gossipsub_unsubscribe(topic)
-
-    async def _networking_recv(self):
-        while True:
-            topic, data = await self._net.gossipsub_recv()
-            logger.trace(f"Received message on {topic} with payload {data}")
-            if topic not in self.topic_routers:
-                logger.warning(f"Received message on unknown or inactive topic {topic}")
-                continue
-
-            router = self.topic_routers[topic]
-            await router.publish_bytes(data)
-
     async def _networking_recv_connection_messages(self):
+        recv = await self._net.get_connection_receiver()
         while True:
-            update = await self._net.connection_update_recv()
-            message = ConnectionMessage.from_update(update)
+            message = await recv.receive()
             logger.trace(
                 f"Received message on connection_messages with payload {message}"
             )
@@ -195,18 +163,7 @@ class Router:
                 router = self.topic_routers[CONNECTION_MESSAGES.topic]
                 assert router.topic.model_type == ConnectionMessage
                 router = cast(TopicRouter[ConnectionMessage], router)
-                await router.publish(message)
-
-    async def _networking_publish(self):
-        with self.networking_receiver as networked_items:
-            async for topic, data in networked_items:
-                try:
-                    logger.trace(f"Sending message on {topic} with payload {data}")
-                    await self._net.gossipsub_publish(topic, data)
-                # As a hack, this also catches AllQueuesFull
-                # Need to fix that ASAP.
-                except (NoPeersSubscribedToTopicError, AllQueuesFullError):
-                    pass
+                await router.publish(ConnectionMessage.from_rust(message))
 
 
 def get_node_id_keypair(
@@ -225,16 +182,16 @@ def get_node_id_keypair(
         with open(path, "a+b") as f:  # opens in append-mode => starts at EOF
             # if non-zero EOF, then file exists => use to get node-ID
             if f.tell() != 0:
-                f.seek(0)  # go to start & read protobuf-encoded bytes
-                protobuf_encoded = f.read()
+                f.seek(0)  # go to start & read postcard-encoded bytes
+                postcard_encoded = f.read()
 
                 try:  # if decoded successfully, save & return
-                    return Keypair.from_protobuf_encoding(protobuf_encoded)
+                    return Keypair.from_postcard_encoding(postcard_encoded)
                 except ValueError as e:  # on runtime error, assume corrupt file
                     logger.warning(f"Encountered error when trying to get keypair: {e}")
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
             keypair = Keypair.generate_ed25519()
-            f.write(keypair.to_protobuf_encoding())
+            f.write(keypair.to_postcard_encoding())
             return keypair

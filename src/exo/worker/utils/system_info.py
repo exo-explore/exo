@@ -1,5 +1,6 @@
 import socket
 import sys
+from ipaddress import ip_address
 from subprocess import CalledProcessError
 
 import psutil
@@ -29,12 +30,6 @@ async def get_friendly_name() -> str:
 
 
 def get_network_interfaces() -> list[NetworkInterfaceInfo]:
-    """
-    Retrieves detailed network interface information on macOS.
-    Parses output from 'networksetup -listallhardwareports' and 'ifconfig'
-    to determine interface names, IP addresses, and types (ethernet, wifi, vpn, other).
-    Returns a list of NetworkInterfaceInfo objects.
-    """
     interfaces_info: list[NetworkInterfaceInfo] = []
 
     for iface, services in psutil.net_if_addrs().items():
@@ -42,7 +37,9 @@ def get_network_interfaces() -> list[NetworkInterfaceInfo]:
             match service.family:
                 case socket.AF_INET | socket.AF_INET6:
                     interfaces_info.append(
-                        NetworkInterfaceInfo(name=iface, ip_address=service.address)
+                        NetworkInterfaceInfo(
+                            name=iface, ip_address=ip_address(service.address)
+                        )
                     )
                 case _:
                     pass

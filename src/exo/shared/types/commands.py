@@ -1,3 +1,5 @@
+from typing import Self
+
 from pydantic import Field
 
 from exo.shared.types.api import ChatCompletionTaskParams
@@ -25,6 +27,17 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+
+    # Decision point - I like this syntax better than the typical fixtures,
+    # but it's """bloat"""
+    @classmethod
+    def fixture(cls) -> Self:
+        return cls(
+            model_meta=ModelMetadata.fixture(),
+            sharding=Sharding.Pipeline,
+            instance_meta=InstanceMeta.MlxRing,
+            min_nodes=1,
+        )
 
 
 class CreateInstance(BaseCommand):
