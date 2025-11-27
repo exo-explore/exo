@@ -48,8 +48,19 @@ class TopicRouter[T: CamelCaseModel]:
         self.receiver: Receiver[T] = recv
         self._sender: Sender[T] = send
         self.networking_sender: RustSender = networking_sender
+        self.networking_receiver: RustReceiver = networking_receiver
 
     async def run(self):
+        async with create_task_group() as tg:
+            tg.start_soon(self.receive_loop)
+            tg.start_soon(self.net_receive_loop)
+
+    async def net_receive_loop(self):
+        while True:
+            item = await self.networking_receiver.receive()
+            await self.publish_bytes(item)
+
+    async def receive_loop(self):
         logger.debug(f"Topic Router {self.topic} ready to send")
         with self.receiver as items:
             async for item in items:

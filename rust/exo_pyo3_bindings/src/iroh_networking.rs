@@ -1,4 +1,4 @@
-use crate::ext::{FutureExt, ResultExt};
+use crate::ext::{ByteArrayExt, FutureExt, ResultExt};
 use crate::identity::{PyEndpointId, PyKeypair};
 use iroh::SecretKey;
 use iroh::discovery::EndpointInfo;
@@ -8,6 +8,7 @@ use iroh_networking::ExoNet;
 use n0_future::{Stream, StreamExt};
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -107,8 +108,10 @@ struct PySender {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PySender {
-    async fn send(&mut self, message: Vec<u8>) -> PyResult<()> {
-        self.inner.broadcast(message.into()).await.pyerr()
+    async fn send(&mut self, message: Py<PyBytes>) -> PyResult<()> {
+        let bytes = Python::attach(|py| message.as_bytes(py).to_vec());
+        let broadcast_fut = self.inner.broadcast(bytes.into());
+        pin!(broadcast_fut).await.pyerr()
     }
 }
 
@@ -121,12 +124,13 @@ struct PyReceiver {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyReceiver {
-    async fn receive(&mut self) -> PyResult<Vec<u8>> {
+    async fn receive(&mut self) -> PyResult<Py<PyBytes>> {
         loop {
-            match self.inner.next().await {
+            let next_fut = self.inner.next();
+            match pin!(next_fut).allow_threads_py().await {
                 // Successful cases
                 Some(Ok(Event::Received(Message { content, .. }))) => {
-                    return Ok(content.to_vec());
+                    return Ok(content.to_vec().pybytes());
                 }
                 Some(Ok(other)) => log::info!("Dropping gossip event {other:?}"),
                 None => return Err(PyStopAsyncIteration::new_err("")),
