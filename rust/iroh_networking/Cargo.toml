@@ -7,6 +7,7 @@ edition.workspace = true
 blake3 = { workspace = true, features = ["neon", "rayon"] }
 iroh = { workspace = true, features = ["discovery-local-network"] }
 iroh-gossip = { workspace = true }
+log.workspace = true
 n0-error = { workspace = true }
 n0-future = { workspace = true }
 rand = { workspace = true }

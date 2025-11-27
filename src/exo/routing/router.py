@@ -167,9 +167,11 @@ class Router:
         recv = await self._net.get_connection_receiver()
         while True:
             message = await recv.receive()
+            logger.warning(f"yo!, {message}!")
             logger.trace(
                 f"Received message on connection_messages with payload {message}"
             )
+
             if CONNECTION_MESSAGES.topic in self.topic_routers:
                 router = self.topic_routers[CONNECTION_MESSAGES.topic]
                 assert router.topic.model_type == ConnectionMessage

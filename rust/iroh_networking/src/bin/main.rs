@@ -9,7 +9,7 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let mut net = ExoNet::init_iroh(SecretKey::generate(&mut rand::rng()), "")
+    let net = ExoNet::init_iroh(SecretKey::generate(&mut rand::rng()), "")
         .await
         .unwrap();
 

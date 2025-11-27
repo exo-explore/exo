@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use iroh::{
     Endpoint, SecretKey,
     discovery::{
@@ -5,6 +7,7 @@ use iroh::{
         mdns::{DiscoveryEvent, MdnsDiscovery},
     },
     endpoint::BindError,
+    endpoint_info::EndpointIdExt,
     protocol::Router,
 };
 use iroh_gossip::{
@@ -13,7 +16,7 @@ use iroh_gossip::{
 };
 
 use n0_error::stack_error;
-use n0_future::Stream;
+use n0_future::{Stream, StreamExt};
 
 #[stack_error(derive, add_meta, from_sources)]
 pub enum Error {
@@ -28,6 +31,7 @@ pub enum Error {
 
 #[derive(Debug)]
 pub struct ExoNet {
+    alpn: String,
     router: Router,
     gossip: Gossip,
     mdns: MdnsDiscovery,
@@ -47,20 +51,42 @@ impl ExoNet {
             .accept(&alpn, gossip.clone())
             .spawn();
         Ok(Self {
+            alpn,
             router,
             gossip,
             mdns,
         })
     }
 
-    pub async fn connection_info(&mut self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
+    pub async fn start_auto_dialer(&self) {
+        let mut dialed = BTreeSet::new();
+        let mut recv = self.connection_info().await;
+        while let Some(item) = recv.next().await {
+            match item {
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    if !dialed.contains(&endpoint_info.endpoint_id) {
+                        log::info!("Dialing new peer {}", endpoint_info.endpoint_id.to_z32());
+                        let _ = self
+                            .router
+                            .endpoint()
+                            .connect(endpoint_info, self.alpn.as_bytes())
+                            .await;
+                    } else {
+                        dialed.insert(endpoint_info.endpoint_id);
+                    }
+                }
+                DiscoveryEvent::Expired { endpoint_id } => {
+                    dialed.remove(&endpoint_id);
+                }
+            }
+        }
+    }
+
+    pub async fn connection_info(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         self.mdns.subscribe().await
     }
 
-    pub async fn subscribe(
-        &mut self,
-        topic: &str,
-    ) -> Result<(GossipSender, GossipReceiver), Error> {
+    pub async fn subscribe(&self, topic: &str) -> Result<(GossipSender, GossipReceiver), Error> {
         Ok(self
             .gossip
             .subscribe(str_to_topic_id(topic), vec![])
@@ -68,7 +94,7 @@ impl ExoNet {
             .split())
     }
 
-    pub async fn shutdown(&mut self) {
+    pub async fn shutdown(&self) {
         self.router
             .shutdown()
             .await

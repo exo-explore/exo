@@ -13,7 +13,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::pin::{Pin, pin};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
@@ -53,7 +53,7 @@ impl PyIpAddress {
 #[gen_stub_pyclass]
 #[pyclass(name = "RustNetworkingHandle")]
 pub struct PyNetworkingHandle {
-    net: Mutex<ExoNet>,
+    net: Arc<ExoNet>,
 }
 
 #[gen_stub_pymethods]
@@ -62,28 +62,29 @@ impl PyNetworkingHandle {
     #[staticmethod]
     pub async fn create(identity: PyKeypair, namespace: String) -> PyResult<Self> {
         let loc: SecretKey = identity.0.clone();
-        let net = RUNTIME
-            .spawn(async move { ExoNet::init_iroh(loc, &namespace).await })
-            .await
-            // todo: pyerr better
-            .pyerr()?
-            .pyerr()?;
-        Ok(Self {
-            net: Mutex::new(net),
-        })
+        let net = Arc::new(
+            RUNTIME
+                .spawn(async move { ExoNet::init_iroh(loc, &namespace).await })
+                .await
+                // todo: pyerr better
+                .pyerr()?
+                .pyerr()?,
+        );
+        let cloned = net.clone();
+        RUNTIME.spawn(async move { cloned.start_auto_dialer().await });
+
+        Ok(Self { net })
     }
 
-    async fn subscribe(&mut self, topic: String) -> PyResult<(PySender, PyReceiver)> {
-        let mut lock = self.net.lock().await;
-        let fut = lock.subscribe(&topic);
+    async fn subscribe(&self, topic: String) -> PyResult<(PySender, PyReceiver)> {
+        let fut = self.net.subscribe(&topic);
         let (send, recv) = pin!(fut).allow_threads_py().await.pyerr()?;
         Ok((PySender { inner: send }, PyReceiver { inner: recv }))
     }
 
-    async fn get_connection_receiver(&mut self) -> PyResult<PyConnectionReceiver> {
-        let mut lock = self.net.lock().await;
-        let fut = lock.connection_info();
-        let stream = fut.await;
+    async fn get_connection_receiver(&self) -> PyResult<PyConnectionReceiver> {
+        let fut = self.net.connection_info();
+        let stream = pin!(fut).allow_threads_py().await;
         Ok(PyConnectionReceiver {
             inner: Mutex::new(Box::pin(stream)),
         })
