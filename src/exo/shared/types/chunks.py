@@ -23,7 +23,7 @@ class TokenChunk(BaseChunk):
 
 
 class ImageChunk(BaseChunk):
-    data: bytes
+    data: str  # Base64-encoded image data
     finish_reason: FinishReason | None = None
 
 

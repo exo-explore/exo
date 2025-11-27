@@ -566,14 +566,10 @@ class API:
             )
             assert isinstance(chunk, ImageChunk)
 
-            # Convert image bytes to base64
-            import base64
-
-            b64_image = base64.b64encode(chunk.data).decode("utf-8")
-
+            # chunk.data is already base64-encoded string
             images.append(
                 ImageData(
-                    b64_json=b64_image
+                    b64_json=chunk.data
                     if payload.response_format == "b64_json"
                     else None,
                     url=None,  # URL format not implemented yet
