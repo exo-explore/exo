@@ -66,6 +66,9 @@ pyo3-stub-gen = "0.17.2"
 # other
 rand = "0.9.2"
 
+[patch.crates-io]
+netwatch = { git = "https://github.com/Evanev7/net-tools.git", branch="patch-for-exo" }
+
 [workspace.lints.rust]
 static_mut_refs = "warn"      # Or use "warn" instead of deny
 incomplete_features = "allow"
