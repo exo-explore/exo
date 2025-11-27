@@ -1,5 +1,6 @@
 from ipaddress import IPv4Address, IPv6Address, ip_address
 
+from pydantic import ConfigDict
 from exo_pyo3_bindings import RustConnectionMessage
 
 from exo.shared.types.common import NodeId
@@ -15,6 +16,13 @@ class SocketAddress(CamelCaseModel):
     ip: IpAddress
     port: int
     zone_id: int | None
+
+    model_config = ConfigDict(
+        frozen=True,
+    )
+
+
+
 
 
 class ConnectionMessage(CamelCaseModel):
