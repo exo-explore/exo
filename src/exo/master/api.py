@@ -54,8 +54,8 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    PlaceInstance,
     ImageGeneration,
+    PlaceInstance,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
