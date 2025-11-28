@@ -610,8 +610,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
         metadata=ModelMetadata(
             model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
             pretty_name="FLUX.1 [schnell]",
-            storage_size=Memory.from_kb(327512),  # TODO
-            n_layers=28,  # TODO
+            storage_size=Memory.from_kb(327512),  # TODO(ciaran)
+            n_layers=28,  # TODO(ciaran)
             hidden_size=0,
             supports_tensor=False,
         ),
