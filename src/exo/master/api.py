@@ -24,7 +24,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import MODEL_CARDS
+from exo.shared.models.model_cards import MODEL_CARDS, ModelCard
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     ChatCompletionChoice,
@@ -88,12 +88,23 @@ def chunk_to_response(
     )
 
 
-async def resolve_model_meta(model_id: str) -> ModelMetadata:
+def get_model_card(model_id: str) -> ModelCard | None:
     if model_id in MODEL_CARDS:
         model_card = MODEL_CARDS[model_id]
+        return model_card
+
+    for _, model_card in MODEL_CARDS.items():
+        if model_id == model_card.model_id:
+            return model_card
+
+
+async def resolve_model_meta(model_id: str) -> ModelMetadata:
+    model_card = get_model_card(model_id)
+
+    if model_card is not None:
         return model_card.metadata
-    else:
-        return await get_model_meta(model_id)
+
+    return await get_model_meta(model_id)
 
 
 class API:

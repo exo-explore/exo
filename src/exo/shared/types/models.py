@@ -1,4 +1,5 @@
 from enum import Enum
+
 from pydantic import PositiveInt
 
 from exo.shared.types.common import Id
