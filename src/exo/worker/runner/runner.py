@@ -46,7 +46,6 @@ from exo.shared.types.worker.runners import (
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.mflux.generator.generate import mflux_generate
 from exo.worker.engines.mflux.utils_mflux import initialize_mflux
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -150,7 +149,8 @@ def main(
 
                         logger.info(f"warming up inference for instance: {instance}")
                         if model_task == ModelTask.TextGeneration:
-                            assert isinstance(model, Model)
+                            # assert isinstance(model, Model) TODO: not actually Model
+                            assert model and not isinstance(model, Flux1)
                             assert tokenizer
                             assert sampler
 
@@ -169,7 +169,8 @@ def main(
                     case ChatCompletion(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
-                        assert isinstance(model, Model)
+                        # assert isinstance(model, Model) TODO: not actually Model
+                        assert model and not isinstance(model, Flux1)
                         assert tokenizer
                         assert sampler
                         logger.info(f"received chat request: {str(task)[:500]}")
