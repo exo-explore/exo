@@ -455,8 +455,6 @@ async def download_shard(
         logger.info(f"Downloading {shard.model_card.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
-    # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.
-    #  Update: <- This does not seem to be the case. Yay?
     file_list = await fetch_file_list_with_cache(
         shard.model_card.model_id, revision, recursive=True
     )
