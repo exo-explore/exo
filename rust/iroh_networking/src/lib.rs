@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use iroh::{
-    Endpoint, SecretKey,
+    Endpoint, EndpointId, SecretKey,
     discovery::{
         IntoDiscoveryError,
         mdns::{DiscoveryEvent, MdnsDiscovery},
@@ -15,8 +15,9 @@ use iroh_gossip::{
     api::{ApiError, GossipReceiver, GossipSender},
 };
 
-use n0_error::stack_error;
+use n0_error::{e, stack_error};
 use n0_future::{Stream, StreamExt};
+use tokio::sync::Mutex;
 
 #[stack_error(derive, add_meta, from_sources)]
 pub enum Error {
@@ -27,14 +28,17 @@ pub enum Error {
     FailedCommunication { source: ApiError },
     #[error("No IP Protocol supported on device")]
     IPNotSupported { source: IntoDiscoveryError },
+    #[error("No peers found before subscribing")]
+    NoPeers,
 }
 
 #[derive(Debug)]
 pub struct ExoNet {
-    alpn: String,
-    router: Router,
-    gossip: Gossip,
-    mdns: MdnsDiscovery,
+    pub alpn: String,
+    pub router: Router,
+    pub gossip: Gossip,
+    pub mdns: MdnsDiscovery,
+    pub known_peers: Mutex<BTreeSet<EndpointId>>,
 }
 
 impl ExoNet {
@@ -55,31 +59,47 @@ impl ExoNet {
             router,
             gossip,
             mdns,
+            known_peers: Mutex::new(BTreeSet::new()),
         })
     }
 
     pub async fn start_auto_dialer(&self) {
-        let mut dialed = BTreeSet::new();
         let mut recv = self.connection_info().await;
+
+        log::info!(
+            "Starting auto dialer for id {}",
+            self.router.endpoint().id().to_z32()
+        );
         while let Some(item) = recv.next().await {
             match item {
                 DiscoveryEvent::Discovered { endpoint_info, .. } => {
-                    if !dialed.contains(&endpoint_info.endpoint_id) {
-                        log::info!("Dialing new peer {}", endpoint_info.endpoint_id.to_z32());
-                        let _ = self
+                    let id = endpoint_info.endpoint_id;
+                    if !self
+                        .known_peers
+                        .lock()
+                        .await
+                        .contains(&endpoint_info.endpoint_id)
+                        && let Ok(conn) = self
                             .router
                             .endpoint()
                             .connect(endpoint_info, self.alpn.as_bytes())
-                            .await;
-                    } else {
-                        dialed.insert(endpoint_info.endpoint_id);
+                            .await
+                        && conn.alpn() == self.alpn.as_bytes()
+                    {
+                        self.known_peers.lock().await.insert(id);
+                        match self.gossip.handle_connection(conn).await {
+                            Ok(()) => log::info!("Successfully dialled"),
+                            Err(_) => log::info!("Failed to dial peer"),
+                        }
                     }
                 }
                 DiscoveryEvent::Expired { endpoint_id } => {
-                    dialed.remove(&endpoint_id);
+                    log::info!("Peer expired {}", endpoint_id.to_z32());
+                    self.known_peers.lock().await.remove(&endpoint_id);
                 }
             }
         }
+        log::info!("Auto dialer stopping");
     }
 
     pub async fn connection_info(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
@@ -87,9 +107,15 @@ impl ExoNet {
     }
 
     pub async fn subscribe(&self, topic: &str) -> Result<(GossipSender, GossipReceiver), Error> {
+        if self.known_peers.lock().await.is_empty() {
+            return Err(e!(Error::NoPeers));
+        }
         Ok(self
             .gossip
-            .subscribe(str_to_topic_id(topic), vec![])
+            .subscribe_and_join(
+                str_to_topic_id(topic),
+                self.known_peers.lock().await.clone().into_iter().collect(),
+            )
             .await?
             .split())
     }

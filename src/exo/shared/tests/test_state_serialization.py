@@ -1,7 +1,8 @@
+from ipaddress import ip_address
 from exo.shared.types.common import NodeId
-from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection
+from exo.routing.connection_message import SocketAddress
 
 
 def test_state_serialization_roundtrip() -> None:
@@ -12,9 +13,9 @@ def test_state_serialization_roundtrip() -> None:
     node_b = NodeId("node-b")
 
     connection = Connection(
-        local_node_id=node_a,
-        send_back_node_id=node_b,
-        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/10001"),
+        sink_id=node_a,
+        source_id=node_b,
+        sink_addr=SocketAddress(ip=ip_address("127.0.0.1"), port=5354, zone_id=None),
     )
 
     state = State()

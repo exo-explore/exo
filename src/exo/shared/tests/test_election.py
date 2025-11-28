@@ -1,7 +1,7 @@
 import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
-from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
+from exo.routing.connection_message import ConnectionMessage
 from exo.shared.election import Election, ElectionMessage, ElectionResult
 from exo.shared.types.commands import ForwarderCommand, TestCommand
 from exo.shared.types.common import NodeId, SessionId
@@ -330,9 +330,7 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
             await cm_tx.send(
                 ConnectionMessage(
                     node_id=NodeId(),
-                    connection_type=ConnectionMessageType.Connected,
-                    remote_ipv4="",
-                    remote_tcp_port=0,
+                    ips=set(),
                 )
             )
 

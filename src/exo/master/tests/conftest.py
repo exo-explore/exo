@@ -1,15 +1,16 @@
 from typing import Callable
+from ipaddress import ip_address
 
 import pytest
 
 from exo.shared.types.common import NodeId
-from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
 from exo.shared.types.topology import Connection, ConnectionProfile, NodeInfo
+from exo.routing.connection_message import SocketAddress
 
 
 @pytest.fixture
@@ -54,10 +55,12 @@ def create_connection() -> Callable[[NodeId, NodeId, int | None], Connection]:
             send_back_port = port_counter
             port_counter += 1
         return Connection(
-            local_node_id=source_node_id,
-            send_back_node_id=sink_node_id,
-            send_back_multiaddr=Multiaddr(
-                address=f"/ip4/169.254.0.{ip_counter}/tcp/{send_back_port}"
+            source_id=source_node_id,
+            sink_id=sink_node_id,
+            sink_addr=SocketAddress(
+                ip=ip_address("169.254.0.{ip_counter}"),
+                port=send_back_port,
+                zone_id=None,
             ),
             connection_profile=ConnectionProfile(
                 throughput=1000, latency=1000, jitter=1000

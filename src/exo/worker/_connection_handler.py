@@ -17,6 +17,8 @@ def check_connections(
 
     conns = list(state.topology.list_connections())
     for iface in state.node_profiles[remote_id].network_interfaces:
+        if sockets is None:
+            continue
         for sock in sockets:
             if iface.ip_address == sock.ip:
                 conn = Connection(source_id=local_id, sink_id=remote_id, sink_addr=sock)

@@ -1,13 +1,14 @@
 import pytest
+from ipaddress import ip_address
 
 from exo.shared.topology import Topology
-from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
 from exo.shared.types.topology import Connection, ConnectionProfile, NodeId, NodeInfo
+from exo.routing.connection_message import SocketAddress
 
 
 @pytest.fixture
@@ -18,9 +19,9 @@ def topology() -> Topology:
 @pytest.fixture
 def connection() -> Connection:
     return Connection(
-        local_node_id=NodeId(),
-        send_back_node_id=NodeId(),
-        send_back_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
+        source_id=NodeId(),
+        sink_id=NodeId(),
+        sink_addr=SocketAddress(ip=ip_address("127.0.0.1"), port=1235, zone_id=None),
         connection_profile=ConnectionProfile(
             throughput=1000, latency=1000, jitter=1000
         ),
@@ -64,12 +65,8 @@ def test_add_connection(
     topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
 ):
     # arrange
-    topology.add_node(
-        NodeInfo(node_id=connection.local_node_id, node_profile=node_profile)
-    )
-    topology.add_node(
-        NodeInfo(node_id=connection.send_back_node_id, node_profile=node_profile)
-    )
+    topology.add_node(NodeInfo(node_id=connection.source_id, node_profile=node_profile))
+    topology.add_node(NodeInfo(node_id=connection.sink_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
@@ -83,12 +80,8 @@ def test_update_node_profile(
     topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
 ):
     # arrange
-    topology.add_node(
-        NodeInfo(node_id=connection.local_node_id, node_profile=node_profile)
-    )
-    topology.add_node(
-        NodeInfo(node_id=connection.send_back_node_id, node_profile=node_profile)
-    )
+    topology.add_node(NodeInfo(node_id=connection.source_id, node_profile=node_profile))
+    topology.add_node(NodeInfo(node_id=connection.sink_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     new_node_profile = NodePerformanceProfile(
@@ -103,12 +96,10 @@ def test_update_node_profile(
     )
 
     # act
-    topology.update_node_profile(
-        connection.local_node_id, node_profile=new_node_profile
-    )
+    topology.update_node_profile(connection.source_id, node_profile=new_node_profile)
 
     # assert
-    data = topology.get_node_profile(connection.local_node_id)
+    data = topology.get_node_profile(connection.source_id)
     assert data == new_node_profile
 
 
@@ -116,21 +107,17 @@ def test_update_connection_profile(
     topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
 ):
     # arrange
-    topology.add_node(
-        NodeInfo(node_id=connection.local_node_id, node_profile=node_profile)
-    )
-    topology.add_node(
-        NodeInfo(node_id=connection.send_back_node_id, node_profile=node_profile)
-    )
+    topology.add_node(NodeInfo(node_id=connection.source_id, node_profile=node_profile))
+    topology.add_node(NodeInfo(node_id=connection.sink_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     new_connection_profile = ConnectionProfile(
         throughput=2000, latency=2000, jitter=2000
     )
     connection = Connection(
-        local_node_id=connection.local_node_id,
-        send_back_node_id=connection.send_back_node_id,
-        send_back_multiaddr=connection.send_back_multiaddr,
+        source_id=connection.source_id,
+        sink_id=connection.sink_id,
+        sink_addr=connection.sink_addr,
         connection_profile=new_connection_profile,
     )
 
@@ -146,12 +133,8 @@ def test_remove_connection_still_connected(
     topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
 ):
     # arrange
-    topology.add_node(
-        NodeInfo(node_id=connection.local_node_id, node_profile=node_profile)
-    )
-    topology.add_node(
-        NodeInfo(node_id=connection.send_back_node_id, node_profile=node_profile)
-    )
+    topology.add_node(NodeInfo(node_id=connection.source_id, node_profile=node_profile))
+    topology.add_node(NodeInfo(node_id=connection.sink_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
@@ -165,31 +148,23 @@ def test_remove_node_still_connected(
     topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
 ):
     # arrange
-    topology.add_node(
-        NodeInfo(node_id=connection.local_node_id, node_profile=node_profile)
-    )
-    topology.add_node(
-        NodeInfo(node_id=connection.send_back_node_id, node_profile=node_profile)
-    )
+    topology.add_node(NodeInfo(node_id=connection.source_id, node_profile=node_profile))
+    topology.add_node(NodeInfo(node_id=connection.sink_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
-    topology.remove_node(connection.local_node_id)
+    topology.remove_node(connection.source_id)
 
     # assert
-    assert topology.get_node_profile(connection.local_node_id) is None
+    assert topology.get_node_profile(connection.source_id) is None
 
 
 def test_list_nodes(
     topology: Topology, node_profile: NodePerformanceProfile, connection: Connection
 ):
     # arrange
-    topology.add_node(
-        NodeInfo(node_id=connection.local_node_id, node_profile=node_profile)
-    )
-    topology.add_node(
-        NodeInfo(node_id=connection.send_back_node_id, node_profile=node_profile)
-    )
+    topology.add_node(NodeInfo(node_id=connection.source_id, node_profile=node_profile))
+    topology.add_node(NodeInfo(node_id=connection.sink_id, node_profile=node_profile))
     topology.add_connection(connection)
 
     # act
@@ -199,6 +174,6 @@ def test_list_nodes(
     assert len(nodes) == 2
     assert all(isinstance(node, NodeInfo) for node in nodes)
     assert {node.node_id for node in nodes} == {
-        connection.local_node_id,
-        connection.send_back_node_id,
+        connection.source_id,
+        connection.sink_id,
     }

@@ -1,4 +1,4 @@
-from typing import Callable
+from ipaddress import ip_address
 
 import pytest
 from loguru import logger
@@ -14,7 +14,6 @@ from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
-from exo.shared.types.topology import Connection, NodeInfo
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -25,6 +24,7 @@ from exo.shared.types.worker.instances import (
 from exo.shared.types.worker.runners import ShardAssignments
 from exo.shared.types.worker.shards import Sharding
 
+from exo.master.tests.conftest import create_node, create_connection
 
 @pytest.fixture
 def topology() -> Topology:
@@ -76,8 +76,6 @@ def test_get_instance_placements_create_instance(
     expected_layers: tuple[int, int, int],
     topology: Topology,
     model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     model_meta.n_layers = total_layers
@@ -124,7 +122,6 @@ def test_get_instance_placements_create_instance(
 
 
 def test_get_instance_placements_one_node_exact_fit(
-    create_node: Callable[[int, NodeId | None], NodeInfo],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
@@ -149,7 +146,6 @@ def test_get_instance_placements_one_node_exact_fit(
 
 
 def test_get_instance_placements_one_node_fits_with_extra_memory(
-    create_node: Callable[[int, NodeId | None], NodeInfo],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
@@ -174,7 +170,6 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
 
 
 def test_get_instance_placements_one_node_not_fit(
-    create_node: Callable[[int, NodeId | None], NodeInfo],
 ) -> None:
     topology = Topology()
     node_id = NodeId()
@@ -237,8 +232,6 @@ def test_get_transition_events_delete_instance(instance: Instance):
 def test_placement_prioritizes_leaf_cycle_with_less_memory(
     topology: Topology,
     model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # Arrange two 3-node cycles. The A-B-C cycle has a leaf node (only one outgoing
     # neighbor per node). The D-E-F cycle has extra outgoing edges making its nodes
@@ -316,8 +309,6 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
 def test_tensor_rdma_backend_connectivity_matrix(
     topology: Topology,
     model_meta: ModelMetadata,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     model_meta.n_layers = 12
     model_meta.storage_size.in_bytes = 1500
@@ -332,7 +323,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
 
     ethernet_interface = NetworkInterfaceInfo(
         name="en0",
-        ip_address="192.168.1.100",
+        ip_address=ip_address("192.168.1.100"),
     )
 
     assert node_a.node_profile is not None
@@ -347,13 +338,13 @@ def test_tensor_rdma_backend_connectivity_matrix(
     conn_c_b = create_connection(node_id_c, node_id_b)
     conn_a_c = create_connection(node_id_a, node_id_c)
 
-    assert conn_a_b.send_back_multiaddr is not None
-    assert conn_b_c.send_back_multiaddr is not None
-    assert conn_c_a.send_back_multiaddr is not None
+    assert conn_a_b.sink_addr is not None
+    assert conn_b_c.sink_addr is not None
+    assert conn_c_a.sink_addr is not None
 
-    assert conn_b_a.send_back_multiaddr is not None
-    assert conn_c_b.send_back_multiaddr is not None
-    assert conn_a_c.send_back_multiaddr is not None
+    assert conn_b_a.sink_addr is not None
+    assert conn_c_b.sink_addr is not None
+    assert conn_a_c.sink_addr is not None
 
     node_a.node_profile = NodePerformanceProfile(
         model_id="test",
@@ -363,11 +354,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_c_a.send_back_multiaddr.ip_address,
+                ip_address=conn_c_a.sink_addr.ip,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_b_a.send_back_multiaddr.ip_address,
+                ip_address=conn_b_a.sink_addr.ip,
             ),
             ethernet_interface,
         ],
@@ -381,11 +372,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_c_b.send_back_multiaddr.ip_address,
+                ip_address=conn_c_b.sink_addr.ip,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_a_b.send_back_multiaddr.ip_address,
+                ip_address=conn_a_b.sink_addr.ip,
             ),
             ethernet_interface,
         ],
@@ -399,11 +390,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_a_c.send_back_multiaddr.ip_address,
+                ip_address=conn_a_c.sink_addr.ip,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_b_c.send_back_multiaddr.ip_address,
+                ip_address=conn_b_c.sink_addr.ip,
             ),
             ethernet_interface,
         ],

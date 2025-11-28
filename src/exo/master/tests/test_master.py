@@ -44,7 +44,7 @@ from exo.utils.channels import channel
 @pytest.mark.asyncio
 async def test_master():
     keypair = get_node_id_keypair()
-    node_id = NodeId(keypair.to_peer_id().to_base58())
+    node_id = NodeId(str(keypair.endpoint_id()))
     session_id = SessionId(master_node_id=node_id, election_clock=0)
 
     ge_sender, global_event_receiver = channel[ForwarderEvent]()
@@ -75,7 +75,7 @@ async def test_master():
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
 
-        sender_node_id = NodeId(f"{keypair.to_peer_id().to_base58()}_sender")
+        sender_node_id = NodeId(f"{keypair.to_postcard_encoding()}_sender")
         # inject a NodePerformanceProfile event
         logger.info("inject a NodePerformanceProfile event")
         await local_event_sender.send(

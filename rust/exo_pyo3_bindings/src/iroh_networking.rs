@@ -97,7 +97,7 @@ pub struct PyConnectionMessage {
     #[pyo3(get)]
     pub endpoint_id: PyEndpointId,
     #[pyo3(get)]
-    pub current_transport_addrs: BTreeSet<PyIpAddress>,
+    pub current_transport_addrs: Option<BTreeSet<PyIpAddress>>,
 }
 
 #[gen_stub_pyclass]
@@ -169,16 +169,17 @@ impl PyConnectionReceiver {
                 }) => {
                     return Ok(PyConnectionMessage {
                         endpoint_id: endpoint_id.into(),
-                        current_transport_addrs: data
-                            .ip_addrs()
-                            .map(|it| PyIpAddress { inner: it.clone() })
-                            .collect(),
+                        current_transport_addrs: Some(
+                            data.ip_addrs()
+                                .map(|it| PyIpAddress { inner: it.clone() })
+                                .collect(),
+                        ),
                     });
                 }
                 Some(DiscoveryEvent::Expired { endpoint_id }) => {
                     return Ok(PyConnectionMessage {
                         endpoint_id: endpoint_id.into(),
-                        current_transport_addrs: BTreeSet::new(),
+                        current_transport_addrs: None,
                     });
                 }
 

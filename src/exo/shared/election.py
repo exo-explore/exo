@@ -164,28 +164,36 @@ class Election:
                 self._candidates.append(message)
 
     async def _connection_receiver(self) -> None:
+        current_peers: set[NodeId] = set()
         with self._cm_receiver as connection_messages:
             async for first in connection_messages:
-                # Delay after connection message for time to symmetrically setup
-                await anyio.sleep(0.2)
-                rest = connection_messages.collect()
+                if first.node_id not in current_peers or first.ips is None:
+                    if first.node_id not in current_peers:
+                        current_peers.add(first.node_id)
+                    if first.ips is None:
+                        current_peers.remove(first.node_id)
+                    # Delay after connection message for time to symmetrically setup
+                    await anyio.sleep(0.2)
+                    rest = connection_messages.collect()
+                    for msg in rest:
+                        if msg.node_id not in current_peers:
+                            current_peers.add(first.node_id)
+                        if msg.ips is None:
+                            current_peers.remove(first.node_id)
 
-                logger.debug(
-                    f"Connection messages received: {first} followed by {rest}"
-                )
-                logger.debug(f"Current clock: {self.clock}")
-                # These messages are strictly peer to peer
-                self.clock += 1
-                logger.debug(f"New clock: {self.clock}")
-                assert self._tg is not None
-                candidates: list[ElectionMessage] = []
-                self._candidates = candidates
-                logger.debug("Starting new campaign")
-                self._tg.start_soon(
-                    self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
-                )
-                logger.debug("Campaign started")
-                logger.debug("Connection message added")
+                    logger.info(
+                        f"Connection messages received: {first} followed by {rest}"
+                    )
+                    logger.info(f"Current clock: {self.clock}")
+                    # These messages are strictly peer to peer
+                    self.clock += 1
+                    logger.info(f"New clock: {self.clock}")
+                    candidates: list[ElectionMessage] = []
+                    self._candidates = candidates
+                    logger.info("Starting new campaign")
+                    assert self._tg is not None
+                    self._tg.start_soon(self._campaign, candidates)
+                    logger.info("Campaign started")
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:
