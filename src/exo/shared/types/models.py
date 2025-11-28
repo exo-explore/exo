@@ -14,6 +14,7 @@ class ModelId(Id):
 class ModelTask(str, Enum):
     TextGeneration = "TextGeneration"
     TextToImage = "TextToImage"
+    ImageToImage = "ImageToImage"
 
 
 class ModelMetadata(CamelCaseModel):

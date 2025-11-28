@@ -81,7 +81,7 @@ def main(
 
         model_card = get_model_card(shard_metadata.model_meta.model_id)
         assert model_card
-        model_task = model_card.task
+        model_tasks = model_card.tasks
 
         current_status: RunnerStatus = RunnerIdle()
         logger.info("runner created")
@@ -125,14 +125,20 @@ def main(
                             )
                         )
 
-                        if model_task == ModelTask.TextGeneration:
+                        # TODO: switch
+                        if ModelTask.TextGeneration in model_tasks:
                             model, tokenizer, sampler = load_mlx_items(
                                 bound_instance, group
                             )
-                        elif model_task == ModelTask.TextToImage:
+                        elif (
+                            ModelTask.TextToImage in model_tasks
+                            or ModelTask.ImageToImage in model_tasks
+                        ):
                             model = initialize_mflux(bound_instance)
                         else:
-                            raise ValueError(f"Unknown model task: {model_card.task}")
+                            raise ValueError(
+                                f"Unknown model task(s): {model_card.tasks}"
+                            )
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
@@ -148,7 +154,7 @@ def main(
                         )
 
                         logger.info(f"warming up inference for instance: {instance}")
-                        if model_task == ModelTask.TextGeneration:
+                        if ModelTask.TextGeneration in model_tasks:
                             # assert isinstance(model, Model) TODO: not actually Model
                             assert model and not isinstance(model, Flux1)
                             assert tokenizer
