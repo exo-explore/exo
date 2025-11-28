@@ -10,11 +10,10 @@ def check_connections(
 ) -> list[Event]:
     remote_id = msg.node_id
     sockets = msg.ips
-    del msg
-    out: list[Event] = []
-    if not state.topology.contains_node(remote_id) or remote_id in state.node_profiles:
-        return out
+    if not state.topology.contains_node(remote_id) or remote_id not in state.node_profiles:
+        return []
 
+    out: list[Event] = []
     conns = list(state.topology.list_connections())
     for iface in state.node_profiles[remote_id].network_interfaces:
         if sockets is None:
