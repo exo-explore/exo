@@ -57,7 +57,6 @@ from exo.shared.types.worker.runners import (
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mflux.generator.generate import mflux_generate
 from exo.worker.engines.mflux.utils_mflux import initialize_mflux
-from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -170,7 +169,8 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if model_task == ModelTask.TextGeneration:
-                        assert isinstance(model, Model)
+                        # assert isinstance(model, Model) TODO: not actually Model
+                        assert model and not isinstance(model, Flux1)
                         assert tokenizer
 
                         toks = warmup_inference(
@@ -195,7 +195,8 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    assert model
+                    # assert isinstance(model, Model) TODO: not actually Model
+                    assert model and not isinstance(model, Flux1)
                     assert tokenizer
                     assert task_params.messages[0].content is not None
 
