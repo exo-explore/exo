@@ -145,7 +145,7 @@ def main(
                     logger.info("runner loaded")
                 case StartWarmup() if isinstance(current_status, RunnerLoaded):
                     assert model
-                    assert tokenizer
+
                     current_status = RunnerWarmingUp()
                     logger.info("runner warming up")
                     event_sender.send(
@@ -155,15 +155,19 @@ def main(
                     )
 
                     logger.info(f"warming up inference for instance: {instance}")
-                    toks = warmup_inference(
-                        model=model,
-                        tokenizer=tokenizer,
-                        # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
-                    )
-                    logger.info(f"warmed up by generating {toks} tokens")
-                    logger.info(
-                        f"runner initialized in {time.time() - setup_start_time} seconds"
-                    )
+                    if model_task == ModelTask.TextGeneration:
+                        assert isinstance(model, Model)
+                        assert tokenizer
+
+                        toks = warmup_inference(
+                            model=model,
+                            tokenizer=tokenizer,
+                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
+                        )
+                        logger.info(f"warmed up by generating {toks} tokens")
+                        logger.info(
+                            f"runner initialized in {time.time() - setup_start_time} seconds"
+                        )
                     current_status = RunnerReady()
                     logger.info("runner ready")
                 case ChatCompletion(task_params=task_params, command_id=command_id) if (
