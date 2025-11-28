@@ -1,6 +1,10 @@
 from pydantic import Field
 
-from exo.shared.types.api import ChatCompletionTaskParams, ImageGenerationTaskParams
+from exo.shared.types.api import (
+    ChatCompletionTaskParams,
+    ImageEditsTaskParams,
+    ImageGenerationTaskParams,
+)
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -22,6 +26,10 @@ class ChatCompletion(BaseCommand):
 
 class ImageGeneration(BaseCommand):
     request_params: ImageGenerationTaskParams
+
+
+class ImageEdits(BaseCommand):
+    request_params: ImageEditsTaskParams
 
 
 class PlaceInstance(BaseCommand):
@@ -52,6 +60,7 @@ Command = (
     | RequestEventLog
     | ChatCompletion
     | ImageGeneration
+    | ImageEdits
     | PlaceInstance
     | CreateInstance
     | DeleteInstance

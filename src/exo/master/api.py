@@ -35,6 +35,7 @@ from exo.shared.types.api import (
     DeleteInstanceResponse,
     FinishReason,
     ImageData,
+    ImageEditsTaskParams,
     ImageGenerationResponse,
     ImageGenerationTaskParams,
     ModelList,
@@ -51,8 +52,9 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    PlaceInstance,
+    ImageEdits,
     ImageGeneration,
+    PlaceInstance,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
@@ -190,6 +192,7 @@ class API:
             self.chat_completions
         )
         self.app.post("/v1/images/generations")(self.image_generations)
+        self.app.post("/v1/images/edits")(self.image_edits)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -560,6 +563,56 @@ class API:
             )
 
         command = ImageGeneration(
+            request_params=payload,
+        )
+        await self._send(command)
+
+        # Collect all image chunks (non-streaming)
+        self._image_generation_queues[command.command_id] = asyncio.Queue()
+
+        images: list[ImageData] = []
+        num_images = payload.n or 1
+
+        for _ in range(num_images):
+            # Wait for each image chunk with timeout
+            chunk = await asyncio.wait_for(
+                self._image_generation_queues[command.command_id].get(), timeout=600
+            )
+            assert isinstance(chunk, ImageChunk)
+
+            # chunk.data is already base64-encoded string
+            images.append(
+                ImageData(
+                    b64_json=chunk.data
+                    if payload.response_format == "b64_json"
+                    else None,
+                    url=None,  # URL format not implemented yet
+                )
+            )
+
+        # Send TaskFinished command
+        await self._send(TaskFinished(finished_command_id=command.command_id))
+        del self._image_generation_queues[command.command_id]
+
+        return ImageGenerationResponse(data=images)
+
+    async def image_edits(
+        self, payload: ImageEditsTaskParams
+    ) -> ImageGenerationResponse:
+        """Handle image generation requests."""
+        model_meta = await resolve_model_meta(payload.model)
+        payload.model = model_meta.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == payload.model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(payload.model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {payload.model}"
+            )
+
+        command = ImageEdits(
             request_params=payload,
         )
         await self._send(command)

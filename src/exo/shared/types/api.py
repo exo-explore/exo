@@ -1,6 +1,7 @@
 import time
 from typing import Any, Literal
 
+from fastapi import UploadFile
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
@@ -184,6 +185,19 @@ class DeleteInstanceResponse(BaseModel):
 
 
 class ImageGenerationTaskParams(BaseModel):
+    prompt: str
+    model: str
+    n: int | None = 1
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    user: str | None = None
+
+
+class ImageEditsTaskParams(BaseModel):
+    image: UploadFile
+    mask: UploadFile | None
     prompt: str
     model: str
     n: int | None = 1
