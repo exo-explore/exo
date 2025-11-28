@@ -19,6 +19,7 @@ _card_cache: dict[str, "ModelCard"] = {}
 class ModelTask(str, Enum):
     TextGeneration = "TextGeneration"
     TextToImage = "TextToImage"
+    ImageToImage = "ImageToImage"
 
 
 class ModelCard(CamelCaseModel):
