@@ -74,6 +74,9 @@ impl ExoNet {
             match item {
                 DiscoveryEvent::Discovered { endpoint_info, .. } => {
                     let id = endpoint_info.endpoint_id;
+                    if id == self.router.endpoint().id() {
+                        continue;
+                    }
                     if !self
                         .known_peers
                         .lock()
