@@ -30,7 +30,7 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
     return (1024, 1024)
 
 
-def mlx_generate_image(
+def mflux_generate(
     model: Flux1,
     task: ImageGenerationTaskParams,
 ) -> Generator[ImageGenerationResponse]:

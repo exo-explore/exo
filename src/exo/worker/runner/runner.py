@@ -55,7 +55,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mflux.generator.generate import mlx_generate_image
+from exo.worker.engines.mflux.generator.generate import mflux_generate
 from exo.worker.engines.mflux.utils_mflux import initialize_mflux
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
@@ -281,9 +281,8 @@ def main(
                         )
                     )
 
-                    # Generate images using MLX diffusion
-                    # Note: Diffusion models handle text encoding internally
-                    for response in mlx_generate_image(
+                    # Generate images using MFlux (MLX) diffusion
+                    for response in mflux_generate(
                         model=model,
                         task=task_params,
                     ):
