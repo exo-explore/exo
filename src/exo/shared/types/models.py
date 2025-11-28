@@ -1,3 +1,4 @@
+from enum import Enum
 from pydantic import PositiveInt
 
 from exo.shared.types.common import Id
@@ -7,6 +8,11 @@ from exo.utils.pydantic_ext import CamelCaseModel
 
 class ModelId(Id):
     pass
+
+
+class ModelTask(str, Enum):
+    TextGeneration = "TextGeneration"
+    TextToImage = "TextToImage"
 
 
 class ModelMetadata(CamelCaseModel):
