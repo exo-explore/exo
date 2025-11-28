@@ -387,6 +387,20 @@ MODEL_CARDS: dict[str, ModelCard] = {
         supports_tensor=True,
         task="text-generation",
     ),
+    "flux1-schnell": ModelCard(
+        short_id="flux1-schnell",
+        model_id="black-forest-labs/FLUX.1-schnell",
+        name="FLUX.1 [schnell]",
+        description="""FLUX.1 [schnell] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
+        task="text-generation",
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
+            pretty_name="FLUX.1 [schnell]",
+            storage_size=Memory.from_kb(327512),  # TODO
+            n_layers=28,  # TODO
+        ),
+    ),
 }
 
 
