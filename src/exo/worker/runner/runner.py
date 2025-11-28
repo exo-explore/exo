@@ -29,6 +29,7 @@ from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
     ImageGeneration,
+    ImageEdits,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -277,6 +278,49 @@ def main(
                     assert model
                     assert tokenizer
                     assert sampler
+                    logger.info(f"received image generation request: {str(task)[:500]}")
+                    current_status = RunnerRunning()
+                    logger.info("runner running")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+
+                    # Generate images using MFlux (MLX) diffusion
+                    for response in mflux_generate(
+                        model=model,
+                        task=task_params,
+                    ):
+                        match response:
+                            case ImageGenerationResponse():
+                                if shard_metadata.device_rank == 0:
+                                    encoded_data = base64.b64encode(
+                                        response.image_data
+                                    ).decode("utf-8")
+                                    event_sender.send(
+                                        ChunkGenerated(
+                                            command_id=command_id,
+                                            chunk=ImageChunk(
+                                                idx=0,
+                                                model=shard_metadata.model_meta.model_id,
+                                                data=encoded_data,
+                                                finish_reason=response.finish_reason,
+                                            ),
+                                        )
+                                    )
+
+                    current_status = RunnerReady()
+                    logger.info("runner ready")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=RunnerReady()
+                        )
+                    )
+                case ImageEdits(task_params=task_params, command_id=command_id) if (
+                    isinstance(current_status, RunnerReady)
+                ):
+                    assert isinstance(model, Flux1)
                     logger.info(f"received image generation request: {str(task)[:500]}")
                     current_status = RunnerRunning()
                     logger.info("runner running")
