@@ -1,5 +1,3 @@
-from typing import Literal
-
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata, ModelTask
 from exo.utils.pydantic_ext import CamelCaseModel
