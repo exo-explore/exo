@@ -232,7 +232,7 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
-                    logger.debug(f"Master indexing event: {str(event)[:100]}")
+                    logger.trace(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
 

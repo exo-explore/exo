@@ -379,7 +379,7 @@ class Worker:
                     session=self.session_id,
                     event=event,
                 )
-                logger.debug(
+                logger.trace(
                     f"Worker published event {self.local_event_index}: {str(event)[:100]}"
                 )
                 self.local_event_index += 1
