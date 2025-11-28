@@ -13,8 +13,6 @@ from exo.utils.pydantic_ext import CamelCaseModel
 class PublishPolicy(str, Enum):
     Never = "Never"
     """Never publish to the network - this is a local message"""
-    Minimal = "Minimal"
-    """Only publish when there is no local receiver for this type of message"""
     Always = "Always"
     """Always publish to the network"""
 

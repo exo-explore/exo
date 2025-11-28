@@ -5,6 +5,7 @@ from os import PathLike
 from pathlib import Path
 from typing import cast
 
+import anyio
 from anyio import (
     BrokenResourceError,
     ClosedResourceError,
@@ -38,8 +39,6 @@ class TopicRouter[T: CamelCaseModel]:
     def __init__(
         self,
         topic: TypedTopic[T],
-        networking_sender: RustSender,
-        networking_receiver: RustReceiver,
         max_buffer_size: float = inf,
     ):
         self.topic: TypedTopic[T] = topic
@@ -47,37 +46,38 @@ class TopicRouter[T: CamelCaseModel]:
         send, recv = channel[T]()
         self.receiver: Receiver[T] = recv
         self._sender: Sender[T] = send
-        self.networking_sender: RustSender = networking_sender
-        self.networking_receiver: RustReceiver = networking_receiver
+        self.networking_sender: RustSender | None = None
+        self.networking_receiver: RustReceiver | None = None
+
+        self._tg: TaskGroup = create_task_group()
 
     async def run(self):
-        async with create_task_group() as tg:
-            tg.start_soon(self.receive_loop)
-            tg.start_soon(self.net_receive_loop)
-
-    async def net_receive_loop(self):
-        while True:
-            item = await self.networking_receiver.receive()
-            await self.publish_bytes(item)
+        async with self._tg as tg:
+            tg.start_soon(self.receive_loop)            
 
     async def receive_loop(self):
         logger.debug(f"Topic Router {self.topic} ready to send")
         with self.receiver as items:
             async for item in items:
                 # Check if we should send to network
-                if (
-                    len(self.senders) == 0
-                    and self.topic.publish_policy is PublishPolicy.Minimal
-                ):
-                    await self._send_out(item)
-                    continue
-                if self.topic.publish_policy is PublishPolicy.Always:
+                if self.topic.publish_policy is PublishPolicy.Always and self.networking_sender is not None:
                     await self._send_out(item)
                 # Then publish to all senders
                 await self.publish(item)
+        logger.debug(f"Shut down Topic Router {self.topic}")
+
+    async def net_receive_loop(self):
+        assert self.networking_receiver is not None
+        while True:
+            item = await self.networking_receiver.receive()
+            await self.publish(self.topic.deserialize(item))
+
+    def subscribe_with(self, net_send: RustSender, net_recv: RustReceiver):
+        self.networking_sender = net_send
+        self.networking_receiver = net_recv
+        self._tg.start_soon(self.net_receive_loop)
 
     async def shutdown(self):
-        logger.debug(f"Shutting down Topic Router {self.topic}")
         # Close all the things!
         for sender in self.senders:
             sender.close()
@@ -98,13 +98,11 @@ class TopicRouter[T: CamelCaseModel]:
                 to_clear.add(sender)
         self.senders -= to_clear
 
-    async def publish_bytes(self, data: bytes):
-        await self.publish(self.topic.deserialize(data))
-
     def new_sender(self) -> Sender[T]:
         return self._sender.clone()
 
     async def _send_out(self, item: T):
+        assert self.networking_sender is not None
         logger.trace(f"TopicRouter {self.topic.topic} sending {item}")
         await self.networking_sender.send(self.topic.serialize(item))
 
@@ -116,14 +114,16 @@ class Router:
 
     def __init__(self, handle: RustNetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
+        self._unsubbed: list[str] = []
         self._net: RustNetworkingHandle = handle
         self._id_count = count()
         self._tg: TaskGroup | None = None
 
     async def register_topic[T: CamelCaseModel](self, topic: TypedTopic[T]):
         assert self._tg is None, "Attempted to register topic after setup time"
-        router = TopicRouter[T](topic, *await self._net.subscribe(str(topic.topic)))
+        router = TopicRouter[T](topic)
         self.topic_routers[topic.topic] = cast(TopicRouter[CamelCaseModel], router)
+        self._unsubbed.append(topic.topic)
 
     def sender[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)
@@ -167,10 +167,23 @@ class Router:
         recv = await self._net.get_connection_receiver()
         while True:
             message = await recv.receive()
-            logger.warning(f"yo!, {message}!")
+            await anyio.sleep(0.2)
             logger.trace(
                 f"Received message on connection_messages with payload {message}"
             )
+            to_clear: list[str] = []
+            for topic in self._unsubbed:
+                try:
+                    rsend, rrecv = await self._net.subscribe(topic)
+                    logger.info(f"Subscribed to peer on {topic}")
+                    to_clear.append(topic)
+                    self.topic_routers[topic].subscribe_with(rsend, rrecv)
+                # TODO: real error
+                except RuntimeError:
+                    pass
+            if to_clear:
+                assert to_clear == self._unsubbed
+                self._unsubbed = [i for i in self._unsubbed if i not in to_clear]
 
             if CONNECTION_MESSAGES.topic in self.topic_routers:
                 router = self.topic_routers[CONNECTION_MESSAGES.topic]
