@@ -12,8 +12,9 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
     StreamableParser,
     load_harmony_encoding,
 )
-from exo.worker.engines.mlx.generator.generate_image import mlx_generate_image
+from mflux.models.flux.variants.txt2img.flux import Flux1
 
+from exo.master.api import get_model_card
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.events import (
@@ -23,6 +24,7 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.models import ModelTask
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -53,6 +55,9 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
+from exo.worker.engines.mflux.generator.generate import mlx_generate_image
+from exo.worker.engines.mflux.utils_mflux import initialize_mflux
+from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -86,6 +91,10 @@ def main(
     model = None
     tokenizer = None
     group = None
+
+    model_card = get_model_card(shard_metadata.model_meta.model_id)
+    assert model_card
+    model_task = model_card.task
 
     current_status: RunnerStatus = RunnerIdle()
     logger.info("runner created")
@@ -137,9 +146,14 @@ def main(
                         )
                         time.sleep(0.5)
 
-                    model, tokenizer = load_mlx_items(
-                        bound_instance, group, on_timeout=on_model_load_timeout
-                    )
+                    if model_task == ModelTask.TextGeneration:
+                        model, tokenizer = load_mlx_items(
+                            bound_instance, group, on_timeout=on_model_load_timeout
+                        )
+                    elif model_task == ModelTask.TextToImage:
+                        model = initialize_mflux(bound_instance)
+                    else:
+                        raise ValueError(f"Unknown model task: {model_card.task}")
 
                     current_status = RunnerLoaded()
                     logger.info("runner loaded")
@@ -253,6 +267,7 @@ def main(
                 case ImageGeneration(
                     task_params=task_params, command_id=command_id
                 ) if isinstance(current_status, RunnerReady):
+                    assert isinstance(model, Flux1)
                     # TODO: refactor with ChatCompletion
                     assert model
                     assert tokenizer
