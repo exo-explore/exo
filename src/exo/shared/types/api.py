@@ -190,7 +190,7 @@ class ImageGenerationTaskParams(BaseModel):
     quality: Literal["high", "medium", "low"] | None = "medium"
     output_format: Literal["png", "jpeg", "webp"] = "png"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
-    size: Literal["1024x1024", "1536x1024", "1024x1536", "auto"] | None = "1024x1024"
+    size: str | None = "1024x1024"
     user: str | None = None
 
 
