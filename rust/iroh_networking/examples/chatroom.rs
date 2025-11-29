@@ -40,14 +40,16 @@ async fn main() {
     println!("Enter messages via STDIN and they will be sent to connected peers using Gossipsub");
 
     let jh1 = tokio::spawn(async move {
-        while let Ok(Some(line)) = stdin.next_line().await {
-            if let Err(e) = send.broadcast(line.into()).await {
-                println!("Publish error: {e:?}");
+        loop {
+            if let Ok(Some(line)) = stdin.next_line().await {
+                if let Err(e) = send.broadcast(line.into()).await {
+                    println!("Publish error: {e:?}");
+                }
             }
         }
     });
 
-    let jh2 = tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
         while let Some(Ok(event)) = recv.next().await {
             match event {
                 // on gossipsub incoming
@@ -72,8 +74,9 @@ async fn main() {
                 }
             }
         }
-    });
+    })
+    .await
+    .unwrap();
     jh1.await.unwrap();
-    jh2.await.unwrap();
     _jh.await.unwrap();
 }

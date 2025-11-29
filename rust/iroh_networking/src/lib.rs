@@ -50,7 +50,11 @@ impl ExoNet {
         let mdns = MdnsDiscovery::builder().build(endpoint.id())?;
         endpoint.discovery().add(mdns.clone());
         let alpn = format!("/exo_discovery_network/{}", namespace).to_owned();
-        let gossip = Gossip::builder().alpn(&alpn).spawn(endpoint.clone());
+        // max msg size 4MB
+        let gossip = Gossip::builder()
+            .max_message_size(4 * 1024 * 1024)
+            .alpn(&alpn)
+            .spawn(endpoint.clone());
         let router = Router::builder(endpoint)
             .accept(&alpn, gossip.clone())
             .spawn();
@@ -139,7 +143,12 @@ fn str_to_topic_id(data: &str) -> TopicId {
 #[allow(dead_code)]
 #[cfg(test)]
 mod test {
+    use std::{sync::Arc, time::Duration};
+
     use iroh::{SecretKey, discovery::mdns::DiscoveryEvent};
+    use iroh_gossip::api::{Event, Message};
+    use n0_future::StreamExt;
+    use tokio::time::sleep;
 
     use crate::ExoNet;
 
@@ -154,5 +163,40 @@ mod test {
         // todo: make rand a dev dep.
         let fut = ExoNet::init_iroh(SecretKey::generate(&mut rand::rng()), "");
         is_send(&fut);
+    }
+
+    #[tokio::test]
+    async fn test_two_endpoints() {
+        let net1 = Arc::new(
+            ExoNet::init_iroh(SecretKey::generate(&mut rand::rng()), "")
+                .await
+                .unwrap(),
+        );
+        let net2 = Arc::new(
+            ExoNet::init_iroh(SecretKey::generate(&mut rand::rng()), "")
+                .await
+                .unwrap(),
+        );
+
+        let cn1 = Arc::clone(&net1);
+        let cn2 = Arc::clone(&net2);
+        tokio::spawn(async move { cn1.start_auto_dialer().await });
+        tokio::spawn(async move { cn2.start_auto_dialer().await });
+
+        while net1.known_peers.lock().await.is_empty() {
+            sleep(Duration::from_secs(1)).await
+        }
+        while net2.known_peers.lock().await.is_empty() {
+            sleep(Duration::from_secs(1)).await
+        }
+        let (send, _) = net1.subscribe("yo").await.unwrap();
+        let (_, mut recv) = net2.subscribe("yo").await.unwrap();
+
+        let msg = "woah";
+        send.broadcast(msg.into()).await.unwrap();
+        let Some(Ok(Event::Received(Message { content, .. }))) = recv.next().await else {
+            panic!()
+        };
+        assert_eq!(content, msg);
     }
 }
