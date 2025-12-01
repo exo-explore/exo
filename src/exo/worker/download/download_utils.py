@@ -10,6 +10,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import urljoin
+from huggingface_hub._snapshot_download import snapshot_download
 
 import aiofiles
 import aiofiles.os as aios
@@ -399,12 +400,35 @@ def calculate_repo_progress(
 async def get_weight_map(model_id: ModelId, revision: str = "main") -> dict[str, str]:
     target_dir = (await ensure_models_dir()) / model_id.normalize()
     await aios.makedirs(target_dir, exist_ok=True)
-    index_file = await download_file_with_retry(
-        model_id, revision, "model.safetensors.index.json", target_dir
+
+    index_files_dir = snapshot_download(
+        repo_id=model_id,
+        local_dir=target_dir,
+        allow_patterns="*.safetensors.index.json",
     )
-    async with aiofiles.open(index_file, "r") as f:
-        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
-    return index_data.weight_map
+
+    index_files = list(Path(index_files_dir).glob("**/*.safetensors.index.json"))
+
+    weight_map: dict[str, str] = {}
+
+    for index_file in index_files:
+        relative_dir = index_file.parent.relative_to(index_files_dir)
+
+        async with aiofiles.open(index_file, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+
+            # TODO: need nesting in weight_map for subdirs?
+            # if relative_dir != Path("."):
+            #     prefixed_weight_map = {
+            #         f"{relative_dir}.{key}": str(relative_dir / value)
+            #         for key, value in index_data.weight_map.items()
+            #     }
+            #     weight_map = weight_map | prefixed_weight_map
+            # else:
+            #     weight_map = weight_map | index_data.weight_map
+            weight_map = weight_map | index_data.weight_map
+
+    return weight_map
 
 
 async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
