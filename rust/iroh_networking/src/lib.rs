@@ -19,33 +19,6 @@ use n0_error::{e, stack_error};
 use n0_future::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
-pub mod ext {
-    use bytemuck::Pod;
-    use bytes::Bytes;
-    use extend::ext;
-    use iroh_gossip::api::{ApiError, GossipReceiver, GossipSender};
-    use tokio::sync::Mutex;
-
-    static FRAME_BUFFER: Mutex<Vec<MessageFrame>> = Mutex::const_new(Vec::new());
-    #[repr(C)]
-    #[derive(Clone, Debug, Pod)]
-    pub struct MessageChunk {
-        pub frame_index: usize,
-        pub content: Vec<u8>,
-    }
-
-    #[ext(pub, name = GossipSenderExt)]
-    impl GossipSender {
-        async fn broadcast_with_chunking(&self, bytes: Bytes) -> Result<(), ApiError> {
-            self.broadcast(message).await
-        }
-    }
-    #[ext(pub, name = GossipReceiverExt)]
-    impl GossipReceiver {
-        async fn receive_with_chunking() {}
-    }
-}
-
 #[stack_error(derive, add_meta, from_sources)]
 pub enum Error {
     #[error(transparent)]
