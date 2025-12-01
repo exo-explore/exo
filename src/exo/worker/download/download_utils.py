@@ -459,7 +459,7 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]
 
             if relative_dir != Path("."):
                 prefixed_weight_map = {
-                    f"{relative_dir}.{key}": value  # TODO: need value nesting?
+                    f"{relative_dir}/{key}": str(relative_dir / value)
                     for key, value in index_data.weight_map.items()
                 }
                 weight_map = weight_map | prefixed_weight_map
