@@ -22,6 +22,15 @@ class ModelTask(str, Enum):
     ImageToImage = "ImageToImage"
 
 
+class ComponentInfo(CamelCaseModel):
+    component_name: str
+    component_path: str
+    storage_size: Memory
+    n_layers: PositiveInt | None
+    can_shard: bool
+    safetensors_index_filename: str | None
+
+
 class ModelCard(CamelCaseModel):
     model_id: ModelId
     storage_size: Memory
@@ -29,6 +38,7 @@ class ModelCard(CamelCaseModel):
     hidden_size: PositiveInt
     supports_tensor: bool
     tasks: list[ModelTask]
+    components: list[ComponentInfo] | None = None
 
     async def save(self, path: Path) -> None:
         async with await open_file(path, "w") as f:
