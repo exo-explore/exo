@@ -457,16 +457,14 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]
         async with aiofiles.open(index_file, "r") as f:
             index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
 
-            # TODO: need nesting in weight_map for subdirs?
-            # if relative_dir != Path("."):
-            #     prefixed_weight_map = {
-            #         f"{relative_dir}.{key}": str(relative_dir / value)
-            #         for key, value in index_data.weight_map.items()
-            #     }
-            #     weight_map = weight_map | prefixed_weight_map
-            # else:
-            #     weight_map = weight_map | index_data.weight_map
-            weight_map = weight_map | index_data.weight_map
+            if relative_dir != Path("."):
+                prefixed_weight_map = {
+                    f"{relative_dir}.{key}": value  # TODO: need value nesting?
+                    for key, value in index_data.weight_map.items()
+                }
+                weight_map = weight_map | prefixed_weight_map
+            else:
+                weight_map = weight_map | index_data.weight_map
 
     return weight_map
 
