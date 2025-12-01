@@ -54,6 +54,7 @@ impl ExoNet {
             .ip_addrs()
             .map(|it| TransportAddr::Ip(it.clone()));
 
+        log::info!("publishing {endpoint_addr:?} with mdns");
         mdns.publish(&EndpointData::new(bound));
         endpoint.discovery().add(mdns.clone());
         let alpn = format!("/exo_discovery_network/{}", namespace).to_owned();
