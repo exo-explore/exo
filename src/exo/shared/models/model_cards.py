@@ -1,5 +1,5 @@
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata, ModelTask
+from exo.shared.types.models import ComponentInfo, ModelId, ModelMetadata, ModelTask
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
@@ -610,10 +610,44 @@ MODEL_CARDS: dict[str, ModelCard] = {
         metadata=ModelMetadata(
             model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
             pretty_name="FLUX.1 [schnell]",
-            storage_size=Memory.from_kb(327512),  # TODO(ciaran)
-            n_layers=28,  # TODO(ciaran)
             hidden_size=0,
             supports_tensor=False,
+            storage_size=Memory.from_bytes(9524621312 + 23782357120),
+            n_layers=57,  # sharded layers
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="text_encoder_2",
+                    component_path="text_encoder_2/",
+                    storage_size=Memory.from_bytes(9524621312),
+                    n_layers=24,
+                    can_shard=False,
+                    safetensors_index_filename="model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(23782357120),
+                    n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    n_layers=None,  # TODO: ?
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
         ),
     ),
 }
