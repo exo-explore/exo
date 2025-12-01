@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use iroh::{
-    Endpoint, EndpointId, SecretKey,
+    Endpoint, EndpointId, SecretKey, TransportAddr,
     discovery::{
-        IntoDiscoveryError,
+        Discovery, EndpointData, IntoDiscoveryError,
         mdns::{DiscoveryEvent, MdnsDiscovery},
     },
     endpoint::BindError,
@@ -48,6 +48,13 @@ impl ExoNet {
             .bind()
             .await?;
         let mdns = MdnsDiscovery::builder().build(endpoint.id())?;
+        let endpoint_addr = endpoint.addr();
+
+        let bound = endpoint_addr
+            .ip_addrs()
+            .map(|it| TransportAddr::Ip(it.clone()));
+
+        mdns.publish(&EndpointData::new(bound));
         endpoint.discovery().add(mdns.clone());
         let alpn = format!("/exo_discovery_network/{}", namespace).to_owned();
         // max msg size 4MB
