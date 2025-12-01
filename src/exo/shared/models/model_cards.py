@@ -409,8 +409,42 @@ MODEL_CARDS: dict[str, ModelCard] = {
         storage_size=Memory.from_kb(327512),  # TODO
         n_layers=28,  # TODO
         hidden_size=0,
-        tasks=[ModelTask.TextToImage],
         supports_tensor=False,
+        tasks=[ModelTask.TextToImage],
+        components=[
+            ComponentInfo(
+                component_name="text_encoder",
+                component_path="text_encoder/",
+                storage_size=Memory.from_kb(0),  # TODO: ?
+                n_layers=12,
+                can_shard=False,
+                safetensors_index_filename=None,  # Single file
+            ),
+            ComponentInfo(
+                component_name="text_encoder_2",
+                component_path="text_encoder_2/",
+                storage_size=Memory.from_bytes(9524621312),
+                n_layers=24,
+                can_shard=False,
+                safetensors_index_filename="model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="transformer",
+                component_path="transformer/",
+                storage_size=Memory.from_bytes(23782357120),
+                n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                can_shard=True,
+                safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ComponentInfo(
+                component_name="vae",
+                component_path="vae/",
+                storage_size=Memory.from_kb(0),  # TODO: ?
+                n_layers=None,  # TODO: ?
+                can_shard=False,
+                safetensors_index_filename=None,
+            ),
+        ],
     ),
 }
 
