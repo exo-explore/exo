@@ -85,6 +85,9 @@ The current recommended way to install exo is from source.
   - NVIDIA driver - verify with `nvidia-smi`
   - CUDA toolkit - install from [NVIDIA CUDA guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#cuda-cross-platform-installation), verify with `nvcc --version`
   - cuDNN library - download from [NVIDIA cuDNN page](https://developer.nvidia.com/cudnn-downloads), verify installation by following [these steps](https://docs.nvidia.com/deeplearning/cudnn/latest/installation/linux.html#verifying-the-install-on-linux:~:text=at%20a%20time.-,Verifying%20the%20Install%20on%20Linux,Test%20passed!,-Upgrading%20From%20Older)
+- For Linux with AMD GPU support (including iGPUs like Radeon 8060S):
+  - ROCm driver and tools - verify with `rocm-smi` or `amd-smi`
+  - AMD GPU will be auto-detected when running exo with `AMD=1` environment variable
 
 ### Hardware Requirements
 
@@ -116,6 +119,30 @@ source install.sh
 
 1. Upgrade to the latest version of macOS Sequoia.
 2. Run `./configure_mlx.sh`. This runs commands to optimize GPU memory allocation on Apple Silicon Macs.
+
+- For Linux with AMD GPUs (including iGPUs):
+
+1. Enable high-performance mode for better inference speed:
+```sh
+sudo bash -c 'echo high > /sys/class/drm/card1/device/power_dpm_force_performance_level'
+```
+
+2. Verify GPU usage during inference:
+```sh
+# Monitor GPU usage
+rocm-smi --showuse
+
+# Check power consumption
+rocm-smi --showpower
+
+# View memory usage
+rocm-smi --showmeminfo vram
+```
+
+3. Run exo with AMD GPU support:
+```sh
+AMD=1 exo
+```
 
 
 ## Documentation
@@ -221,6 +248,11 @@ exo
 Linux devices will automatically default to using the **tinygrad** inference engine.
 
 You can read about tinygrad-specific env vars [here](https://docs.tinygrad.org/env_vars/). For example, you can configure tinygrad to use the cpu by specifying `CLANG=1`.
+
+For AMD GPU support (including iGPUs like Radeon 8060S in Ryzen AI Max+ 395), run with the `AMD=1` environment variable:
+```sh
+AMD=1 exo
+```
 
 ### Example Usage on a single device with "exo run" command
 
