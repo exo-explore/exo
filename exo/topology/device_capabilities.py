@@ -4,6 +4,7 @@ from exo import DEBUG
 import subprocess
 import psutil
 import asyncio
+import os
 from exo.helpers import get_mac_system_info, subprocess_pool
 
 TFLOPS = 1.00
@@ -139,6 +140,9 @@ CHIP_FLOPS = {
   "AMD Radeon RX 7700 XT": DeviceFlops(fp32=34.2*TFLOPS, fp16=68.4*TFLOPS, int8=136.8*TFLOPS),
   "AMD Radeon RX 7600": DeviceFlops(fp32=21.5*TFLOPS, fp16=43.0*TFLOPS, int8=86.0*TFLOPS),
   "AMD Radeon RX 7500": DeviceFlops(fp32=16.2*TFLOPS, fp16=32.4*TFLOPS, int8=64.8*TFLOPS),
+  # Radeon 8000 series (RDNA 3.5 - Strix Point iGPU)
+  "AMD Radeon 8060S": DeviceFlops(fp32=3.5*TFLOPS, fp16=7.0*TFLOPS, int8=14.0*TFLOPS),
+  "AMD Radeon Graphics": DeviceFlops(fp32=3.0*TFLOPS, fp16=6.0*TFLOPS, int8=12.0*TFLOPS),  # Generic iGPU fallback
   ### Qualcomm embedded chips: TODO
 }
 CHIP_FLOPS.update({f"LAPTOP GPU {key}": value for key, value in CHIP_FLOPS.items()})
@@ -176,7 +180,29 @@ async def mac_device_capabilities() -> DeviceCapabilities:
 
 async def linux_device_capabilities() -> DeviceCapabilities:
   import psutil
+  import subprocess
+  import sys
   from tinygrad import Device
+
+  # AMD iGPU auto-detection and environment variable setup
+  # Only set AMD=1 if no explicit device is already specified
+  if not os.getenv("AMD") and not os.getenv("CUDA") and not os.getenv("NV"):
+    # Check for ROCm/HIP existence
+    if os.path.exists("/opt/rocm/bin/rocminfo") or os.path.exists("/dev/kfd"):
+      try:
+        # Detect AMD GPU using rocm-smi
+        result = subprocess.run(['rocm-smi', '--showproductname'],
+                               capture_output=True, text=True, timeout=5, check=False)
+        if result.returncode == 0 and 'AMD' in result.stdout.upper():
+          os.environ["AMD"] = "1"
+          if DEBUG >= 2:
+            print(f"Auto-detected AMD GPU via ROCm, setting AMD=1")
+          # Force tinygrad to re-detect device
+          if hasattr(Device, '_DEFAULT'):
+            delattr(Device, '_DEFAULT')
+      except Exception as e:
+        if DEBUG >= 1:
+          print(f"AMD GPU detection failed: {e}")
 
   if DEBUG >= 2: print(f"tinygrad {Device.DEFAULT=}")
   if Device.DEFAULT == "CUDA" or Device.DEFAULT == "NV" or Device.DEFAULT == "GPU":
@@ -200,9 +226,47 @@ async def linux_device_capabilities() -> DeviceCapabilities:
     )
   elif Device.DEFAULT == "AMD":
     import pyamdgpuinfo
+    import subprocess
 
     gpu_raw_info = pyamdgpuinfo.get_gpu(0)
     gpu_name = gpu_raw_info.name
+
+    # Integrated GPU (iGPU) may return None for name, so we need fallback logic
+    # to get the GPU name from ROCm SMI tools
+    if gpu_name is None or gpu_name == "":
+      try:
+        # Try rocminfo first for detailed Marketing Name
+        result = subprocess.run(['rocminfo'],
+                               capture_output=True, text=True, timeout=5, check=False)
+        if result.returncode == 0:
+          # Find first Marketing Name that contains "Radeon"
+          for line in result.stdout.split('\n'):
+            if 'Marketing Name:' in line:
+              marketing_name = line.split('Marketing Name:')[-1].strip()
+              if 'Radeon' in marketing_name and 'w/' in marketing_name:
+                # "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S" -> "AMD Radeon 8060S"
+                gpu_name = 'AMD Radeon ' + marketing_name.split('Radeon')[-1].strip()
+                break
+              elif 'Radeon' in marketing_name:
+                gpu_name = marketing_name
+                break
+
+        # If rocminfo failed, try rocm-smi
+        if not gpu_name or gpu_name == "":
+          result = subprocess.run(['rocm-smi', '--showproductname'],
+                                 capture_output=True, text=True, timeout=5, check=False)
+          if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+              if 'Card Series' in line:
+                gpu_name = line.split(':')[-1].strip()
+                break
+      except Exception as e:
+        if DEBUG >= 1: print(f"Failed to get AMD GPU name from ROCm tools: {e}")
+
+      # Final fallback
+      if not gpu_name or gpu_name == "":
+        gpu_name = "AMD Radeon Graphics"
+
     gpu_memory_info = gpu_raw_info.memory_info["vram_size"]
 
     if DEBUG >= 2: print(f"AMD device {gpu_name=} {gpu_memory_info=}")

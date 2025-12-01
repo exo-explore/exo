@@ -32,6 +32,26 @@ import uvloop
 import concurrent.futures
 import resource
 import psutil
+import subprocess
+import sys
+
+# AMD iGPU auto-detection and environment variable setup
+if sys.platform == "linux":
+  # Only set AMD=1 if no explicit device is already specified
+  if not os.getenv("AMD") and not os.getenv("CUDA") and not os.getenv("NV"):
+    # Check for ROCm/HIP existence
+    if os.path.exists("/opt/rocm/bin/rocminfo") or os.path.exists("/dev/kfd"):
+      try:
+        # Detect AMD GPU using rocm-smi
+        result = subprocess.run(['rocm-smi', '--showproductname'],
+                               capture_output=True, text=True, timeout=5, check=False)
+        if result.returncode == 0 and 'AMD' in result.stdout.upper():
+          os.environ["AMD"] = "1"
+          if DEBUG >= 2:
+            print(f"Auto-detected AMD GPU via ROCm, setting AMD=1")
+      except Exception as e:
+        if DEBUG >= 1:
+          print(f"AMD GPU detection failed: {e}")
 
 # TODO: figure out why this is happening
 os.environ["GRPC_VERBOSITY"] = "error"
