@@ -112,4 +112,13 @@ HF_ENDPOINT=https://hf-mirror.com    # HuggingFace mirror endpoint for restricte
 ### AMD iGPU Support (Ryzen AI Max+ 395)
 - **Base commit**: 5f18faec1758ffa79d6db1d463b4b8bca211a0a8
 - **Branch**: feature/amd-igpu-support
-- **Objective**: Enable GPU inference on Ryzen AI Max+ 395 iGPU (currently falls back to CPU)
+- **Objective**: Enable GPU inference on Ryzen AI Max+ 395 iGPU
+- **Status**: ✅ Completed
+
+#### Issues Resolved
+
+**Issue: ModuleNotFoundError: No module named 'tinygrad.runtime.autogen.am'**
+- **Root cause**: The tinygrad version specified in setup.py (commit `ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8`) did not include the `am` autogen module required for AMD GPU support
+- **Solution**: Updated tinygrad to commit `759b41ab913359520fc0a49976a842829e63be3d` (v0.11.0), which includes the complete autogen infrastructure including the `am` module
+- **Files modified**: `setup.py`
+- **Testing**: Confirmed working with test prompt - GPU inference operational on Radeon 8060S

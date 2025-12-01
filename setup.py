@@ -29,7 +29,7 @@ install_requires = [
   "transformers==4.46.3",
   "uuid==1.30",
   "uvloop==0.21.0",
-  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@ec120ce6b9ce8e4ff4b5692566a683ef240e8bc8",
+  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@759b41ab913359520fc0a49976a842829e63be3d",
 ]
 
 extras_require = {
