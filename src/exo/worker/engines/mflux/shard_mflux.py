@@ -1,8 +1,7 @@
 from typing import TYPE_CHECKING, Protocol, cast
 
-from loguru import logger
 import mlx.core as mx
-import mlx.nn as nn
+from loguru import logger
 from mflux.models.flux.model.flux_transformer.transformer import (
     JointTransformerBlock,
     SingleTransformerBlock,
@@ -157,16 +156,12 @@ class FluxJointToSingleTransition(CustomMlxJointBlock):
         self,
         original_block: _JointBlock,
         rank: int,
-        world_size: int,
         group: mx.distributed.Group,
-        send_to_next_node: bool,
     ):
         super().__init__(original_block)
         self.original_block = original_block
         self.rank = rank
-        self.world_size = world_size
         self.group = group
-        self.send_to_next_node = send_to_next_node
 
     def __call__(
         self,
@@ -174,7 +169,7 @@ class FluxJointToSingleTransition(CustomMlxJointBlock):
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
-    ) -> mx.array:
+    ) -> tuple[mx.array, mx.array]:
         logger.info(f"running transition as rank {self.rank}")
         encoder_hidden_states, hidden_states = self.original_block(
             hidden_states=hidden_states,
@@ -184,13 +179,9 @@ class FluxJointToSingleTransition(CustomMlxJointBlock):
         )
 
         concatenated = mx.concat([encoder_hidden_states, hidden_states], axis=-2)
+        mx.distributed.send(concatenated, self.rank + 1, group=self.group)
 
-        if self.send_to_next_node:
-            concatenated = mx.distributed.send(
-                concatenated, self.rank + 1, group=self.group
-            )
-
-        return concatenated
+        return encoder_hidden_states, hidden_states
 
 
 class FluxSinglePipelineFirstBlock(CustomMlxSingleBlock):
@@ -293,6 +284,10 @@ def shard_flux_transformer(
         model.transformer.single_transformer_blocks
     )
 
+    logger.info(f"total_layers: {total_layers}")
+    logger.info(f"start_layer: {start_layer}")
+    logger.info(f"end_layer: {end_layer}")
+
     if end_layer <= total_joint_blocks:
         assigned_joint_blocks = cast(
             list[_JointBlock], transformer.transformer_blocks[start_layer:end_layer]
@@ -323,30 +318,22 @@ def shard_flux_transformer(
                 group=group,
             )
 
-        # Wrap last joint block - handle transition to single blocks
-        has_single_blocks_following = (
-            len(assigned_single_blocks) > 0
-            or end_layer < total_layers  # Next node starts with single blocks
-        )
-
-        if has_single_blocks_following:
-            # Transition from joint to single blocks
-            send_to_next = len(assigned_single_blocks) == 0 and rank < world_size - 1
-            assigned_joint_blocks[-1] = FluxJointToSingleTransition(
-                original_block=assigned_joint_blocks[-1],
-                rank=rank,
-                world_size=world_size,
-                group=group,
-                send_to_next_node=send_to_next,
-            )
-        elif rank < world_size - 1:
-            # No single blocks anywhere, just send dual outputs to next joint block
-            assigned_joint_blocks[-1] = FluxJointPipelineLastBlock(
-                original_block=assigned_joint_blocks[-1],
-                rank=rank,
-                world_size=world_size,
-                group=group,
-            )
+        if rank < world_size - 1:
+            if end_layer == total_joint_blocks:
+                # This node has the last joint block, next node has single blocks
+                assigned_joint_blocks[-1] = FluxJointToSingleTransition(
+                    original_block=assigned_joint_blocks[-1],
+                    rank=rank,
+                    group=group,
+                )
+            elif end_layer < total_joint_blocks:
+                # Next node has more joint blocks
+                assigned_joint_blocks[-1] = FluxJointPipelineLastBlock(
+                    original_block=assigned_joint_blocks[-1],
+                    rank=rank,
+                    world_size=world_size,
+                    group=group,
+                )
 
     # Single blocks
     if assigned_single_blocks:
