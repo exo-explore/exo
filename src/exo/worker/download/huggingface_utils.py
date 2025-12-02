@@ -128,7 +128,7 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
                     layer_num = extract_layer_num(tensor_name_no_prefix)
                     if (
                         layer_num is not None
-                        and shard.start_layer <= layer_num <= shard.end_layer
+                        and shard.start_layer <= layer_num < shard.end_layer
                     ):
                         shard_specific_patterns.add(filename)
 
@@ -144,7 +144,7 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
                 layer_num = extract_layer_num(tensor_name)
                 if (
                     layer_num is not None
-                    and shard.start_layer <= layer_num <= shard.end_layer
+                    and shard.start_layer <= layer_num < shard.end_layer
                 ):
                     shard_specific_patterns.add(filename)
             layer_independent_files = set(
