@@ -139,6 +139,8 @@ class RunnerSupervisor:
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:
                 await self._check_runner(e)
+                for tid in self.pending:
+                    self.pending[tid].set()
 
     def __del__(self) -> None:
         if self.runner_process.is_alive():

@@ -57,6 +57,7 @@ def create_instance_command(model_meta: ModelMetadata) -> CreateInstance:
         model_meta=model_meta,
         sharding=Sharding.Pipeline,
         instance_meta=InstanceMeta.MlxRing,
+        min_nodes=1,
     )
 
 

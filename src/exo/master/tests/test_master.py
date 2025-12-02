@@ -125,6 +125,7 @@ async def test_master():
                         ),
                         sharding=Sharding.Pipeline,
                         instance_meta=InstanceMeta.MlxRing,
+                        min_nodes=1,
                     )
                 ),
             )

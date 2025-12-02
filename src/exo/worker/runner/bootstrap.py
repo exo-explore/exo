@@ -4,7 +4,7 @@ import loguru
 
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, MlxIbvInstance
 from exo.utils.channels import MpReceiver, MpSender
 
 logger: "loguru.Logger"
@@ -20,7 +20,8 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
 ) -> None:
-    os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+    if isinstance(bound_instance.instance, MlxIbvInstance) and len(bound_instance.instance.ibv_devices) >= 2:
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     global logger
     logger = _logger

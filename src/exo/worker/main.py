@@ -1,7 +1,7 @@
 from random import random
 
 import anyio
-from anyio import CancelScope, create_task_group, current_time
+from anyio import CancelScope, create_task_group, current_time, fail_after
 from anyio.abc import TaskGroup
 from loguru import logger
 
@@ -184,6 +184,7 @@ class Worker:
             assert task.task_status
             await self.event_sender.send(TaskCreated(task_id=task.task_id, task=task))
 
+            # lets not kill the worker if a runner is unresponsive
             match task:
                 case CreateRunner():
                     self._create_supervisor(task)
@@ -201,11 +202,8 @@ class Worker:
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
-
-                    initial_progress = (
-                        await self.shard_downloader.get_shard_download_status_for_shard(
-                            shard
-                        )
+                    initial_progress = await self.shard_downloader.get_shard_download_status_for_shard(
+                        shard
                     )
                     if initial_progress.status == "complete":
                         progress = DownloadCompleted(
@@ -217,7 +215,8 @@ class Worker:
                         )
                         await self.event_sender.send(
                             TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.Complete
+                                task_id=task.task_id,
+                                task_status=TaskStatus.Complete,
                             )
                         )
                     else:
@@ -228,9 +227,18 @@ class Worker:
                         )
                         self._handle_shard_download_process(task, initial_progress)
                 case Shutdown(runner_id=runner_id):
-                    await self.runners.pop(runner_id).start_task(task)
+                    try:
+                        with fail_after(3):
+                            await self.runners.pop(runner_id).start_task(task)
+                    except TimeoutError:
+                        await self.event_sender.send(
+                            TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.TimedOut)
+                        )
                 case task:
-                    await self.runners[self._task_to_runner_id(task)].start_task(task)
+                    await self.runners[self._task_to_runner_id(task)].start_task(
+                        task
+                    )
+
 
     def shutdown(self):
         if self._tg:

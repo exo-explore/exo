@@ -36,24 +36,13 @@ def em(
     )
 
 
-@pytest.fixture
-def fast_timeout(monkeypatch: pytest.MonkeyPatch):
-    # Keep campaigns fast; user explicitly allows tests to shorten the timeout.
-    import exo.shared.election as election_mod
-
-    monkeypatch.setattr(election_mod, "ELECTION_TIMEOUT", 0.05, raising=True)
-    yield
-
-
 # ======================================= #
 #                 TESTS                   #
 # ======================================= #
 
 
 @pytest.mark.anyio
-async def test_single_round_broadcasts_and_updates_seniority_on_self_win(
-    fast_timeout: None,
-) -> None:
+async def test_single_round_broadcasts_and_updates_seniority_on_self_win() -> None:
     """
     Start a round by injecting an ElectionMessage with higher clock.
     With only our node effectively 'winning', we should broadcast once and update seniority.
@@ -109,9 +98,7 @@ async def test_single_round_broadcasts_and_updates_seniority_on_self_win(
 
 
 @pytest.mark.anyio
-async def test_peer_with_higher_seniority_wins_and_we_switch_master(
-    fast_timeout: None,
-) -> None:
+async def test_peer_with_higher_seniority_wins_and_we_switch_master() -> None:
     """
     If a peer with clearly higher seniority participates in the round, they should win.
     We should broadcast our status exactly once for this round, then switch master.
@@ -165,7 +152,7 @@ async def test_peer_with_higher_seniority_wins_and_we_switch_master(
 
 
 @pytest.mark.anyio
-async def test_ignores_older_messages(fast_timeout: None) -> None:
+async def test_ignores_older_messages() -> None:
     """
     Messages with a lower clock than the current round are ignored by the receiver.
     Expect exactly one broadcast for the higher clock round.
@@ -214,9 +201,7 @@ async def test_ignores_older_messages(fast_timeout: None) -> None:
 
 
 @pytest.mark.anyio
-async def test_two_rounds_emit_two_broadcasts_and_increment_clock(
-    fast_timeout: None,
-) -> None:
+async def test_two_rounds_emit_two_broadcasts_and_increment_clock() -> None:
     """
     Two successive rounds → two broadcasts. Second round triggered by a higher-clock message.
     """
@@ -262,7 +247,7 @@ async def test_two_rounds_emit_two_broadcasts_and_increment_clock(
 
 
 @pytest.mark.anyio
-async def test_promotion_new_seniority_counts_participants(fast_timeout: None) -> None:
+async def test_promotion_new_seniority_counts_participants() -> None:
     """
     When we win against two peers in the same round, our seniority becomes
     max(existing, number_of_candidates). With existing=0: expect 3 (us + A + B).
@@ -311,9 +296,7 @@ async def test_promotion_new_seniority_counts_participants(fast_timeout: None) -
 
 
 @pytest.mark.anyio
-async def test_connection_message_triggers_new_round_broadcast(
-    fast_timeout: None,
-) -> None:
+async def test_connection_message_triggers_new_round_broadcast() -> None:
     """
     A connection message increments the clock and starts a new campaign.
     We should observe a broadcast at the incremented clock.
@@ -365,9 +348,7 @@ async def test_connection_message_triggers_new_round_broadcast(
 
 
 @pytest.mark.anyio
-async def test_tie_breaker_prefers_node_with_more_commands_seen(
-    fast_timeout: None,
-) -> None:
+async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
     """
     With equal seniority, the node that has seen more commands should win the election.
     We increase our local 'commands_seen' by sending TestCommand()s before triggering the round.

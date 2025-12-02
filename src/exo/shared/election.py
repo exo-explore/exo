@@ -94,27 +94,26 @@ class Election:
 
             # And start an election immediately, that instantly resolves
             candidates: list[ElectionMessage] = []
-            logger.info("Starting initial campaign")
+            logger.debug("Starting initial campaign")
             self._candidates = candidates
-            logger.info("Campaign started")
             await self._campaign(candidates, campaign_timeout=0.0)
-            logger.info("Initial campaign finished")
+            logger.debug("Initial campaign finished")
 
         # Cancel and wait for the last election to end
         if self._campaign_cancel_scope is not None:
-            logger.info("Cancelling campaign")
+            logger.debug("Cancelling campaign")
             self._campaign_cancel_scope.cancel()
         if self._campaign_done is not None:
-            logger.info("Waiting for campaign to finish")
+            logger.debug("Waiting for campaign to finish")
             await self._campaign_done.wait()
-        logger.info("Campaign cancelled and finished")
+        logger.debug("Campaign cancelled and finished")
         logger.info("Election finished")
 
     async def elect(self, em: ElectionMessage) -> None:
-        logger.info(f"Electing: {em}")
+        logger.debug(f"Electing: {em}")
         is_new_master = em.proposed_session != self.current_session
         self.current_session = em.proposed_session
-        logger.info(f"Current session: {self.current_session}")
+        logger.debug(f"Current session: {self.current_session}")
         await self._er_sender.send(
             ElectionResult(
                 won_clock=em.clock,
@@ -135,29 +134,29 @@ class Election:
     async def _election_receiver(self) -> None:
         with self._em_receiver as election_messages:
             async for message in election_messages:
-                logger.info(f"Election message received: {message}")
+                logger.debug(f"Election message received: {message}")
                 if message.proposed_session.master_node_id == self.node_id:
-                    logger.info("Dropping message from ourselves")
+                    logger.debug("Dropping message from ourselves")
                     # Drop messages from us (See exo.routing.router)
                     continue
                 # If a new round is starting, we participate
                 if message.clock > self.clock:
                     self.clock = message.clock
-                    logger.info(f"New clock: {self.clock}")
+                    logger.debug(f"New clock: {self.clock}")
                     assert self._tg is not None
-                    logger.info("Starting new campaign")
+                    logger.debug("Starting new campaign")
                     candidates: list[ElectionMessage] = [message]
-                    logger.info(f"Candidates: {candidates}")
-                    logger.info(f"Current candidates: {self._candidates}")
+                    logger.debug(f"Candidates: {candidates}")
+                    logger.debug(f"Current candidates: {self._candidates}")
                     self._candidates = candidates
-                    logger.info(f"New candidates: {self._candidates}")
-                    logger.info("Starting new campaign")
+                    logger.debug(f"New candidates: {self._candidates}")
+                    logger.debug("Starting new campaign")
                     self._tg.start_soon(self._campaign, candidates)
-                    logger.info("Campaign started")
+                    logger.debug("Campaign started")
                     continue
                 # Dismiss old messages
                 if message.clock < self.clock:
-                    logger.info(f"Dropping old message: {message}")
+                    logger.debug(f"Dropping old message: {message}")
                     continue
                 logger.debug(f"Election added candidate {message}")
                 # Now we are processing this rounds messages - including the message that triggered this round.
@@ -170,20 +169,20 @@ class Election:
                 await anyio.sleep(0.2)
                 rest = connection_messages.collect()
 
-                logger.info(f"Connection messages received: {first} followed by {rest}")
-                logger.info(f"Current clock: {self.clock}")
+                logger.debug(f"Connection messages received: {first} followed by {rest}")
+                logger.debug(f"Current clock: {self.clock}")
                 # These messages are strictly peer to peer
                 self.clock += 1
-                logger.info(f"New clock: {self.clock}")
+                logger.debug(f"New clock: {self.clock}")
                 assert self._tg is not None
                 candidates: list[ElectionMessage] = []
                 self._candidates = candidates
-                logger.info("Starting new campaign")
+                logger.debug("Starting new campaign")
                 self._tg.start_soon(self._campaign, candidates)
-                logger.info("Campaign started")
+                logger.debug("Campaign started")
                 self._connection_messages.append(first)
                 self._connection_messages.extend(rest)
-                logger.info("Connection message added")
+                logger.debug("Connection message added")
 
     async def _command_counter(self) -> None:
         with self._co_receiver as commands:
@@ -210,52 +209,52 @@ class Election:
 
         try:
             with scope:
-                logger.info(f"Election {clock} started")
+                logger.debug(f"Election {clock} started")
 
                 status = self._election_status(clock)
                 candidates.append(status)
                 await self._em_sender.send(status)
 
-                logger.info(f"Sleeping for {campaign_timeout} seconds")
+                logger.debug(f"Sleeping for {campaign_timeout} seconds")
                 await anyio.sleep(campaign_timeout)
                 # minor hack - rebroadcast status in case anyone has missed it.
                 await self._em_sender.send(status)
-                logger.info("Woke up from sleep")
+                logger.debug("Woke up from sleep")
                 # add an anyio checkpoint - anyio.lowlevel.chekpoint() or checkpoint_if_cancelled() is preferred, but wasn't typechecking last I checked
                 await anyio.sleep(0)
 
                 # Election finished!
                 elected = max(candidates)
-                logger.info(f"Election queue {candidates}")
-                logger.info(f"Elected: {elected}")
+                logger.debug(f"Election queue {candidates}")
+                logger.debug(f"Elected: {elected}")
                 if (
                     self.node_id == elected.proposed_session.master_node_id
                     and self.seniority >= 0
                 ):
-                    logger.info(
+                    logger.debug(
                         f"Node is a candidate and seniority is {self.seniority}"
                     )
                     self.seniority = max(self.seniority, len(candidates))
-                    logger.info(f"New seniority: {self.seniority}")
+                    logger.debug(f"New seniority: {self.seniority}")
                 else:
-                    logger.info(
+                    logger.debug(
                         f"Node is not a candidate or seniority is not {self.seniority}"
                     )
-                logger.info(
+                logger.debug(
                     f"Election finished, new SessionId({elected.proposed_session}) with queue {candidates}"
                 )
-                logger.info("Sending election result")
+                logger.debug("Sending election result")
                 await self.elect(elected)
-                logger.info("Election result sent")
+                logger.debug("Election result sent")
         except get_cancelled_exc_class():
-            logger.info(f"Election {clock} cancelled")
+            logger.debug(f"Election {clock} cancelled")
         finally:
-            logger.info(f"Election {clock} finally")
+            logger.debug(f"Election {clock} finally")
             if self._campaign_cancel_scope is scope:
                 self._campaign_cancel_scope = None
-            logger.info("Setting done event")
+            logger.debug("Setting done event")
             done.set()
-            logger.info("Done event set")
+            logger.debug("Done event set")
 
     def _election_status(self, clock: int | None = None) -> ElectionMessage:
         c = self.clock if clock is None else clock

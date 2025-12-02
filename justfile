@@ -22,5 +22,5 @@ rust-rebuild:
 
 clean:
     rm -rf **/__pycache__
-    rm -rf rust/target
+    sudo rm -rf rust/target
     rm -rf .venv
