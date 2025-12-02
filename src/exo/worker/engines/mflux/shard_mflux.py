@@ -152,7 +152,7 @@ class FluxJointPipelineLastBlock(CustomMlxJointBlock):
 class FluxJointToSingleTransition(CustomMlxJointBlock):
     def __init__(
         self,
-        original_block: nn.Module,
+        original_block: _JointBlock,
         rank: int,
         world_size: int,
         group: mx.distributed.Group,
