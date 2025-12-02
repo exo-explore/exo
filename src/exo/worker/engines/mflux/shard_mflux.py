@@ -1,0 +1,392 @@
+from typing import TYPE_CHECKING, Protocol, cast
+
+import mlx.core as mx
+import mlx.nn as nn
+from mflux.models.flux.model.flux_transformer.transformer import (
+    JointTransformerBlock,
+    SingleTransformerBlock,
+    Transformer,
+)
+from mflux.models.flux.variants.txt2img.flux import Flux1
+
+from exo.shared.types.worker.shards import (
+    PipelineShardMetadata,
+    ShardMetadata,
+    TensorShardMetadata,
+)
+
+
+class _JointBlock(Protocol):
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> tuple[mx.array, mx.array]: ...
+
+
+class _SingleBlock(Protocol):
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> mx.array: ...
+
+
+class CustomMlxJointBlock(JointTransformerBlock):
+    """Base class for replacing an MLX layer with a custom implementation."""
+
+    def __init__(self, original_layer: _JointBlock):
+        super().__init__(None)
+        # Set twice to avoid __setattr__ recursion
+        object.__setattr__(self, "_original_layer", original_layer)
+        self.original_layer: _JointBlock = original_layer
+
+    # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
+    if not TYPE_CHECKING:
+
+        def __getattr__(self, name):
+            try:
+                return super().__getattr__(name)
+            except AttributeError:
+                original_layer = object.__getattribute__(self, "_original_layer")
+                return object.__getattribute__(original_layer, name)
+
+
+class CustomMlxSingleBlock(SingleTransformerBlock):
+    """Base class for replacing an MLX layer with a custom implementation."""
+
+    def __init__(self, original_layer: _SingleBlock):
+        super().__init__(None)
+        # Set twice to avoid __setattr__ recursion
+        object.__setattr__(self, "_original_layer", original_layer)
+        self.original_layer: _SingleBlock = original_layer
+
+    # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
+    if not TYPE_CHECKING:
+
+        def __getattr__(self, name):
+            try:
+                return super().__getattr__(name)
+            except AttributeError:
+                original_layer = object.__getattribute__(self, "_original_layer")
+                return object.__getattribute__(original_layer, name)
+
+
+class FluxJointPipelineFirstBlock(CustomMlxJointBlock):
+    def __init__(
+        self,
+        original_block: _JointBlock,
+        rank: int,
+        group: mx.distributed.Group,
+    ):
+        super().__init__(original_block)
+        self.original_block = original_block
+        self.rank = rank
+        self.group = group
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> tuple[mx.array, mx.array]:
+        if self.rank != 0:
+            encoder_hidden_states = mx.distributed.recv_like(
+                encoder_hidden_states, self.rank - 1, group=self.group
+            )
+            hidden_states = mx.distributed.recv_like(
+                hidden_states, self.rank - 1, group=self.group
+            )
+
+        return self.original_block(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            text_embeddings=text_embeddings,
+            rotary_embeddings=rotary_embeddings,
+        )
+
+
+class FluxJointPipelineLastBlock(CustomMlxJointBlock):
+    def __init__(
+        self,
+        original_block: _JointBlock,
+        rank: int,
+        world_size: int,
+        group: mx.distributed.Group,
+    ):
+        super().__init__(original_block)
+        self.original_block = original_block
+        self.rank = rank
+        self.world_size = world_size
+        self.group = group
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> tuple[mx.array, mx.array]:
+        encoder_hidden_states, hidden_states = self.original_block(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            text_embeddings=text_embeddings,
+            rotary_embeddings=rotary_embeddings,
+        )
+
+        if self.rank != self.world_size - 1:
+            encoder_hidden_states = mx.distributed.send(
+                encoder_hidden_states, self.rank + 1, group=self.group
+            )
+            hidden_states = mx.distributed.send(
+                hidden_states, self.rank + 1, group=self.group
+            )
+
+        return encoder_hidden_states, hidden_states
+
+
+class FluxJointToSingleTransition(CustomMlxJointBlock):
+    def __init__(
+        self,
+        original_block: nn.Module,
+        rank: int,
+        world_size: int,
+        group: mx.distributed.Group,
+        send_to_next_node: bool,
+    ):
+        super().__init__(original_block)
+        self.original_block = original_block
+        self.rank = rank
+        self.world_size = world_size
+        self.group = group
+        self.send_to_next_node = send_to_next_node
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> mx.array:
+        encoder_hidden_states, hidden_states = self.original_block(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            text_embeddings=text_embeddings,
+            rotary_embeddings=rotary_embeddings,
+        )
+
+        concatenated = mx.concat([encoder_hidden_states, hidden_states], axis=-2)
+
+        if self.send_to_next_node:
+            concatenated = mx.distributed.send(
+                concatenated, self.rank + 1, group=self.group
+            )
+
+        return concatenated
+
+
+class FluxSinglePipelineFirstBlock(CustomMlxSingleBlock):
+    def __init__(
+        self,
+        original_block: _SingleBlock,
+        rank: int,
+        group: mx.distributed.Group,
+    ):
+        super().__init__(original_block)
+        self.original_block = original_block
+        self.rank = rank
+        self.group = group
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> mx.array:
+        """Forward pass with inter-node communication.
+
+        Receives concatenated hidden_states from previous node.
+        """
+        hidden_states = mx.distributed.recv_like(
+            hidden_states, self.rank - 1, group=self.group
+        )
+
+        return self.original_block(
+            hidden_states=hidden_states,
+            text_embeddings=text_embeddings,
+            rotary_embeddings=rotary_embeddings,
+        )
+
+
+class FluxSinglePipelineLastBlock(CustomMlxSingleBlock):
+    def __init__(
+        self,
+        original_block: _SingleBlock,
+        rank: int,
+        world_size: int,
+        group: mx.distributed.Group,
+    ):
+        super().__init__(original_block)
+        self.original_block = original_block
+        self.rank = rank
+        self.world_size = world_size
+        self.group = group
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> mx.array:
+        hidden_states = self.original_block(
+            hidden_states=hidden_states,
+            text_embeddings=text_embeddings,
+            rotary_embeddings=rotary_embeddings,
+        )
+
+        if self.rank != self.world_size - 1:
+            hidden_states = mx.distributed.send(
+                hidden_states, self.rank + 1, group=self.group
+            )
+
+        hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
+            -hidden_states.shape[0] :
+        ]
+
+        return hidden_states
+
+
+def shard_flux_transformer(
+    model: Flux1,
+    group: mx.distributed.Group,
+    shard_metadata: ShardMetadata,
+) -> Flux1:
+    if isinstance(shard_metadata, TensorShardMetadata):
+        raise NotImplementedError(
+            "Tensor parallelism is not yet supported for Flux models. "
+            "Use pipeline parallelism instead."
+        )
+
+    if not isinstance(shard_metadata, PipelineShardMetadata):
+        raise ValueError(
+            f"Unsupported shard metadata type: {type(shard_metadata)}. "
+            "Expected PipelineShardMetadata."
+        )
+
+    # TODO: Implement custom pipeline parallelism for Flux
+    # The standard PipelineFirstLayer/PipelineLastLayer wrappers assume layers with
+    # signature `(x: mx.array, ...) -> mx.array` (single input, single output).
+    # However, Flux's JointTransformerBlock has signature:
+    #   __call__(hidden_states, encoder_hidden_states, ...) -> tuple[encoder_hidden_states, hidden_states]
+    # This dual-output signature is incompatible with the _LayerCallable protocol.
+    #
+    # To support distributed inference, we need to:
+    # 1. Create custom wrapper layers that understand the dual-output signature
+    # 2. Handle inter-node communication for both hidden_states and encoder_hidden_states
+    # 3. Properly handle the transition point between JointTransformerBlock and SingleTransformerBlock
+    #    (where encoder_hidden_states gets concatenated with hidden_states)
+    #
+    # For now, this function just slices the blocks but doesn't add pipeline communication.
+    # This means distributed inference will NOT work until the custom wrappers are implemented.
+
+    transformer: Transformer = model.transformer
+
+    # Total = joint blocks + single blocks
+    total_joint_blocks = len(transformer.transformer_blocks)
+    total_single_blocks = len(transformer.single_transformer_blocks)
+    total_layers = total_joint_blocks + total_single_blocks
+
+    start_layer = shard_metadata.start_layer
+    end_layer = shard_metadata.end_layer
+    rank = shard_metadata.device_rank
+    world_size = len(model.transformer.transformer_blocks) + len(
+        model.transformer.single_transformer_blocks
+    )
+
+    if end_layer <= total_joint_blocks:
+        assigned_joint_blocks = cast(
+            list[_JointBlock], transformer.transformer_blocks[start_layer:end_layer]
+        )
+        assigned_single_blocks = []
+    elif start_layer >= total_joint_blocks:
+        assigned_joint_blocks = []
+        single_start = start_layer - total_joint_blocks
+        single_end = end_layer - total_joint_blocks
+        assigned_single_blocks = cast(
+            list[_SingleBlock],
+            transformer.single_transformer_blocks[single_start:single_end],
+        )
+    else:
+        assigned_joint_blocks = cast(
+            list[_JointBlock], transformer.transformer_blocks[start_layer:]
+        )
+        single_end = end_layer - total_joint_blocks
+        assigned_single_blocks = cast(
+            list[_SingleBlock], transformer.single_transformer_blocks[:single_end]
+        )
+
+    if assigned_joint_blocks:
+        if rank > 0:
+            assigned_joint_blocks[0] = FluxJointPipelineFirstBlock(
+                original_block=assigned_joint_blocks[0],
+                rank=rank,
+                group=group,
+            )
+
+        # Wrap last joint block - handle transition to single blocks
+        has_single_blocks_following = (
+            len(assigned_single_blocks) > 0
+            or end_layer < total_layers  # Next node starts with single blocks
+        )
+
+        if has_single_blocks_following:
+            # Transition from joint to single blocks
+            send_to_next = len(assigned_single_blocks) == 0 and rank < world_size - 1
+            assigned_joint_blocks[-1] = FluxJointToSingleTransition(
+                original_block=assigned_joint_blocks[-1],
+                rank=rank,
+                world_size=world_size,
+                group=group,
+                send_to_next_node=send_to_next,
+            )
+        elif rank < world_size - 1:
+            # No single blocks anywhere, just send dual outputs to next joint block
+            assigned_joint_blocks[-1] = FluxJointPipelineLastBlock(
+                original_block=assigned_joint_blocks[-1],
+                rank=rank,
+                world_size=world_size,
+                group=group,
+            )
+
+    # Single blocks
+    if assigned_single_blocks:
+        # Wrap first single block if receiving from previous node
+        # (either from joint blocks on previous node or single blocks on previous node)
+        has_joint_on_this_node = len(assigned_joint_blocks) > 0
+        is_first_single_globally = start_layer == total_joint_blocks
+
+        if not has_joint_on_this_node and not is_first_single_globally:
+            # Receiving from previous node (which had single blocks)
+            assigned_single_blocks[0] = FluxSinglePipelineFirstBlock(
+                original_block=assigned_single_blocks[0],
+                rank=rank,
+                group=group,
+            )
+
+        # Wrap last single block (always do all_gather)
+        assigned_single_blocks[-1] = FluxSinglePipelineLastBlock(
+            original_block=assigned_single_blocks[-1],
+            rank=rank,
+            world_size=world_size,
+            group=group,
+        )
+
+    # Replace transformer blocks with sharded versions
+    transformer.transformer_blocks = assigned_joint_blocks
+    transformer.single_transformer_blocks = assigned_single_blocks
+
+    return model
