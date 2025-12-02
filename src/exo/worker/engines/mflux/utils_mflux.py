@@ -9,21 +9,9 @@ from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init
 
 
 def initialize_mflux(bound_instance: BoundInstance) -> Flux1:
-    """Initialize Flux1 model for single-node or distributed inference.
-
-    Automatically detects multi-node setup and applies pipeline parallelism
-    to the transformer component while keeping other components replicated.
-
-    Args:
-        bound_instance: Instance binding information with shard metadata
-
-    Returns:
-        Flux1 model, with transformer sharded if running in distributed mode
-    """
     model_id = bound_instance.bound_shard.model_meta.model_id
     model_path = build_model_path(model_id)
 
-    # Check if this is a distributed setup
     is_distributed = len(bound_instance.instance.shard_assignments.node_to_runner) > 1
 
     if not is_distributed:
