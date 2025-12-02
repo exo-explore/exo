@@ -253,6 +253,38 @@ class FluxSinglePipelineLastBlock(CustomMlxSingleBlock):
         return hidden_states
 
 
+class FluxSingleSyncBlock(CustomMlxSingleBlock):
+    """Fake single block for nodes without single blocks.
+
+    Participates in all_gather to receive the final hidden_states from the last node.
+    """
+
+    def __init__(self, group: mx.distributed.Group):
+        super().__init__(self._dummy_block)
+        self.group = group
+
+    @staticmethod
+    def _dummy_block(
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> mx.array:
+        return hidden_states
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+    ) -> mx.array:
+        logger.info("running sync block (no single blocks on this node)")
+        hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
+            -hidden_states.shape[0] :
+        ]
+
+        return hidden_states
+
+
 def shard_flux_transformer(
     model: Flux1,
     group: mx.distributed.Group,
@@ -355,6 +387,9 @@ def shard_flux_transformer(
             world_size=world_size,
             group=group,
         )
+    else:
+        # No single blocks on this node - add sync block to participate in all_gather
+        assigned_single_blocks = [FluxSingleSyncBlock(group)]
 
     # Replace transformer blocks with sharded versions
     transformer.transformer_blocks = assigned_joint_blocks
