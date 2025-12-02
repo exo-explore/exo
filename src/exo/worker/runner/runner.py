@@ -28,8 +28,8 @@ from exo.shared.types.models import ModelTask
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
-    ImageGeneration,
     ImageEdits,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -56,7 +56,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import MpReceiver, MpSender
-from exo.worker.engines.mflux.generator.generate import mflux_generate
+from exo.worker.engines.mflux.generator.generate import mflux_generate, warmup_mflux
 from exo.worker.engines.mflux.utils_mflux import initialize_mflux
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
@@ -187,6 +187,14 @@ def main(
                         logger.info(
                             f"runner initialized in {time.time() - setup_start_time} seconds"
                         )
+                    elif (
+                        ModelTask.TextToImage in model_tasks
+                        or ModelTask.ImageToImage in model_tasks
+                    ):
+                        assert isinstance(model, Flux1)
+                        image = warmup_mflux(model=model)
+                        logger.info(f"warmed up by generating {image.size} image")
+
                     current_status = RunnerReady()
                     logger.info("runner ready")
                 case ChatCompletion(task_params=task_params, command_id=command_id) if (
