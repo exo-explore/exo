@@ -100,6 +100,7 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
             "*.py",
             "tokenizer.model",
             "tiktoken.model",
+            "*/spiece.model",
             "*.tiktoken",
             "*.txt",
             "*.jinja",
