@@ -2,7 +2,9 @@
 resolver = "3"
 members = [
     "exo_pyo3_bindings",
-    "util", "iroh_networking",
+    "util",
+    "iroh_networking",
+    "iroh_dnssd",
 ]
 
 [workspace.package]

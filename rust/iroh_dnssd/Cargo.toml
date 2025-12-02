@@ -1,0 +1,15 @@
+[package]
+name = "iroh_dnssd"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+astro-dnssd = "0.3.6"
+iroh = "0.95.1"
+n0-future.workspace = true
+rand = "0.9.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+
+[lints]
+workspace = true
