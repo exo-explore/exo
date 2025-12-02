@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Protocol, cast
 
+from loguru import logger
 import mlx.core as mx
 import mlx.nn as nn
 from mflux.models.flux.model.flux_transformer.transformer import (
@@ -94,6 +95,7 @@ class FluxJointPipelineFirstBlock(CustomMlxJointBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> tuple[mx.array, mx.array]:
+        logger.info(f"running first joint block as rank {self.rank}")
         if self.rank != 0:
             encoder_hidden_states = mx.distributed.recv_like(
                 encoder_hidden_states, self.rank - 1, group=self.group
@@ -131,6 +133,7 @@ class FluxJointPipelineLastBlock(CustomMlxJointBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> tuple[mx.array, mx.array]:
+        logger.info(f"running last joint block as rank {self.rank}")
         encoder_hidden_states, hidden_states = self.original_block(
             hidden_states=hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -172,6 +175,7 @@ class FluxJointToSingleTransition(CustomMlxJointBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
+        logger.info(f"running transition as rank {self.rank}")
         encoder_hidden_states, hidden_states = self.original_block(
             hidden_states=hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -207,10 +211,7 @@ class FluxSinglePipelineFirstBlock(CustomMlxSingleBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
-        """Forward pass with inter-node communication.
-
-        Receives concatenated hidden_states from previous node.
-        """
+        logger.info(f"running first single block as rank {self.rank}")
         hidden_states = mx.distributed.recv_like(
             hidden_states, self.rank - 1, group=self.group
         )
@@ -242,6 +243,7 @@ class FluxSinglePipelineLastBlock(CustomMlxSingleBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
+        logger.info(f"running last single block as rank {self.rank}")
         hidden_states = self.original_block(
             hidden_states=hidden_states,
             text_embeddings=text_embeddings,
@@ -276,22 +278,6 @@ def shard_flux_transformer(
             f"Unsupported shard metadata type: {type(shard_metadata)}. "
             "Expected PipelineShardMetadata."
         )
-
-    # TODO: Implement custom pipeline parallelism for Flux
-    # The standard PipelineFirstLayer/PipelineLastLayer wrappers assume layers with
-    # signature `(x: mx.array, ...) -> mx.array` (single input, single output).
-    # However, Flux's JointTransformerBlock has signature:
-    #   __call__(hidden_states, encoder_hidden_states, ...) -> tuple[encoder_hidden_states, hidden_states]
-    # This dual-output signature is incompatible with the _LayerCallable protocol.
-    #
-    # To support distributed inference, we need to:
-    # 1. Create custom wrapper layers that understand the dual-output signature
-    # 2. Handle inter-node communication for both hidden_states and encoder_hidden_states
-    # 3. Properly handle the transition point between JointTransformerBlock and SingleTransformerBlock
-    #    (where encoder_hidden_states gets concatenated with hidden_states)
-    #
-    # For now, this function just slices the blocks but doesn't add pipeline communication.
-    # This means distributed inference will NOT work until the custom wrappers are implemented.
 
     transformer: Transformer = model.transformer
 
