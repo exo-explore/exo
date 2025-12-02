@@ -280,9 +280,7 @@ def shard_flux_transformer(
     start_layer = shard_metadata.start_layer
     end_layer = shard_metadata.end_layer
     rank = shard_metadata.device_rank
-    world_size = len(model.transformer.transformer_blocks) + len(
-        model.transformer.single_transformer_blocks
-    )
+    world_size = shard_metadata.world_size
 
     logger.info(f"total_layers: {total_layers}")
     logger.info(f"start_layer: {start_layer}")
