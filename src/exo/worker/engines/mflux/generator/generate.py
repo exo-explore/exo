@@ -1,6 +1,7 @@
 import io
 from typing import Generator
 
+from PIL import Image
 import mlx.core as mx
 from mflux.config.config import Config
 from mflux.models.flux.variants.txt2img.flux import Flux1
@@ -28,6 +29,17 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
 
     # Default fallback
     return (1024, 1024)
+
+
+def warmup_mflux(model: Flux1) -> Image.Image:
+    prompt = "Warmup"
+    image = model.generate_image(
+        seed=2,
+        prompt=prompt,
+        config=Config(num_inference_steps=1, height=256, width=256),
+    )
+
+    return image.image
 
 
 def mflux_generate(
