@@ -334,9 +334,6 @@ def main(
                                                     chunk_index=chunk_index,
                                                     total_chunks=total_chunks,
                                                     image_index=image_index,
-                                                    finish_reason=response.finish_reason
-                                                    if is_last_chunk
-                                                    else None,
                                                 ),
                                             )
                                         )
@@ -399,9 +396,6 @@ def main(
                                                     chunk_index=chunk_index,
                                                     total_chunks=total_chunks,
                                                     image_index=image_index,
-                                                    finish_reason=response.finish_reason
-                                                    if is_last_chunk
-                                                    else None,
                                                 ),
                                             )
                                         )

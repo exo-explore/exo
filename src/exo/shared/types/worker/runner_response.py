@@ -23,7 +23,6 @@ class GenerationResponse(BaseRunnerResponse):
 class ImageGenerationResponse(BaseRunnerResponse):
     image_data: bytes
     format: Literal["png", "jpeg", "webp"] = "png"
-    finish_reason: FinishReason | None = None
 
 
 class FinishedResponse(BaseRunnerResponse):
