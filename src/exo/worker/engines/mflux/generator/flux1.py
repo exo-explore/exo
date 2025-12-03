@@ -1,4 +1,5 @@
 from typing import Literal
+
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
 from mflux.config.config import Config
@@ -12,8 +13,6 @@ from mflux.utils.exceptions import StopImageGenerationException
 from mflux.utils.image_util import ImageUtil
 from PIL import Image
 from tqdm import tqdm
-
-from exo.shared.types.api import ImageGenerationTaskParams
 
 
 def _generate_image(model: Flux1, settings: Config, prompt: str, seed: int):

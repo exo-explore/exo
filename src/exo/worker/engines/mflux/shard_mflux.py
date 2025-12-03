@@ -13,6 +13,7 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
+from exo.worker.engines.mlx.utils_mlx import mx_barrier
 
 
 class _JointBlock(Protocol):
@@ -278,23 +279,9 @@ class FluxSingleSyncBlock(CustomMlxSingleBlock):
         return hidden_states
 
 
-def shard_flux_transformer(
-    model: Flux1,
-    group: mx.distributed.Group,
-    shard_metadata: ShardMetadata,
-) -> Flux1:
-    if isinstance(shard_metadata, TensorShardMetadata):
-        raise NotImplementedError(
-            "Tensor parallelism is not yet supported for Flux models. "
-            "Use pipeline parallelism instead."
-        )
-
-    if not isinstance(shard_metadata, PipelineShardMetadata):
-        raise ValueError(
-            f"Unsupported shard metadata type: {type(shard_metadata)}. "
-            "Expected PipelineShardMetadata."
-        )
-
+def pipeline_transformer(
+    model: Flux1, group: mx.distributed.Group, shard_metadata: ShardMetadata
+):
     transformer: Transformer = model.transformer
 
     # Total = joint blocks + single blocks
@@ -383,5 +370,30 @@ def shard_flux_transformer(
     # Replace transformer blocks with sharded versions
     transformer.transformer_blocks = assigned_joint_blocks
     transformer.single_transformer_blocks = assigned_single_blocks
+
+    return model
+
+
+def shard_flux_transformer(
+    model: Flux1,
+    group: mx.distributed.Group,
+    shard_metadata: ShardMetadata,
+) -> Flux1:
+    match shard_metadata:
+        case TensorShardMetadata():
+            raise NotImplementedError(
+                "Tensor parallelism is not yet supported for Flux models. "
+                "Use pipeline parallelism instead."
+            )
+        case PipelineShardMetadata():
+            model = pipeline_transformer(model, group, shard_metadata)
+
+    mx.eval(model.parameters())
+
+    # TODO: Do we need this?
+    mx.eval(model)
+
+    # Synchronize processes before generation to avoid timeout
+    mx_barrier(group)
 
     return model
