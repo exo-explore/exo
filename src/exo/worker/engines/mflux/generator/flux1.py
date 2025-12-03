@@ -1,3 +1,4 @@
+from typing import Literal
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
 from mflux.config.config import Config
@@ -13,25 +14,6 @@ from PIL import Image
 from tqdm import tqdm
 
 from exo.shared.types.api import ImageGenerationTaskParams
-
-
-def parse_size(size_str: str | None) -> tuple[int, int]:
-    """
-    Parse size parameter like '1024x1024' to (width, height) tuple.
-    """
-    if not size_str or size_str == "auto":
-        size_str = "1024x1024"
-
-    try:
-        parts = size_str.split("x")
-        if len(parts) == 2:
-            width, height = int(parts[0]), int(parts[1])
-            return (width, height)
-    except (ValueError, AttributeError):
-        pass
-
-    # Default fallback
-    return (1024, 1024)
 
 
 def _generate_image(model: Flux1, settings: Config, prompt: str, seed: int):
@@ -147,11 +129,13 @@ def _generate_image(model: Flux1, settings: Config, prompt: str, seed: int):
 
 def generate_image(
     model: Flux1,
-    task: ImageGenerationTaskParams,
+    prompt: str,
+    height: int,
+    width: int,
+    quality: Literal["low", "medium", "high"],
+    seed: int,
 ) -> Image.Image:
     # Parse parameters
-    width, height = parse_size(task.size)
-    quality = task.quality or "medium"
 
     # TODO: Flux1 only
     steps = 2
@@ -163,5 +147,5 @@ def generate_image(
     seed = 2  # TODO: not in OAI API?
     config = Config(num_inference_steps=steps, height=height, width=width)
 
-    image = _generate_image(model=model, settings=config, prompt=task.prompt, seed=seed)
+    image = _generate_image(model=model, settings=config, prompt=prompt, seed=seed)
     return image.image
