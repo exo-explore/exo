@@ -52,10 +52,17 @@ def mflux_generate(
     output_format = task.output_format or "png"
     quality = task.quality or "medium"
 
+    # TODO: Flux1 only
+    steps = 2
+    if quality == "low":
+        steps = 1
+    elif quality == "high":
+        steps = 4
+
     image = model.generate_image(
         seed=2,
         prompt=task.prompt,
-        config=Config(num_inference_steps=2, height=height, width=width),
+        config=Config(num_inference_steps=steps, height=height, width=width),
     )
 
     buffer = io.BytesIO()
