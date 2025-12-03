@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, Protocol, cast
 
 import mlx.core as mx
-from loguru import logger
 from mflux.models.flux.model.flux_transformer.transformer import (
     JointTransformerBlock,
     SingleTransformerBlock,
@@ -94,7 +93,6 @@ class FluxJointPipelineFirstBlock(CustomMlxJointBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        logger.info(f"running first joint block as rank {self.rank}")
         if self.rank != 0:
             encoder_hidden_states = mx.distributed.recv_like(
                 encoder_hidden_states, self.rank - 1, group=self.group
@@ -132,7 +130,6 @@ class FluxJointPipelineLastBlock(CustomMlxJointBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        logger.info(f"running last joint block as rank {self.rank}")
         encoder_hidden_states, hidden_states = self.original_block(
             hidden_states=hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -170,7 +167,6 @@ class FluxJointToSingleTransition(CustomMlxJointBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        logger.info(f"running transition as rank {self.rank}")
         encoder_hidden_states, hidden_states = self.original_block(
             hidden_states=hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -202,7 +198,6 @@ class FluxSinglePipelineFirstBlock(CustomMlxSingleBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
-        logger.info(f"running first single block as rank {self.rank}")
         hidden_states = mx.distributed.recv_like(
             hidden_states, self.rank - 1, group=self.group
         )
@@ -234,7 +229,6 @@ class FluxSinglePipelineLastBlock(CustomMlxSingleBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
-        logger.info(f"running last single block as rank {self.rank}")
         hidden_states = self.original_block(
             hidden_states=hidden_states,
             text_embeddings=text_embeddings,
@@ -277,7 +271,6 @@ class FluxSingleSyncBlock(CustomMlxSingleBlock):
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
-        logger.info("running sync block (no single blocks on this node)")
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
@@ -313,10 +306,6 @@ def shard_flux_transformer(
     end_layer = shard_metadata.end_layer
     rank = shard_metadata.device_rank
     world_size = shard_metadata.world_size
-
-    logger.info(f"total_layers: {total_layers}")
-    logger.info(f"start_layer: {start_layer}")
-    logger.info(f"end_layer: {end_layer}")
 
     if end_layer <= total_joint_blocks:
         assigned_joint_blocks = cast(
