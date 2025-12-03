@@ -169,7 +169,9 @@ class Election:
                 await anyio.sleep(0.2)
                 rest = connection_messages.collect()
 
-                logger.debug(f"Connection messages received: {first} followed by {rest}")
+                logger.debug(
+                    f"Connection messages received: {first} followed by {rest}"
+                )
                 logger.debug(f"Current clock: {self.clock}")
                 # These messages are strictly peer to peer
                 self.clock += 1

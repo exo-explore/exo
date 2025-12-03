@@ -409,6 +409,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
         instance_meta=InstanceMeta.MlxIbv,
         command_id=CommandId(),
         model_meta=model_meta,
+        min_nodes=1,
     )
 
     placements = get_instance_placements_after_create(cic, topology, {})

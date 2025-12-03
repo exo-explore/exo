@@ -94,7 +94,9 @@ def extract_layer_num(tensor_name: str) -> int | None:
 
 
 def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list[str]:
-    default_patterns = set(["*.json", "*.py", "tokenizer.model", "*.tiktoken", "*.txt"])
+    default_patterns = set(
+        ["*.json", "*.py", "tokenizer.model", "*.tiktoken", "*.txt", "*.jinja"]
+    )
     shard_specific_patterns: set[str] = set()
     if weight_map:
         for tensor_name, filename in weight_map.items():
@@ -104,14 +106,11 @@ def get_allow_patterns(weight_map: dict[str, str], shard: ShardMetadata) -> list
                 and shard.start_layer <= layer_num <= shard.end_layer
             ):
                 shard_specific_patterns.add(filename)
-        sorted_file_names = sorted(weight_map.values())
-        # TODO: if the model needs any "layer-independent" parameters,
-        # we might want to always add files that correspond to them
-        # e.g. lm_head
-        if shard.is_first_layer:
-            shard_specific_patterns.add(sorted_file_names[0])
-        elif shard.is_last_layer:
-            shard_specific_patterns.add(sorted_file_names[-1])
+        layer_independent_files = set(
+            [v for k, v in weight_map.items() if extract_layer_num(k) is None]
+        )
+        shard_specific_patterns.update(layer_independent_files)
+        logger.debug(f"get_allow_patterns {shard=} {layer_independent_files=}")
     else:
         shard_specific_patterns = set(["*.safetensors"])
     logger.info(f"get_allow_patterns {shard=} {shard_specific_patterns=}")

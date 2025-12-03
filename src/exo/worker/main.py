@@ -202,8 +202,10 @@ class Worker:
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
-                    initial_progress = await self.shard_downloader.get_shard_download_status_for_shard(
-                        shard
+                    initial_progress = (
+                        await self.shard_downloader.get_shard_download_status_for_shard(
+                            shard
+                        )
                     )
                     if initial_progress.status == "complete":
                         progress = DownloadCompleted(
@@ -232,13 +234,12 @@ class Worker:
                             await self.runners.pop(runner_id).start_task(task)
                     except TimeoutError:
                         await self.event_sender.send(
-                            TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.TimedOut)
+                            TaskStatusUpdated(
+                                task_id=task.task_id, task_status=TaskStatus.TimedOut
+                            )
                         )
                 case task:
-                    await self.runners[self._task_to_runner_id(task)].start_task(
-                        task
-                    )
-
+                    await self.runners[self._task_to_runner_id(task)].start_task(task)
 
     def shutdown(self):
         if self._tg:

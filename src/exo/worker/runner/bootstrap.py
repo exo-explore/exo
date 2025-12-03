@@ -20,7 +20,10 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
 ) -> None:
-    if isinstance(bound_instance.instance, MlxIbvInstance) and len(bound_instance.instance.ibv_devices) >= 2:
+    if (
+        isinstance(bound_instance.instance, MlxIbvInstance)
+        and len(bound_instance.instance.ibv_devices) >= 2
+    ):
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
 
     global logger

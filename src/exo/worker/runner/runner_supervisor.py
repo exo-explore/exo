@@ -118,6 +118,7 @@ class RunnerSupervisor:
         self._tg.cancel_scope.cancel()
 
     async def start_task(self, task: Task):
+        logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
         try:
@@ -126,6 +127,7 @@ class RunnerSupervisor:
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         await event.wait()
+        logger.info(f"Finished task {task}")
 
     async def _forward_events(self):
         with self._ev_recv as events:
@@ -149,11 +151,13 @@ class RunnerSupervisor:
                 self.runner_process.kill()
 
     async def _check_runner(self, e: Exception) -> None:
+        logger.info("Checking runner's status")
         if self.runner_process.is_alive():
+            logger.info("Runner was found to be alive, attempting to join process")
             await to_thread.run_sync(self.runner_process.join, 1)
         rc = self.runner_process.exitcode
+        logger.info(f"RunnerSupervisor exited with exit code {rc}")
         if rc == 0:
-            #
             return
 
         if isinstance(rc, int) and rc < 0:

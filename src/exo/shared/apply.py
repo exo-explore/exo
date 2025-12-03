@@ -83,17 +83,27 @@ def apply(state: State, event: IndexedEvent) -> State:
 
 
 def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> State:
-    new_node_downloads: Sequence[DownloadProgress] = [
-        event.download_progress
-        if dp.shard_metadata == event.download_progress.shard_metadata
-        else dp
-        for dp in state.downloads.get(
-            event.download_progress.node_id, [event.download_progress]
-        )
-    ]
+    """
+    Update or add a node download progress to state.
+    """
+    dp = event.download_progress
+    node_id = dp.node_id
+
+    current = list(state.downloads.get(node_id, ()))
+
+    replaced = False
+    for i, existing_dp in enumerate(current):
+        if existing_dp.shard_metadata == dp.shard_metadata:
+            current[i] = dp
+            replaced = True
+            break
+
+    if not replaced:
+        current.append(dp)
+
     new_downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {
         **state.downloads,
-        event.download_progress.node_id: new_node_downloads,
+        node_id: current,
     }
     return state.model_copy(update={"downloads": new_downloads})
 

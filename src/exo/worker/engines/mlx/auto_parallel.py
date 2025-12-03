@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from functools import partial
 from inspect import signature
-from typing import TYPE_CHECKING, Callable, Protocol, cast, override
+from typing import TYPE_CHECKING, Callable, Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -66,7 +66,6 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.r: int = r
         self.group = group
 
-    @override
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
@@ -87,7 +86,6 @@ class PipelineLastLayer(CustomMlxLayer):
         self.group = group
         self.original_layer_signature = signature(self.original_layer.__call__)
 
-    @override
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
             x, *args, **kwargs
@@ -107,6 +105,31 @@ class PipelineLastLayer(CustomMlxLayer):
 
         output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
+
+
+def _inner_model(model: nn.Module) -> nn.Module:
+    inner = getattr(model, "model", None)
+    if isinstance(inner, nn.Module):
+        return inner
+
+    inner = getattr(model, "transformer", None)
+    if isinstance(inner, nn.Module):
+        return inner
+
+    raise ValueError("Model must either have a 'model' or 'transformer' attribute")
+
+
+def _get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
+    # Handle both model.layers and model.h cases
+    layers: list[_LayerCallable]
+    if hasattr(inner_model_instance, "layers"):
+        layers = cast(list[_LayerCallable], inner_model_instance.layers)
+    elif hasattr(inner_model_instance, "h"):
+        layers = cast(list[_LayerCallable], inner_model_instance.h)
+    else:
+        raise ValueError("Model must have either a 'layers' or 'h' attribute")
+
+    return layers
 
 
 def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
@@ -143,20 +166,17 @@ def pipeline_auto_parallel(
     inner_model_instance: nn.Module = _inner_model(model)
 
     # Handle both model.layers and model.h cases
-    layers: list[_LayerCallable]
-    if hasattr(inner_model_instance, "layers"):
-        layers = cast(list[_LayerCallable], inner_model_instance.layers)
-    elif hasattr(inner_model_instance, "h"):
-        layers = cast(list[_LayerCallable], inner_model_instance.h)
-    else:
-        raise ValueError("Model must have either a 'layers' or 'h' attribute")
+    layers: list[_LayerCallable] = _get_layers(inner_model_instance)
 
-    layers = layers[model_shard_meta.start_layer : model_shard_meta.end_layer]
-    layers[0] = PipelineFirstLayer(layers[0], model_shard_meta.device_rank, group=group)
+    start_layer, end_layer = model_shard_meta.start_layer, model_shard_meta.end_layer
+    device_rank, world_size = model_shard_meta.device_rank, model_shard_meta.world_size
+
+    layers = layers[start_layer:end_layer]
+    layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
     layers[-1] = PipelineLastLayer(
         layers[-1],
-        model_shard_meta.device_rank,
-        model_shard_meta.world_size,
+        device_rank,
+        world_size,
         group=group,
     )
 
@@ -167,18 +187,6 @@ def pipeline_auto_parallel(
     )
 
     return model
-
-
-def _inner_model(model: nn.Module) -> nn.Module:
-    inner = getattr(model, "model", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    inner = getattr(model, "transformer", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    raise ValueError("Model must either have a 'model' or 'transformer' attribute")
 
 
 def tensor_auto_parallel(

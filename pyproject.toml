@@ -26,12 +26,11 @@ dependencies = [
     "greenlet>=3.2.4",
     "huggingface-hub>=0.33.4",
     "psutil>=7.0.0",
-    "transformers>=4.55.2",
     "cobs>=1.2.2",
     "loguru>=0.7.3",
     "textual>=5.3.0",
     "exo_pyo3_bindings", # rust bindings
-    "anyio>=4.11.0",
+    "anyio==4.11.0",
     "bidict>=0.23.1",
     "mlx>=0.29.3",
     "mlx-lm>=0.28.3",

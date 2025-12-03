@@ -51,11 +51,8 @@ def get_smallest_cycles(cycles: list[list[NodeInfo]]) -> list[list[NodeInfo]]:
 
 def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
-    selected_cycle: list[NodeInfo],
+    selected_cycle: list[NodeWithProfile],
 ):
-    if not narrow_all_nodes(selected_cycle):
-        raise ValueError("All nodes must have profiles to create shard assignments")
-
     cycle_memory = sum(
         (node.node_profile.memory.ram_available for node in selected_cycle),
         start=Memory(),
@@ -105,11 +102,8 @@ def get_shard_assignments_for_pipeline_parallel(
 
 def get_shard_assignments_for_tensor_parallel(
     model_meta: ModelMetadata,
-    selected_cycle: list[NodeInfo],
+    selected_cycle: list[NodeWithProfile],
 ):
-    if not narrow_all_nodes(selected_cycle):
-        raise ValueError("All nodes must have profiles to create shard assignments")
-
     total_layers = model_meta.n_layers
     world_size = len(selected_cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
@@ -144,6 +138,8 @@ def get_shard_assignments(
     selected_cycle: list[NodeInfo],
     sharding: Sharding,
 ) -> ShardAssignments:
+    if not narrow_all_nodes(selected_cycle):
+        raise ValueError("All nodes must have profiles to create shard assignments")
     match sharding:
         case Sharding.Pipeline:
             return get_shard_assignments_for_pipeline_parallel(
@@ -159,12 +155,20 @@ def get_shard_assignments(
 
 def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
     cycles = cycle_digraph.get_cycles()
+    expected_length = len(list(cycle_digraph.list_nodes()))
+    cycles = [cycle for cycle in cycles if len(cycle) == expected_length]
     if not cycles:
+        if expected_length > 1:
+            logger.warning(
+                f"No cycles of length {expected_length} found even though chosen subgraph contained {expected_length} nodes"
+            )
         return []
 
     get_thunderbolt = False
     if cycle_digraph.is_thunderbolt_cycle(cycles[0]):
         get_thunderbolt = True
+
+    logger.info(f"Using thunderbolt cycle: {get_thunderbolt}")
 
     cycle = cycles[0]
     hosts: list[Host] = []

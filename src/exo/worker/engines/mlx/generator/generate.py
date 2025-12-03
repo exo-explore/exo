@@ -43,6 +43,8 @@ def warmup_inference(
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
 ) -> int:
+    content = "Prompt to warm up the inference engine. Repeat this."
+
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
         chat_task_data=ChatCompletionTaskParams(
@@ -50,7 +52,7 @@ def warmup_inference(
             messages=[
                 ChatCompletionMessage(
                     role="user",
-                    content="Prompt to warm up the inference engine. Repeat this.",
+                    content=content,
                 )
             ],
         ),
@@ -126,3 +128,6 @@ def mlx_generate(
             token=out.token,
             finish_reason=cast(FinishReason | None, out.finish_reason),
         )
+
+        if out.finish_reason is not None:
+            break

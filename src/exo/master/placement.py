@@ -96,6 +96,13 @@ def get_instance_placements_after_create(
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))
 
+    if len(selected_cycle) == 1:
+        logger.warning(
+            "You have likely selected ibv for a single node instance; falling back to MlxRing"
+        )
+
+        command.instance_meta = InstanceMeta.MlxRing
+
     # TODO: Single node instances
     match command.instance_meta:
         case InstanceMeta.MlxIbv:

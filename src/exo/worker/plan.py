@@ -135,7 +135,8 @@ def _load_model(
         shard_assignments = instance.shard_assignments
 
         all_downloads_complete_local = all(
-            any(
+            nid in global_download_status
+            and any(
                 isinstance(dp, DownloadCompleted)
                 and dp.shard_metadata == shard_assignments.runner_to_shard[rid]
                 for dp in global_download_status[nid]
