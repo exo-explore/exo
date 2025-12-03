@@ -2,7 +2,6 @@ import io
 from typing import Generator
 
 import mlx.core as mx
-from mflux.config.config import Config
 from mflux.models.flux.variants.txt2img.flux import Flux1
 from PIL import Image
 
@@ -13,22 +12,49 @@ from exo.worker.engines.mflux.generator.flux1 import generate_image
 image_generation_stream = mx.new_stream(mx.default_device())
 
 
-def warmup_mflux(model: Flux1) -> Image.Image:
-    prompt = "Warmup"
-    image = model.generate_image(
-        seed=2,
-        prompt=prompt,
-        config=Config(num_inference_steps=1, height=256, width=256),
-    )
+def parse_size(size_str: str | None) -> tuple[int, int]:
+    """
+    Parse size parameter like '1024x1024' to (width, height) tuple.
+    """
+    if not size_str or size_str == "auto":
+        size_str = "1024x1024"
 
-    return image.image
+    try:
+        parts = size_str.split("x")
+        if len(parts) == 2:
+            width, height = int(parts[0]), int(parts[1])
+            return (width, height)
+    except (ValueError, AttributeError):
+        pass
+
+    # Default fallback
+    return (1024, 1024)
+
+
+def warmup_mflux(model: Flux1) -> Image.Image:
+    return generate_image(
+        model=model, prompt="Warmup", height=256, width=256, quality="low", seed=2
+    )
 
 
 def mflux_generate(
     model: Flux1,
     task: ImageGenerationTaskParams,
 ) -> Generator[ImageGenerationResponse]:
-    image = generate_image(model=model, task=task)
+    # Parse parameters
+    width, height = parse_size(task.size)
+    quality = task.quality or "medium"
+
+    seed = 2  # TODO: not in OAI API?
+
+    image = generate_image(
+        model=model,
+        prompt=task.prompt,
+        height=height,
+        width=width,
+        quality=quality,
+        seed=seed,
+    )
 
     buffer = io.BytesIO()
     image_format = task.output_format.upper()
