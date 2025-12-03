@@ -406,8 +406,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
     ),
     "flux1-schnell": ModelCard(
         model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
-        storage_size=Memory.from_kb(327512),  # TODO
-        n_layers=28,  # TODO
+        storage_size=Memory.from_bytes(23782357120),  # + 9524621312),
+        n_layers=57,
         hidden_size=0,
         supports_tensor=False,
         tasks=[ModelTask.TextToImage],
