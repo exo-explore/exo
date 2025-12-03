@@ -27,7 +27,6 @@ class ImageChunk(BaseChunk):
     chunk_index: int
     total_chunks: int
     image_index: int
-    finish_reason: FinishReason | None = None
 
 
 GenerationChunk = TokenChunk | ImageChunk
