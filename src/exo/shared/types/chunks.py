@@ -26,7 +26,10 @@ class TokenChunk(BaseChunk):
 
 
 class ImageChunk(BaseChunk):
-    data: str  # Base64-encoded image data
+    data: str
+    chunk_index: int
+    total_chunks: int
+    image_index: int
     finish_reason: FinishReason | None = None
 
 
