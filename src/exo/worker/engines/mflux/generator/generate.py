@@ -8,7 +8,7 @@ from PIL import Image
 
 from exo.shared.types.api import ImageGenerationTaskParams
 from exo.shared.types.worker.runner_response import ImageGenerationResponse
-from exo.worker.engines.mflux.generator.mflux import generate_image
+from exo.worker.engines.mflux.generator.flux1 import generate_image
 
 image_generation_stream = mx.new_stream(mx.default_device())
 
