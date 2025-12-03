@@ -67,6 +67,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 
 
 def main(
@@ -296,9 +297,11 @@ def main(
                     )
 
                     # Generate images using MFlux (MLX) diffusion
-                    for response in mflux_generate(
-                        model=model,
-                        task=task_params,
+                    for image_index, response in enumerate(
+                        mflux_generate(
+                            model=model,
+                            task=task_params,
+                        )
                     ):
                         match response:
                             case ImageGenerationResponse():
@@ -306,17 +309,37 @@ def main(
                                     encoded_data = base64.b64encode(
                                         response.image_data
                                     ).decode("utf-8")
-                                    event_sender.send(
-                                        ChunkGenerated(
-                                            command_id=command_id,
-                                            chunk=ImageChunk(
-                                                idx=0,
-                                                model=shard_metadata.model_meta.model_id,
-                                                data=encoded_data,
-                                                finish_reason=response.finish_reason,
-                                            ),
+                                    # Split into chunks to stay under gossipsub 1MB limit
+                                    data_chunks = [
+                                        encoded_data[i : i + EXO_MAX_CHUNK_SIZE]
+                                        for i in range(
+                                            0, len(encoded_data), EXO_MAX_CHUNK_SIZE
                                         )
+                                    ]
+                                    total_chunks = len(data_chunks)
+                                    logger.info(
+                                        f"sending ImageChunk: {len(encoded_data)} bytes in {total_chunks} chunks"
                                     )
+                                    for chunk_index, chunk_data in enumerate(
+                                        data_chunks
+                                    ):
+                                        is_last_chunk = chunk_index == total_chunks - 1
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=ImageChunk(
+                                                    idx=chunk_index,
+                                                    model=shard_metadata.model_meta.model_id,
+                                                    data=chunk_data,
+                                                    chunk_index=chunk_index,
+                                                    total_chunks=total_chunks,
+                                                    image_index=image_index,
+                                                    finish_reason=response.finish_reason
+                                                    if is_last_chunk
+                                                    else None,
+                                                ),
+                                            )
+                                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
@@ -339,9 +362,11 @@ def main(
                     )
 
                     # Generate images using MFlux (MLX) diffusion
-                    for response in mflux_generate(
-                        model=model,
-                        task=task_params,
+                    for image_index, response in enumerate(
+                        mflux_generate(
+                            model=model,
+                            task=task_params,
+                        )
                     ):
                         match response:
                             case ImageGenerationResponse():
@@ -349,17 +374,37 @@ def main(
                                     encoded_data = base64.b64encode(
                                         response.image_data
                                     ).decode("utf-8")
-                                    event_sender.send(
-                                        ChunkGenerated(
-                                            command_id=command_id,
-                                            chunk=ImageChunk(
-                                                idx=0,
-                                                model=shard_metadata.model_meta.model_id,
-                                                data=encoded_data,
-                                                finish_reason=response.finish_reason,
-                                            ),
+                                    # Split into chunks to stay under gossipsub 1MB limit
+                                    data_chunks = [
+                                        encoded_data[i : i + EXO_MAX_CHUNK_SIZE]
+                                        for i in range(
+                                            0, len(encoded_data), EXO_MAX_CHUNK_SIZE
                                         )
+                                    ]
+                                    total_chunks = len(data_chunks)
+                                    logger.info(
+                                        f"sending ImageChunk: {len(encoded_data)} bytes in {total_chunks} chunks"
                                     )
+                                    for chunk_index, chunk_data in enumerate(
+                                        data_chunks
+                                    ):
+                                        is_last_chunk = chunk_index == total_chunks - 1
+                                        event_sender.send(
+                                            ChunkGenerated(
+                                                command_id=command_id,
+                                                chunk=ImageChunk(
+                                                    idx=chunk_index,
+                                                    model=shard_metadata.model_meta.model_id,
+                                                    data=chunk_data,
+                                                    chunk_index=chunk_index,
+                                                    total_chunks=total_chunks,
+                                                    image_index=image_index,
+                                                    finish_reason=response.finish_reason
+                                                    if is_last_chunk
+                                                    else None,
+                                                ),
+                                            )
+                                        )
 
                     current_status = RunnerReady()
                     logger.info("runner ready")

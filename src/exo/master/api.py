@@ -635,20 +635,40 @@ class API:
         # Collect all image chunks (non-streaming)
         self._image_generation_queues[command.command_id] = asyncio.Queue()
 
-        images: list[ImageData] = []
         num_images = payload.n or 1
 
-        for _ in range(num_images):
-            # Wait for each image chunk with timeout
+        # Track chunks per image: {image_index: {chunk_index: data}}
+        image_chunks: dict[int, dict[int, str]] = {}
+        image_total_chunks: dict[int, int] = {}
+        images_complete = 0
+
+        while images_complete < num_images:
             chunk = await asyncio.wait_for(
                 self._image_generation_queues[command.command_id].get(), timeout=600
             )
             assert isinstance(chunk, ImageChunk)
 
-            # chunk.data is already base64-encoded string
+            if chunk.image_index not in image_chunks:
+                image_chunks[chunk.image_index] = {}
+                image_total_chunks[chunk.image_index] = chunk.total_chunks
+
+            image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+
+            # Check if this image is complete
+            if (
+                len(image_chunks[chunk.image_index])
+                == image_total_chunks[chunk.image_index]
+            ):
+                images_complete += 1
+
+        # Reassemble images in order
+        images: list[ImageData] = []
+        for image_idx in range(num_images):
+            chunks_dict = image_chunks[image_idx]
+            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
             images.append(
                 ImageData(
-                    b64_json=chunk.data
+                    b64_json=full_data
                     if payload.response_format == "b64_json"
                     else None,
                     url=None,  # URL format not implemented yet
@@ -664,7 +684,7 @@ class API:
     async def image_edits(
         self, payload: ImageEditsTaskParams
     ) -> ImageGenerationResponse:
-        """Handle image generation requests."""
+        """Handle image edit requests."""
         model_meta = await resolve_model_meta(payload.model)
         payload.model = model_meta.model_id
 
@@ -685,20 +705,40 @@ class API:
         # Collect all image chunks (non-streaming)
         self._image_generation_queues[command.command_id] = asyncio.Queue()
 
-        images: list[ImageData] = []
         num_images = payload.n or 1
 
-        for _ in range(num_images):
-            # Wait for each image chunk with timeout
+        # Track chunks per image: {image_index: {chunk_index: data}}
+        image_chunks: dict[int, dict[int, str]] = {}
+        image_total_chunks: dict[int, int] = {}
+        images_complete = 0
+
+        while images_complete < num_images:
             chunk = await asyncio.wait_for(
                 self._image_generation_queues[command.command_id].get(), timeout=600
             )
             assert isinstance(chunk, ImageChunk)
 
-            # chunk.data is already base64-encoded string
+            if chunk.image_index not in image_chunks:
+                image_chunks[chunk.image_index] = {}
+                image_total_chunks[chunk.image_index] = chunk.total_chunks
+
+            image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+
+            # Check if this image is complete
+            if (
+                len(image_chunks[chunk.image_index])
+                == image_total_chunks[chunk.image_index]
+            ):
+                images_complete += 1
+
+        # Reassemble images in order
+        images: list[ImageData] = []
+        for image_idx in range(num_images):
+            chunks_dict = image_chunks[image_idx]
+            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
             images.append(
                 ImageData(
-                    b64_json=chunk.data
+                    b64_json=full_data
                     if payload.response_format == "b64_json"
                     else None,
                     url=None,  # URL format not implemented yet
