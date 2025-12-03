@@ -612,7 +612,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             pretty_name="FLUX.1 [schnell]",
             hidden_size=0,
             supports_tensor=False,
-            storage_size=Memory.from_bytes(9524621312 + 23782357120),
+            storage_size=Memory.from_bytes(23782357120),  # + 9524621312),
             n_layers=57,  # sharded layers
             components=[
                 ComponentInfo(
