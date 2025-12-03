@@ -15,6 +15,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
 from exo.master.api import get_model_card
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.events import (
@@ -67,7 +68,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
-from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 
 
 def main(
