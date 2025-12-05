@@ -28,10 +28,10 @@ pub(crate) mod alias {
 
 /// Namespace for crate-wide extension traits/methods
 pub(crate) mod ext {
-    use std::net::IpAddr;
     use extend::ext;
     use libp2p::Multiaddr;
     use libp2p::multiaddr::Protocol;
+    use std::net::IpAddr;
 
     #[ext(pub, name = MultiaddrExt)]
     impl Multiaddr {
@@ -42,7 +42,7 @@ pub(crate) mod ext {
                 match p {
                     Protocol::Ip4(ip) => IpAddr::V4(ip),
                     Protocol::Ip6(ip) => IpAddr::V6(ip),
-                    _ => return None
+                    _ => return None,
                 }
             } else {
                 return None;

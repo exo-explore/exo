@@ -20,13 +20,13 @@ impl handler::ConnectionHandler for ConnectionHandler {
     type FromBehaviour = <dummy::ConnectionHandler as handler::ConnectionHandler>::FromBehaviour;
     type ToBehaviour = <dummy::ConnectionHandler as handler::ConnectionHandler>::ToBehaviour;
     type InboundProtocol =
-    <dummy::ConnectionHandler as handler::ConnectionHandler>::InboundProtocol;
+        <dummy::ConnectionHandler as handler::ConnectionHandler>::InboundProtocol;
     type OutboundProtocol =
-    <dummy::ConnectionHandler as handler::ConnectionHandler>::OutboundProtocol;
+        <dummy::ConnectionHandler as handler::ConnectionHandler>::OutboundProtocol;
     type InboundOpenInfo =
-    <dummy::ConnectionHandler as handler::ConnectionHandler>::InboundOpenInfo;
+        <dummy::ConnectionHandler as handler::ConnectionHandler>::InboundOpenInfo;
     type OutboundOpenInfo =
-    <dummy::ConnectionHandler as handler::ConnectionHandler>::OutboundOpenInfo;
+        <dummy::ConnectionHandler as handler::ConnectionHandler>::OutboundOpenInfo;
 
     delegate! {
         to self.0 {

@@ -14,21 +14,20 @@ use libp2p::futures::StreamExt as _;
 use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{gossipsub, mdns};
+use networking::discovery;
+use networking::swarm::create_swarm;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use std::net::IpAddr;
 use tokio::sync::{Mutex, mpsc, oneshot};
-use networking::discovery;
-use networking::swarm::create_swarm;
 use util::ext::VecExt as _;
 
 mod exception {
-    use pyo3::{exceptions::{PyException}, prelude::*, PyErrArguments};
     use pyo3::types::PyTuple;
-    use pyo3_stub_gen::{derive::*};
-
+    use pyo3::{PyErrArguments, exceptions::PyException, prelude::*};
+    use pyo3_stub_gen::derive::*;
 
     #[gen_stub_pyclass]
     #[pyclass(frozen, extends=PyException, name="NoPeersSubscribedToTopicError")]
@@ -71,7 +70,8 @@ mod exception {
     pub struct PyAllQueuesFullError {}
 
     impl PyAllQueuesFullError {
-        const MSG: &'static str = "All libp2p peers are unresponsive, resend the message or reconnect.";
+        const MSG: &'static str =
+            "All libp2p peers are unresponsive, resend the message or reconnect.";
 
         ///   Creates a new  [ `PyErr` ]  of this type.
         ///
@@ -154,10 +154,10 @@ async fn networking_task(
     connection_update_tx: mpsc::Sender<PyConnectionUpdate>,
     gossipsub_message_tx: mpsc::Sender<(String, Vec<u8>)>,
 ) {
-    use networking::swarm::BehaviourEvent::*;
     use SwarmEvent::*;
     use ToTask::*;
     use mdns::Event::*;
+    use networking::swarm::BehaviourEvent::*;
 
     log::info!("RUST: networking task started");
 
@@ -367,7 +367,7 @@ impl PyNetworkingHandle {
                 connection_update_tx,
                 gossipsub_message_tx,
             )
-                .await;
+            .await;
         });
         Ok(Self::new(
             to_task_tx,

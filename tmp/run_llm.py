@@ -27,7 +27,7 @@ def stream_chat(host: str, query: str) -> None:
                 if not line.startswith("data:"):
                     continue
 
-                data = line[len("data:"):].strip()
+                data = line[len("data:") :].strip()
                 if data == "[DONE]":
                     break
 
@@ -55,7 +55,8 @@ def main() -> None:
     )
     parser.add_argument("host", help="Hostname (without protocol), e.g. localhost")
     parser.add_argument(
-        "-f", "--file",
+        "-f",
+        "--file",
         help="Path to a text file whose contents will be used as the query",
     )
     parser.add_argument(

@@ -1,3 +1,4 @@
+use crate::ext::MultiaddrExt;
 use crate::keep_alive;
 use delegate::delegate;
 use either::Either;
@@ -7,7 +8,11 @@ use libp2p::core::transport::PortUse;
 use libp2p::core::{ConnectedPoint, Endpoint};
 use libp2p::swarm::behaviour::ConnectionEstablished;
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::{dummy, CloseConnection, ConnectionClosed, ConnectionDenied, ConnectionHandler, ConnectionHandlerSelect, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm};
+use libp2p::swarm::{
+    CloseConnection, ConnectionClosed, ConnectionDenied, ConnectionHandler,
+    ConnectionHandlerSelect, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
+    THandlerOutEvent, ToSwarm, dummy,
+};
 use libp2p::{Multiaddr, PeerId, identity, mdns};
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
@@ -16,16 +21,14 @@ use std::net::IpAddr;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use util::wakerdeque::WakerDeque;
-use crate::ext::MultiaddrExt;
-
 
 const RETRY_CONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
 mod managed {
+    use libp2p::swarm::NetworkBehaviour;
+    use libp2p::{identity, mdns, ping};
     use std::io;
     use std::time::Duration;
-    use libp2p::{identity, mdns, ping};
-    use libp2p::swarm::NetworkBehaviour;
 
     const MDNS_RECORD_TTL: Duration = Duration::from_secs(2_500);
     const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(1_500);
@@ -64,7 +67,11 @@ mod managed {
     }
 
     fn ping_behaviour() -> ping::Behaviour {
-        ping::Behaviour::new(ping::Config::new().with_timeout(PING_TIMEOUT).with_interval(PING_INTERVAL))
+        ping::Behaviour::new(
+            ping::Config::new()
+                .with_timeout(PING_TIMEOUT)
+                .with_interval(PING_INTERVAL),
+        )
     }
 }
 
@@ -128,7 +135,6 @@ impl Behaviour {
             connection: CloseConnection::One(connection),
         })
     }
-
 
     fn handle_mdns_discovered(&mut self, peers: Vec<(PeerId, Multiaddr)>) {
         for (p, ma) in peers {
@@ -202,7 +208,7 @@ impl Behaviour {
 
 impl NetworkBehaviour for Behaviour {
     type ConnectionHandler =
-    ConnectionHandlerSelect<dummy::ConnectionHandler, THandler<managed::Behaviour>>;
+        ConnectionHandlerSelect<dummy::ConnectionHandler, THandler<managed::Behaviour>>;
     type ToSwarm = Event;
 
     // simply delegate to underlying mDNS behaviour
@@ -261,11 +267,10 @@ impl NetworkBehaviour for Behaviour {
     ) {
         match event {
             Either::Left(ev) => libp2p::core::util::unreachable(ev),
-            Either::Right(ev) => self.managed.on_connection_handler_event(
-                peer_id,
-                connection_id,
-                ev,
-            ),
+            Either::Right(ev) => {
+                self.managed
+                    .on_connection_handler_event(peer_id, connection_id, ev)
+            }
         }
     }
 
@@ -277,11 +282,11 @@ impl NetworkBehaviour for Behaviour {
         // handle swarm events to update internal state:
         match event {
             FromSwarm::ConnectionEstablished(ConnectionEstablished {
-                                                 peer_id,
-                                                 connection_id,
-                                                 endpoint,
-                                                 ..
-                                             }) => {
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
+            }) => {
                 let remote_address = match endpoint {
                     ConnectedPoint::Dialer { address, .. } => address,
                     ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
@@ -293,11 +298,11 @@ impl NetworkBehaviour for Behaviour {
                 }
             }
             FromSwarm::ConnectionClosed(ConnectionClosed {
-                                            peer_id,
-                                            connection_id,
-                                            endpoint,
-                                            ..
-                                        }) => {
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
+            }) => {
                 let remote_address = match endpoint {
                     ConnectedPoint::Dialer { address, .. } => address,
                     ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
@@ -331,7 +336,7 @@ impl NetworkBehaviour for Behaviour {
                         mdns::Event::Expired(peers) => {
                             self.handle_mdns_expired(peers);
                         }
-                    }
+                    },
 
                     // handle ping events => if error then disconnect
                     managed::BehaviourEvent::Ping(e) => {
@@ -345,7 +350,6 @@ impl NetworkBehaviour for Behaviour {
                 // there are more events to come where that came from
                 cx.waker().wake_by_ref();
             }
-
 
             // forward any other mDNS event to the swarm or its connection handler(s)
             Poll::Ready(e) => {

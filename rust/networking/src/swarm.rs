@@ -37,19 +37,20 @@ mod transport {
     use libp2p::core::transport::Boxed;
     use libp2p::pnet::{PnetError, PnetOutput};
     use libp2p::{PeerId, Transport, identity, noise, pnet, yamux};
-    use std::{sync::LazyLock, env};
+    use std::{env, sync::LazyLock};
 
     /// Key used for networking's private network; parametrized on the [`NETWORK_VERSION`].
     /// See [`pnet_upgrade`] for more.
     static PNET_PRESHARED_KEY: LazyLock<[u8; 32]> = LazyLock::new(|| {
         let builder = Sha3_256::new().update(b"exo_discovery_network");
-        
+
         if let Ok(var) = env::var(OVERRIDE_VERSION_ENV_VAR) {
-            let bytes = var.into_bytes(); 
+            let bytes = var.into_bytes();
             builder.update(&bytes)
         } else {
             builder.update(NETWORK_VERSION)
-        }.finalize()
+        }
+        .finalize()
     });
 
     /// Make the Swarm run on a private network, as to not clash with public libp2p nodes and
@@ -103,9 +104,9 @@ mod transport {
 
 mod behaviour {
     use crate::{alias, discovery};
-    use std::time::Duration;
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{gossipsub, identity};
+    use std::time::Duration;
 
     /// Behavior of the Swarm which composes all desired behaviors:
     /// Right now its just [`discovery::Behaviour`] and [`gossipsub::Behaviour`].
@@ -139,6 +140,6 @@ mod behaviour {
                 .build()
                 .expect("the configuration should always be valid"),
         )
-            .expect("creating gossipsub behavior should always work")
+        .expect("creating gossipsub behavior should always work")
     }
 }
