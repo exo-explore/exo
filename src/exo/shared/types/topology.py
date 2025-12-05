@@ -34,4 +34,4 @@ class Connection(CamelCaseModel):
         )
 
     def is_thunderbolt(self) -> bool:
-        return str(self.send_back_multiaddr.ipv4_address).startswith("200.0")
+        return str(self.send_back_multiaddr.ipv4_address).startswith("169.254")
