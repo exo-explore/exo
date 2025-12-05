@@ -5,7 +5,7 @@ from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
     ShardMetadata,
 )
-from exo.worker.engines.mflux.pipefusion import apply_pipefusion_transformer
+from exo.worker.engines.mflux.pipefusion.pipefusion import apply_pipefusion_transformer
 from exo.worker.engines.mlx.utils_mlx import mx_barrier
 
 
