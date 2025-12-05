@@ -1,8 +1,6 @@
 import base64
 import time
 
-from mflux.models.flux.variants.txt2img.flux import Flux1
-
 from exo.master.api import get_model_card
 from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.types.api import ChatCompletionMessageText
@@ -159,9 +157,7 @@ def main(
                         logger.info(f"warming up inference for instance: {instance}")
                         if ModelTask.TextGeneration in model_tasks:
                             # assert isinstance(model, Model) TODO: not actually Model
-                            assert model and not isinstance(
-                                model, (Flux1, DistributedFlux1)
-                            )
+                            assert model and not isinstance(model, DistributedFlux1)
                             assert tokenizer
                             assert sampler
 
@@ -179,9 +175,14 @@ def main(
                             ModelTask.TextToImage in model_tasks
                             or ModelTask.ImageToImage in model_tasks
                         ):
-                            assert isinstance(model, (Flux1, DistributedFlux1))
+                            assert isinstance(model, DistributedFlux1)
                             image = warmup_mflux(model=model)
-                            logger.info(f"warmed up by generating {image.size} image")
+                            if image is not None:
+                                logger.info(
+                                    f"warmed up by generating {image.size} image"
+                                )
+                            else:
+                                logger.info("warmup completed (non-primary node)")
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
@@ -189,9 +190,7 @@ def main(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
                         # assert isinstance(model, Model) TODO: not actually Model
-                        assert model and not isinstance(
-                            model, (Flux1, DistributedFlux1)
-                        )
+                        assert model and not isinstance(model, DistributedFlux1)
                         assert tokenizer
                         assert sampler
                         logger.info(f"received chat request: {str(task)[:500]}")
@@ -240,7 +239,7 @@ def main(
                     case ImageGeneration(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
-                        assert isinstance(model, (Flux1, DistributedFlux1))
+                        assert isinstance(model, DistributedFlux1)
                         logger.info(
                             f"received image generation request: {str(task)[:500]}"
                         )
@@ -306,7 +305,7 @@ def main(
                     case ImageEdits(task_params=task_params, command_id=command_id) if (
                         isinstance(current_status, RunnerReady)
                     ):
-                        assert isinstance(model, (Flux1, DistributedFlux1))
+                        assert isinstance(model, DistributedFlux1)
                         logger.info(
                             f"received image generation request: {str(task)[:500]}"
                         )
