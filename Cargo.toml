@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "networking",
-    "exo_pyo3_bindings",
-    "system_custodian",
-    "util",
+    "rust/networking",
+    "rust/exo_pyo3_bindings",
+    "rust/system_custodian",
+    "rust/util",
 ]
 
 [workspace.package]
@@ -24,9 +24,9 @@ opt-level = 3
 # Common configurations include versions, paths, features, etc.
 [workspace.dependencies]
 ## Crate members as common dependencies
-networking = { path = "networking" }
-system_custodian = { path = "system_custodian" }
-util = { path = "util" }
+networking = { path = "rust/networking" }
+system_custodian = { path = "rust/system_custodian" }
+util = { path = "rust/util" }
 
 # Proc-macro authoring tools
 syn = "2.0"
