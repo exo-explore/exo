@@ -20,7 +20,6 @@ def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
 
 async def build_base_shard(model_id: str) -> ShardMetadata:
     model_meta = await get_model_meta(model_id)
-    # print(f"build_base_shard {model_id=} {model_meta=}")
     return PipelineShardMetadata(
         model_meta=model_meta,
         device_rank=0,
@@ -92,10 +91,8 @@ class CachedShardDownloader(ShardDownloader):
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
         if (shard.model_meta.model_id, shard) in self.cache:
-            # print(f"ensure_shard cache hit {shard=}")
             return self.cache[(shard.model_meta.model_id, shard)]
 
-        # print(f"ensure_shard cache miss {shard=}")
         target_dir = await self.shard_downloader.ensure_shard(shard, config_only)
         self.cache[(shard.model_meta.model_id, shard)] = target_dir
         return target_dir
@@ -135,7 +132,6 @@ class ResumableShardDownloader(ShardDownloader):
     ) -> Path:
         allow_patterns = ["config.json"] if config_only else None
 
-        # print(f"ensure_shard {shard=} {config_only=} {allow_patterns=}")
         target_dir, _ = await download_shard(
             shard,
             self.on_progress_wrapper,
@@ -147,7 +143,6 @@ class ResumableShardDownloader(ShardDownloader):
     async def get_shard_download_status(
         self,
     ) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
-        # print("get_shard_download_status")
         async def _status_for_model(
             model_id: str,
         ) -> tuple[Path, RepoDownloadProgress]:
@@ -165,9 +160,8 @@ class ResumableShardDownloader(ShardDownloader):
 
         for task in asyncio.as_completed(tasks):
             try:
-                result = await task
-                path, progress = result
-                yield (path, progress)
+                yield await task
+            # TODO: except Exception
             except Exception as e:
                 print("Error downloading shard:", e)
 

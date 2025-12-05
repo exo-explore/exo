@@ -4,6 +4,8 @@ import asyncio
 from typing import Generator
 
 import pytest
+from _pytest.logging import LogCaptureFixture
+from loguru import logger
 
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
@@ -41,3 +43,16 @@ def get_pipeline_shard_metadata(
         end_layer=32,
         n_layers=32,
     )
+
+
+@pytest.fixture
+def caplog(caplog: LogCaptureFixture):
+    handler_id = logger.add(
+        caplog.handler,
+        format="{message}",
+        level=0,
+        filter=lambda record: record["level"].no >= caplog.handler.level,
+        enqueue=True,  # Set to 'True' if your test is spawning child processes.
+    )
+    yield caplog
+    logger.remove(handler_id)

@@ -1,4 +1,3 @@
-import inspect
 import os
 from pathlib import Path
 
@@ -34,19 +33,3 @@ LIBP2P_COMMANDS_TOPIC = "commands"
 LB_TFLOPS = 2.3
 LB_MEMBW_GBPS = 68
 LB_DISK_GBPS = 1.5
-
-
-# little helper function to get the name of the module that raised the error
-def get_caller_module_name() -> str:
-    frm = inspect.stack()[1]
-    mod = inspect.getmodule(frm[0])
-    if mod is None:
-        return "UNKNOWN MODULE"
-    return mod.__name__
-
-
-def get_error_reporting_message() -> str:
-    return (
-        f"THIS IS A BUG IN THE EXO SOFTWARE, PLEASE REPORT IT AT https://github.com/exo-explore/exo/\n"
-        f"The module that raised the error was: {get_caller_module_name()}"
-    )

@@ -77,9 +77,6 @@ class _MpEndOfStream:
     pass
 
 
-MP_END_OF_STREAM = _MpEndOfStream()
-
-
 class MpState[T]:
     def __init__(self, max_buffer_size: float):
         if max_buffer_size == inf:
@@ -133,7 +130,7 @@ class MpSender[T]:
     def close(self) -> None:
         if not self._state.closed.is_set():
             self._state.closed.set()
-        self._state.buffer.put(MP_END_OF_STREAM)
+        self._state.buffer.put(_MpEndOfStream())
         self._state.buffer.close()
 
     # == unique to Mp channels ==
@@ -177,10 +174,9 @@ class MpReceiver[T]:
 
         try:
             item = self._state.buffer.get(block=False)
-            if item == MP_END_OF_STREAM:
+            if isinstance(item, _MpEndOfStream):
                 self.close()
                 raise EndOfStream
-            assert not isinstance(item, _MpEndOfStream)
             return item
         except Empty:
             raise WouldBlock from None
@@ -193,10 +189,9 @@ class MpReceiver[T]:
             return self.receive_nowait()
         except WouldBlock:
             item = self._state.buffer.get()
-            if item == MP_END_OF_STREAM:
+            if isinstance(item, _MpEndOfStream):
                 self.close()
                 raise EndOfStream from None
-            assert not isinstance(item, _MpEndOfStream)
             return item
 
     # nb: this function will not cancel particularly well

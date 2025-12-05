@@ -13,7 +13,6 @@ dependencies = [
     "base58>=2.1.1",
     "cryptography>=45.0.5",
     "fastapi>=0.116.1",
-    "uvicorn>=0.35.0",
     "filelock>=3.18.0",
     "aiosqlite>=0.21.0",
     "networkx>=3.5",
@@ -26,7 +25,6 @@ dependencies = [
     "greenlet>=3.2.4",
     "huggingface-hub>=0.33.4",
     "psutil>=7.0.0",
-    "cobs>=1.2.2",
     "loguru>=0.7.3",
     "textual>=5.3.0",
     "exo_pyo3_bindings", # rust bindings
@@ -35,6 +33,7 @@ dependencies = [
     "mlx>=0.29.3",
     "mlx-lm>=0.28.3",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
+    "hypercorn>=0.18.0",
 ]
 
 [project.scripts]

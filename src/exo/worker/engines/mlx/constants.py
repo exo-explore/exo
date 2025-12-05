@@ -14,5 +14,3 @@ TEMPERATURE: float = 1.0
 
 # TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
 TRUST_REMOTE_CODE: bool = True
-# TODO: Do we really want this?
-HIDE_THINKING: bool = False

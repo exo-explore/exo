@@ -1,21 +1,23 @@
-import asyncio
 import os
 import time
 from collections.abc import AsyncGenerator
-from typing import final
+from typing import cast
 
-import uvicorn
-from anyio import Event as AsyncTaskEvent
+import anyio
 from anyio import create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
+from hypercorn.config import Config
+from hypercorn.typing import ASGIFramework
 from loguru import logger
 
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
+from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
@@ -46,9 +48,10 @@ from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender
+from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.event_buffer import OrderedBuffer
-from exo.worker.engines.mlx.constants import HIDE_THINKING
+
+HIDE_THINKING = False
 
 
 def chunk_to_response(
@@ -76,7 +79,6 @@ async def resolve_model_meta(model_id: str) -> ModelMetadata:
         return await get_model_meta(model_id)
 
 
-@final
 class API:
     def __init__(
         self,
@@ -101,7 +103,7 @@ class API:
         self.port = port
 
         self.paused: bool = False
-        self.paused_ev: AsyncTaskEvent = AsyncTaskEvent()
+        self.paused_ev: anyio.Event = anyio.Event()
 
         self.app = FastAPI()
         self._setup_cors()
@@ -121,7 +123,7 @@ class API:
             name="dashboard",
         )
 
-        self._chat_completion_queues: dict[CommandId, asyncio.Queue[TokenChunk]] = {}
+        self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
@@ -135,7 +137,7 @@ class API:
         self.last_completed_election = result_clock
         self.paused = False
         self.paused_ev.set()
-        self.paused_ev = AsyncTaskEvent()
+        self.paused_ev = anyio.Event()
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
@@ -210,37 +212,40 @@ class API:
     ) -> AsyncGenerator[str, None]:
         """Generate chat completion stream as JSON strings."""
 
-        self._chat_completion_queues[command_id] = asyncio.Queue()
+        try:
+            self._chat_completion_queues[command_id], recv = channel[TokenChunk]()
 
-        finished = False
-        is_thinking = False
-        while not finished:
-            # TODO: how long should this timeout be?
-            chunk = await asyncio.wait_for(
-                self._chat_completion_queues[command_id].get(), timeout=600
+            is_thinking = False
+            with recv as token_chunks:
+                async for chunk in token_chunks:
+                    if HIDE_THINKING:
+                        if chunk.text == "<think>":
+                            is_thinking = True
+                        if chunk.text == "</think>":
+                            is_thinking = False
+                    chunk_response: ChatCompletionResponse = chunk_to_response(
+                        chunk, command_id
+                    )
+                    if not (is_thinking and HIDE_THINKING):
+                        logger.debug(f"chunk_response: {chunk_response}")
+                        yield f"data: {chunk_response.model_dump_json()}\n\n"
+
+                    if chunk.finish_reason is not None:
+                        yield "data: [DONE]\n\n"
+                        break
+
+        except anyio.get_cancelled_exc_class():
+            # TODO: TaskCancelled
+            """
+            self.command_sender.send_nowait(
+                ForwarderCommand(origin=self.node_id, command=command)
             )
-            assert isinstance(chunk, TokenChunk)
-            # TODO: Do we want this?
-            if HIDE_THINKING:
-                if chunk.text == "<think>":
-                    chunk.text = "\n"
-                if chunk.text == "</think>":
-                    chunk.text = "\n"
-            chunk_response: ChatCompletionResponse = chunk_to_response(
-                chunk, command_id
-            )
-            logger.debug(f"chunk_response: {chunk_response}")
-
-            if not HIDE_THINKING or not is_thinking:
-                yield f"data: {chunk_response.model_dump_json()}\n\n"
-
-            if chunk.finish_reason is not None:
-                yield "data: [DONE]\n\n"
-                finished = True
-
-        command = TaskFinished(finished_command_id=command_id)
-        await self._send(command)
-        del self._chat_completion_queues[command_id]
+            """
+            raise
+        finally:
+            command = TaskFinished(finished_command_id=command_id)
+            await self._send(command)
+            del self._chat_completion_queues[command_id]
 
     async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
         logger.warning(
@@ -298,29 +303,27 @@ class API:
         )
 
     async def run(self):
-        uvicorn_config = uvicorn.Config(
-            self.app, host="0.0.0.0", port=self.port, access_log=False
-        )
-        uvicorn_server = uvicorn.Server(uvicorn_config)
+        cfg = Config()
+        cfg.bind = f"0.0.0.0:{self.port}"
+        # nb: shared.logging needs updating if any of this changes
+        cfg.accesslog = None
+        cfg.errorlog = "-"
+        cfg.logger_class = InterceptLogger
 
         async with create_task_group() as tg:
             self._tg = tg
             logger.info("Starting API")
-            tg.start_soon(uvicorn_server.serve)
             tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
-            tg.start_soon(self._print_banner_when_ready, uvicorn_server)
+            print_startup_banner(self.port)
+            await serve(
+                cast(ASGIFramework, self.app),
+                cfg,
+                shutdown_trigger=lambda: anyio.sleep_forever(),
+            )
+
         self.command_sender.close()
         self.global_event_receiver.close()
-
-    async def _print_banner_when_ready(self, uvicorn_server: uvicorn.Server):
-        """Wait for the uvicorn server to be ready, then print the startup banner."""
-        # TODO: Is this the best condition to check for?
-        #  The point is this should log when exo is ready.
-        while not uvicorn_server.started:
-            await asyncio.sleep(0.1)
-
-        print_startup_banner(self.port)
 
     async def _apply_state(self):
         with self.global_event_receiver as events:
@@ -333,7 +336,7 @@ class API:
                         and event.command_id in self._chat_completion_queues
                     ):
                         assert isinstance(event.chunk, TokenChunk)
-                        self._chat_completion_queues[event.command_id].put_nowait(
+                        await self._chat_completion_queues[event.command_id].send(
                             event.chunk
                         )
 

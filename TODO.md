@@ -17,6 +17,8 @@
 23. Do we need cache_limit? We went back and forth on that a lot because we thought it might be causing issues. One problem is it sets it relative to model size. So if you have multiple models loaded in it will take the most recent model size for the cache_limit. This is problematic if you launch DeepSeek -> Llama for example.
 24. further openai/lmstudio api compatibility
 25. Rethink retry logic
+26. Task cancellation. When API http request gets cancelled, it should cancel corresponding task.
+27. Log cleanup - per-module log filters and default to DEBUG log levels
 
 Potential refactors:
 

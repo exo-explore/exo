@@ -6,6 +6,7 @@ from typing import Self
 
 import anyio
 from anyio.abc import TaskGroup
+from loguru import logger
 from pydantic import PositiveInt
 
 import exo.routing.topics as topics
@@ -14,7 +15,7 @@ from exo.master.main import Master
 from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
-from exo.shared.logging import logger, logger_cleanup, logger_setup
+from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.commands import KillCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
