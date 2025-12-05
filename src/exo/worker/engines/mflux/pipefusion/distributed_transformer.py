@@ -5,6 +5,7 @@ from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mlx.utils_mlx import mx_barrier
 from exo.worker.runner.bootstrap import logger
 
 
@@ -171,6 +172,7 @@ class DistributedTransformer:
                     [encoder_hidden_states, hidden_states], axis=1
                 )
                 mx.eval(hidden_states)
+                mx_barrier(self.group)
                 logger.info(f"receiving single block inputs: {hidden_states.shape}")
                 hidden_states = mx.distributed.recv_like(
                     hidden_states, self.rank - 1, group=self.group
@@ -192,6 +194,7 @@ class DistributedTransformer:
             # Send to next stage if not last
             if not self.is_last_stage:
                 mx.eval(hidden_states)
+                mx_barrier(self.group)
                 logger.info(f"sending single block outputs: {hidden_states.shape}")
                 mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
 
