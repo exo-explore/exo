@@ -32,6 +32,7 @@ def shard_flux_transformer(
     mx.eval(model.parameters())
 
     # TODO: Do we need this?
+    logger.info("between evals")
     mx.eval(model)
 
     # Synchronize processes before generation to avoid timeout
