@@ -12,14 +12,15 @@ from exo.shared.types.profiling import (
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
-from exo.worker.utils.macmon import (
+
+from .macmon import (
     MacMonError,
     Metrics,
 )
-from exo.worker.utils.macmon import (
+from .macmon import (
     get_metrics_async as macmon_get_metrics_async,
 )
-from exo.worker.utils.system_info import (
+from .system_info import (
     get_friendly_name,
     get_model_and_chip,
     get_network_interfaces,

@@ -1,10 +1,9 @@
+import json
 import os
 import resource
 import time
 from pathlib import Path
 from typing import Any, Callable, cast
-import json
-
 
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model

@@ -50,6 +50,7 @@ from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDown
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 from exo.worker.utils import start_polling_memory_metrics, start_polling_node_metrics
+from exo.worker.utils.net_profile import connect_all
 
 
 class Worker:
@@ -122,6 +123,7 @@ class Worker:
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)
             tg.start_soon(self._forward_events)
+            tg.start_soon(self._poll_connection_updates)
             # TODO: This is a little gross, but not too bad
             for msg in self._initial_connection_messages:
                 await self.event_sender.send(
@@ -393,6 +395,26 @@ class Worker:
                 self.local_event_index += 1
                 await self.local_event_sender.send(fe)
                 self.out_for_delivery[event.event_id] = fe
+
+    async def _poll_connection_updates(self):
+        while True:
+            # TODO: EdgeDeleted
+            edges = set(self.state.topology.list_connections())
+            conns = await connect_all(self.state.topology)
+            for nid in conns:
+                for ip in conns[nid]:
+                    edge = Connection(
+                        local_node_id=self.node_id,
+                        send_back_node_id=nid,
+                        send_back_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/8000")
+                        if "." in ip
+                        else Multiaddr(address=f"/ip6/{ip}/tcp/8000"),
+                    )
+                    if edge not in edges:
+                        logger.debug(f"manually discovered {edge=}")
+                        await self.event_sender.send(TopologyEdgeCreated(edge=edge))
+
+            await anyio.sleep(10)
 
 
 def event_relevant_to_worker(event: Event, worker: Worker):
