@@ -202,14 +202,7 @@ class DistributedTransformer:
                 logger.info("sent single block outputs")
                 mx.eval(hidden_states)
 
-        # === PHASE 5: Final Projection (last stage only) ===
-        if self.is_last_stage:
-            # Extract image portion (remove text embeddings prefix)
-            hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
-            hidden_states = transformer.norm_out(hidden_states, text_embeddings)
-            hidden_states = transformer.proj_out(hidden_states)
-
-        # === PHASE 6: All-gather Final Output ===
+        # === PHASE 5: All-gather Final Output ===
         # All stages participate to receive the final output
         logger.info("gathering final output")
         mx.eval(hidden_states)
@@ -221,6 +214,12 @@ class DistributedTransformer:
 
         mx.eval(hidden_states)
         logger.info("gathered final output")
+
+        # === PHASE 6: Final Projection (last stage only) ===
+        # Extract image portion (remove text embeddings prefix)
+        hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+        hidden_states = transformer.norm_out(hidden_states, text_embeddings)
+        hidden_states = transformer.proj_out(hidden_states)
 
         return hidden_states
 
