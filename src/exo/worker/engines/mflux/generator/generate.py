@@ -7,6 +7,7 @@ from PIL import Image
 
 from exo.shared.types.api import ImageGenerationTaskParams
 from exo.shared.types.worker.runner_response import ImageGenerationResponse
+from exo.worker.engines.mflux.distributed_flux import DistributedFlux1
 from exo.worker.engines.mflux.generator.flux1 import generate_image
 
 image_generation_stream = mx.new_stream(mx.default_device())
@@ -31,14 +32,21 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
     return (1024, 1024)
 
 
-def warmup_mflux(model: Flux1) -> Image.Image:
+def warmup_mflux(model: Flux1 | DistributedFlux1) -> Image.Image:
+    # Extract underlying model if wrapped
+    underlying_model = model.model if isinstance(model, DistributedFlux1) else model
     return generate_image(
-        model=model, prompt="Warmup", height=256, width=256, quality="low", seed=2
+        model=underlying_model,
+        prompt="Warmup",
+        height=256,
+        width=256,
+        quality="low",
+        seed=2,
     )
 
 
 def mflux_generate(
-    model: Flux1,
+    model: Flux1 | DistributedFlux1,
     task: ImageGenerationTaskParams,
 ) -> Generator[ImageGenerationResponse]:
     # Parse parameters
@@ -47,8 +55,12 @@ def mflux_generate(
 
     seed = 2  # TODO: not in OAI API?
 
+    # Extract underlying model if wrapped
+    # TODO: In future, use model.group for async pipeline when distributed
+    underlying_model = model.model if isinstance(model, DistributedFlux1) else model
+
     image = generate_image(
-        model=model,
+        model=underlying_model,
         prompt=task.prompt,
         height=height,
         width=width,
