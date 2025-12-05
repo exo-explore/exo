@@ -15,6 +15,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.runner.bootstrap import logger
 
 
 class DistributedFlux1:
@@ -128,6 +129,7 @@ class DistributedFlux1:
 
         config = Config(num_inference_steps=steps, height=height, width=width)
         image = self._generate_image(settings=config, prompt=prompt, seed=seed)
+        logger.info("generated image")
 
         # Only rank 0 returns the actual image
         if self.is_first_stage:

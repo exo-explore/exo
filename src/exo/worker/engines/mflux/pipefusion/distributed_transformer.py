@@ -1,11 +1,11 @@
 from typing import Any
 
-from exo.worker.runner.bootstrap import logger
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.runner.bootstrap import logger
 
 
 class DistributedTransformer:
@@ -118,6 +118,8 @@ class DistributedTransformer:
         if self.has_joint_blocks:
             # Receive from previous stage (if not first stage)
             if not self.is_first_stage:
+                mx.eval(hidden_states)
+                mx.eval(encoder_hidden_states)
                 logger.info("receiving joint block inputs")
                 hidden_states = mx.distributed.recv_like(
                     hidden_states, self.rank - 1, group=self.group
@@ -128,6 +130,7 @@ class DistributedTransformer:
 
             # Run assigned joint blocks
             for idx in range(self.joint_start, self.joint_end):
+                mx.eval(hidden_states)
                 logger.info(f"running joint block {idx}")
                 block = transformer.transformer_blocks[idx]
                 encoder_hidden_states, hidden_states = block(
@@ -139,6 +142,7 @@ class DistributedTransformer:
 
         # === PHASE 3: Joint→Single Transition ===
         if self.owns_concat_stage:
+            mx.eval(hidden_states)
             logger.info("concatenating")
             # Concatenate encoder and hidden states
             concatenated = mx.concatenate(
@@ -153,6 +157,7 @@ class DistributedTransformer:
                 mx.distributed.send(concatenated, self.rank + 1, group=self.group)
                 # This stage is done with blocks, but will participate in all_gather
         elif self.has_joint_blocks and not self.is_last_stage:
+            mx.eval(hidden_states)
             logger.info("sending joint block outputs")
             # Send joint block outputs to next stage (which has more joint blocks)
             mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
@@ -165,13 +170,17 @@ class DistributedTransformer:
                 hidden_states = mx.concatenate(
                     [encoder_hidden_states, hidden_states], axis=1
                 )
+                mx.eval(hidden_states)
                 logger.info(f"receiving single block inputs: {hidden_states.shape}")
                 hidden_states = mx.distributed.recv_like(
                     hidden_states, self.rank - 1, group=self.group
                 )
+                mx.eval(hidden_states)
+                logger.info("received")
 
             # Run assigned single blocks
             for idx in range(self.single_start, self.single_end):
+                mx.eval(hidden_states)
                 logger.info(f"running single block: {idx}")
                 block = transformer.single_transformer_blocks[idx]
                 hidden_states = block(
@@ -182,6 +191,7 @@ class DistributedTransformer:
 
             # Send to next stage if not last
             if not self.is_last_stage:
+                mx.eval(hidden_states)
                 logger.info(f"sending single block outputs: {hidden_states.shape}")
                 mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
 
@@ -195,9 +205,13 @@ class DistributedTransformer:
         # === PHASE 6: All-gather Final Output ===
         # All stages participate to receive the final output
         logger.info("gathering final output")
+        mx.eval(hidden_states)
+        logger.info(f"hidden_states: {hidden_states.shape}")
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
+
+        mx.eval(hidden_states)
         logger.info("gathered final output")
 
         return hidden_states
