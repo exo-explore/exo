@@ -1,7 +1,7 @@
 from typing import Any
 
 import mlx.core as mx
-from mflux.config.runtime_config import RuntimeConfig
+from mflux.config.runtime_config import RuntimeConfig, logging
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -158,12 +158,12 @@ class DistributedTransformer:
         if self.has_single_blocks:
             # Receive from previous stage if we didn't do concatenation
             if not self.owns_concat_stage and not self.is_first_stage:
-                hidden_states = mx.concatenate(
+                concatenated = mx.concatenate(
                     [encoder_hidden_states, hidden_states], axis=1
                 )
-                mx_barrier(self.group)
+
                 hidden_states = mx.distributed.recv_like(
-                    hidden_states, self.rank - 1, group=self.group
+                    concatenated, self.rank - 1, group=self.group
                 )
 
             # Run assigned single blocks
@@ -177,14 +177,15 @@ class DistributedTransformer:
 
             # Send to next stage if not last
             if not self.is_last_stage:
-                mx_barrier(self.group)
                 hidden_states = mx.distributed.send(
                     hidden_states, self.rank + 1, group=self.group
                 )
 
         # === PHASE 5: All-gather Final Output ===
         # All stages participate to receive the final output
-        mx_barrier(self.group)
+        if not self.has_joint_blocks:
+            mx.eval(hidden_states)
+            logging.info("gathering")
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
