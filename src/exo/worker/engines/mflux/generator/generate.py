@@ -1,14 +1,12 @@
 import io
-from typing import Generator
+from typing import Generator, Literal
 
 import mlx.core as mx
-from mflux.models.flux.variants.txt2img.flux import Flux1
 from PIL import Image
 
 from exo.shared.types.api import ImageGenerationTaskParams
 from exo.shared.types.worker.runner_response import ImageGenerationResponse
 from exo.worker.engines.mflux.distributed_flux import DistributedFlux1
-from exo.worker.engines.mflux.generator.flux1 import generate_image
 
 image_generation_stream = mx.new_stream(mx.default_device())
 
@@ -32,11 +30,13 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
     return (1024, 1024)
 
 
-def warmup_mflux(model: Flux1 | DistributedFlux1) -> Image.Image:
-    # Extract underlying model if wrapped
-    underlying_model = model.model if isinstance(model, DistributedFlux1) else model
-    return generate_image(
-        model=underlying_model,
+def warmup_mflux(model: DistributedFlux1) -> Image.Image | None:
+    """
+    Warmup the model by generating a small image.
+
+    Returns the image for rank 0, None for other ranks in distributed mode.
+    """
+    return model.generate(
         prompt="Warmup",
         height=256,
         width=256,
@@ -46,27 +46,32 @@ def warmup_mflux(model: Flux1 | DistributedFlux1) -> Image.Image:
 
 
 def mflux_generate(
-    model: Flux1 | DistributedFlux1,
+    model: DistributedFlux1,
     task: ImageGenerationTaskParams,
-) -> Generator[ImageGenerationResponse]:
+) -> Generator[ImageGenerationResponse, None, None]:
+    """
+    Generate an image using the DistributedFlux1 model.
+
+    For distributed inference, only rank 0 yields the response.
+    Other ranks participate in the pipeline but yield nothing.
+    """
     # Parse parameters
     width, height = parse_size(task.size)
-    quality = task.quality or "medium"
-
+    quality: Literal["low", "medium", "high"] = task.quality or "medium"
     seed = 2  # TODO: not in OAI API?
 
-    # Extract underlying model if wrapped
-    # TODO: In future, use model.group for async pipeline when distributed
-    underlying_model = model.model if isinstance(model, DistributedFlux1) else model
-
-    image = generate_image(
-        model=underlying_model,
+    # Generate using the model's generate method
+    image = model.generate(
         prompt=task.prompt,
         height=height,
         width=width,
         quality=quality,
         seed=seed,
     )
+
+    # Only rank 0 returns the image
+    if image is None:
+        return
 
     buffer = io.BytesIO()
     image_format = task.output_format.upper()
