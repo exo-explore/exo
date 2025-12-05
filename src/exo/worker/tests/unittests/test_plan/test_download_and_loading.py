@@ -35,7 +35,9 @@ def test_plan_requests_download_when_waiting_and_shard_not_downloaded():
         node_to_runner={NODE_A: RUNNER_1_ID},
         runner_to_shard={RUNNER_1_ID: shard},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerWaitingForModel()
     )
@@ -76,7 +78,9 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
         node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         runner_to_shard={RUNNER_1_ID: shard1, RUNNER_2_ID: shard2},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerWaitingForModel()
     )
@@ -126,7 +130,9 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
         node_to_runner={NODE_A: RUNNER_1_ID},
         runner_to_shard={RUNNER_1_ID: shard},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerWaitingForModel()
     )
@@ -173,7 +179,9 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         runner_to_shard={RUNNER_1_ID: shard1, RUNNER_2_ID: shard2},
     )
 
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerWaitingForModel()
     )

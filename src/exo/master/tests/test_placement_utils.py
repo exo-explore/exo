@@ -5,6 +5,7 @@ import pytest
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_hosts_from_subgraph,
+    get_mlx_ibv_coordinators,
     get_shard_assignments,
     get_smallest_cycles,
 )
@@ -12,6 +13,7 @@ from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
 from exo.shared.types.topology import Connection, NodeInfo
 from exo.shared.types.worker.shards import Sharding
 
@@ -261,3 +263,135 @@ def test_get_hosts_from_subgraph(
     ]
     for expected_host in expected_hosts:
         assert expected_host in hosts
+
+
+def test_get_mlx_ibv_coordinators(
+    topology: Topology,
+    create_node: Callable[[int, NodeId | None], NodeInfo],
+    create_connection: Callable[[NodeId, NodeId, int | None], Connection],
+):
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+    node_c_id = NodeId()
+
+    node_a = create_node(500 * 1024, node_a_id)
+    node_b = create_node(500 * 1024, node_b_id)
+    node_c = create_node(1000 * 1024, node_c_id)
+
+    conn_a_b = create_connection(node_a_id, node_b_id, 5001)
+    conn_b_a = create_connection(node_b_id, node_a_id, 5002)
+    conn_b_c = create_connection(node_b_id, node_c_id, 5003)
+    conn_c_b = create_connection(node_c_id, node_b_id, 5004)
+    conn_c_a = create_connection(node_c_id, node_a_id, 5005)
+    conn_a_c = create_connection(node_a_id, node_c_id, 5006)
+
+    # Update node profiles with network interfaces before adding to topology
+    assert node_a.node_profile is not None
+    assert node_b.node_profile is not None
+    assert node_c.node_profile is not None
+
+    node_a.node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=node_a.node_profile.memory,
+        network_interfaces=[
+            NetworkInterfaceInfo(
+                name="en3",
+                ip_address=conn_a_b.send_back_multiaddr.ip_address,
+            ),
+            NetworkInterfaceInfo(
+                name="en4",
+                ip_address=conn_a_c.send_back_multiaddr.ip_address,
+            ),
+        ],
+        system=node_a.node_profile.system,
+    )
+    node_b.node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=node_b.node_profile.memory,
+        network_interfaces=[
+            NetworkInterfaceInfo(
+                name="en3",
+                ip_address=conn_b_a.send_back_multiaddr.ip_address,
+            ),
+            NetworkInterfaceInfo(
+                name="en4",
+                ip_address=conn_b_c.send_back_multiaddr.ip_address,
+            ),
+        ],
+        system=node_b.node_profile.system,
+    )
+    node_c.node_profile = NodePerformanceProfile(
+        model_id="test",
+        chip_id="test",
+        friendly_name="test",
+        memory=node_c.node_profile.memory,
+        network_interfaces=[
+            NetworkInterfaceInfo(
+                name="en3",
+                ip_address=conn_c_b.send_back_multiaddr.ip_address,
+            ),
+            NetworkInterfaceInfo(
+                name="en4",
+                ip_address=conn_c_a.send_back_multiaddr.ip_address,
+            ),
+        ],
+        system=node_c.node_profile.system,
+    )
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
+
+    topology.add_connection(conn_a_b)
+    topology.add_connection(conn_b_a)
+    topology.add_connection(conn_b_c)
+    topology.add_connection(conn_c_b)
+    topology.add_connection(conn_c_a)
+    topology.add_connection(conn_a_c)
+
+    cycle = [node_a, node_b, node_c]
+
+    # act
+    coordinators = get_mlx_ibv_coordinators(
+        cycle, coordinator_port=5000, cycle_digraph=topology
+    )
+
+    # assert
+    assert len(coordinators) == 3
+    assert node_a_id in coordinators
+    assert node_b_id in coordinators
+    assert node_c_id in coordinators
+
+    # All coordinators should have IP:PORT format
+    for node_id, coordinator in coordinators.items():
+        assert ":" in coordinator, (
+            f"Coordinator for {node_id} should have ':' separator"
+        )
+
+    # Verify port is correct
+    for node_id, coordinator in coordinators.items():
+        assert coordinator.endswith(":5000"), (
+            f"Coordinator for {node_id} should use port 5000"
+        )
+
+    # Rank 0 (node_a) treats this as the listen socket so should listen on all
+    # IPs
+    assert coordinators[node_a_id].startswith("0.0.0.0:"), (
+        "Rank 0 node should use localhost as coordinator"
+    )
+
+    # Non-rank-0 nodes should use the specific IP from their connection to rank 0
+    # node_b uses the IP from conn_b_a (node_b -> node_a)
+    assert coordinators[node_b_id] == (
+        f"{conn_b_a.send_back_multiaddr.ip_address}:5000"
+    ), "node_b should use the IP from conn_b_a"
+
+    # node_c uses the IP from conn_c_a (node_c -> node_a)
+    assert coordinators[node_c_id] == (
+        f"{conn_c_a.send_back_multiaddr.ip_address}:5000"
+    ), "node_c should use the IP from conn_c_a"

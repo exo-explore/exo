@@ -40,7 +40,9 @@ def test_plan_forwards_pending_chat_completion_when_runner_ready():
         node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerReady()
     )
@@ -86,7 +88,9 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
         node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         runner_to_shard={RUNNER_1_ID: shard1, RUNNER_2_ID: shard2},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerReady()
     )
@@ -131,7 +135,9 @@ def test_plan_does_not_forward_tasks_for_other_instances():
         node_to_runner={NODE_A: RUNNER_1_ID},
         runner_to_shard={RUNNER_1_ID: shard},
     )
-    bound_instance = BoundInstance(instance=local_instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=local_instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerReady()
     )
@@ -175,7 +181,9 @@ def test_plan_ignores_non_pending_or_non_chat_tasks():
         node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
 
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerReady()
@@ -236,7 +244,9 @@ def test_plan_returns_none_when_nothing_to_do():
         node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerRunning()
     )

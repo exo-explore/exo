@@ -8,7 +8,7 @@ from loguru import logger
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_hosts_from_subgraph,
-    get_mlx_ibv_coordinator,
+    get_mlx_ibv_coordinators,
     get_mlx_ibv_devices_matrix,
     get_shard_assignments,
     get_smallest_cycles,
@@ -110,15 +110,16 @@ def get_instance_placements_after_create(
                 selected_cycle,
                 cycle_digraph,
             )
-            mlx_ibv_coordinator = get_mlx_ibv_coordinator(
+            mlx_ibv_coordinators = get_mlx_ibv_coordinators(
                 selected_cycle,
                 coordinator_port=random_ephemeral_port(),
+                cycle_digraph=cycle_digraph,
             )
             target_instances[instance_id] = MlxJacclInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 ibv_devices=mlx_ibv_devices,
-                ibv_coordinator=mlx_ibv_coordinator,
+                ibv_coordinators=mlx_ibv_coordinators,
             )
         case InstanceMeta.MlxRing:
             hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)

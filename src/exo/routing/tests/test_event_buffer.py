@@ -95,7 +95,7 @@ async def test_ingest_drops_duplicate_indices(buffer: OrderedBuffer[Event]):
 
     buffer.ingest(*make_indexed_event(0))
     buffer.ingest(*event2_first)
-    
+
     with pytest.raises(AssertionError):
         buffer.ingest(*event2_second)  # This duplicate should be ignored
 

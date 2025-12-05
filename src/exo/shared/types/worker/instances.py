@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import model_validator
 
-from exo.shared.types.common import Host, Id
+from exo.shared.types.common import Host, Id, NodeId
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
@@ -30,7 +30,7 @@ class MlxRingInstance(BaseInstance):
 
 class MlxJacclInstance(BaseInstance):
     ibv_devices: list[list[str | None]]
-    ibv_coordinator: str
+    ibv_coordinators: dict[NodeId, str]
 
 
 # TODO: Single node instance
@@ -40,6 +40,7 @@ Instance = MlxRingInstance | MlxJacclInstance
 class BoundInstance(CamelCaseModel):
     instance: Instance
     bound_runner_id: RunnerId
+    bound_node_id: NodeId
 
     @property
     def bound_shard(self) -> ShardMetadata:

@@ -36,7 +36,9 @@ def test_plan_kills_runner_when_instance_missing():
         node_to_runner={NODE_A: RUNNER_1_ID},
         runner_to_shard={RUNNER_1_ID: shard},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     runner = FakeRunnerSupervisor(bound_instance=bound_instance, status=RunnerReady())
 
     runners = {RUNNER_1_ID: runner}
@@ -71,7 +73,9 @@ def test_plan_kills_runner_when_sibling_failed():
         node_to_runner={NODE_A: RUNNER_1_ID, NODE_B: RUNNER_2_ID},
         runner_to_shard={RUNNER_1_ID: shard1, RUNNER_2_ID: shard2},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     runner = FakeRunnerSupervisor(bound_instance=bound_instance, status=RunnerReady())
 
     runners = {RUNNER_1_ID: runner}
@@ -143,7 +147,9 @@ def test_plan_does_not_create_runner_when_supervisor_already_present():
         node_to_runner={NODE_A: RUNNER_1_ID},
         runner_to_shard={RUNNER_1_ID: shard},
     )
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     runner = FakeRunnerSupervisor(bound_instance=bound_instance, status=RunnerReady())
 
     runners = {RUNNER_1_ID: runner}

@@ -40,6 +40,7 @@ def em(
 #                 TESTS                   #
 # ======================================= #
 
+
 @pytest.fixture(autouse=True)
 def fast_election_timeout(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("exo.shared.election.DEFAULT_ELECTION_TIMEOUT", 0.1)

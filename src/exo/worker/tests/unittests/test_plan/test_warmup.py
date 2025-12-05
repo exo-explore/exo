@@ -35,7 +35,9 @@ def test_plan_starts_warmup_for_non_zero_rank_when_all_loaded_or_warming():
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
 
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_2_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_2_ID, bound_node_id=NODE_B
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerLoaded()
     )
@@ -75,7 +77,9 @@ def test_plan_starts_warmup_for_rank_zero_after_others_warming():
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
 
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerLoaded()
     )
@@ -114,7 +118,9 @@ def test_plan_does_not_start_warmup_for_non_zero_rank_until_all_loaded_or_warmin
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
 
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_2_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_2_ID, bound_node_id=NODE_B
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerLoaded()
     )
@@ -153,7 +159,9 @@ def test_plan_does_not_start_warmup_for_rank_zero_until_others_warming():
         runner_to_shard={RUNNER_1_ID: shard0, RUNNER_2_ID: shard1},
     )
 
-    bound_instance = BoundInstance(instance=instance, bound_runner_id=RUNNER_1_ID)
+    bound_instance = BoundInstance(
+        instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
+    )
     local_runner = FakeRunnerSupervisor(
         bound_instance=bound_instance, status=RunnerLoaded()
     )

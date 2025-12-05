@@ -95,7 +95,9 @@ def _create_runner(
 
         return CreateRunner(
             instance_id=instance.instance_id,
-            bound_instance=BoundInstance(instance=instance, bound_runner_id=runner_id),
+            bound_instance=BoundInstance(
+                instance=instance, bound_runner_id=runner_id, bound_node_id=node_id
+            ),
         )
 
 

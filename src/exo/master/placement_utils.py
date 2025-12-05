@@ -269,20 +269,31 @@ def _find_interface_name_for_ip(
     return None
 
 
-def get_mlx_ibv_coordinator(
+def get_mlx_ibv_coordinators(
     selected_cycle: list[NodeInfo],
     coordinator_port: int,
-) -> str:
-    """Get the coordinator address for MLX IBV (rank 0 device).
+    cycle_digraph: Topology,
+) -> dict[NodeId, str]:
+    """Get the coordinator addresses for MLX IBV (rank 0 device).
 
-    Selects a non-thunderbolt IP address from rank 0 node as a heuristic for
-    ethernet accessibility. Returns address in format "X.X.X.X:PORT".
+    Select an IP address that each node can reach for the rank 0 node. Returns
+    address in format "X.X.X.X:PORT" per node.
     """
     rank_0_node = selected_cycle[0]
     logger.info(f"Selecting coordinator from rank 0 node: {rank_0_node.node_id}")
-    assert rank_0_node.node_profile is not None
-    for iface in rank_0_node.node_profile.network_interfaces:
-        if iface.name == "en0" and "." in iface.ip_address:
-            return f"{iface.ip_address}:{coordinator_port}"
 
-    raise ValueError("No en0 iface found for device")
+    def get_ip_for_node(n: NodeInfo) -> str:
+        if n.node_id == rank_0_node.node_id:
+            return "0.0.0.0"
+
+        for ip in _find_connection_ip(n, rank_0_node, cycle_digraph):
+            return ip
+
+        logger.warning(
+            f"Failed to find directly connected ip between {n.node_id} and {rank_0_node.node_id}"
+        )
+        raise ValueError("Current ibv backend requires all-to-all rdma connections")
+
+    return {
+        n.node_id: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle
+    }

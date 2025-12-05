@@ -166,28 +166,28 @@ async def test_master():
             events[1].event.instance.shard_assignments.runner_to_shard.keys()
         )[0]
         assert events[1].event.instance == MlxRingInstance(
-                instance_id=events[1].event.instance.instance_id,
-                shard_assignments=ShardAssignments(
-                    model_id=ModelId("llama-3.2-1b"),
-                    runner_to_shard={
-                        (runner_id): PipelineShardMetadata(
-                            start_layer=0,
-                            end_layer=16,
+            instance_id=events[1].event.instance.instance_id,
+            shard_assignments=ShardAssignments(
+                model_id=ModelId("llama-3.2-1b"),
+                runner_to_shard={
+                    (runner_id): PipelineShardMetadata(
+                        start_layer=0,
+                        end_layer=16,
+                        n_layers=16,
+                        model_meta=ModelMetadata(
+                            model_id=ModelId("llama-3.2-1b"),
+                            pretty_name="Llama 3.2 1B",
                             n_layers=16,
-                            model_meta=ModelMetadata(
-                                model_id=ModelId("llama-3.2-1b"),
-                                pretty_name="Llama 3.2 1B",
-                                n_layers=16,
-                                storage_size=Memory.from_bytes(678948),
-                            ),
-                            device_rank=0,
-                            world_size=1,
-                        )
-                    },
-                    node_to_runner={node_id: runner_id},
-                ),
-                hosts=[],
-            )
+                            storage_size=Memory.from_bytes(678948),
+                        ),
+                        device_rank=0,
+                        world_size=1,
+                    )
+                },
+                node_to_runner={node_id: runner_id},
+            ),
+            hosts=[],
+        )
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
         assert isinstance(events[2].event.task, ChatCompletionTask)
