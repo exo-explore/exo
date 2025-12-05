@@ -46,6 +46,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mflux.distributed_flux import DistributedFlux1
 from exo.worker.engines.mflux.generator.generate import mflux_generate, warmup_mflux
 from exo.worker.engines.mflux.utils_mflux import initialize_mflux
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
@@ -158,7 +159,9 @@ def main(
                         logger.info(f"warming up inference for instance: {instance}")
                         if ModelTask.TextGeneration in model_tasks:
                             # assert isinstance(model, Model) TODO: not actually Model
-                            assert model and not isinstance(model, Flux1)
+                            assert model and not isinstance(
+                                model, (Flux1, DistributedFlux1)
+                            )
                             assert tokenizer
                             assert sampler
 
@@ -176,7 +179,7 @@ def main(
                             ModelTask.TextToImage in model_tasks
                             or ModelTask.ImageToImage in model_tasks
                         ):
-                            assert isinstance(model, Flux1)
+                            assert isinstance(model, (Flux1, DistributedFlux1))
                             image = warmup_mflux(model=model)
                             logger.info(f"warmed up by generating {image.size} image")
 
@@ -186,7 +189,9 @@ def main(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
                         # assert isinstance(model, Model) TODO: not actually Model
-                        assert model and not isinstance(model, Flux1)
+                        assert model and not isinstance(
+                            model, (Flux1, DistributedFlux1)
+                        )
                         assert tokenizer
                         assert sampler
                         logger.info(f"received chat request: {str(task)[:500]}")
@@ -235,7 +240,7 @@ def main(
                     case ImageGeneration(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
-                        assert isinstance(model, Flux1)
+                        assert isinstance(model, (Flux1, DistributedFlux1))
                         logger.info(
                             f"received image generation request: {str(task)[:500]}"
                         )
@@ -301,7 +306,7 @@ def main(
                     case ImageEdits(task_params=task_params, command_id=command_id) if (
                         isinstance(current_status, RunnerReady)
                     ):
-                        assert isinstance(model, Flux1)
+                        assert isinstance(model, (Flux1, DistributedFlux1))
                         logger.info(
                             f"received image generation request: {str(task)[:500]}"
                         )
