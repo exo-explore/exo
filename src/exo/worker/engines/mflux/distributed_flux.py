@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
 from mflux.config.config import Config
-from exo.worker.runner.bootstrap import logger
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
 from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
@@ -261,7 +260,6 @@ class DistributedFlux1:
         # Scale model input if needed by the scheduler
         latents = config.scheduler.scale_model_input(latents, t)
 
-        logger.info("running transformer")
         # Predict noise (communication happens in block wrappers)
         noise = model.transformer(
             t=t,
