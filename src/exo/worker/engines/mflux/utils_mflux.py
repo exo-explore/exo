@@ -1,4 +1,3 @@
-from loguru import logger
 from mflux.config.model_config import ModelConfig
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
@@ -8,6 +7,7 @@ from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mflux.distributed_flux import DistributedFlux1
 from exo.worker.engines.mflux.shard_mflux import shard_flux_transformer
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init
+from exo.worker.runner.bootstrap import logger
 
 
 def initialize_mflux(bound_instance: BoundInstance) -> DistributedFlux1:
