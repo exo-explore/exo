@@ -2,9 +2,6 @@ name: ci-pipeline
 
 on:
   push:
-    branches:
-      - staging
-      - main
   pull_request:
     branches:
       - staging
@@ -90,6 +87,24 @@ jobs:
         shell: bash
 
       - uses: ./.github/actions/typecheck
+
+  nix-flake-check:
+    name: Check Nix flake
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Run nix flake check
+        run: |
+          nix flake check
+        shell: bash
 
 #  ci:
 #    needs: typecheck

@@ -9,6 +9,11 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Provides formatting infrastructure:
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   # TODO: figure out caching story
@@ -26,6 +31,7 @@
         "aarch64-darwin"
         "aarch64-linux"
       ];
+      fenixToolchain = system: inputs.fenix.packages.${system}.complete;
     in
     inputs.flake-utils.lib.eachSystem systems (
       system:
@@ -34,8 +40,19 @@
           inherit system;
           overlays = [ inputs.fenix.overlays.default ];
         };
+        treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+          programs.ruff-format.enable = true;
+          programs.ruff-format.excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
+          programs.rustfmt.enable = true;
+          programs.rustfmt.package = (fenixToolchain system).rustfmt;
+          programs.nixpkgs-fmt.enable = true;
+        };
       in
       {
+        formatter = treefmtEval.config.build.wrapper;
+        checks.formatting = treefmtEval.config.build.check inputs.self;
+
         devShells.default = pkgs.mkShell {
           packages =
             with pkgs;
@@ -47,7 +64,7 @@
               basedpyright
 
               # RUST
-              (fenix.complete.withComponents [
+              ((fenixToolchain system).withComponents [
                 "cargo"
                 "rustc"
                 "clippy"
