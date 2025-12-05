@@ -196,7 +196,11 @@ class DistributedTransformer:
                 mx.eval(hidden_states)
                 mx_barrier(self.group)
                 logger.info(f"sending single block outputs: {hidden_states.shape}")
-                mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
+                hidden_states = mx.distributed.send(
+                    hidden_states, self.rank + 1, group=self.group
+                )
+                logger.info("sent single block outputs")
+                mx.eval(hidden_states)
 
         # === PHASE 5: Final Projection (last stage only) ===
         if self.is_last_stage:
