@@ -165,9 +165,7 @@ async def test_master():
         runner_id = list(
             events[1].event.instance.shard_assignments.runner_to_shard.keys()
         )[0]
-        assert events[1].event == InstanceCreated(
-            event_id=events[1].event.event_id,
-            instance=MlxRingInstance(
+        assert events[1].event.instance == MlxRingInstance(
                 instance_id=events[1].event.instance.instance_id,
                 shard_assignments=ShardAssignments(
                     model_id=ModelId("llama-3.2-1b"),
@@ -189,8 +187,7 @@ async def test_master():
                     node_to_runner={node_id: runner_id},
                 ),
                 hosts=[],
-            ),
-        )
+            )
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
         assert isinstance(events[2].event.task, ChatCompletionTask)

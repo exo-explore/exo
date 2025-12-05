@@ -13,7 +13,7 @@ class BaseCommand(TaggedModel):
 
 
 class TestCommand(BaseCommand):
-    pass
+    __test__ = False
 
 
 class KillCommand(BaseCommand):

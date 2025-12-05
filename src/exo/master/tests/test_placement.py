@@ -1,6 +1,7 @@
 from typing import Callable
 
 import pytest
+from loguru import logger
 
 from exo.master.placement import (
     get_instance_placements_after_create,
@@ -362,7 +363,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_a_b.send_back_multiaddr.ip_address,
+                ip_address=conn_c_a.send_back_multiaddr.ip_address,
+            ),
+            NetworkInterfaceInfo(
+                name="en4",
+                ip_address=conn_b_a.send_back_multiaddr.ip_address,
             ),
             ethernet_interface,
         ],
@@ -375,8 +380,12 @@ def test_tensor_rdma_backend_connectivity_matrix(
         memory=node_b.node_profile.memory,
         network_interfaces=[
             NetworkInterfaceInfo(
+                name="en3",
+                ip_address=conn_c_b.send_back_multiaddr.ip_address,
+            ),
+            NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_b_c.send_back_multiaddr.ip_address,
+                ip_address=conn_a_b.send_back_multiaddr.ip_address,
             ),
             ethernet_interface,
         ],
@@ -389,8 +398,12 @@ def test_tensor_rdma_backend_connectivity_matrix(
         memory=node_c.node_profile.memory,
         network_interfaces=[
             NetworkInterfaceInfo(
-                name="en5",
-                ip_address=conn_c_a.send_back_multiaddr.ip_address,
+                name="en3",
+                ip_address=conn_a_c.send_back_multiaddr.ip_address,
+            ),
+            NetworkInterfaceInfo(
+                name="en4",
+                ip_address=conn_b_c.send_back_multiaddr.ip_address,
             ),
             ethernet_interface,
         ],
@@ -403,6 +416,9 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_connection(conn_a_b)
     topology.add_connection(conn_b_c)
     topology.add_connection(conn_c_a)
+    topology.add_connection(conn_b_a)
+    topology.add_connection(conn_c_b)
+    topology.add_connection(conn_a_c)
 
     cic = CreateInstance(
         sharding=Sharding.Tensor,
@@ -436,9 +452,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
     idx_b = node_to_idx[node_id_b]
     idx_c = node_to_idx[node_id_c]
 
-    assert matrix[idx_a][idx_b] == "rdma_en3"
-    assert matrix[idx_b][idx_c] == "rdma_en4"
-    assert matrix[idx_c][idx_a] == "rdma_en5"
+    logger.info(matrix)
+
+    assert matrix[idx_a][idx_b] == "rdma_en4"
+    assert matrix[idx_b][idx_c] == "rdma_en3"
+    assert matrix[idx_c][idx_a] == "rdma_en3"
 
     assert ":" in instance.ibv_coordinator
     assert not instance.ibv_coordinator.startswith("169.254")

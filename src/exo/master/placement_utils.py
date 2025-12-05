@@ -260,9 +260,11 @@ def _find_interface_name_for_ip(
         if interface.name not in ["en2", "en3", "en4", "en5", "en6", "en7"]:
             continue
         logger.info(f" | {interface.name}: {interface.ip_address}")
-        if interface.ip_address == ip_address:
-            logger.info("Found")
-            return f"rdma_{interface.name}"
+        if interface.ip_address != ip_address:
+            continue
+
+        logger.info("Found")
+        return f"rdma_{interface.name}"
 
     return None
 

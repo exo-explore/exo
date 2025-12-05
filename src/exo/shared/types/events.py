@@ -26,7 +26,7 @@ class BaseEvent(TaggedModel):
 
 
 class TestEvent(BaseEvent):
-    pass
+    __test__ = False
 
 
 class TaskCreated(BaseEvent):
@@ -55,6 +55,12 @@ class TaskFailed(BaseEvent):
 
 class InstanceCreated(BaseEvent):
     instance: Instance
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, InstanceCreated):
+            return self.instance == other.instance and self.event_id == other.event_id
+
+        return False
 
 
 class InstanceDeleted(BaseEvent):

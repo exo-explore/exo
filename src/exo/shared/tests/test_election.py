@@ -2,10 +2,10 @@ import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
-from exo.shared.election import Election, ElectionMessage, ElectionResult
 from exo.shared.types.commands import ForwarderCommand, TestCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import channel
+from exo.shared.election import Election, ElectionMessage, ElectionResult
 
 # ======= #
 # Helpers #
@@ -39,6 +39,10 @@ def em(
 # ======================================= #
 #                 TESTS                   #
 # ======================================= #
+
+@pytest.fixture(autouse=True)
+def fast_election_timeout(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("exo.shared.election.DEFAULT_ELECTION_TIMEOUT", 0.1)
 
 
 @pytest.mark.anyio
@@ -188,7 +192,7 @@ async def test_ignores_older_messages() -> None:
             await em_in_tx.send(em(clock=1, seniority=999, node_id="B"))
 
             got_second = False
-            with move_on_after(0.2):
+            with move_on_after(0.05):
                 _ = await em_out_rx.receive()
                 got_second = True
             assert not got_second, "Should not receive a broadcast for an older round"

@@ -16,6 +16,7 @@ from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
 from exo.utils.pydantic_ext import CamelCaseModel
 
+DEFAULT_ELECTION_TIMEOUT = 3.0
 
 class ElectionMessage(CamelCaseModel):
     clock: int
@@ -151,7 +152,7 @@ class Election:
                     self._candidates = candidates
                     logger.debug(f"New candidates: {self._candidates}")
                     logger.debug("Starting new campaign")
-                    self._tg.start_soon(self._campaign, candidates)
+                    self._tg.start_soon(self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT)
                     logger.debug("Campaign started")
                     continue
                 # Dismiss old messages
@@ -180,7 +181,7 @@ class Election:
                 candidates: list[ElectionMessage] = []
                 self._candidates = candidates
                 logger.debug("Starting new campaign")
-                self._tg.start_soon(self._campaign, candidates)
+                self._tg.start_soon(self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT)
                 logger.debug("Campaign started")
                 self._connection_messages.append(first)
                 self._connection_messages.extend(rest)
@@ -192,7 +193,7 @@ class Election:
                 self.commands_seen += 1
 
     async def _campaign(
-        self, candidates: list[ElectionMessage], *, campaign_timeout: float = 3.0
+        self, candidates: list[ElectionMessage], campaign_timeout: float
     ) -> None:
         clock = self.clock
 
