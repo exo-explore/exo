@@ -4,6 +4,7 @@ from mflux.models.flux.variants.txt2img.flux import Flux1
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.mflux.pipefusion.pipefusion import apply_pipefusion_transformer
 from exo.worker.engines.mlx.utils_mlx import mx_barrier
+from exo.worker.runner.bootstrap import logger
 
 
 def shard_flux_transformer(
@@ -26,6 +27,7 @@ def shard_flux_transformer(
         The model with sharded transformer
     """
     model = apply_pipefusion_transformer(model, group, shard_metadata)
+    logger.info("applied pipefusion transformations")
 
     mx.eval(model.parameters())
 
@@ -33,6 +35,8 @@ def shard_flux_transformer(
     mx.eval(model)
 
     # Synchronize processes before generation to avoid timeout
+    logger.info("before barrier")
     mx_barrier(group)
+    logger.info("after barrier")
 
     return model
