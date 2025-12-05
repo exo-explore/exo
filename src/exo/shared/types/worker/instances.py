@@ -13,7 +13,7 @@ class InstanceId(Id):
 
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
-    MlxIbv = "MlxIbv"
+    MlxJaccl = "MlxJaccl"
 
 
 class BaseInstance(TaggedModel):
@@ -28,13 +28,13 @@ class MlxRingInstance(BaseInstance):
     hosts: list[Host]
 
 
-class MlxIbvInstance(BaseInstance):
+class MlxJacclInstance(BaseInstance):
     ibv_devices: list[list[str | None]]
     ibv_coordinator: str
 
 
 # TODO: Single node instance
-Instance = MlxRingInstance | MlxIbvInstance
+Instance = MlxRingInstance | MlxJacclInstance
 
 
 class BoundInstance(CamelCaseModel):

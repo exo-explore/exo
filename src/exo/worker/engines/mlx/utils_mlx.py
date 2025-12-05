@@ -32,7 +32,7 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import (
     BoundInstance,
-    MlxIbvInstance,
+    MlxJacclInstance,
     MlxRingInstance,
 )
 from exo.shared.types.worker.shards import (
@@ -128,7 +128,7 @@ def mlx_distributed_init(
             os.environ["MLX_RING_VERBOSE"] = "1"
             group = mx.distributed.init(backend="ring", strict=True)
 
-        case MlxIbvInstance(ibv_devices=ibv_devices, ibv_coordinator=ibv_coordinator):
+        case MlxJacclInstance(ibv_devices=ibv_devices, ibv_coordinator=ibv_coordinator):
             # Use RDMA connectivity matrix
             devices_file = f"./hosts_{rank}.json"
             ibv_devices_json = json.dumps(ibv_devices)

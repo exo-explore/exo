@@ -19,7 +19,7 @@ from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
     InstanceMeta,
-    MlxIbvInstance,
+    MlxJacclInstance,
     MlxRingInstance,
 )
 from exo.shared.types.worker.runners import ShardAssignments
@@ -422,7 +422,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
 
     cic = CreateInstance(
         sharding=Sharding.Tensor,
-        instance_meta=InstanceMeta.MlxIbv,
+        instance_meta=InstanceMeta.MlxJaccl,
         command_id=CommandId(),
         model_meta=model_meta,
         min_nodes=1,
@@ -434,7 +434,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
 
-    assert isinstance(instance, MlxIbvInstance)
+    assert isinstance(instance, MlxJacclInstance)
 
     assert instance.ibv_devices is not None
     assert instance.ibv_coordinator is not None

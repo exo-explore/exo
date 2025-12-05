@@ -37,7 +37,7 @@ Integration tests:
 
 2. Test that node count does not affect inference result (per-configuration)
  - Llama on 1 node, and on 2 nodes returns the same result, given temperature 0 and set seed.
- - Do for all configurations (Ring/Ibv, Pipeline/Tensor)
+ - Do for all configurations (Ring/Jaccl, Pipeline/Tensor)
 
 3. Test supervisor catches exceptions gracefully
  - Timeouts

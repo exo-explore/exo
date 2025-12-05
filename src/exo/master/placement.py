@@ -26,7 +26,7 @@ from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
     InstanceMeta,
-    MlxIbvInstance,
+    MlxJacclInstance,
     MlxRingInstance,
 )
 
@@ -105,7 +105,7 @@ def get_instance_placements_after_create(
 
     # TODO: Single node instances
     match command.instance_meta:
-        case InstanceMeta.MlxIbv:
+        case InstanceMeta.MlxJaccl:
             mlx_ibv_devices = get_mlx_ibv_devices_matrix(
                 selected_cycle,
                 cycle_digraph,
@@ -114,7 +114,7 @@ def get_instance_placements_after_create(
                 selected_cycle,
                 coordinator_port=random_ephemeral_port(),
             )
-            target_instances[instance_id] = MlxIbvInstance(
+            target_instances[instance_id] = MlxJacclInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 ibv_devices=mlx_ibv_devices,
