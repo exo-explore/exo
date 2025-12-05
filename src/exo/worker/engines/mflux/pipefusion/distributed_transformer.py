@@ -1,7 +1,7 @@
 from typing import Any
 
 import mlx.core as mx
-from mflux.config.runtime_config import RuntimeConfig, logging
+from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -161,10 +161,10 @@ class DistributedTransformer:
                 concatenated = mx.concatenate(
                     [encoder_hidden_states, hidden_states], axis=1
                 )
-
                 hidden_states = mx.distributed.recv_like(
                     concatenated, self.rank - 1, group=self.group
                 )
+                mx.eval(hidden_states)
 
             # Run assigned single blocks
             for idx in range(self.single_start, self.single_end):
@@ -183,9 +183,6 @@ class DistributedTransformer:
 
         # === PHASE 5: All-gather Final Output ===
         # All stages participate to receive the final output
-        if not self.has_joint_blocks:
-            mx.eval(hidden_states)
-            logging.info("gathering")
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
