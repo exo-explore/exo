@@ -214,6 +214,7 @@ class DistributedTransformer:
         logger.info("gathering final output")
         mx.eval(hidden_states)
         logger.info(f"hidden_states: {hidden_states.shape}")
+        mx_barrier(self.group)
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
