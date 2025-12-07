@@ -22,7 +22,8 @@ class EventId(Id):
 class BaseEvent(TaggedModel):
     event_id: EventId = Field(default_factory=EventId)
     # Internal, for debugging. Please don't rely on this field for anything!
-    _master_time_stamp: None | datetime = None
+    _master_time_stamp: datetime | None = None
+    _retry: int | None = None
 
 
 class TestEvent(BaseEvent):
