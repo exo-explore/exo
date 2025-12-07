@@ -190,10 +190,10 @@ class Master:
                             retry_num += 1
                             # We should just be able to send everything, since other buffers will ignore old messages
                             for i in range(command.since_idx, len(self._event_log)):
-                                ev = self._event_log[i]
-                                ev._retry = retry_num
+                                event = self._event_log[i]
+                                event.retry = retry_num
                                 await self._send_event(
-                                    IndexedEvent(idx=i, event=self._event_log[i])
+                                    IndexedEvent(idx=i, event=event)
                                 )
                     for event in generated_events:
                         await self.event_sender.send(event)
