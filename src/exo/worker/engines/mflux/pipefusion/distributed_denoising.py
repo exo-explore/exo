@@ -42,7 +42,7 @@ def calculate_token_indices(
     return token_ranges  # List of (start, end) token indices
 
 
-class DistributedTransformer:
+class DistributedDenoising:
     def __init__(
         self,
         transformer: Transformer,
@@ -243,6 +243,9 @@ class DistributedTransformer:
         controlnet_single_block_samples: list[mx.array] | None = None,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
+        prev_latents = hidden_states
+        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
+
         if t < self.num_sync_steps:
             hidden_states = self._sync_pipeline(
                 t,
@@ -262,7 +265,13 @@ class DistributedTransformer:
                 kontext_image_ids,
             )
 
-        return hidden_states
+        latents = config.scheduler.step(
+            model_output=hidden_states,
+            timestep=t,
+            sample=prev_latents,
+        )
+
+        return latents
 
     # Delegate attribute access to the underlying transformer for compatibility
     def __getattr__(self, name: str) -> Any:
