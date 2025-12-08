@@ -192,7 +192,7 @@ class API:
             self.chat_completions
         )
         self.app.post("/v1/images/generations")(self.image_generations)
-        self.app.post("/v1/images/edits")(self.image_edits)
+        # self.app.post("/v1/images/edits")(self.image_edits)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -568,7 +568,7 @@ class API:
         await self._send(command)
 
         # Collect all image chunks (non-streaming)
-        self._image_generation_queues[command.command_id] = asyncio.Queue()
+        self._image_generation_queues[command.command_id], recv = channel[ImageChunk]()
 
         num_images = payload.n or 1
 
@@ -577,114 +577,50 @@ class API:
         image_total_chunks: dict[int, int] = {}
         images_complete = 0
 
-        while images_complete < num_images:
-            chunk = await asyncio.wait_for(
-                self._image_generation_queues[command.command_id].get(), timeout=600
-            )
-            assert isinstance(chunk, ImageChunk)
+        try:
+            while images_complete < num_images:
+                with recv as chunks:
+                    async for chunk in chunks:
+                        if chunk.image_index not in image_chunks:
+                            image_chunks[chunk.image_index] = {}
+                            image_total_chunks[chunk.image_index] = chunk.total_chunks
 
-            if chunk.image_index not in image_chunks:
-                image_chunks[chunk.image_index] = {}
-                image_total_chunks[chunk.image_index] = chunk.total_chunks
+                        image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
 
-            image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+                        # Check if this image is complete
+                        if (
+                            len(image_chunks[chunk.image_index])
+                            == image_total_chunks[chunk.image_index]
+                        ):
+                            images_complete += 1
 
-            # Check if this image is complete
-            if (
-                len(image_chunks[chunk.image_index])
-                == image_total_chunks[chunk.image_index]
-            ):
-                images_complete += 1
-
-        # Reassemble images in order
-        images: list[ImageData] = []
-        for image_idx in range(num_images):
-            chunks_dict = image_chunks[image_idx]
-            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-            images.append(
-                ImageData(
-                    b64_json=full_data
-                    if payload.response_format == "b64_json"
-                    else None,
-                    url=None,  # URL format not implemented yet
+            # Reassemble images in order
+            images: list[ImageData] = []
+            for image_idx in range(num_images):
+                chunks_dict = image_chunks[image_idx]
+                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
+                images.append(
+                    ImageData(
+                        b64_json=full_data
+                        if payload.response_format == "b64_json"
+                        else None,
+                        url=None,  # URL format not implemented yet
+                    )
                 )
+
+            return ImageGenerationResponse(data=images)
+        except anyio.get_cancelled_exc_class():
+            # TODO: TaskCancelled
+            """
+            self.command_sender.send_nowait(
+                ForwarderCommand(origin=self.node_id, command=command)
             )
-
-        # Send TaskFinished command
-        await self._send(TaskFinished(finished_command_id=command.command_id))
-        del self._image_generation_queues[command.command_id]
-
-        return ImageGenerationResponse(data=images)
-
-    async def image_edits(
-        self, payload: ImageEditsTaskParams
-    ) -> ImageGenerationResponse:
-        """Handle image edit requests."""
-        model_meta = await resolve_model_meta(payload.model)
-        payload.model = model_meta.model_id
-
-        if not any(
-            instance.shard_assignments.model_id == payload.model
-            for instance in self.state.instances.values()
-        ):
-            await self._trigger_notify_user_to_download_model(payload.model)
-            raise HTTPException(
-                status_code=404, detail=f"No instance found for model {payload.model}"
-            )
-
-        command = ImageEdits(
-            request_params=payload,
-        )
-        await self._send(command)
-
-        # Collect all image chunks (non-streaming)
-        self._image_generation_queues[command.command_id] = asyncio.Queue()
-
-        num_images = payload.n or 1
-
-        # Track chunks per image: {image_index: {chunk_index: data}}
-        image_chunks: dict[int, dict[int, str]] = {}
-        image_total_chunks: dict[int, int] = {}
-        images_complete = 0
-
-        while images_complete < num_images:
-            chunk = await asyncio.wait_for(
-                self._image_generation_queues[command.command_id].get(), timeout=600
-            )
-            assert isinstance(chunk, ImageChunk)
-
-            if chunk.image_index not in image_chunks:
-                image_chunks[chunk.image_index] = {}
-                image_total_chunks[chunk.image_index] = chunk.total_chunks
-
-            image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
-
-            # Check if this image is complete
-            if (
-                len(image_chunks[chunk.image_index])
-                == image_total_chunks[chunk.image_index]
-            ):
-                images_complete += 1
-
-        # Reassemble images in order
-        images: list[ImageData] = []
-        for image_idx in range(num_images):
-            chunks_dict = image_chunks[image_idx]
-            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-            images.append(
-                ImageData(
-                    b64_json=full_data
-                    if payload.response_format == "b64_json"
-                    else None,
-                    url=None,  # URL format not implemented yet
-                )
-            )
-
-        # Send TaskFinished command
-        await self._send(TaskFinished(finished_command_id=command.command_id))
-        del self._image_generation_queues[command.command_id]
-
-        return ImageGenerationResponse(data=images)
+            """
+            raise
+        finally:
+            # Send TaskFinished command
+            await self._send(TaskFinished(finished_command_id=command.command_id))
+            del self._image_generation_queues[command.command_id]
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
