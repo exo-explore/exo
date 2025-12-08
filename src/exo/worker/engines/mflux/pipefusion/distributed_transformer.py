@@ -97,28 +97,23 @@ class DistributedTransformer:
     def is_last_stage(self) -> bool:
         return self.rank == self.world_size - 1
 
-    def __call__(
+    def _sync_pipeline(
         self,
         t: int,
         config: RuntimeConfig,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
-        controlnet_block_samples: list[mx.array] | None = None,
-        controlnet_single_block_samples: list[mx.array] | None = None,
         kontext_image_ids: mx.array | None = None,
-    ) -> mx.array:
-        """Forward pass with inline distributed communication."""
-        transformer = self.transformer
-
+    ):
         # === PHASE 1: Create Embeddings (all stages compute, for consistency) ===
-        hidden_states = transformer.x_embedder(hidden_states)
-        encoder_hidden_states = transformer.context_embedder(prompt_embeds)
+        hidden_states = self.transformer.x_embedder(hidden_states)
+        encoder_hidden_states = self.transformer.context_embedder(prompt_embeds)
         text_embeddings = Transformer.compute_text_embeddings(
-            t, pooled_prompt_embeds, transformer.time_text_embed, config
+            t, pooled_prompt_embeds, self.transformer.time_text_embed, config
         )
         image_rotary_embeddings = Transformer.compute_rotary_embeddings(
-            prompt_embeds, transformer.pos_embed, config, kontext_image_ids
+            prompt_embeds, self.transformer.pos_embed, config, kontext_image_ids
         )
 
         # === PHASE 2: Joint Blocks with Communication ===
@@ -133,7 +128,7 @@ class DistributedTransformer:
                 )
 
             # Run assigned joint blocks
-            for block in transformer.transformer_blocks:
+            for block in self.transformer.transformer_blocks:
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
@@ -173,7 +168,7 @@ class DistributedTransformer:
                 mx.eval(hidden_states)
 
             # Run assigned single blocks
-            for block in transformer.single_transformer_blocks:
+            for block in self.transformer.single_transformer_blocks:
                 hidden_states = block(
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
@@ -195,10 +190,30 @@ class DistributedTransformer:
         # === PHASE 6: Final Projection (last stage only) ===
         # Extract image portion (remove text embeddings prefix)
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
-        hidden_states = transformer.norm_out(hidden_states, text_embeddings)
-        hidden_states = transformer.proj_out(hidden_states)
+        hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
+        hidden_states = self.transformer.proj_out(hidden_states)
 
         return hidden_states
+
+    def __call__(
+        self,
+        t: int,
+        config: RuntimeConfig,
+        hidden_states: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        controlnet_block_samples: list[mx.array] | None = None,
+        controlnet_single_block_samples: list[mx.array] | None = None,
+        kontext_image_ids: mx.array | None = None,
+    ) -> mx.array:
+        return self._sync_pipeline(
+            t,
+            config,
+            hidden_states,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            kontext_image_ids,
+        )
 
     # Delegate attribute access to the underlying transformer for compatibility
     def __getattr__(self, name: str) -> Any:
