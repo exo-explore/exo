@@ -121,8 +121,7 @@ def test_get_instance_placements_create_instance(
     assert shards_sorted[-1].end_layer == total_layers
 
 
-def test_get_instance_placements_one_node_exact_fit(
-) -> None:
+def test_get_instance_placements_one_node_exact_fit() -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
@@ -145,8 +144,7 @@ def test_get_instance_placements_one_node_exact_fit(
     assert len(instance.shard_assignments.runner_to_shard) == 1
 
 
-def test_get_instance_placements_one_node_fits_with_extra_memory(
-) -> None:
+def test_get_instance_placements_one_node_fits_with_extra_memory() -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1001 * 1024, node_id))
@@ -169,8 +167,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
     assert len(instance.shard_assignments.runner_to_shard) == 1
 
 
-def test_get_instance_placements_one_node_not_fit(
-) -> None:
+def test_get_instance_placements_one_node_not_fit() -> None:
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))

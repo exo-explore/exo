@@ -22,9 +22,6 @@ class SocketAddress(CamelCaseModel):
     )
 
 
-
-
-
 class ConnectionMessage(CamelCaseModel):
     node_id: NodeId
     ips: set[SocketAddress] | None
@@ -33,7 +30,9 @@ class ConnectionMessage(CamelCaseModel):
     def from_rust(cls, message: RustConnectionMessage) -> "ConnectionMessage":
         return cls(
             node_id=NodeId(str(message.endpoint_id)),
-            ips=None if message.current_transport_addrs is None else set(
+            ips=None
+            if message.current_transport_addrs is None
+            else set(
                 # TODO: better handle fallible conversion
                 SocketAddress(
                     ip=ip_address(addr.ip_addr()),

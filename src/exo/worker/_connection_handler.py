@@ -10,7 +10,10 @@ def check_connections(
 ) -> list[Event]:
     remote_id = msg.node_id
     sockets = msg.ips
-    if not state.topology.contains_node(remote_id) or remote_id not in state.node_profiles:
+    if (
+        not state.topology.contains_node(remote_id)
+        or remote_id not in state.node_profiles
+    ):
         return []
 
     out: list[Event] = []

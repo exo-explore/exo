@@ -5,16 +5,12 @@ edition.workspace = true
 
 [dependencies]
 blake3 = { workspace = true, features = ["neon", "rayon"] }
-bytemuck = { version = "1.24.0", features = ["derive"] }
-bytes.workspace = true
-extend.workspace = true
 iroh = { workspace = true, features = ["discovery-local-network"] }
-iroh-gossip = { workspace = true }
+iroh-gossip.workspace = true
 log.workspace = true
-n0-error = { workspace = true }
-n0-future = { workspace = true }
-rand = { workspace = true }
-thiserror.workspace = true
+n0-error.workspace = true
+n0-future.workspace = true
+rand.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 

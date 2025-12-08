@@ -192,9 +192,7 @@ class Master:
                             for i in range(command.since_idx, len(self._event_log)):
                                 event = self._event_log[i]
                                 event.retry = retry_num
-                                await self._send_event(
-                                    IndexedEvent(idx=i, event=event)
-                                )
+                                await self._send_event(IndexedEvent(idx=i, event=event))
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:

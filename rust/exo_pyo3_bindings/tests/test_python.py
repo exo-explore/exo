@@ -1,7 +1,12 @@
 import asyncio
 
 import pytest
-from exo_pyo3_bindings import Keypair, RustNetworkingHandle, RustReceiver, RustConnectionReceiver
+from exo_pyo3_bindings import (
+    Keypair,
+    RustNetworkingHandle,
+    RustReceiver,
+    RustConnectionReceiver,
+)
 
 
 @pytest.mark.asyncio

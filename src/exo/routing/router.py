@@ -53,14 +53,17 @@ class TopicRouter[T: CamelCaseModel]:
 
     async def run(self):
         async with self._tg as tg:
-            tg.start_soon(self.receive_loop)            
+            tg.start_soon(self.receive_loop)
 
     async def receive_loop(self):
         logger.debug(f"Topic Router {self.topic} ready to send")
         with self.receiver as items:
             async for item in items:
                 # Check if we should send to network
-                if self.topic.publish_policy is PublishPolicy.Always and self.networking_sender is not None:
+                if (
+                    self.topic.publish_policy is PublishPolicy.Always
+                    and self.networking_sender is not None
+                ):
                     await self._send_out(item)
                 # Then publish to all senders
                 await self.publish(item)
