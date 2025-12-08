@@ -1,11 +1,11 @@
-use crate::ext::{ByteArrayExt, FutureExt, ResultExt};
+use crate::ext::{ByteArrayExt as _, FutureExt as _, ResultExt as _};
 use crate::identity::{PyEndpointId, PyKeypair};
 use iroh::SecretKey;
 use iroh::discovery::EndpointInfo;
 use iroh::discovery::mdns::DiscoveryEvent;
 use iroh_gossip::api::{ApiError, Event, GossipReceiver, GossipSender, Message};
+use iroh_networking::ExoNet;
 use n0_future::{Stream, StreamExt as _};
-use networking::ExoNet;
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -17,6 +17,7 @@ use std::sync::{Arc, LazyLock};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
+#[allow(clippy::expect_used)]
 static RUNTIME: LazyLock<Runtime> =
     LazyLock::new(|| Runtime::new().expect("Failed to create tokio runtime"));
 
@@ -38,11 +39,11 @@ impl PyIpAddress {
         self.inner.ip().to_string()
     }
 
-    pub fn port(&self) -> u16 {
+    pub const fn port(&self) -> u16 {
         self.inner.port()
     }
 
-    pub fn zone_id(&self) -> Option<u32> {
+    pub const fn zone_id(&self) -> Option<u32> {
         match self.inner {
             SocketAddr::V6(ip) => Some(ip.scope_id()),
             SocketAddr::V4(_) => None,
@@ -70,7 +71,7 @@ impl PyNetworkingHandle {
                 .pyerr()?
                 .pyerr()?,
         );
-        let cloned = net.clone();
+        let cloned = Arc::clone(&net);
         RUNTIME.spawn(async move { cloned.start_auto_dialer().await });
 
         Ok(Self { net })
@@ -158,34 +159,27 @@ struct PyConnectionReceiver {
 #[pymethods]
 impl PyConnectionReceiver {
     async fn receive(&mut self) -> PyResult<PyConnectionMessage> {
-        loop {
-            let mg_fut = self.inner.lock();
-            let mut lock = pin!(mg_fut).allow_threads_py().await;
-            match lock.next().allow_threads_py().await {
-                // Successful cases
-                Some(DiscoveryEvent::Discovered {
-                    endpoint_info: EndpointInfo { endpoint_id, data },
-                    ..
-                }) => {
-                    return Ok(PyConnectionMessage {
-                        endpoint_id: endpoint_id.into(),
-                        current_transport_addrs: Some(
-                            data.ip_addrs()
-                                .map(|it| PyIpAddress { inner: it.clone() })
-                                .collect(),
-                        ),
-                    });
-                }
-                Some(DiscoveryEvent::Expired { endpoint_id }) => {
-                    return Ok(PyConnectionMessage {
-                        endpoint_id: endpoint_id.into(),
-                        current_transport_addrs: None,
-                    });
-                }
-
-                // Failure case
-                None => return Err(PyStopAsyncIteration::new_err("")),
-            }
+        let mg_fut = self.inner.lock();
+        let mut lock = pin!(mg_fut).allow_threads_py().await;
+        match lock.next().allow_threads_py().await {
+            // Successful cases
+            Some(DiscoveryEvent::Discovered {
+                endpoint_info: EndpointInfo { endpoint_id, data },
+                ..
+            }) => Ok(PyConnectionMessage {
+                endpoint_id: endpoint_id.into(),
+                current_transport_addrs: Some(
+                    data.ip_addrs()
+                        .map(|inner| PyIpAddress { inner: *inner })
+                        .collect(),
+                ),
+            }),
+            Some(DiscoveryEvent::Expired { endpoint_id }) => Ok(PyConnectionMessage {
+                endpoint_id: endpoint_id.into(),
+                current_transport_addrs: None,
+            }),
+            // Failure case
+            None => Err(PyStopAsyncIteration::new_err("")),
         }
     }
 }

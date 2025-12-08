@@ -1,4 +1,4 @@
-//! SEE: https://pyo3.rs/v0.27.1/async-await.html#detaching-from-the-interpreter-across-await
+//! SEE: <https://pyo3.rs/v0.27.1/async-await.html#detaching-from-the-interpreter-across-await>
 
 use pyo3::prelude::*;
 use std::{
@@ -8,13 +8,13 @@ use std::{
 };
 
 #[repr(transparent)]
-pub(crate) struct AllowThreads<F>(F);
+pub struct AllowThreads<F>(F);
 
 impl<F> AllowThreads<F>
 where
     Self: Future,
 {
-    pub fn new(f: F) -> Self {
+    pub const fn new(f: F) -> Self {
         Self(f)
     }
 }

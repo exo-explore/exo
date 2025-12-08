@@ -1,4 +1,4 @@
-use iroh::{EndpointId, SecretKey, endpoint_info::EndpointIdExt};
+use iroh::{EndpointId, SecretKey, endpoint_info::EndpointIdExt as _};
 use postcard::ser_flavors::StdVec;
 
 use crate::ext::ResultExt as _;
@@ -23,7 +23,7 @@ impl PyKeypair {
     }
     /// Decode a postcard structure into a keypair
     #[staticmethod]
-    fn from_postcard_encoding(bytes: Bound<'_, PyBytes>) -> PyResult<Self> {
+    fn from_postcard_encoding(bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
         let bytes = Vec::from(bytes.as_bytes());
         Ok(Self(postcard::from_bytes(&bytes).pyerr()?))
     }

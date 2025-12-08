@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 use iroh::{
     Endpoint, EndpointId, SecretKey, TransportAddr,
     discovery::{
-        Discovery, EndpointData, IntoDiscoveryError,
+        Discovery as _, EndpointData, IntoDiscoveryError,
         mdns::{DiscoveryEvent, MdnsDiscovery},
     },
     endpoint::BindError,
-    endpoint_info::EndpointIdExt,
+    endpoint_info::EndpointIdExt as _,
     protocol::Router,
 };
 use iroh_gossip::{
@@ -16,11 +16,11 @@ use iroh_gossip::{
 };
 
 use n0_error::{e, stack_error};
-use n0_future::{Stream, StreamExt};
+use n0_future::{Stream, StreamExt as _};
 use tokio::sync::Mutex;
 
 #[stack_error(derive, add_meta, from_sources)]
-pub enum Error {
+pub enum ExoError {
     #[error(transparent)]
     FailedBinding { source: BindError },
     /// The gossip topic was closed.
@@ -42,7 +42,8 @@ pub struct ExoNet {
 }
 
 impl ExoNet {
-    pub async fn init_iroh(sk: SecretKey, namespace: &str) -> Result<Self, Error> {
+    #[inline]
+    pub async fn init_iroh(sk: SecretKey, namespace: &str) -> Result<Self, ExoError> {
         let endpoint = Endpoint::empty_builder(iroh::RelayMode::Disabled)
             .secret_key(sk)
             .bind()
@@ -50,14 +51,12 @@ impl ExoNet {
         let mdns = MdnsDiscovery::builder().build(endpoint.id())?;
         let endpoint_addr = endpoint.addr();
 
-        let bound = endpoint_addr
-            .ip_addrs()
-            .map(|it| TransportAddr::Ip(it.clone()));
+        let bound = endpoint_addr.ip_addrs().map(|it| TransportAddr::Ip(*it));
 
         log::info!("publishing {endpoint_addr:?} with mdns");
         mdns.publish(&EndpointData::new(bound));
         endpoint.discovery().add(mdns.clone());
-        let alpn = format!("/exo_discovery_network/{}", namespace).to_owned();
+        let alpn = format!("/exo_discovery_network/{namespace}");
         // max msg size 4MB
         let gossip = Gossip::builder()
             .max_message_size(4 * 1024 * 1024)
@@ -75,6 +74,7 @@ impl ExoNet {
         })
     }
 
+    #[inline]
     pub async fn start_auto_dialer(&self) {
         let mut recv = self.connection_info().await;
 
@@ -117,13 +117,15 @@ impl ExoNet {
         log::info!("Auto dialer stopping");
     }
 
+    #[inline]
     pub async fn connection_info(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         self.mdns.subscribe().await
     }
 
-    pub async fn subscribe(&self, topic: &str) -> Result<(GossipSender, GossipReceiver), Error> {
+    #[inline]
+    pub async fn subscribe(&self, topic: &str) -> Result<(GossipSender, GossipReceiver), ExoError> {
         if self.known_peers.lock().await.is_empty() {
-            return Err(e!(Error::NoPeers));
+            return Err(e!(ExoError::NoPeers));
         }
         Ok(self
             .gossip
@@ -135,11 +137,10 @@ impl ExoNet {
             .split())
     }
 
+    #[inline]
+    #[allow(clippy::expect_used)]
     pub async fn shutdown(&self) {
-        self.router
-            .shutdown()
-            .await
-            .expect("Iroh Router failed to shutdown");
+        self.router.shutdown().await.expect("router panic");
     }
 }
 
