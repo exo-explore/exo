@@ -26,6 +26,7 @@ from exo.shared.types.worker.shards import Sharding
 
 from exo.master.tests.conftest import create_node, create_connection
 
+
 @pytest.fixture
 def topology() -> Topology:
     return Topology()

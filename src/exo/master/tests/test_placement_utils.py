@@ -1,5 +1,3 @@
-from typing import Callable
-
 import pytest
 
 from exo.master.placement_utils import (
@@ -14,8 +12,9 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
-from exo.shared.types.topology import Connection, NodeInfo
 from exo.shared.types.worker.shards import Sharding
+
+from exo.master.tests.conftest import create_connection, create_node
 
 
 @pytest.fixture
@@ -26,8 +25,6 @@ def topology() -> Topology:
 
 def test_filter_cycles_by_memory(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     node1_id = NodeId()
@@ -60,8 +57,6 @@ def test_filter_cycles_by_memory(
 
 def test_filter_cycles_by_insufficient_memory(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     node1_id = NodeId()
@@ -90,8 +85,6 @@ def test_filter_cycles_by_insufficient_memory(
 
 def test_filter_multiple_cycles_by_memory(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     node_a_id = NodeId()
@@ -129,8 +122,6 @@ def test_filter_multiple_cycles_by_memory(
 
 def test_get_smallest_cycles(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
 ):
     # arrange
     node_a_id = NodeId()
@@ -169,8 +160,6 @@ def test_get_smallest_cycles(
 )
 def test_get_shard_assignments(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId], Connection],
     available_memory: tuple[int, int, int],
     total_layers: int,
     expected_layers: tuple[int, int, int],
@@ -230,8 +219,6 @@ def test_get_shard_assignments(
 
 def test_get_hosts_from_subgraph(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId, int | None], Connection],
 ):
     # arrange
     node_a_id = NodeId()
@@ -246,10 +233,10 @@ def test_get_hosts_from_subgraph(
     topology.add_node(node_b)
     topology.add_node(node_c)
 
-    topology.add_connection(create_connection(node_a_id, node_b_id, 5001))
-    topology.add_connection(create_connection(node_b_id, node_c_id, 5002))
-    topology.add_connection(create_connection(node_c_id, node_a_id, 5003))
-    topology.add_connection(create_connection(node_b_id, node_a_id, 5004))
+    topology.add_connection(create_connection(node_a_id, node_b_id))
+    topology.add_connection(create_connection(node_b_id, node_c_id))
+    topology.add_connection(create_connection(node_c_id, node_a_id))
+    topology.add_connection(create_connection(node_b_id, node_a_id))
 
     # act
     hosts = get_hosts_from_subgraph(topology)
@@ -267,8 +254,6 @@ def test_get_hosts_from_subgraph(
 
 def test_get_mlx_jaccl_coordinators(
     topology: Topology,
-    create_node: Callable[[int, NodeId | None], NodeInfo],
-    create_connection: Callable[[NodeId, NodeId, int | None], Connection],
 ):
     # arrange
     node_a_id = NodeId()
@@ -279,12 +264,12 @@ def test_get_mlx_jaccl_coordinators(
     node_b = create_node(500 * 1024, node_b_id)
     node_c = create_node(1000 * 1024, node_c_id)
 
-    conn_a_b = create_connection(node_a_id, node_b_id, 5001)
-    conn_b_a = create_connection(node_b_id, node_a_id, 5002)
-    conn_b_c = create_connection(node_b_id, node_c_id, 5003)
-    conn_c_b = create_connection(node_c_id, node_b_id, 5004)
-    conn_c_a = create_connection(node_c_id, node_a_id, 5005)
-    conn_a_c = create_connection(node_a_id, node_c_id, 5006)
+    conn_a_b = create_connection(node_a_id, node_b_id)
+    conn_b_a = create_connection(node_b_id, node_a_id)
+    conn_b_c = create_connection(node_b_id, node_c_id)
+    conn_c_b = create_connection(node_c_id, node_b_id)
+    conn_c_a = create_connection(node_c_id, node_a_id)
+    conn_a_c = create_connection(node_a_id, node_c_id)
 
     # Update node profiles with network interfaces before adding to topology
     assert node_a.node_profile is not None
@@ -299,11 +284,11 @@ def test_get_mlx_jaccl_coordinators(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_a_b.send_back_multiaddr.ip_address,
+                ip_address=conn_a_b.sink_addr.ip,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_a_c.send_back_multiaddr.ip_address,
+                ip_address=conn_a_c.sink_addr.ip,
             ),
         ],
         system=node_a.node_profile.system,
@@ -316,11 +301,11 @@ def test_get_mlx_jaccl_coordinators(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_b_a.send_back_multiaddr.ip_address,
+                ip_address=conn_b_a.sink_addr.ip,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_b_c.send_back_multiaddr.ip_address,
+                ip_address=conn_b_c.sink_addr.ip,
             ),
         ],
         system=node_b.node_profile.system,
@@ -333,11 +318,11 @@ def test_get_mlx_jaccl_coordinators(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_c_b.send_back_multiaddr.ip_address,
+                ip_address=conn_c_b.sink_addr.ip,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_c_a.send_back_multiaddr.ip_address,
+                ip_address=conn_c_a.sink_addr.ip,
             ),
         ],
         system=node_c.node_profile.system,
@@ -387,11 +372,11 @@ def test_get_mlx_jaccl_coordinators(
 
     # Non-rank-0 nodes should use the specific IP from their connection to rank 0
     # node_b uses the IP from conn_b_a (node_b -> node_a)
-    assert coordinators[node_b_id] == (
-        f"{conn_b_a.send_back_multiaddr.ip_address}:5000"
-    ), "node_b should use the IP from conn_b_a"
+    assert coordinators[node_b_id] == (f"{conn_b_a.sink_addr.ip}:5000"), (
+        "node_b should use the IP from conn_b_a"
+    )
 
     # node_c uses the IP from conn_c_a (node_c -> node_a)
-    assert coordinators[node_c_id] == (
-        f"{conn_c_a.send_back_multiaddr.ip_address}:5000"
-    ), "node_c should use the IP from conn_c_a"
+    assert coordinators[node_c_id] == (f"{conn_c_a.sink_addr.ip}:5000"), (
+        "node_c should use the IP from conn_c_a"
+    )
