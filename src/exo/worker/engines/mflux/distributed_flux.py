@@ -251,18 +251,10 @@ class DistributedFlux1:
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
     ) -> mx.array:
-        """
-        Single diffusion step with distributed communication.
-
-        Currently uses block wrappers for communication. Will be refactored
-        to handle send/recv at this level for async pipeline.
-        """
         model = self._model
 
-        # Scale model input if needed by the scheduler
         latents = config.scheduler.scale_model_input(latents, t)
 
-        # Predict noise (communication happens in block wrappers)
         noise = model.transformer(
             t=t,
             config=config,
@@ -271,7 +263,6 @@ class DistributedFlux1:
             pooled_prompt_embeds=pooled_prompt_embeds,
         )
 
-        # Apply scheduler step (denoising)
         latents = config.scheduler.step(
             model_output=noise,
             timestep=t,
