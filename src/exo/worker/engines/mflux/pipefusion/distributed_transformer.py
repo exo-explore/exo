@@ -1,4 +1,5 @@
-from typing import Any
+from math import ceil
+from typing import Any, Optional
 
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
@@ -7,26 +8,48 @@ from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from exo.shared.types.worker.shards import PipelineShardMetadata
 
 
+def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: int):
+    patch_height = ceil(latent_height / num_patches)
+    patch_height = ceil(patch_height / patch_size) * patch_size
+
+    actual_num_patches = ceil(latent_height / patch_height)
+    patch_heights = [patch_height] * (actual_num_patches - 1)
+
+    last_height = latent_height - patch_height * (actual_num_patches - 1)
+    patch_heights.append(last_height)
+
+    return patch_heights, actual_num_patches
+
+
+def calculate_token_indices(
+    patch_heights: list[int], latent_width: int, patch_size: int
+):
+    tokens_per_row = latent_width // patch_size
+
+    token_ranges = []
+    cumulative_height = 0
+
+    for h in patch_heights:
+        start_row = cumulative_height // patch_size
+        end_row = (cumulative_height + h) // patch_size
+
+        start_token = tokens_per_row * start_row
+        end_token = tokens_per_row * end_row
+
+        token_ranges.append((start_token, end_token))
+        cumulative_height += h
+
+    return token_ranges  # List of (start, end) token indices
+
+
 class DistributedTransformer:
-    """
-    Reimplements Transformer forward with distributed communication.
-
-    Each stage runs assigned blocks with send/recv at phase boundaries
-
-    This design:
-    - All stages compute embeddings (deterministic, same on all nodes)
-        TODO: only perform on rank 0?
-    - Communication happens at joint→single transition and end of phases
-    - Final projection only on last stage
-    - All-gather synchronizes final output to all nodes
-    """
-
     def __init__(
         self,
         transformer: Transformer,
         group: mx.distributed.Group,
         shard_metadata: PipelineShardMetadata,
         num_sync_steps: int = 1,
+        num_patches: Optional[int] = None,
     ):
         self.transformer = transformer
         self.group = group
@@ -36,6 +59,7 @@ class DistributedTransformer:
         self.end_layer = shard_metadata.end_layer
 
         self.num_sync_steps = num_sync_steps
+        self.num_patches = num_patches if num_patches else group.size
 
         # Get block counts from the original transformer (before slicing)
         # Note: These are the ORIGINAL counts, not the sliced counts
@@ -43,7 +67,6 @@ class DistributedTransformer:
         self.total_single = 38  # Flux has 38 single blocks
         self.total_layers = self.total_joint + self.total_single
 
-        # Compute which blocks this stage owns
         self._compute_assigned_blocks()
 
     def _compute_assigned_blocks(self) -> None:
@@ -51,7 +74,6 @@ class DistributedTransformer:
         start = self.start_layer
         end = self.end_layer
 
-        # Joint block range for this stage
         if end <= self.total_joint:
             # All assigned blocks are joint blocks
             self.joint_start = start
@@ -71,14 +93,9 @@ class DistributedTransformer:
             self.single_start = 0
             self.single_end = end - self.total_joint
 
-        # Convenience properties
         self.has_joint_blocks = self.joint_end > self.joint_start
         self.has_single_blocks = self.single_end > self.single_start
 
-        # Determine if this stage handles the joint→single concatenation
-        # This happens when we have joint blocks and either:
-        # - We also have single blocks (transition within this stage), or
-        # - We're the last stage to have joint blocks and next stage has single
         self.owns_concat_stage = self.has_joint_blocks and (
             self.has_single_blocks or self.end_layer == self.total_joint
         )
