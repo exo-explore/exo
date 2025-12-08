@@ -1,5 +1,5 @@
 [package]
-name = "iroh_networking"
+name = "networking"
 version.workspace = true
 edition.workspace = true
 

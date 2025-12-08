@@ -6,11 +6,10 @@
 
 mod allow_threading;
 mod identity;
-mod iroh_networking;
-// mod examples;
+mod networking;
 
 use crate::identity::ident_submodule;
-use crate::iroh_networking::networking_submodule;
+use crate::networking::networking_submodule;
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 

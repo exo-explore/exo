@@ -2,7 +2,7 @@
 resolver = "3"
 members = [
     "rust/exo_pyo3_bindings",
-    "rust/iroh_networking",
+    "rust/networking",
 ]
 
 [workspace.package]
@@ -22,7 +22,7 @@ opt-level = 3
 # Common configurations include versions, paths, features, etc.
 [workspace.dependencies]
 ## Crate members as common dependencies
-iroh_networking = { path = "rust/iroh_networking" }
+networking = { path = "rust/networking" }
 
 extend = "1.2"
 

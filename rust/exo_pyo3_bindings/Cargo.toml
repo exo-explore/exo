@@ -20,25 +20,24 @@ doc = false
 workspace = true
 
 [dependencies]
-iroh_networking = { workspace = true }
+networking.workspace = true
 
 # interop
 pyo3 = { workspace = true, features = ["experimental-async"] }
-pyo3-stub-gen = { workspace = true }
-pyo3-async-runtimes = { workspace = true, features = ["attributes", "tokio-runtime", "testing"] }
-pyo3-log = { workspace = true }
+pyo3-stub-gen.workspace = true
+# pyo3-async-runtimes = { workspace = true, features = ["attributes", "tokio-runtime", "testing"] }
+pyo3-log.workspace = true
 
 # macro dependencies
-extend = { workspace = true }
+extend.workspace = true
 
 # async runtime
 tokio = { workspace = true, features = ["full", "tracing"] }
 
 # utility dependencies
 postcard = { workspace = true, features = ["use-std"] }
-thiserror = { workspace = true }
-rand = { workspace = true }
-n0-future = { workspace = true }
+rand.workspace = true
+n0-future.workspace = true
 
 
 # Tracing
