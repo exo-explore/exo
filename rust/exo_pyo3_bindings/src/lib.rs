@@ -40,7 +40,7 @@ pub(crate) mod ext {
 
     pub trait FutureExt: Future + Sized {
         /// SEE: <https://pyo3.rs/v0.27.1/async-await.html#detaching-from-the-interpreter-across-await>
-        /// An AllowThreads returns a Future with an Err output if python has shutdown while we
+        /// An [`AllowThreads`] returns a Future with an Err output if python has shutdown while we
         /// were awaiting something
         fn allow_threads_py(self) -> AllowThreads<Self>
         where
@@ -84,7 +84,12 @@ pub(crate) mod ext {
 #[pymodule(name = "exo_pyo3_bindings")]
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
-    pyo3_log::init();
+    use log::LevelFilter;
+    #[allow(clippy::expect_used)]
+    pyo3_log::Logger::default()
+        .filter(LevelFilter::Warn)
+        .install()
+        .expect("logger install");
 
     ident_submodule(m)?;
     networking_submodule(m)?;
