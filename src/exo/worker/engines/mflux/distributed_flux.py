@@ -19,8 +19,8 @@ from tqdm import tqdm
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
-from exo.worker.engines.mflux.pipefusion.distributed_transformer import (
-    DistributedTransformer,
+from exo.worker.engines.mflux.pipefusion.distributed_denoising import (
+    DistributedDenoising,
 )
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
@@ -66,7 +66,7 @@ class DistributedFlux1:
 
         if group is not None:
             # Apply pipeline parallelism by wrapping the transformer
-            model.transformer = DistributedTransformer(  # type: ignore[assignment]
+            model.transformer = DistributedDenoising(  # type: ignore[assignment]
                 transformer=model.transformer,
                 group=group,
                 shard_metadata=shard_metadata,
@@ -335,11 +335,10 @@ class DistributedFlux1:
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
     ) -> mx.array:
-        model = self._model
+        if self._group is None:
+            latents = config.scheduler.scale_model_input(latents, t)
 
-        latents = config.scheduler.scale_model_input(latents, t)
-
-        noise = model.transformer(
+        noise = self._model.transformer(
             t=t,
             config=config,
             hidden_states=latents,
@@ -347,10 +346,13 @@ class DistributedFlux1:
             pooled_prompt_embeds=pooled_prompt_embeds,
         )
 
-        latents = config.scheduler.step(
-            model_output=noise,
-            timestep=t,
-            sample=latents,
-        )
+        if self._group is None:
+            latents = config.scheduler.step(
+                model_output=noise,
+                timestep=t,
+                sample=latents,
+            )
+        else:
+            latents = noise
 
         return latents
