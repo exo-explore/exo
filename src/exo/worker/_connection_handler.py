@@ -29,7 +29,4 @@ def check_connections(
                     continue
                 out.append(TopologyEdgeCreated(edge=conn))
 
-    for conn in conns:
-        out.append(TopologyEdgeDeleted(edge=conn))
-
     return out
