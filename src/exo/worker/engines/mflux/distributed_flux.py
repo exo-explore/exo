@@ -1,8 +1,10 @@
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
 from mflux.config.config import Config
+from mflux.config.model_config import ModelConfig
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
 from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
@@ -14,7 +16,13 @@ from mflux.utils.image_util import ImageUtil
 from PIL import Image
 from tqdm import tqdm
 
+from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.download.download_utils import build_model_path
+from exo.worker.engines.mflux.pipefusion.distributed_transformer import (
+    DistributedTransformer,
+)
+from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
 
 
@@ -34,13 +42,89 @@ class DistributedFlux1:
 
     def __init__(
         self,
-        model: Flux1,
-        group: Optional[mx.distributed.Group],
+        model_id: str,
+        local_path: Path,
         shard_metadata: PipelineShardMetadata,
+        group: Optional[mx.distributed.Group] = None,
+        quantize: int | None = None,
     ):
+        """
+        Initialize DistributedFlux1 directly from configuration.
+
+        Args:
+            model_id: The model identifier (e.g., "black-forest-labs/FLUX.1-schnell")
+            local_path: Path to the local model weights
+            shard_metadata: Pipeline shard metadata with layer assignments
+            group: MLX distributed group for multi-node coordination (None for single-node)
+            quantize: Optional quantization bit width
+        """
+        model = Flux1(
+            model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
+            local_path=str(local_path),
+            quantize=quantize,
+        )
+
+        if group is not None:
+            # Apply pipeline parallelism by wrapping the transformer
+            model.transformer = DistributedTransformer(  # type: ignore[assignment]
+                transformer=model.transformer,
+                group=group,
+                shard_metadata=shard_metadata,
+            )
+            logger.info("Applied pipefusion transformations")
+
+            mx.eval(model.parameters())
+
+            # TODO: Do we need this?
+            mx.eval(model)
+
+            # Synchronize processes before generation to avoid timeout
+            mx_barrier(group)
+            logger.info(f"Flux transformer sharded for rank {group.rank()}")
+        else:
+            logger.info("Single-node Flux initialization")
+
         object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_group", group)
         object.__setattr__(self, "_shard_metadata", shard_metadata)
+
+    @classmethod
+    def from_bound_instance(cls, bound_instance: BoundInstance) -> "DistributedFlux1":
+        """
+        Create DistributedFlux1 from a BoundInstance.
+
+        This factory method extracts model configuration from the bound instance
+        and handles distributed initialization if needed.
+
+        Args:
+            bound_instance: The bound instance containing model and shard info
+
+        Returns:
+            Initialized DistributedFlux1 ready for inference
+        """
+        model_id = bound_instance.bound_shard.model_meta.model_id
+        model_path = build_model_path(model_id)
+
+        shard_metadata = bound_instance.bound_shard
+        if not isinstance(shard_metadata, PipelineShardMetadata):
+            raise ValueError("Expected PipelineShardMetadata for Flux")
+
+        is_distributed = (
+            len(bound_instance.instance.shard_assignments.node_to_runner) > 1
+        )
+
+        if is_distributed:
+            logger.info("Starting distributed init for Flux")
+            group = mlx_distributed_init(bound_instance)
+        else:
+            group = None
+
+        return cls(
+            model_id=model_id,
+            local_path=model_path,
+            shard_metadata=shard_metadata,
+            group=group,
+        )
 
     @property
     def model(self) -> Flux1:
