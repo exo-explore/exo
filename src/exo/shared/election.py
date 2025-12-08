@@ -192,7 +192,9 @@ class Election:
                     self._candidates = candidates
                     logger.info("Starting new campaign")
                     assert self._tg is not None
-                    self._tg.start_soon(self._campaign, candidates)
+                    self._tg.start_soon(
+                        self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
+                    )
                     logger.info("Campaign started")
 
     async def _command_counter(self) -> None:

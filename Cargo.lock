@@ -774,7 +774,6 @@ dependencies = [
  "log",
  "n0-future",
  "networking",
- "pin-project",
  "postcard",
  "pyo3",
  "pyo3-log",

@@ -40,6 +40,8 @@ pub(crate) mod ext {
 
     pub trait FutureExt: Future + Sized {
         /// SEE: <https://pyo3.rs/v0.27.1/async-await.html#detaching-from-the-interpreter-across-await>
+        /// An AllowThreads returns a Future with an Err output if python has shutdown while we
+        /// were awaiting something
         fn allow_threads_py(self) -> AllowThreads<Self>
         where
             AllowThreads<Self>: Future,

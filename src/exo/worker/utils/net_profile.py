@@ -35,7 +35,7 @@ async def check_reachable(topology: Topology) -> dict[NodeId, set[str]]:
                 continue
             for iface in node.node_profile.network_interfaces:
                 tg.start_soon(
-                    check_reachability, iface.ip_address, node.node_id, reachable
+                    check_reachability, str(iface.ip_address), node.node_id, reachable
                 )
 
     return reachable

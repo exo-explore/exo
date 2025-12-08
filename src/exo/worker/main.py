@@ -254,13 +254,10 @@ class Worker:
     async def _connection_message_event_writer(self):
         with self.connection_message_receiver as connection_messages:
             async for msg in connection_messages:
-                for event in self._convert_connection_message_to_event(msg):
+                for event in check_connections(self.node_id, msg, self.state):
+                    logger.info(f"Worker discovered connection {event}")
                     await self.event_sender.send(event)
 
-    def _convert_connection_message_to_event(
-        self, msg: ConnectionMessage
-    ) -> list[Event]:
-        return check_connections(self.node_id, msg, self.state)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.

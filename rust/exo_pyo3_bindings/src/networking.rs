@@ -79,13 +79,12 @@ impl PyNetworkingHandle {
 
     async fn subscribe(&self, topic: String) -> PyResult<(PySender, PyReceiver)> {
         let fut = self.net.subscribe(&topic);
-        let (send, recv) = pin!(fut).allow_threads_py().await.pyerr()?;
+        let (send, recv) = fut.await.pyerr()?;
         Ok((PySender { inner: send }, PyReceiver { inner: recv }))
     }
 
     async fn get_connection_receiver(&self) -> PyResult<PyConnectionReceiver> {
-        let fut = self.net.connection_info();
-        let stream = pin!(fut).allow_threads_py().await;
+        let stream = self.net.connection_info().await;
         Ok(PyConnectionReceiver {
             inner: Mutex::new(Box::pin(stream)),
         })
@@ -113,7 +112,7 @@ impl PySender {
     async fn send(&mut self, message: Py<PyBytes>) -> PyResult<()> {
         let bytes = Python::attach(|py| message.as_bytes(py).to_vec());
         let broadcast_fut = self.inner.broadcast(bytes.into());
-        pin!(broadcast_fut).await.pyerr()
+        pin!(broadcast_fut).allow_threads_py().await?.pyerr()
     }
 }
 
@@ -129,7 +128,7 @@ impl PyReceiver {
     async fn receive(&mut self) -> PyResult<Py<PyBytes>> {
         loop {
             let next_fut = self.inner.next();
-            match pin!(next_fut).allow_threads_py().await {
+            match pin!(next_fut).allow_threads_py().await? {
                 // Successful cases
                 Some(Ok(Event::Received(Message { content, .. }))) => {
                     return Ok(content.to_vec().pybytes());
@@ -159,9 +158,10 @@ struct PyConnectionReceiver {
 #[pymethods]
 impl PyConnectionReceiver {
     async fn receive(&mut self) -> PyResult<PyConnectionMessage> {
-        let mg_fut = self.inner.lock();
-        let mut lock = pin!(mg_fut).allow_threads_py().await;
-        match lock.next().allow_threads_py().await {
+        // Errors on trying to receive twice - which is a dev error. This could just block the
+        // async task, but I want the error to persist
+        let mut lock = self.inner.try_lock().pyerr()?;
+        match lock.next().allow_threads_py().await? {
             // Successful cases
             Some(DiscoveryEvent::Discovered {
                 endpoint_info: EndpointInfo { endpoint_id, data },
