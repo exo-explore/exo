@@ -87,7 +87,11 @@ class Worker:
         self.download_status: dict[ShardMetadata, DownloadProgress] = {}
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
         self._tg: TaskGroup | None = None
+
         self._nack_cancel_scope: CancelScope | None = None
+        self._nack_attempts: int = 0
+        self._nack_base_seconds: float = 0.5
+        self._nack_cap_seconds: float = 10.0
 
         self.event_sender, self.event_receiver = channel[Event]()
 
@@ -147,12 +151,18 @@ class Worker:
 
                 # 2. for each event, apply it to the state
                 indexed_events = self.event_buffer.drain_indexed()
+                if indexed_events:
+                    self._nack_attempts = 0
+
                 if not indexed_events and (
                     self._nack_cancel_scope is None
                     or self._nack_cancel_scope.cancel_called
                 ):
                     assert self._tg
-                    self._tg.start_soon(self._nack_request)
+                    self._tg.start_soon(
+                        self._nack_request, self.state.last_event_applied_idx
+                    )
+                    continue
                 elif indexed_events and self._nack_cancel_scope:
                     self._nack_cancel_scope.cancel()
 
@@ -164,7 +174,6 @@ class Worker:
 
                 # 3. If we've found a "relevant" event, run a plan -> op -> execute cycle.
                 if flag:
-                    # await self.plan_step()
                     pass
 
     async def plan_step(self):
@@ -282,19 +291,21 @@ class Worker:
                     )
                 )
 
-    async def _nack_request(self) -> None:
+    async def _nack_request(self, since_idx: int) -> None:
+        # We request all events after (and including) the missing index.
         # This function is started whenever we receive an event that is out of sequence.
         # It is cancelled as soon as we receiver an event that is in sequence.
-        # Thus, if we don't make any progress within 1 + random() seconds, we request a copy of the event log
-        # This can be MASSIVELY tightened - just requesting a single event should be sufficient.
         with CancelScope() as scope:
             self._nack_cancel_scope = scope
+            delay: float = self._nack_base_seconds * (2.0**self._nack_attempts)
+            delay = min(self._nack_cap_seconds, delay)
+            self._nack_attempts += 1
             try:
-                await anyio.sleep(1 + random())
+                await anyio.sleep(delay)
                 await self.command_sender.send(
                     ForwarderCommand(
                         origin=self.node_id,
-                        command=RequestEventLog(since_idx=0),
+                        command=RequestEventLog(since_idx=since_idx),
                     )
                 )
             finally:
