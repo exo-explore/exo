@@ -52,6 +52,11 @@
       {
         formatter = treefmtEval.config.build.wrapper;
         checks.formatting = treefmtEval.config.build.check inputs.self;
+        checks.lint = pkgs.runCommand "lint-check" { } ''
+          export RUFF_CACHE_DIR="$TMPDIR/ruff-cache"
+          ${pkgs.ruff}/bin/ruff check ${inputs.self}/
+          touch $out
+        '';
 
         devShells.default = pkgs.mkShell {
           packages =

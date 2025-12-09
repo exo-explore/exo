@@ -2,7 +2,7 @@ fmt:
     nix fmt
 
 lint:
-    uv run ruff check --fix src
+    uv run ruff check --fix
 
 test:
     uv run pytest src

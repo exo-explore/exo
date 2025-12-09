@@ -118,7 +118,7 @@ environments = [
 ###
 
 [tool.ruff]
-extend-exclude = ["shared/protobufs/**"]
+extend-exclude = ["shared/protobufs/**", "*mlx_typings/**", "rust/exo_pyo3_bindings/**"]
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]

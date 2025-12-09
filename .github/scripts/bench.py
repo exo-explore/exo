@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 import time
@@ -193,7 +194,7 @@ def collect_metrics_snapshot(state: Mapping[str, Any]) -> MetricsSnapshot:
 
     # Count tasks per instance (only Pending and Running exist in state; completed tasks are deleted)
     instance_task_counts: dict[str, dict[str, int]] = {}
-    for instance_id in instances.keys():
+    for instance_id in instances:
         instance_task_counts[instance_id] = {
             "Pending": 0,
             "Running": 0,
@@ -492,7 +493,7 @@ async def wait_for_tasks_drained(api_base: str, timeout_s: int = 600) -> None:
     pending or running tasks remaining.
     """
     print(f"\n{'=' * 80}")
-    print(f"⏳ WAITING FOR ALL TASKS TO DRAIN")
+    print("⏳ WAITING FOR ALL TASKS TO DRAIN")
     print(f"{'=' * 80}")
     start = time.monotonic()
 
@@ -821,10 +822,8 @@ async def monitor_metrics(
             traceback.print_exc()
 
         # Wait for interval or until stopped
-        try:
+        with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-        except asyncio.TimeoutError:
-            pass
 
 
 async def run_stage(
@@ -883,7 +882,7 @@ async def run_stage(
         results = list(await asyncio.gather(*tasks))
 
     # Wait for all tasks in the cluster to be drained
-    print(f"\nHTTP requests completed. Now waiting for cluster tasks to drain...")
+    print("\nHTTP requests completed. Now waiting for cluster tasks to drain...")
     await wait_for_tasks_drained(api_base, timeout_s=600)
 
     stage_completed_at = time.time()
@@ -1026,7 +1025,7 @@ async def run_benchmark(
 
         # Add 30 second delay to allow topology to stabilize before creating instances
         print(
-            f"\nWaiting 30 seconds for topology to stabilize before creating instances..."
+            "\nWaiting 30 seconds for topology to stabilize before creating instances..."
         )
         await asyncio.sleep(30)
         print("Proceeding with instance creation\n")
@@ -1036,7 +1035,7 @@ async def run_benchmark(
 
         model_counts = Counter(model_ids)
 
-        print(f"\nTarget instance counts by model:")
+        print("\nTarget instance counts by model:")
         for model_id, count in model_counts.items():
             print(f"  {model_id}: {count} instance(s)")
         print()
@@ -1088,7 +1087,7 @@ async def run_benchmark(
 
         # Collect all instance IDs for all models
         state = fetch_state(api_base)
-        for model_id in model_counts.keys():
+        for model_id in model_counts:
             ids = get_all_instance_ids_for_model(state, model_id)
             all_instance_ids.extend(ids)
 
@@ -1317,7 +1316,7 @@ async def run_benchmark(
                 print(f"Saving results to: {results_output_path}")
                 with open(results_output_path, "w") as f:
                     json.dump(results_doc, f, indent=2)
-                print(f"Results saved successfully")
+                print("Results saved successfully")
 
             # Cleanup all instances
             for instance_id in all_instance_ids:
@@ -1331,7 +1330,7 @@ async def run_benchmark(
                 "[SECONDARY] Waiting with cluster (primary handles benchmark execution)"
             )
             # Secondary nodes wait until all instances of all models are deleted
-            for model_id in model_counts.keys():
+            for model_id in model_counts:
                 await wait_for_all_instances_deleted(api_base, model_id)
 
         return 0
