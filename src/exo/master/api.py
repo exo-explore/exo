@@ -596,6 +596,9 @@ class API:
                         ):
                             images_complete += 1
 
+                        if images_complete >= num_images:
+                            break
+
             # Reassemble images in order
             images: list[ImageData] = []
             for image_idx in range(num_images):
