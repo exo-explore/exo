@@ -633,8 +633,6 @@ class API:
         await self._send(command)
 
         # Collect all image chunks (non-streaming)
-        self._image_generation_queues[command.command_id], recv = channel[ImageChunk]()
-
         num_images = payload.n or 1
 
         # Track chunks per image: {image_index: {chunk_index: data}}
@@ -643,6 +641,10 @@ class API:
         images_complete = 0
 
         try:
+            self._image_generation_queues[command.command_id], recv = channel[
+                ImageChunk
+            ]()
+
             while images_complete < num_images:
                 with recv as chunks:
                     async for chunk in chunks:
