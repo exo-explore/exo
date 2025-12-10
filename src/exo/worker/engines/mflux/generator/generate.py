@@ -58,7 +58,7 @@ def mflux_generate(
     # Parse parameters
     width, height = parse_size(task.size)
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
-    seed = 2  # TODO: not in OAI API?
+    seed = 2  # TODO: not in OAI API? random?
 
     # Generate using the model's generate method
     image = model.generate(
