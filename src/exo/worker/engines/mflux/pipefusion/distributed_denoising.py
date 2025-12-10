@@ -125,6 +125,10 @@ class DistributedDenoising:
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
     ):
+        prev_latents = hidden_states
+
+        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
+
         # === PHASE 1: Create Embeddings (all stages compute, for consistency) ===
         hidden_states = self.transformer.x_embedder(hidden_states)
         encoder_hidden_states = self.transformer.context_embedder(prompt_embeds)
@@ -216,7 +220,13 @@ class DistributedDenoising:
         hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
         hidden_states = self.transformer.proj_out(hidden_states)
 
-        return hidden_states
+        latents = config.scheduler.step(
+            model_output=hidden_states,
+            timestep=t,
+            sample=prev_latents,
+        )
+
+        return latents
 
     def _async_pipeline(
         self,
@@ -247,11 +257,8 @@ class DistributedDenoising:
         controlnet_single_block_samples: list[mx.array] | None = None,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
-        prev_latents = hidden_states
-        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
-
         if t < self.num_sync_steps:
-            hidden_states = self._sync_pipeline(
+            latents = self._sync_pipeline(
                 t,
                 config,
                 hidden_states,
@@ -260,7 +267,7 @@ class DistributedDenoising:
                 kontext_image_ids,
             )
         else:
-            hidden_states = self._async_pipeline(
+            latents = self._async_pipeline(
                 t,
                 config,
                 hidden_states,
@@ -268,12 +275,6 @@ class DistributedDenoising:
                 pooled_prompt_embeds,
                 kontext_image_ids,
             )
-
-        latents = config.scheduler.step(
-            model_output=hidden_states,
-            timestep=t,
-            sample=prev_latents,
-        )
 
         return latents
 
