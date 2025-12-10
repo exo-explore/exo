@@ -146,7 +146,7 @@ class DistributedDenoising:
                 )
 
             # Run assigned joint blocks
-            for block in self.transformer.transformer_blocks:
+            for block in self.transformer_blocks:
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
@@ -186,7 +186,7 @@ class DistributedDenoising:
                 mx.eval(hidden_states)
 
             # Run assigned single blocks
-            for block in self.transformer.single_transformer_blocks:
+            for block in self.single_transformer_blocks:
                 hidden_states = block(
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
