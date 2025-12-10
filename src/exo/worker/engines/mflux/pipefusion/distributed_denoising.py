@@ -204,12 +204,11 @@ class DistributedDenoising:
                     hidden_states, self.rank + 1, group=self.group
                 )
 
-        mx.eval(hidden_states)
-        mx_barrier(group=self.group)
-
         #
         # === PHASE 5: All-gather Final Output ===
         # All stages participate to receive the final output
+        mx.eval(hidden_states)
+        mx_barrier(group=self.group)
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
