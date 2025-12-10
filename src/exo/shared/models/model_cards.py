@@ -650,4 +650,52 @@ MODEL_CARDS: dict[str, ModelCard] = {
             ],
         ),
     ),
+    "flux1-dev": ModelCard(
+        short_id="flux1-dev",
+        model_id="black-forest-labs/FLUX.1-dev",
+        name="FLUX.1 [dev]",
+        description="""FLUX.1 [dev] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("black-forest-labs/FLUX.1-dev"),
+            pretty_name="FLUX.1 [dev]",
+            storage_size=Memory.from_bytes(23782357120),  # + 9524621312),
+            n_layers=57,  # sharded layers
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="text_encoder_2",
+                    component_path="text_encoder_2/",
+                    storage_size=Memory.from_bytes(9524621312),
+                    n_layers=24,
+                    can_shard=False,
+                    safetensors_index_filename="model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(23802816640),
+                    n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    n_layers=None,  # TODO: ?
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
+        ),
+    ),
 }
