@@ -1,3 +1,4 @@
+from math import ceil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
@@ -77,6 +78,7 @@ class DistributedFlux1:
                 transformer=model.transformer,
                 group=group,
                 shard_metadata=shard_metadata,
+                num_sync_steps=ceil(self._steps_map[variant]["medium"] / 20),
             )
             logger.info("Applied pipefusion transformations")
 
