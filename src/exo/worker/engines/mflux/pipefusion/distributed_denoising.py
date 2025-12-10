@@ -6,6 +6,7 @@ from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mlx.utils_mlx import mx_barrier
 
 
 def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: int):
@@ -198,6 +199,9 @@ class DistributedDenoising:
                 hidden_states = mx.distributed.send(
                     hidden_states, self.rank + 1, group=self.group
                 )
+
+        mx.eval(hidden_states)
+        mx_barrier(group=self.group)
 
         #
         # === PHASE 5: All-gather Final Output ===
