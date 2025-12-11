@@ -6,6 +6,11 @@ from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mflux.pipefusion.kv_cache import JointPatchKVCache, PatchKVCache
+from exo.worker.engines.mflux.pipefusion.patched_blocks import (
+    PatchedJointTransformerBlock,
+    PatchedSingleTransformerBlock,
+)
 from exo.worker.engines.mlx.utils_mlx import mx_barrier
 
 
@@ -172,7 +177,7 @@ class DistributedDenoising:
             else:
                 # Send concatenated state to next stage (which has single blocks)
                 mx.distributed.send(concatenated, self.rank + 1, group=self.group)
-                # This stage is done with blocks, but will participate in all_gather
+
         elif self.has_joint_blocks and not self.is_last_stage:
             # Send joint block outputs to next stage (which has more joint blocks)
             mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
@@ -236,14 +241,180 @@ class DistributedDenoising:
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
     ):
-        return self._sync_pipeline(
-            t,
-            config,
-            hidden_states,
-            prompt_embeds,
-            pooled_prompt_embeds,
-            kontext_image_ids,
+        prev_latents = hidden_states
+        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
+
+        # === PHASE 1: Create Embeddings (all stages compute, for consistency) ===
+        full_hidden = self.transformer.x_embedder(hidden_states)
+        encoder_hidden_states = self.transformer.context_embedder(prompt_embeds)
+        text_embeddings = Transformer.compute_text_embeddings(
+            t, pooled_prompt_embeds, self.transformer.time_text_embed, config
         )
+        image_rotary_embeddings = Transformer.compute_rotary_embeddings(
+            prompt_embeds, self.transformer.pos_embed, config, kontext_image_ids
+        )
+
+        # === Calculate patch info ===
+        batch_size = full_hidden.shape[0]
+        num_img_tokens = full_hidden.shape[1]
+        text_seq_len = encoder_hidden_states.shape[1]
+        total_seq_len = text_seq_len + num_img_tokens
+
+        # Latent dimensions (image size / 8 for VAE)
+        latent_height = config.height // 8
+        latent_width = config.width // 8
+        patch_size = 2  # Flux uses 2x2 patches
+
+        patch_heights, actual_num_patches = calculate_patch_heights(
+            latent_height, self.num_patches, patch_size
+        )
+        token_indices = calculate_token_indices(patch_heights, latent_width, patch_size)
+
+        # === Initialize KV caches (once per timestep) ===
+        joint_kv_caches = [
+            JointPatchKVCache(
+                batch_size=batch_size,
+                num_heads=24,
+                text_seq_len=text_seq_len,
+                image_seq_len=num_img_tokens,
+                head_dim=128,
+                dtype=full_hidden.dtype,
+            )
+            for _ in range(len(self.transformer_blocks))
+        ]
+        single_kv_caches = [
+            PatchKVCache(
+                batch_size=batch_size,
+                num_heads=24,
+                total_seq_len=total_seq_len,
+                head_dim=128,
+                dtype=full_hidden.dtype,
+            )
+            for _ in range(len(self.single_transformer_blocks))
+        ]
+
+        # === Process each patch ===
+        output_patches = []
+        for start_token, end_token in token_indices:
+            # Extract current patch from full hidden states
+            patch_hidden = full_hidden[:, start_token:end_token, :]
+
+            # === PHASE 2: Joint Blocks with KV Cache ===
+            if self.has_joint_blocks:
+                # Receive from previous stage (if not first stage)
+                if not self.is_first_stage:
+                    patch_hidden = mx.distributed.recv_like(
+                        patch_hidden, self.rank - 1, group=self.group
+                    )
+                    encoder_hidden_states = mx.distributed.recv_like(
+                        encoder_hidden_states, self.rank - 1, group=self.group
+                    )
+
+                    mx.eval(patch_hidden, encoder_hidden_states)
+
+                # Run assigned joint blocks with KV cache
+                for block_idx, block in enumerate(self.transformer_blocks):
+                    patched_block = PatchedJointTransformerBlock(block)
+                    encoder_hidden_states, patch_hidden = patched_block(
+                        patch_hidden=patch_hidden,
+                        encoder_hidden_states=encoder_hidden_states,
+                        text_embeddings=text_embeddings,
+                        image_rotary_emb=image_rotary_embeddings,
+                        kv_cache=joint_kv_caches[block_idx],
+                        patch_start=start_token,
+                        patch_end=end_token,
+                        text_seq_len=text_seq_len,
+                    )
+
+            # === PHASE 3: Joint→Single Transition ===
+            if self.owns_concat_stage:
+                # Concatenate encoder and hidden states for this patch
+                patch_concat = mx.concatenate(
+                    [encoder_hidden_states, patch_hidden], axis=1
+                )
+
+                if self.has_single_blocks:
+                    # We continue with single blocks on this stage
+                    patch_hidden = patch_concat
+                else:
+                    # Send concatenated state to next stage
+                    mx.eval(
+                        mx.distributed.send(
+                            patch_concat, self.rank + 1, group=self.group
+                        )
+                    )
+
+            elif self.has_joint_blocks and not self.is_last_stage:
+                # Send joint block outputs to next stage
+                mx.eval(
+                    mx.distributed.send(patch_hidden, self.rank + 1, group=self.group),
+                    mx.distributed.send(
+                        encoder_hidden_states, self.rank + 1, group=self.group
+                    ),
+                )
+
+            # === PHASE 4: Single Blocks with KV Cache ===
+            if self.has_single_blocks:
+                # Receive from previous stage if we didn't do concatenation
+                if not self.owns_concat_stage and not self.is_first_stage:
+                    # Create template for recv
+                    recv_template = mx.concatenate(
+                        [encoder_hidden_states, patch_hidden], axis=1
+                    )
+                    patch_hidden = mx.distributed.recv_like(
+                        recv_template, self.rank - 1, group=self.group
+                    )
+                    mx.eval(patch_hidden)
+
+                # Run assigned single blocks with KV cache
+                for block_idx, block in enumerate(self.single_transformer_blocks):
+                    patched_block = PatchedSingleTransformerBlock(block)
+                    patch_hidden = patched_block(
+                        patch_hidden=patch_hidden,
+                        text_embeddings=text_embeddings,
+                        image_rotary_emb=image_rotary_embeddings,
+                        kv_cache=single_kv_caches[block_idx],
+                        patch_start=start_token,
+                        patch_end=end_token,
+                        text_seq_len=text_seq_len,
+                    )
+
+                # Send to next stage if not last
+                if not self.is_last_stage:
+                    mx.eval(
+                        mx.distributed.send(
+                            patch_hidden, self.rank + 1, group=self.group
+                        )
+                    )
+
+            # Extract only image portion from this patch (remove text prefix)
+            patch_img_only = patch_hidden[:, text_seq_len:, :]
+            output_patches.append(patch_img_only)
+
+        # === PHASE 5: All-gather Final Output ===
+        mx.eval(output_patches)
+        mx_barrier(group=self.group)
+
+        # All-gather each patch from last stage
+        for i in range(len(output_patches)):
+            output_patches[i] = mx.distributed.all_gather(
+                output_patches[i], group=self.group
+            )[-output_patches[i].shape[0] :]
+
+        # Reconstruct full sequence from patches (already image-only)
+        hidden_states = mx.concatenate(output_patches, axis=1)
+
+        # === PHASE 6: Final Projection ===
+        hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
+        hidden_states = self.transformer.proj_out(hidden_states)
+
+        latents = config.scheduler.step(
+            model_output=hidden_states,
+            timestep=t,
+            sample=prev_latents,
+        )
+
+        return latents
 
     def __call__(
         self,
