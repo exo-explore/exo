@@ -60,7 +60,7 @@ class DistributedDenoising:
         self.end_layer = shard_metadata.end_layer
 
         self.num_sync_steps = num_sync_steps
-        self.num_patches = num_patches if num_patches else group.size
+        self.num_patches = num_patches if num_patches else group.size()
 
         # Get block counts from the original transformer (before slicing)
         # Note: These are the ORIGINAL counts, not the sliced counts
