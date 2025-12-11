@@ -3,8 +3,14 @@ from mflux.models.flux.model.flux_transformer.common.attention_utils import (
     AttentionUtils,
 )
 from mflux.models.flux.model.flux_transformer.joint_attention import JointAttention
+from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
+    JointTransformerBlock,
+)
 from mflux.models.flux.model.flux_transformer.single_block_attention import (
     SingleBlockAttention,
+)
+from mflux.models.flux.model.flux_transformer.single_transformer_block import (
+    SingleTransformerBlock,
 )
 
 from exo.worker.engines.mflux.pipefusion.kv_cache import JointPatchKVCache, PatchKVCache
@@ -235,3 +241,166 @@ class CachedSingleBlockAttention:
         )
 
         return attn_output
+
+
+class PatchedJointTransformerBlock:
+    """Joint transformer block with KV caching for patch-based processing.
+
+    Wraps a JointTransformerBlock to process image patches while using
+    cached K/V values for the full sequence (text + all image patches).
+    """
+
+    def __init__(self, block: JointTransformerBlock):
+        """Wrap an existing JointTransformerBlock.
+
+        Args:
+            block: The original JointTransformerBlock (for weight access)
+        """
+        self.block = block
+        self.cached_attn = CachedJointAttention(block.attn)
+
+    def __call__(
+        self,
+        patch_hidden: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        image_rotary_emb: mx.array,
+        kv_cache: JointPatchKVCache,
+        patch_start: int,
+        patch_end: int,
+        text_seq_len: int,
+    ) -> tuple[mx.array, mx.array]:
+        """Forward pass with KV caching for patch-based processing.
+
+        Args:
+            patch_hidden: Image patch hidden states [B, patch_img_len, D]
+            encoder_hidden_states: Full text hidden states [B, text_len, D]
+            text_embeddings: Time + pooled text conditioning
+            image_rotary_emb: Full rotary embeddings for [text + full_image]
+            kv_cache: KV cache to update and read from
+            patch_start: Start token index of this patch in image sequence
+            patch_end: End token index of this patch in image sequence
+            text_seq_len: Length of text sequence
+
+        Returns:
+            Tuple of (encoder_hidden_states, patch_hidden) after block processing
+        """
+        # 1. Compute norms
+        norm_hidden, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.block.norm1(
+            hidden_states=patch_hidden,
+            text_embeddings=text_embeddings,
+        )
+        (
+            norm_encoder,
+            c_gate_msa,
+            c_shift_mlp,
+            c_scale_mlp,
+            c_gate_mlp,
+        ) = self.block.norm1_context(
+            hidden_states=encoder_hidden_states,
+            text_embeddings=text_embeddings,
+        )
+
+        # 2. Compute attention with KV cache
+        attn_output, context_attn_output = self.cached_attn(
+            norm_hidden=norm_hidden,
+            norm_encoder=norm_encoder,
+            image_rotary_emb=image_rotary_emb,
+            kv_cache=kv_cache,
+            patch_start=patch_start,
+            patch_end=patch_end,
+            text_seq_len=text_seq_len,
+        )
+
+        # 3. Apply norm and feed forward
+        patch_hidden = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=patch_hidden,
+            attn_output=attn_output,
+            gate_mlp=gate_mlp,
+            gate_msa=gate_msa,
+            scale_mlp=scale_mlp,
+            shift_mlp=shift_mlp,
+            norm_layer=self.block.norm2,
+            ff_layer=self.block.ff,
+        )
+        encoder_hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=encoder_hidden_states,
+            attn_output=context_attn_output,
+            gate_mlp=c_gate_mlp,
+            gate_msa=c_gate_msa,
+            scale_mlp=c_scale_mlp,
+            shift_mlp=c_shift_mlp,
+            norm_layer=self.block.norm2_context,
+            ff_layer=self.block.ff_context,
+        )
+
+        return encoder_hidden_states, patch_hidden
+
+
+class PatchedSingleTransformerBlock:
+    """Single transformer block with KV caching for patch-based processing.
+
+    Wraps a SingleTransformerBlock to process patches of concatenated [text + image]
+    while using cached K/V values for the full sequence.
+    """
+
+    def __init__(self, block: SingleTransformerBlock):
+        """Wrap an existing SingleTransformerBlock.
+
+        Args:
+            block: The original SingleTransformerBlock (for weight access)
+        """
+        self.block = block
+        self.cached_attn = CachedSingleBlockAttention(block.attn)
+
+    def __call__(
+        self,
+        patch_hidden: mx.array,
+        text_embeddings: mx.array,
+        image_rotary_emb: mx.array,
+        kv_cache: PatchKVCache,
+        patch_start: int,
+        patch_end: int,
+        text_seq_len: int,
+    ) -> mx.array:
+        """Forward pass with KV caching for patch-based processing.
+
+        Args:
+            patch_hidden: Patch of [text + image] hidden states [B, text_len + patch_img_len, D]
+            text_embeddings: Time + pooled text conditioning
+            image_rotary_emb: Full rotary embeddings for [text + full_image]
+            kv_cache: KV cache to update and read from
+            patch_start: Start token index of image patch (within image portion)
+            patch_end: End token index of image patch (within image portion)
+            text_seq_len: Length of text portion in hidden_states
+
+        Returns:
+            Output hidden states [B, text_len + patch_img_len, D]
+        """
+        # 0. Establish residual connection
+        residual = patch_hidden
+
+        # 1. Compute norm
+        norm_hidden, gate = self.block.norm(
+            hidden_states=patch_hidden,
+            text_embeddings=text_embeddings,
+        )
+
+        # 2. Compute attention with KV cache
+        attn_output = self.cached_attn(
+            norm_hidden=norm_hidden,
+            image_rotary_emb=image_rotary_emb,
+            kv_cache=kv_cache,
+            patch_start=patch_start,
+            patch_end=patch_end,
+            text_seq_len=text_seq_len,
+        )
+
+        # 3. Apply feed forward and projection
+        hidden_states = self.block._apply_feed_forward_and_projection(
+            norm_hidden_states=norm_hidden,
+            attn_output=attn_output,
+            gate=gate,
+        )
+
+        return residual + hidden_states
