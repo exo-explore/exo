@@ -8,6 +8,8 @@ from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.mflux.pipefusion.kv_cache import JointPatchKVCache, PatchKVCache
 from exo.worker.engines.mflux.pipefusion.patched_blocks import (
+    CachingJointTransformerBlock,
+    CachingSingleTransformerBlock,
     PatchedJointTransformerBlock,
     PatchedSingleTransformerBlock,
 )
@@ -125,6 +127,43 @@ class DistributedDenoising:
     def is_last_stage(self) -> bool:
         return self.rank == self.world_size - 1
 
+    def _initialize_kv_caches(
+        self,
+        batch_size: int,
+        text_seq_len: int,
+        num_img_tokens: int,
+        dtype: mx.Dtype,
+    ) -> None:
+        """Initialize KV caches for both sync and async pipelines.
+
+        Args:
+            batch_size: Batch size
+            text_seq_len: Length of text sequence
+            num_img_tokens: Number of image tokens
+            dtype: Data type for cache tensors
+        """
+        self._joint_kv_caches = [
+            JointPatchKVCache(
+                batch_size=batch_size,
+                num_heads=24,
+                text_seq_len=text_seq_len,
+                image_seq_len=num_img_tokens,
+                head_dim=128,
+                dtype=dtype,
+            )
+            for _ in range(len(self.transformer_blocks))
+        ]
+        self._single_kv_caches = [
+            PatchKVCache(
+                batch_size=batch_size,
+                num_heads=24,
+                total_seq_len=text_seq_len + num_img_tokens,
+                head_dim=128,
+                dtype=dtype,
+            )
+            for _ in range(len(self.single_transformer_blocks))
+        ]
+
     def _sync_pipeline(
         self,
         t: int,
@@ -148,7 +187,20 @@ class DistributedDenoising:
             prompt_embeds, self.transformer.pos_embed, config, kontext_image_ids
         )
 
-        # === PHASE 2: Joint Blocks with Communication ===
+        # === Initialize KV caches to populate during sync for async warmstart ===
+        batch_size = hidden_states.shape[0]
+        num_img_tokens = hidden_states.shape[1]
+        text_seq_len = encoder_hidden_states.shape[1]
+
+        if self._joint_kv_caches is None:
+            self._initialize_kv_caches(
+                batch_size=batch_size,
+                text_seq_len=text_seq_len,
+                num_img_tokens=num_img_tokens,
+                dtype=hidden_states.dtype,
+            )
+
+        # === PHASE 2: Joint Blocks with Communication and Caching ===
         if self.has_joint_blocks:
             # Receive from previous stage (if not first stage)
             if not self.is_first_stage:
@@ -159,9 +211,12 @@ class DistributedDenoising:
                     encoder_hidden_states, self.rank - 1, group=self.group
                 )
 
-            # Run assigned joint blocks
-            for block in self.transformer_blocks:
-                encoder_hidden_states, hidden_states = block(
+            # Run assigned joint blocks with caching wrappers
+            for block_idx, block in enumerate(self.transformer_blocks):
+                caching_block = CachingJointTransformerBlock(
+                    block, self._joint_kv_caches[block_idx]
+                )
+                encoder_hidden_states, hidden_states = caching_block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     text_embeddings=text_embeddings,
@@ -187,7 +242,7 @@ class DistributedDenoising:
             mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
             mx.distributed.send(encoder_hidden_states, self.rank + 1, group=self.group)
 
-        # === PHASE 4: Single Blocks with Communication ===
+        # === PHASE 4: Single Blocks with Communication and Caching ===
         if self.has_single_blocks:
             # Receive from previous stage if we didn't do concatenation
             if not self.owns_concat_stage and not self.is_first_stage:
@@ -199,9 +254,12 @@ class DistributedDenoising:
                 )
                 mx.eval(hidden_states)
 
-            # Run assigned single blocks
-            for block in self.single_transformer_blocks:
-                hidden_states = block(
+            # Run assigned single blocks with caching wrappers
+            for block_idx, block in enumerate(self.single_transformer_blocks):
+                caching_block = CachingSingleTransformerBlock(
+                    block, self._single_kv_caches[block_idx]
+                )
+                hidden_states = caching_block(
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
@@ -274,32 +332,17 @@ class DistributedDenoising:
         )
         token_indices = calculate_token_indices(patch_heights, latent_width, patch_size)
 
-        # === Initialize KV caches (only on first async timestep, reused across timesteps) ===
+        # === Initialize KV caches if not already done (reused across timesteps) ===
         # This enables true PipeFusion behavior: at timestep T, patches not yet processed
-        # have stale K/V from timestep T-1 (not zeros)
+        # have stale K/V from timestep T-1. If sync pipeline ran first, caches already
+        # contain valid K/V from the last sync timestep.
         if self._joint_kv_caches is None:
-            self._joint_kv_caches = [
-                JointPatchKVCache(
-                    batch_size=batch_size,
-                    num_heads=24,
-                    text_seq_len=text_seq_len,
-                    image_seq_len=num_img_tokens,
-                    head_dim=128,
-                    dtype=full_hidden.dtype,
-                )
-                for _ in range(len(self.transformer_blocks))
-            ]
-        if self._single_kv_caches is None:
-            self._single_kv_caches = [
-                PatchKVCache(
-                    batch_size=batch_size,
-                    num_heads=24,
-                    total_seq_len=total_seq_len,
-                    head_dim=128,
-                    dtype=full_hidden.dtype,
-                )
-                for _ in range(len(self.single_transformer_blocks))
-            ]
+            self._initialize_kv_caches(
+                batch_size=batch_size,
+                text_seq_len=text_seq_len,
+                num_img_tokens=num_img_tokens,
+                dtype=full_hidden.dtype,
+            )
 
         # Use persistent caches (stale K/V from previous timestep for unprocessed patches)
         joint_kv_caches = self._joint_kv_caches
