@@ -482,6 +482,10 @@ class DistributedDenoising:
         controlnet_single_block_samples: list[mx.array] | None = None,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
+        if t == 0:
+            self._joint_kv_caches = None
+            self._single_kv_caches = None
+
         if t < self.num_sync_steps:
             latents = self._sync_pipeline(
                 t,
