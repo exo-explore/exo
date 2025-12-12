@@ -409,8 +409,8 @@ class PatchedSingleTransformerBlock:
 class CachingJointTransformerBlock:
     """Joint transformer block that captures K/V for cache during sync mode.
 
-    Runs full (non-patched) attention but stores K/V in the cache for
-    subsequent async timesteps to use as stale values.
+    Implements the full block computation while storing K/V in the cache for
+    subsequent async timesteps to use as stale values. Computes K/V only once.
     """
 
     def __init__(self, block: JointTransformerBlock, kv_cache: JointPatchKVCache):
@@ -422,6 +422,9 @@ class CachingJointTransformerBlock:
         """
         self.block = block
         self.kv_cache = kv_cache
+        self.attn = block.attn
+        self.num_heads = block.attn.num_heads
+        self.head_dim = block.attn.head_dimension
 
     def __call__(
         self,
@@ -430,7 +433,7 @@ class CachingJointTransformerBlock:
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        """Forward pass that also populates the KV cache.
+        """Forward pass that computes attention and populates the KV cache.
 
         Args:
             hidden_states: Full image hidden states [B, img_len, D]
@@ -441,92 +444,120 @@ class CachingJointTransformerBlock:
         Returns:
             Tuple of (encoder_hidden_states, hidden_states) after block processing
         """
-        # Run standard block (computes full attention)
-        encoder_out, hidden_out = self.block(
-            hidden_states=hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            text_embeddings=text_embeddings,
-            rotary_embeddings=rotary_embeddings,
-        )
-
-        # Populate KV cache for async pipeline warmstart
-        self._populate_cache(
-            hidden_states, encoder_hidden_states, text_embeddings, rotary_embeddings
-        )
-
-        return encoder_out, hidden_out
-
-    def _populate_cache(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-    ) -> None:
-        """Compute and store K/V in cache for async pipeline warmstart."""
-        attn = self.block.attn
         text_seq_len = encoder_hidden_states.shape[1]
         num_img_tokens = hidden_states.shape[1]
+        batch_size = hidden_states.shape[0]
 
-        # Get normalized inputs (same as what attention would see)
-        norm_hidden, *_ = self.block.norm1(
+        # 1. Compute norms (same as PatchedJointTransformerBlock)
+        norm_hidden, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.block.norm1(
             hidden_states=hidden_states,
             text_embeddings=text_embeddings,
         )
-        norm_encoder, *_ = self.block.norm1_context(
+        (
+            norm_encoder,
+            c_gate_msa,
+            c_shift_mlp,
+            c_scale_mlp,
+            c_gate_mlp,
+        ) = self.block.norm1_context(
             hidden_states=encoder_hidden_states,
             text_embeddings=text_embeddings,
         )
 
-        # Compute K, V for image (full, not patched)
-        _, img_key, img_value = AttentionUtils.process_qkv(
+        # 2. Compute Q, K, V for full image
+        img_query, img_key, img_value = AttentionUtils.process_qkv(
             hidden_states=norm_hidden,
-            to_q=attn.to_q,
-            to_k=attn.to_k,
-            to_v=attn.to_v,
-            norm_q=attn.norm_q,
-            norm_k=attn.norm_k,
-            num_heads=attn.num_heads,
-            head_dim=attn.head_dimension,
+            to_q=self.attn.to_q,
+            to_k=self.attn.to_k,
+            to_v=self.attn.to_v,
+            norm_q=self.attn.norm_q,
+            norm_k=self.attn.norm_k,
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
         )
 
-        # Compute K, V for text
-        _, txt_key, txt_value = AttentionUtils.process_qkv(
+        # 3. Compute Q, K, V for text
+        txt_query, txt_key, txt_value = AttentionUtils.process_qkv(
             hidden_states=norm_encoder,
-            to_q=attn.add_q_proj,
-            to_k=attn.add_k_proj,
-            to_v=attn.add_v_proj,
-            norm_q=attn.norm_added_q,
-            norm_k=attn.norm_added_k,
-            num_heads=attn.num_heads,
-            head_dim=attn.head_dimension,
+            to_q=self.attn.add_q_proj,
+            to_k=self.attn.add_k_proj,
+            to_v=self.attn.add_v_proj,
+            norm_q=self.attn.norm_added_q,
+            norm_k=self.attn.norm_added_k,
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
         )
 
-        # Concatenate and apply RoPE
-        full_key = mx.concatenate([txt_key, img_key], axis=2)
-        full_value = mx.concatenate([txt_value, img_value], axis=2)
-        _, full_key = AttentionUtils.apply_rope(
-            xq=full_key, xk=full_key, freqs_cis=rotary_embeddings
+        # 4. Concatenate Q, K, V: [text, image]
+        query = mx.concatenate([txt_query, img_query], axis=2)
+        key = mx.concatenate([txt_key, img_key], axis=2)
+        value = mx.concatenate([txt_value, img_value], axis=2)
+
+        # 5. Apply RoPE to Q and K
+        query, key = AttentionUtils.apply_rope(
+            xq=query, xk=key, freqs_cis=rotary_embeddings
         )
 
-        # Store full sequence in cache
+        # 6. Store K, V in cache for async pipeline warmstart
         self.kv_cache.update_text(
-            key=full_key[:, :, :text_seq_len, :],
-            value=full_value[:, :, :text_seq_len, :],
+            key=key[:, :, :text_seq_len, :],
+            value=value[:, :, :text_seq_len, :],
         )
         self.kv_cache.update_image_patch(
             patch_start=0,
             patch_end=num_img_tokens,
-            key=full_key[:, :, text_seq_len:, :],
-            value=full_value[:, :, text_seq_len:, :],
+            key=key[:, :, text_seq_len:, :],
+            value=value[:, :, text_seq_len:, :],
         )
+
+        # 7. Compute full attention (standard, not using stale cache)
+        attn_output = AttentionUtils.compute_attention(
+            query=query,
+            key=key,
+            value=value,
+            batch_size=batch_size,
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
+        )
+
+        # 8. Extract outputs for text and image
+        context_attn_output = attn_output[:, :text_seq_len, :]
+        attn_output = attn_output[:, text_seq_len:, :]
+
+        # 9. Project outputs
+        attn_output = self.attn.to_out[0](attn_output)
+        context_attn_output = self.attn.to_add_out(context_attn_output)
+
+        # 10. Apply norm and feed forward (same as PatchedJointTransformerBlock)
+        hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=hidden_states,
+            attn_output=attn_output,
+            gate_mlp=gate_mlp,
+            gate_msa=gate_msa,
+            scale_mlp=scale_mlp,
+            shift_mlp=shift_mlp,
+            norm_layer=self.block.norm2,
+            ff_layer=self.block.ff,
+        )
+        encoder_hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=encoder_hidden_states,
+            attn_output=context_attn_output,
+            gate_mlp=c_gate_mlp,
+            gate_msa=c_gate_msa,
+            scale_mlp=c_scale_mlp,
+            shift_mlp=c_shift_mlp,
+            norm_layer=self.block.norm2_context,
+            ff_layer=self.block.ff_context,
+        )
+
+        return encoder_hidden_states, hidden_states
 
 
 class CachingSingleTransformerBlock:
     """Single transformer block that captures K/V for cache during sync mode.
 
-    Runs full (non-patched) attention but stores K/V in the cache for
-    subsequent async timesteps to use as stale values.
+    Implements the full block computation while storing K/V in the cache for
+    subsequent async timesteps to use as stale values. Computes K/V only once.
     """
 
     def __init__(self, block: SingleTransformerBlock, kv_cache: PatchKVCache):
@@ -538,6 +569,9 @@ class CachingSingleTransformerBlock:
         """
         self.block = block
         self.kv_cache = kv_cache
+        self.attn = block.attn
+        self.num_heads = block.attn.num_heads
+        self.head_dim = block.attn.head_dimension
 
     def __call__(
         self,
@@ -545,7 +579,7 @@ class CachingSingleTransformerBlock:
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
     ) -> mx.array:
-        """Forward pass that also populates the KV cache.
+        """Forward pass that computes attention and populates the KV cache.
 
         Args:
             hidden_states: Full [text + image] hidden states [B, text_len + img_len, D]
@@ -555,55 +589,58 @@ class CachingSingleTransformerBlock:
         Returns:
             Output hidden states after block processing
         """
-        # Run standard block
-        hidden_out = self.block(
-            hidden_states=hidden_states,
-            text_embeddings=text_embeddings,
-            rotary_embeddings=rotary_embeddings,
-        )
-
-        # Populate KV cache for async pipeline warmstart
-        self._populate_cache(hidden_states, text_embeddings, rotary_embeddings)
-
-        return hidden_out
-
-    def _populate_cache(
-        self,
-        hidden_states: mx.array,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-    ) -> None:
-        """Compute and store K/V in cache for async pipeline warmstart."""
-        attn = self.block.attn
         total_seq_len = hidden_states.shape[1]
+        batch_size = hidden_states.shape[0]
 
-        # Get normalized inputs
-        norm_hidden, _ = self.block.norm(
+        # 0. Establish residual connection
+        residual = hidden_states
+
+        # 1. Compute norm
+        norm_hidden, gate = self.block.norm(
             hidden_states=hidden_states,
             text_embeddings=text_embeddings,
         )
 
-        # Compute K, V
-        _, key, value = AttentionUtils.process_qkv(
+        # 2. Compute Q, K, V
+        query, key, value = AttentionUtils.process_qkv(
             hidden_states=norm_hidden,
-            to_q=attn.to_q,
-            to_k=attn.to_k,
-            to_v=attn.to_v,
-            norm_q=attn.norm_q,
-            norm_k=attn.norm_k,
-            num_heads=attn.num_heads,
-            head_dim=attn.head_dimension,
+            to_q=self.attn.to_q,
+            to_k=self.attn.to_k,
+            to_v=self.attn.to_v,
+            norm_q=self.attn.norm_q,
+            norm_k=self.attn.norm_k,
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
         )
 
-        # Apply RoPE
-        _, key = AttentionUtils.apply_rope(
-            xq=key, xk=key, freqs_cis=rotary_embeddings
+        # 3. Apply RoPE to Q and K
+        query, key = AttentionUtils.apply_rope(
+            xq=query, xk=key, freqs_cis=rotary_embeddings
         )
 
-        # Store full sequence in cache
+        # 4. Store K, V in cache for async pipeline warmstart
         self.kv_cache.update(
             patch_start=0,
             patch_end=total_seq_len,
             key=key,
             value=value,
         )
+
+        # 5. Compute full attention (standard, not using stale cache)
+        attn_output = AttentionUtils.compute_attention(
+            query=query,
+            key=key,
+            value=value,
+            batch_size=batch_size,
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
+        )
+
+        # 6. Apply feed forward and projection (same as PatchedSingleTransformerBlock)
+        hidden_states = self.block._apply_feed_forward_and_projection(
+            norm_hidden_states=norm_hidden,
+            attn_output=attn_output,
+            gate=gate,
+        )
+
+        return residual + hidden_states
