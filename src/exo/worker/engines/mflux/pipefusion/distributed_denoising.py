@@ -67,6 +67,10 @@ class DistributedDenoising:
         self.num_sync_steps = num_sync_steps
         self.num_patches = num_patches if num_patches else group.size()
 
+        # Persistent KV caches (initialized on first async timestep, reused across timesteps)
+        self._joint_kv_caches: list[JointPatchKVCache] | None = None
+        self._single_kv_caches: list[PatchKVCache] | None = None
+
         # Get block counts from the original transformer (before slicing)
         # Note: These are the ORIGINAL counts, not the sliced counts
         self.total_joint = 19  # Flux has 19 joint blocks
@@ -270,28 +274,36 @@ class DistributedDenoising:
         )
         token_indices = calculate_token_indices(patch_heights, latent_width, patch_size)
 
-        # === Initialize KV caches (once per timestep) ===
-        joint_kv_caches = [
-            JointPatchKVCache(
-                batch_size=batch_size,
-                num_heads=24,
-                text_seq_len=text_seq_len,
-                image_seq_len=num_img_tokens,
-                head_dim=128,
-                dtype=full_hidden.dtype,
-            )
-            for _ in range(len(self.transformer_blocks))
-        ]
-        single_kv_caches = [
-            PatchKVCache(
-                batch_size=batch_size,
-                num_heads=24,
-                total_seq_len=total_seq_len,
-                head_dim=128,
-                dtype=full_hidden.dtype,
-            )
-            for _ in range(len(self.single_transformer_blocks))
-        ]
+        # === Initialize KV caches (only on first async timestep, reused across timesteps) ===
+        # This enables true PipeFusion behavior: at timestep T, patches not yet processed
+        # have stale K/V from timestep T-1 (not zeros)
+        if self._joint_kv_caches is None:
+            self._joint_kv_caches = [
+                JointPatchKVCache(
+                    batch_size=batch_size,
+                    num_heads=24,
+                    text_seq_len=text_seq_len,
+                    image_seq_len=num_img_tokens,
+                    head_dim=128,
+                    dtype=full_hidden.dtype,
+                )
+                for _ in range(len(self.transformer_blocks))
+            ]
+        if self._single_kv_caches is None:
+            self._single_kv_caches = [
+                PatchKVCache(
+                    batch_size=batch_size,
+                    num_heads=24,
+                    total_seq_len=total_seq_len,
+                    head_dim=128,
+                    dtype=full_hidden.dtype,
+                )
+                for _ in range(len(self.single_transformer_blocks))
+            ]
+
+        # Use persistent caches (stale K/V from previous timestep for unprocessed patches)
+        joint_kv_caches = self._joint_kv_caches
+        single_kv_caches = self._single_kv_caches
 
         # === Process each patch ===
         output_patches = []
