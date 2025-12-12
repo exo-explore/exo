@@ -446,18 +446,15 @@ class DistributedDenoising:
             patch_img_only = patch_hidden[:, text_seq_len:, :]
             output_patches.append(patch_img_only)
 
-        # === PHASE 5: All-gather Final Output ===
-        mx.eval(output_patches)
-        mx_barrier(group=self.group)
-
-        # All-gather each patch from last stage
-        for i in range(len(output_patches)):
-            output_patches[i] = mx.distributed.all_gather(
-                output_patches[i], group=self.group
-            )[-output_patches[i].shape[0] :]
-
         # Reconstruct full sequence from patches (already image-only)
         hidden_states = mx.concatenate(output_patches, axis=1)
+
+        # === PHASE 5: All-gather Final Output ===
+        mx.eval(hidden_states)
+        mx_barrier(group=self.group)
+        hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
+            -hidden_states.shape[0] :
+        ]
 
         # === PHASE 6: Final Projection ===
         hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
