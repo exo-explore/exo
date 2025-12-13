@@ -348,8 +348,10 @@ class DistributedDenoising:
         single_kv_caches = self._single_kv_caches
 
         # === Process each patch ===
+        # Encoder hidden states are the same for all patches in a timestep,
+        # so we only need to receive them once (with the first patch)
         output_patches = []
-        for start_token, end_token in token_indices:
+        for patch_idx, (start_token, end_token) in enumerate(token_indices):
             # Extract current patch from full hidden states
             patch_hidden = full_hidden[:, start_token:end_token, :]
 
@@ -360,9 +362,11 @@ class DistributedDenoising:
                     patch_hidden = mx.distributed.recv_like(
                         patch_hidden, self.rank - 1, group=self.group
                     )
-                    encoder_hidden_states = mx.distributed.recv_like(
-                        encoder_hidden_states, self.rank - 1, group=self.group
-                    )
+                    # Only receive encoder_hidden_states once per timestep (with first patch)
+                    if patch_idx == 0:
+                        encoder_hidden_states = mx.distributed.recv_like(
+                            encoder_hidden_states, self.rank - 1, group=self.group
+                        )
 
                     mx.eval(patch_hidden, encoder_hidden_states)
 
@@ -400,12 +404,15 @@ class DistributedDenoising:
 
             elif self.has_joint_blocks and not self.is_last_stage:
                 # Send joint block outputs to next stage
-                mx.eval(
-                    mx.distributed.send(patch_hidden, self.rank + 1, group=self.group),
+                # Only send encoder_hidden_states once per timestep (with first patch)
+                if patch_idx == 0:
                     mx.distributed.send(
                         encoder_hidden_states, self.rank + 1, group=self.group
-                    ),
-                )
+                    )
+                else:
+                    mx.distributed.send(patch_hidden, self.rank + 1, group=self.group)
+
+                mx.eval(patch_hidden, encoder_hidden_states)
 
             # === PHASE 4: Single Blocks with KV Cache ===
             if self.has_single_blocks:
