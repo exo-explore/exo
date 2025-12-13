@@ -130,15 +130,16 @@ class DistributedDenoising:
     def _initialize_kv_caches(
         self,
         batch_size: int,
-        text_seq_len: int,
         num_img_tokens: int,
         dtype: mx.Dtype,
     ) -> None:
         """Initialize KV caches for both sync and async pipelines.
 
+        Note: Caches only store IMAGE K/V, not text K/V. Text K/V is always
+        computed fresh and doesn't need caching (it's the same for all patches).
+
         Args:
             batch_size: Batch size
-            text_seq_len: Length of text sequence
             num_img_tokens: Number of image tokens
             dtype: Data type for cache tensors
         """
@@ -146,7 +147,6 @@ class DistributedDenoising:
             JointPatchKVCache(
                 batch_size=batch_size,
                 num_heads=24,
-                text_seq_len=text_seq_len,
                 image_seq_len=num_img_tokens,
                 head_dim=128,
                 dtype=dtype,
@@ -157,7 +157,7 @@ class DistributedDenoising:
             PatchKVCache(
                 batch_size=batch_size,
                 num_heads=24,
-                total_seq_len=text_seq_len + num_img_tokens,
+                image_seq_len=num_img_tokens,
                 head_dim=128,
                 dtype=dtype,
             )
@@ -195,7 +195,6 @@ class DistributedDenoising:
         if self._joint_kv_caches is None:
             self._initialize_kv_caches(
                 batch_size=batch_size,
-                text_seq_len=text_seq_len,
                 num_img_tokens=num_img_tokens,
                 dtype=hidden_states.dtype,
             )
@@ -263,6 +262,7 @@ class DistributedDenoising:
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
+                    text_seq_len=text_seq_len,
                 )
 
             # Send to next stage if not last
@@ -339,7 +339,6 @@ class DistributedDenoising:
         if self._joint_kv_caches is None:
             self._initialize_kv_caches(
                 batch_size=batch_size,
-                text_seq_len=text_seq_len,
                 num_img_tokens=num_img_tokens,
                 dtype=full_hidden.dtype,
             )

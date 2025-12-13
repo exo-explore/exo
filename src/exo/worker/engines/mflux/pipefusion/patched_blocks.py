@@ -104,11 +104,8 @@ class CachedJointAttention:
             xq=query, xk=patch_key, freqs_cis=patch_rope
         )
 
-        # 7. Update cache with this patch's K, V (after RoPE)
-        kv_cache.update_text(
-            key=patch_key[:, :, :text_seq_len, :],
-            value=patch_value[:, :, :text_seq_len, :],
-        )
+        # 7. Update cache with this patch's IMAGE K/V only (after RoPE)
+        # Text K/V is not cached - it's always fresh and the same for all patches
         kv_cache.update_image_patch(
             patch_start=patch_start,
             patch_end=patch_end,
@@ -116,8 +113,12 @@ class CachedJointAttention:
             value=patch_value[:, :, text_seq_len:, :],
         )
 
-        # 8. Get full K, V from cache (fresh current patch + stale others)
-        full_key, full_value = kv_cache.get_full_kv()
+        # 8. Get full K, V by concatenating fresh text K/V with cached image K/V
+        # Text K/V: fresh (just computed), Image K/V: fresh for current patch, stale for others
+        full_key, full_value = kv_cache.get_full_kv(
+            text_key=patch_key[:, :, :text_seq_len, :],
+            text_value=patch_value[:, :, :text_seq_len, :],
+        )
 
         # 9. Compute attention: patch query attends to full K, V
         # Query shape: [B, H, text_seq_len + patch_len, D]
@@ -209,25 +210,21 @@ class CachedSingleBlockAttention:
         # 3. Apply RoPE to Q and K
         query, key = AttentionUtils.apply_rope(xq=query, xk=key, freqs_cis=patch_rope)
 
-        # 4. Update cache with this patch's K, V (after RoPE)
-        # Cache stores full [text + image] sequence
-        # Text portion: indices 0 to text_seq_len
-        # Image portion: indices text_seq_len to text_seq_len + full_img_len
-        kv_cache.update(
-            patch_start=0,
-            patch_end=text_seq_len,
-            key=key[:, :, :text_seq_len, :],
-            value=value[:, :, :text_seq_len, :],
-        )
-        kv_cache.update(
-            patch_start=text_seq_len + patch_start,
-            patch_end=text_seq_len + patch_end,
+        # 4. Update cache with this patch's IMAGE K/V only (after RoPE)
+        # Text K/V is not cached - it's always fresh and the same for all patches
+        kv_cache.update_image_patch(
+            patch_start=patch_start,
+            patch_end=patch_end,
             key=key[:, :, text_seq_len:, :],
             value=value[:, :, text_seq_len:, :],
         )
 
-        # 5. Get full K, V from cache
-        full_key, full_value = kv_cache.get_full_kv()
+        # 5. Get full K, V by concatenating fresh text K/V with cached image K/V
+        # Text K/V: fresh (just computed), Image K/V: fresh for current patch, stale for others
+        full_key, full_value = kv_cache.get_full_kv(
+            text_key=key[:, :, :text_seq_len, :],
+            text_value=value[:, :, :text_seq_len, :],
+        )
 
         # 6. Compute attention: patch query attends to full K, V
         batch_size = norm_hidden.shape[0]
@@ -498,11 +495,8 @@ class CachingJointTransformerBlock:
             xq=query, xk=key, freqs_cis=rotary_embeddings
         )
 
-        # 6. Store K, V in cache for async pipeline warmstart
-        self.kv_cache.update_text(
-            key=key[:, :, :text_seq_len, :],
-            value=value[:, :, :text_seq_len, :],
-        )
+        # 6. Store only IMAGE K/V in cache for async pipeline warmstart
+        # Text K/V is not cached - it's always computed fresh
         self.kv_cache.update_image_patch(
             patch_start=0,
             patch_end=num_img_tokens,
@@ -578,6 +572,7 @@ class CachingSingleTransformerBlock:
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
+        text_seq_len: int,
     ) -> mx.array:
         """Forward pass that computes attention and populates the KV cache.
 
@@ -585,11 +580,13 @@ class CachingSingleTransformerBlock:
             hidden_states: Full [text + image] hidden states [B, text_len + img_len, D]
             text_embeddings: Time + pooled text conditioning
             rotary_embeddings: Full rotary embeddings for [text + full_image]
+            text_seq_len: Length of text portion (needed to cache only image K/V)
 
         Returns:
             Output hidden states after block processing
         """
         total_seq_len = hidden_states.shape[1]
+        num_img_tokens = total_seq_len - text_seq_len
         batch_size = hidden_states.shape[0]
 
         # 0. Establish residual connection
@@ -618,12 +615,13 @@ class CachingSingleTransformerBlock:
             xq=query, xk=key, freqs_cis=rotary_embeddings
         )
 
-        # 4. Store K, V in cache for async pipeline warmstart
-        self.kv_cache.update(
+        # 4. Store only IMAGE K/V in cache for async pipeline warmstart
+        # Text K/V is not cached - it's always computed fresh
+        self.kv_cache.update_image_patch(
             patch_start=0,
-            patch_end=total_seq_len,
-            key=key,
-            value=value,
+            patch_end=num_img_tokens,
+            key=key[:, :, text_seq_len:, :],
+            value=value[:, :, text_seq_len:, :],
         )
 
         # 5. Compute full attention (standard, not using stale cache)
