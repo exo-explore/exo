@@ -281,7 +281,9 @@ class DistributedDenoising:
 
             # Send to next stage if not last
             if not self.is_last_stage:
-                mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
+                mx.eval(
+                    mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
+                )
 
         # === PHASE 5: Last Stage - Final Projection + Scheduler ===
         # Extract image portion (remove text embeddings prefix)
@@ -296,7 +298,18 @@ class DistributedDenoising:
                 timestep=t,
                 sample=prev_latents,
             )
-            mx.eval(hidden_states)
+
+            if not self.is_first_stage:
+                mx.eval(mx.distributed.send(hidden_states, 0, group=self.group))
+        else:
+            hidden_states = prev_latents
+
+        if self.is_first_stage and not self.is_last_stage:
+            hidden_states = mx.distributed.recv_like(
+                hidden_states, self.world_size - 1, group=self.group
+            )
+
+        mx.eval(hidden_states)
 
         #
         # === PHASE 5: All-gather Final Output ===
@@ -305,8 +318,6 @@ class DistributedDenoising:
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
-
-        return hidden_states
 
     def _async_pipeline(
         self,
