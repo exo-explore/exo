@@ -73,7 +73,6 @@ class TopicRouter[T: CamelCaseModel]:
         assert self.networking_receiver is not None
         while True:
             item = self.topic.deserialize(await self.networking_receiver.receive())
-            logger.debug(f"Got {item} from network")
             await self.publish(item)
 
     def subscribe_with(self, net_send: RustSender, net_recv: RustReceiver):
