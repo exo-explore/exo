@@ -5,7 +5,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from exo.shared.topology import Topology
-from exo.shared.types.common import Host, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import NodePerformanceProfile
@@ -17,6 +17,7 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
+from exo.routing.connection_message import IpAddress
 
 
 class NodeWithProfile(BaseModel):
@@ -153,7 +154,7 @@ def get_shard_assignments(
             )
 
 
-def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
+def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[IpAddress]:
     # this function is wrong.
     cycles = cycle_digraph.get_cycles()
     expected_length = len(list(cycle_digraph.list_nodes()))
@@ -172,7 +173,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
     logger.info(f"Using thunderbolt cycle: {get_thunderbolt}")
 
     cycle = cycles[0]
-    hosts: list[Host] = []
+    hosts: list[IpAddress] = []
     for i in range(len(cycle)):
         current_node = cycle[i]
         next_node = cycle[(i + 1) % len(cycle)]
@@ -185,11 +186,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
                 if get_thunderbolt and not connection.is_thunderbolt():
                     continue
                 assert connection.sink_addr is not None
-                host = Host(
-                    ip=str(connection.sink_addr.ip),
-                    port=connection.sink_addr.port,
-                )
-                hosts.append(host)
+                hosts.append(connection.sink_addr)
                 break
 
     return hosts
@@ -246,7 +243,7 @@ def _find_connection_ip(
             connection.source_id == node_i.node_id
             and connection.sink_id == node_j.node_id
         ):
-            yield str(connection.sink_addr.ip)
+            yield str(connection.sink_addr)
 
 
 def _find_interface_name_for_ip(

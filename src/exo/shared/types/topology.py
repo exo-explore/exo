@@ -1,4 +1,4 @@
-from exo.routing.connection_message import SocketAddress
+from exo.routing.connection_message import IpAddress
 from exo.shared.types.common import NodeId
 from exo.shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -12,7 +12,7 @@ class NodeInfo(CamelCaseModel):
 class Connection(CamelCaseModel):
     source_id: NodeId
     sink_id: NodeId
-    sink_addr: SocketAddress
+    sink_addr: IpAddress
     connection_profile: ConnectionProfile | None = None
 
     def __hash__(self) -> int:
@@ -34,4 +34,4 @@ class Connection(CamelCaseModel):
         )
 
     def is_thunderbolt(self) -> bool:
-        return str(self.sink_addr.ip).startswith("169.254")
+        return str(self.sink_addr).startswith("169.254")

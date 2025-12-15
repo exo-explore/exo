@@ -20,9 +20,12 @@ from exo.shared.types.events import (
     NodePerformanceMeasured,
     TaskCreated,
     TaskStatusUpdated,
+    TopologyEdgeCreated,
+    TopologyEdgeDeleted,
 )
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
+from exo.shared.types.topology import Connection
 from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
@@ -254,10 +257,11 @@ class Worker:
     async def _connection_message_event_writer(self):
         with self.connection_message_receiver as connection_messages:
             async for msg in connection_messages:
+                break
+                # TODO: use mdns for partial discovery
                 for event in check_connections(self.node_id, msg, self.state):
                     logger.info(f"Worker discovered connection {event}")
                     await self.event_sender.send(event)
-
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.
@@ -385,30 +389,21 @@ class Worker:
 
     async def _poll_connection_updates(self):
         while True:
-            # TODO: EdgeDeleted
-            edges = set(self.state.topology.list_connections())
+            edges = self.state.topology.out_edges(self.node_id)
+            pure_edges = set(edge for _, edge in edges)
             conns = await check_reachable(self.state.topology)
+
+            for nid, conn in edges:
+                if nid in conns and conn.sink_addr in conns.get(nid, set()):
+                    continue
+
+                logger.debug(f"ping failed to discover {conn=}")
+                await self.event_sender.send(TopologyEdgeDeleted(edge=conn))
             for nid in conns:
                 for ip in conns[nid]:
-                    edge = Connection(
-                        local_node_id=self.node_id,
-                        send_back_node_id=nid,
-                        # nonsense multiaddr
-                        send_back_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
-                        if "." in ip
-                        # nonsense multiaddr
-                        else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
-                    )
-                    if edge not in edges:
+                    edge = Connection(sink_id=self.node_id, source_id=nid, sink_addr=ip)
+                    if edge not in pure_edges:
                         logger.debug(f"ping discovered {edge=}")
                         await self.event_sender.send(TopologyEdgeCreated(edge=edge))
-
-            for nid, conn in self.state.topology.out_edges(self.node_id):
-                if (
-                    nid not in conns
-                    or conn.send_back_multiaddr.ip_address not in conns.get(nid, set())
-                ):
-                    logger.debug(f"ping failed to discover {conn=}")
-                    await self.event_sender.send(TopologyEdgeDeleted(edge=conn))
 
             await anyio.sleep(10)

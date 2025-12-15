@@ -132,10 +132,7 @@ class Topology:
             return
 
         for connection in self.list_connections():
-            if (
-                connection.local_node_id == node_id
-                or connection.send_back_node_id == node_id
-            ):
+            if connection.source_id == node_id or connection.sink_id == node_id:
                 self.remove_connection(connection)
 
         rx_idx = self._node_id_to_rx_id_map[node_id]
