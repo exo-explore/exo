@@ -55,6 +55,22 @@ class Topology:
             and len(self._graph.neighbors(self._node_id_to_rx_id_map[node_id])) == 1
         )
 
+    def neighbours(self, node_id: NodeId) -> list[NodeId]:
+        return [
+            self._rx_id_to_node_id_map[rx_id]
+            for rx_id in self._graph.neighbors(self._node_id_to_rx_id_map[node_id])
+        ]
+
+    def out_edges(self, node_id: NodeId) -> list[tuple[NodeId, Connection]]:
+        if node_id not in self._node_id_to_rx_id_map:
+            return []
+        return [
+            (self._rx_id_to_node_id_map[nid], conn)
+            for _, nid, conn in self._graph.out_edges(
+                self._node_id_to_rx_id_map[node_id]
+            )
+        ]
+
     def contains_node(self, node_id: NodeId) -> bool:
         return node_id in self._node_id_to_rx_id_map
 
@@ -112,6 +128,16 @@ class Topology:
             return None
 
     def remove_node(self, node_id: NodeId) -> None:
+        if node_id not in self._node_id_to_rx_id_map:
+            return
+
+        for connection in self.list_connections():
+            if (
+                connection.local_node_id == node_id
+                or connection.send_back_node_id == node_id
+            ):
+                self.remove_connection(connection)
+
         rx_idx = self._node_id_to_rx_id_map[node_id]
         self._graph.remove_node(rx_idx)
 
@@ -119,6 +145,8 @@ class Topology:
         del self._rx_id_to_node_id_map[rx_idx]
 
     def remove_connection(self, connection: Connection) -> None:
+        if connection not in self._edge_id_to_rx_id_map:
+            return
         rx_idx = self._edge_id_to_rx_id_map[connection]
         self._graph.remove_edge_from_index(rx_idx)
         del self._edge_id_to_rx_id_map[connection]

@@ -1,7 +1,7 @@
 import argparse
 import multiprocessing as mp
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Self
 
 import anyio
@@ -16,7 +16,6 @@ from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
-from exo.shared.types.commands import KillCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -35,7 +34,7 @@ class Node:
     api: API | None
 
     node_id: NodeId
-    _tg: TaskGroup | None = None
+    _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     @classmethod
     async def create(cls, args: "Args") -> "Self":
@@ -66,7 +65,6 @@ class Node:
             node_id,
             session_id,
             exo_shard_downloader(),
-            initial_connection_messages=[],
             connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
             global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
             local_event_sender=router.sender(topics.LOCAL_EVENTS),
@@ -99,9 +97,8 @@ class Node:
         return cls(router, worker, election, er_recv, master, api, node_id)
 
     async def run(self):
-        async with anyio.create_task_group() as tg:
+        async with self._tg as tg:
             signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
-            self._tg = tg
             tg.start_soon(self.router.run)
             tg.start_soon(self.worker.run)
             tg.start_soon(self.election.run)
@@ -110,10 +107,8 @@ class Node:
             if self.api:
                 tg.start_soon(self.api.run)
             tg.start_soon(self._elect_loop)
-            tg.start_soon(self._listen_for_kill_command)
 
     def shutdown(self):
-        assert self._tg
         # if this is our second call to shutdown, just sys.exit
         if self._tg.cancel_scope.cancel_called:
             import sys
@@ -121,18 +116,7 @@ class Node:
             sys.exit(1)
         self._tg.cancel_scope.cancel()
 
-    async def _listen_for_kill_command(self):
-        assert self._tg
-        with self.router.receiver(topics.COMMANDS) as commands:
-            async for command in commands:
-                match command.command:
-                    case KillCommand():
-                        self.shutdown()
-                    case _:
-                        pass
-
     async def _elect_loop(self):
-        assert self._tg
         with self.election_result_receiver as results:
             async for result in results:
                 # This function continues to have a lot of very specific entangled logic
@@ -187,7 +171,6 @@ class Node:
                             self.node_id,
                             result.session_id,
                             exo_shard_downloader(),
-                            initial_connection_messages=result.historic_messages,
                             connection_message_receiver=self.router.receiver(
                                 topics.CONNECTION_MESSAGES
                             ),

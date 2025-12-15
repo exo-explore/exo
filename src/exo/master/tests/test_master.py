@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Sequence
 
 import anyio
@@ -84,6 +85,7 @@ async def test_master():
                 session=session_id,
                 event=(
                     NodePerformanceMeasured(
+                        when=str(datetime.now(tz=timezone.utc)),
                         node_id=node_id,
                         node_profile=NodePerformanceProfile(
                             model_id="maccy",

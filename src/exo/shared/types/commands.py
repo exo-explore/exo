@@ -16,10 +16,6 @@ class TestCommand(BaseCommand):
     __test__ = False
 
 
-class KillCommand(BaseCommand):
-    pass
-
-
 class ChatCompletion(BaseCommand):
     request_params: ChatCompletionTaskParams
 
@@ -45,7 +41,6 @@ class RequestEventLog(BaseCommand):
 
 Command = (
     TestCommand
-    | KillCommand
     | RequestEventLog
     | ChatCompletion
     | CreateInstance

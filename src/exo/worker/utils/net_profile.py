@@ -27,7 +27,7 @@ async def check_reachability(
         out[target_node_id].add(target_ip)
 
 
-async def connect_all(topology: Topology) -> dict[NodeId, set[str]]:
+async def check_reachable(topology: Topology) -> dict[NodeId, set[str]]:
     reachable: dict[NodeId, set[str]] = {}
     async with create_task_group() as tg:
         for node in topology.list_nodes():

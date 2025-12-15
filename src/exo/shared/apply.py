@@ -1,5 +1,6 @@
 import copy
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 
 from loguru import logger
 
@@ -14,6 +15,7 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
+    NodeTimedOut,
     RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
@@ -45,6 +47,10 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case NodeCreated():
+            return apply_topology_node_created(event, state)
+        case NodeTimedOut():
+            return apply_node_timed_out(event, state)
         case NodePerformanceMeasured():
             return apply_node_performance_measured(event, state)
         case NodeDownloadProgress():
@@ -63,8 +69,6 @@ def event_apply(event: Event, state: State) -> State:
             return apply_task_failed(event, state)
         case TaskStatusUpdated():
             return apply_task_status_updated(event, state)
-        case NodeCreated():
-            return apply_topology_node_created(event, state)
         case TopologyEdgeCreated():
             return apply_topology_edge_created(event, state)
         case TopologyEdgeDeleted():
@@ -183,6 +187,24 @@ def apply_runner_deleted(event: RunnerDeleted, state: State) -> State:
     return state.model_copy(update={"runners": new_runners})
 
 
+def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
+    topology = copy.copy(state.topology)
+    state.topology.remove_node(event.node_id)
+    node_profiles = {
+        key: value for key, value in state.node_profiles.items() if key != event.node_id
+    }
+    last_seen = {
+        key: value for key, value in state.last_seen.items() if key != event.node_id
+    }
+    return state.model_copy(
+        update={
+            "topology": topology,
+            "node_profiles": node_profiles,
+            "last_seen": last_seen,
+        }
+    )
+
+
 def apply_node_performance_measured(
     event: NodePerformanceMeasured, state: State
 ) -> State:
@@ -190,13 +212,23 @@ def apply_node_performance_measured(
         **state.node_profiles,
         event.node_id: event.node_profile,
     }
+    last_seen: Mapping[NodeId, datetime] = {
+        **state.last_seen,
+        event.node_id: datetime.fromisoformat(event.when),
+    }
     state = state.model_copy(update={"node_profiles": new_profiles})
     topology = copy.copy(state.topology)
     # TODO: NodeCreated
     if not topology.contains_node(event.node_id):
         topology.add_node(NodeInfo(node_id=event.node_id))
     topology.update_node_profile(event.node_id, event.node_profile)
-    return state.model_copy(update={"topology": topology})
+    return state.model_copy(
+        update={
+            "node_profiles": new_profiles,
+            "topology": topology,
+            "last_seen": last_seen,
+        }
+    )
 
 
 def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State:
@@ -224,12 +256,20 @@ def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State
             **state.node_profiles,
             event.node_id: created,
         }
+        last_seen: Mapping[NodeId, datetime] = {
+            **state.last_seen,
+            event.node_id: datetime.fromisoformat(event.when),
+        }
         if not topology.contains_node(event.node_id):
             topology.add_node(NodeInfo(node_id=event.node_id))
             # TODO: NodeCreated
         topology.update_node_profile(event.node_id, created)
         return state.model_copy(
-            update={"node_profiles": created_profiles, "topology": topology}
+            update={
+                "node_profiles": created_profiles,
+                "topology": topology,
+                "last_seen": last_seen,
+            }
         )
 
     updated = existing.model_copy(update={"memory": event.memory})

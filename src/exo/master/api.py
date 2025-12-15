@@ -37,7 +37,6 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    KillCommand,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
@@ -92,7 +91,7 @@ class API:
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
     ) -> None:
-        self.state = State()
+        self._state = State()
         self.command_sender = command_sender
         self.global_event_receiver = global_event_receiver
         self.election_receiver = election_receiver
@@ -127,13 +126,15 @@ class API:
         self._tg: TaskGroup | None = None
 
     def reset(self, new_session_id: SessionId, result_clock: int):
-        self.state = State()
+        logger.info("Resetting API State")
+        self._state = State()
         self.session_id = new_session_id
         self.event_buffer = OrderedBuffer[Event]()
         self._chat_completion_queues = {}
         self.unpause(result_clock)
 
     def unpause(self, result_clock: int):
+        logger.info("Unpausing API")
         self.last_completed_election = result_clock
         self.paused = False
         self.paused_ev.set()
@@ -155,11 +156,10 @@ class API:
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/v1/chat/completions")(self.chat_completions)
-        self.app.get("/state")(lambda: self.state)
-        self.app.delete("/kill")(self.kill_exo)
+        self.app.get("/state")(self.state)
 
-    async def kill_exo(self):
-        await self._send(KillCommand())
+    async def state(self) -> State:
+        return self._state
 
     async def create_instance(
         self, payload: CreateInstanceTaskParams
@@ -189,12 +189,12 @@ class API:
         )
 
     def get_instance(self, instance_id: InstanceId) -> Instance:
-        if instance_id not in self.state.instances:
+        if instance_id not in self._state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
-        return self.state.instances[instance_id]
+        return self._state.instances[instance_id]
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
-        if instance_id not in self.state.instances:
+        if instance_id not in self._state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
 
         command = DeleteInstance(
@@ -261,7 +261,7 @@ class API:
 
         if not any(
             instance.shard_assignments.model_id == payload.model
-            for instance in self.state.instances.values()
+            for instance in self._state.instances.values()
         ):
             await self._trigger_notify_user_to_download_model(payload.model)
             raise HTTPException(
@@ -281,7 +281,7 @@ class API:
         """Calculate total available memory across all nodes in bytes."""
         total_available = Memory()
 
-        for node in self.state.topology.list_nodes():
+        for node in self._state.topology.list_nodes():
             if node.node_profile is not None:
                 total_available += node.node_profile.memory.ram_available
 
@@ -328,9 +328,11 @@ class API:
     async def _apply_state(self):
         with self.global_event_receiver as events:
             async for f_event in events:
+                if f_event.origin != self.session_id.master_node_id:
+                    continue
                 self.event_buffer.ingest(f_event.origin_idx, f_event.event)
                 for idx, event in self.event_buffer.drain_indexed():
-                    self.state = apply(self.state, IndexedEvent(event=event, idx=idx))
+                    self._state = apply(self._state, IndexedEvent(event=event, idx=idx))
                     if (
                         isinstance(event, ChunkGenerated)
                         and event.command_id in self._chat_completion_queues

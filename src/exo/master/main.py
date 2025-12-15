@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from anyio import create_task_group
+import anyio
 from anyio.abc import TaskGroup
 from loguru import logger
 
@@ -15,7 +15,6 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
-    KillCommand,
     RequestEventLog,
     TaskFinished,
     TestCommand,
@@ -26,9 +25,9 @@ from exo.shared.types.events import (
     ForwarderEvent,
     IndexedEvent,
     InstanceDeleted,
+    NodeTimedOut,
     TaskCreated,
     TaskDeleted,
-    TopologyEdgeDeleted,
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
@@ -59,7 +58,7 @@ class Master:
         tb_only: bool = False,
     ):
         self.state = State()
-        self._tg: TaskGroup | None = None
+        self._tg: TaskGroup = anyio.create_task_group()
         self.node_id = node_id
         self.session_id = session_id
         self.command_task_mapping: dict[CommandId, TaskId] = {}
@@ -80,11 +79,11 @@ class Master:
     async def run(self):
         logger.info("Starting Master")
 
-        async with create_task_group() as tg:
-            self._tg = tg
+        async with self._tg as tg:
             tg.start_soon(self._event_processor)
             tg.start_soon(self._command_processor)
             tg.start_soon(self._loopback_processor)
+            tg.start_soon(self._plan)
         self.global_event_sender.close()
         self.local_event_receiver.close()
         self.command_receiver.close()
@@ -92,9 +91,8 @@ class Master:
         self._loopback_event_receiver.close()
 
     async def shutdown(self):
-        if self._tg:
-            logger.info("Stopping Master")
-            self._tg.cancel_scope.cancel()
+        logger.info("Stopping Master")
+        self._tg.cancel_scope.cancel()
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
@@ -104,7 +102,7 @@ class Master:
                     generated_events: list[Event] = []
                     command = forwarder_command.command
                     match command:
-                        case TestCommand() | KillCommand():
+                        case TestCommand():
                             pass
                         case ChatCompletion():
                             instance_task_counts: dict[InstanceId, int] = {}
@@ -191,6 +189,30 @@ class Master:
                 except ValueError as e:
                     logger.opt(exception=e).warning("Error in command processor")
 
+    # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
+    async def _plan(self) -> None:
+        while True:
+            # kill broken instances
+            connected_node_ids = set(
+                [x.node_id for x in self.state.topology.list_nodes()]
+            )
+            for instance_id, instance in self.state.instances.items():
+                for node_id in instance.shard_assignments.node_to_runner:
+                    if node_id not in connected_node_ids:
+                        await self.event_sender.send(
+                            InstanceDeleted(instance_id=instance_id)
+                        )
+                        break
+
+            # time out dead nodes
+            for node_id, time in self.state.last_seen.items():
+                now = datetime.now(tz=timezone.utc)
+                if now - time > timedelta(seconds=30):
+                    logger.info(f"Manually removing node {node_id} due to inactivity")
+                    await self.event_sender.send(NodeTimedOut(node_id=node_id))
+
+            await anyio.sleep(10)
+
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
             async for local_event in local_events:
@@ -209,22 +231,8 @@ class Master:
 
                     event._master_time_stamp = datetime.now(tz=timezone.utc)  # pyright: ignore[reportPrivateUsage]
 
-                    # TODO: SQL <- What does this mean?
                     self._event_log.append(event)
                     await self._send_event(indexed)
-
-                    # TODO: This can be done in a better place. But for now, we use this to check if any running instances have been broken.
-                    if isinstance(event, TopologyEdgeDeleted):
-                        connected_node_ids = set(
-                            [x.node_id for x in self.state.topology.list_nodes()]
-                        )
-                        for instance_id, instance in self.state.instances.items():
-                            for node_id in instance.shard_assignments.node_to_runner:
-                                if node_id not in connected_node_ids:
-                                    await self.event_sender.send(
-                                        InstanceDeleted(instance_id=instance_id)
-                                    )
-                                    break
 
     async def _loopback_processor(self) -> None:
         # this would ideally not be necessary.

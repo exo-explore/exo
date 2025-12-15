@@ -44,7 +44,7 @@ class TopicRouter[T: CamelCaseModel]:
         self.senders: set[Sender[T]] = set()
         send, recv = channel[T]()
         self.receiver: Receiver[T] = recv
-        self.temp_sender: Sender[T] | None = send
+        self._sender: Sender[T] = send
         self.networking_sender: Sender[tuple[str, bytes]] = networking_sender
 
     async def run(self):
@@ -68,8 +68,7 @@ class TopicRouter[T: CamelCaseModel]:
         # Close all the things!
         for sender in self.senders:
             sender.close()
-        if self.temp_sender:
-            self.temp_sender.close()
+        self._sender.close()
         self.receiver.close()
 
     async def publish(self, item: T):
@@ -88,6 +87,9 @@ class TopicRouter[T: CamelCaseModel]:
 
     async def publish_bytes(self, data: bytes):
         await self.publish(self.topic.deserialize(data))
+
+    def new_sender(self) -> Sender[T]:
+        return self._sender.clone()
 
     async def _send_out(self, item: T):
         logger.trace(f"TopicRouter {self.topic.topic} sending {item}")
@@ -126,16 +128,7 @@ class Router:
         # There's gotta be a way to do this without THIS many asserts
         assert router is not None
         assert router.topic == topic
-        send: Sender[T] | None = cast(Sender[T] | None, router.temp_sender)
-        if send:
-            router.temp_sender = None
-            return send
-        try:
-            sender = cast(Receiver[T], router.receiver).clone_sender()
-        except ClosedResourceError:
-            sender, router.receiver = cast(
-                tuple[Sender[T], Receiver[CamelCaseModel]], channel[T]()
-            )
+        sender = cast(TopicRouter[T], router).new_sender()
         return sender
 
     def receiver[T: CamelCaseModel](self, topic: TypedTopic[T]) -> Receiver[T]:

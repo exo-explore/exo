@@ -81,18 +81,24 @@ class NodeCreated(BaseEvent):
     node_id: NodeId
 
 
+class NodeTimedOut(BaseEvent):
+    node_id: NodeId
+
+
 class NodePerformanceMeasured(BaseEvent):
     node_id: NodeId
+    when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
     node_profile: NodePerformanceProfile
-
-
-class NodeDownloadProgress(BaseEvent):
-    download_progress: DownloadProgress
 
 
 class NodeMemoryMeasured(BaseEvent):
     node_id: NodeId
+    when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
     memory: MemoryPerformanceProfile
+
+
+class NodeDownloadProgress(BaseEvent):
+    download_progress: DownloadProgress
 
 
 class ChunkGenerated(BaseEvent):
@@ -119,11 +125,12 @@ Event = (
     | InstanceDeleted
     | RunnerStatusUpdated
     | RunnerDeleted
+    | NodeCreated
+    | NodeTimedOut
     | NodePerformanceMeasured
     | NodeMemoryMeasured
     | NodeDownloadProgress
     | ChunkGenerated
-    | NodeCreated
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
 )

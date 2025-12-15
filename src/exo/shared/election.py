@@ -44,7 +44,6 @@ class ElectionResult(CamelCaseModel):
     session_id: SessionId
     won_clock: int
     is_new_master: bool
-    historic_messages: list[ConnectionMessage]
 
 
 class Election:
@@ -84,7 +83,6 @@ class Election:
         self._campaign_cancel_scope: CancelScope | None = None
         self._campaign_done: Event | None = None
         self._tg: TaskGroup | None = None
-        self._connection_messages: list[ConnectionMessage] = []
 
     async def run(self):
         logger.info("Starting Election")
@@ -121,7 +119,6 @@ class Election:
                 won_clock=em.clock,
                 session_id=em.proposed_session,
                 is_new_master=is_new_master,
-                historic_messages=self._connection_messages,
             )
         )
 
@@ -188,8 +185,6 @@ class Election:
                     self._campaign, candidates, DEFAULT_ELECTION_TIMEOUT
                 )
                 logger.debug("Campaign started")
-                self._connection_messages.append(first)
-                self._connection_messages.extend(rest)
                 logger.debug("Connection message added")
 
     async def _command_counter(self) -> None:

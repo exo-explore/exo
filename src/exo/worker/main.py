@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from random import random
 
 import anyio
@@ -50,7 +51,7 @@ from exo.worker.download.shard_downloader import RepoDownloadProgress, ShardDown
 from exo.worker.plan import plan
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 from exo.worker.utils import start_polling_memory_metrics, start_polling_node_metrics
-from exo.worker.utils.net_profile import connect_all
+from exo.worker.utils.net_profile import check_reachable
 
 
 class Worker:
@@ -60,7 +61,6 @@ class Worker:
         session_id: SessionId,
         shard_downloader: ShardDownloader,
         *,
-        initial_connection_messages: list[ConnectionMessage],
         connection_message_receiver: Receiver[ConnectionMessage],
         global_event_receiver: Receiver[ForwarderEvent],
         local_event_sender: Sender[ForwarderEvent],
@@ -80,7 +80,6 @@ class Worker:
         self.command_sender = command_sender
         self.connection_message_receiver = connection_message_receiver
         self.event_buffer = OrderedBuffer[Event]()
-        self._initial_connection_messages = initial_connection_messages
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
 
         self.state: State = State()
@@ -104,7 +103,9 @@ class Worker:
         ) -> None:
             await self.event_sender.send(
                 NodePerformanceMeasured(
-                    node_id=self.node_id, node_profile=node_performance_profile
+                    node_id=self.node_id,
+                    node_profile=node_performance_profile,
+                    when=str(datetime.now(tz=timezone.utc)),
                 ),
             )
 
@@ -112,7 +113,11 @@ class Worker:
             memory_profile: MemoryPerformanceProfile,
         ) -> None:
             await self.event_sender.send(
-                NodeMemoryMeasured(node_id=self.node_id, memory=memory_profile)
+                NodeMemoryMeasured(
+                    node_id=self.node_id,
+                    memory=memory_profile,
+                    when=str(datetime.now(tz=timezone.utc)),
+                )
             )
 
         # END CLEANUP
@@ -128,12 +133,6 @@ class Worker:
             tg.start_soon(self._event_applier)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._poll_connection_updates)
-            # TODO: This is a little gross, but not too bad
-            for msg in self._initial_connection_messages:
-                await self.event_sender.send(
-                    self._convert_connection_message_to_event(msg)
-                )
-            self._initial_connection_messages = []
 
         # Actual shutdown code - waits for all tasks to complete before executing.
         self.local_event_sender.close()
@@ -143,9 +142,11 @@ class Worker:
 
     async def _event_applier(self):
         with self.global_event_receiver as events:
-            async for event in events:
-                self.event_buffer.ingest(event.origin_idx, event.event)
-                event_id = event.event.event_id
+            async for f_event in events:
+                if f_event.origin != self.session_id.master_node_id:
+                    continue
+                self.event_buffer.ingest(f_event.origin_idx, f_event.event)
+                event_id = f_event.event.event_id
                 if event_id in self.out_for_delivery:
                     del self.out_for_delivery[event_id]
 
@@ -167,15 +168,8 @@ class Worker:
                 elif indexed_events and self._nack_cancel_scope:
                     self._nack_cancel_scope.cancel()
 
-                flag = False
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
-                    if event_relevant_to_worker(event, self):
-                        flag = True
-
-                # 3. If we've found a "relevant" event, run a plan -> op -> execute cycle.
-                if flag:
-                    pass
 
     async def plan_step(self):
         while True:
@@ -420,23 +414,28 @@ class Worker:
         while True:
             # TODO: EdgeDeleted
             edges = set(self.state.topology.list_connections())
-            conns = await connect_all(self.state.topology)
+            conns = await check_reachable(self.state.topology)
             for nid in conns:
                 for ip in conns[nid]:
                     edge = Connection(
                         local_node_id=self.node_id,
                         send_back_node_id=nid,
+                        # nonsense multiaddr
                         send_back_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/8000")
                         if "." in ip
+                        # nonsense multiaddr
                         else Multiaddr(address=f"/ip6/{ip}/tcp/8000"),
                     )
                     if edge not in edges:
-                        logger.debug(f"manually discovered {edge=}")
+                        logger.debug(f"ping discovered {edge=}")
                         await self.event_sender.send(TopologyEdgeCreated(edge=edge))
 
+            for nid, conn in self.state.topology.out_edges(self.node_id):
+                if (
+                    nid not in conns
+                    or conn.send_back_multiaddr.ip_address not in conns.get(nid, set())
+                ):
+                    logger.debug(f"ping failed to discover {conn=}")
+                    await self.event_sender.send(TopologyEdgeDeleted(edge=conn))
+
             await anyio.sleep(10)
-
-
-def event_relevant_to_worker(event: Event, worker: Worker):
-    # TODO
-    return True
