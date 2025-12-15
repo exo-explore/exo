@@ -281,32 +281,32 @@ class DistributedDenoising:
 
             # Send to next stage if not last
             if not self.is_last_stage:
-                hidden_states = mx.distributed.send(
-                    hidden_states, self.rank + 1, group=self.group
-                )
+                mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
+
+        # === PHASE 5: Last Stage - Final Projection + Scheduler ===
+        # Extract image portion (remove text embeddings prefix)
+        hidden_states = hidden_states[:, text_seq_len:, ...]
+
+        if self.is_last_stage:
+            hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
+            hidden_states = self.transformer.proj_out(hidden_states)
+
+            hidden_states = config.scheduler.step(
+                model_output=hidden_states,
+                timestep=t,
+                sample=prev_latents,
+            )
+            mx.eval(hidden_states)
 
         #
         # === PHASE 5: All-gather Final Output ===
         # All stages participate to receive the final output
-        mx.eval(hidden_states)
         mx_barrier(group=self.group)
         hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
             -hidden_states.shape[0] :
         ]
 
-        # === PHASE 6: Final Projection (last stage only) ===
-        # Extract image portion (remove text embeddings prefix)
-        hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
-        hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
-        hidden_states = self.transformer.proj_out(hidden_states)
-
-        latents = config.scheduler.step(
-            model_output=hidden_states,
-            timestep=t,
-            sample=prev_latents,
-        )
-
-        return latents
+        return hidden_states
 
     def _async_pipeline(
         self,
