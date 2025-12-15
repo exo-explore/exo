@@ -410,8 +410,6 @@ class DistributedDenoising:
                 else:
                     mx.distributed.send(patch_hidden, self.rank + 1, group=self.group)
 
-                mx.eval(patch_hidden, encoder_hidden_states)
-
             # === PHASE 4: Single Blocks with KV Cache ===
             if self.has_single_blocks:
                 # Receive from previous stage if we didn't do concatenation
