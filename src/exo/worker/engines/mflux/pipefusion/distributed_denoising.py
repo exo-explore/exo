@@ -359,21 +359,6 @@ class DistributedDenoising:
         )
         token_indices = calculate_token_indices(patch_heights, latent_width, patch_size)
 
-        # === Initialize KV caches if not already done (reused across timesteps) ===
-        # This enables true PipeFusion behavior: at timestep T, patches not yet processed
-        # have stale K/V from timestep T-1. If sync pipeline ran first, caches already
-        # contain valid K/V from the last sync timestep.
-        if self._joint_kv_caches is None:
-            self._initialize_kv_caches(
-                batch_size=batch_size,
-                num_img_tokens=num_img_tokens,
-                dtype=full_hidden.dtype,
-            )
-
-        # Use persistent caches (stale K/V from previous timestep for unprocessed patches)
-        joint_kv_caches = self._joint_kv_caches
-        single_kv_caches = self._single_kv_caches
-
         # === Process each patch ===
         # Encoder hidden states are the same for all patches in a timestep,
         # so we only need to receive them once (with the first patch)
@@ -403,7 +388,7 @@ class DistributedDenoising:
                         encoder_hidden_states=encoder_hidden_states,
                         text_embeddings=text_embeddings,
                         image_rotary_emb=image_rotary_embeddings,
-                        kv_cache=joint_kv_caches[block_idx],
+                        kv_cache=self.joint_kv_caches[block_idx],
                         patch_start=start_token,
                         patch_end=end_token,
                         text_seq_len=text_seq_len,
@@ -457,7 +442,7 @@ class DistributedDenoising:
                         patch_hidden=patch_hidden,
                         text_embeddings=text_embeddings,
                         image_rotary_emb=image_rotary_embeddings,
-                        kv_cache=single_kv_caches[block_idx],
+                        kv_cache=self.single_kv_caches[block_idx],
                         patch_start=start_token,
                         patch_end=end_token,
                         text_seq_len=text_seq_len,
