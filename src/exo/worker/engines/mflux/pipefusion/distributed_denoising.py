@@ -368,8 +368,6 @@ class DistributedDenoising:
                             encoder_hidden_states, self.rank - 1, group=self.group
                         )
 
-                    mx.eval(patch_hidden, encoder_hidden_states)
-
                 # Run assigned joint blocks with KV cache
                 for block_idx, block in enumerate(self.transformer_blocks):
                     patched_block = PatchedJointTransformerBlock(block)
