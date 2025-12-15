@@ -1,0 +1,40 @@
+[package]
+name = "downloads"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+doctest = false
+name = "downloads"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# macro dependencies
+derive_more = { workspace = true }
+
+# async
+tokio = { workspace = true, features = ["full"] }
+futures = { workspace = true }
+futures-util = { workspace = true }
+
+# utility dependencies
+util = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+itertools = { workspace = true }
+
+# tracing/logging
+log = { workspace = true }
+
+# BitTorrent library
+librqbit = "8.1.1"
+
+# Embed torrent files
+include_dir = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }

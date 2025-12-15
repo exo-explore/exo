@@ -16,3 +16,4 @@ class ModelMetadata(CamelCaseModel):
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
+    revision: str | None = None  # Git commit hash for torrent lookup

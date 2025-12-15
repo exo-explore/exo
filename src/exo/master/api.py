@@ -5,9 +5,9 @@ from typing import cast
 import anyio
 from anyio import create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -178,6 +178,7 @@ class API:
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
+        self.app.get("/_internal/announce")(self.tracker_announce)
 
     async def place_instance(self, payload: PlaceInstanceParams):
         command = PlaceInstance(
@@ -621,6 +622,65 @@ class API:
                 for card in MODEL_CARDS.values()
             ]
         )
+
+    async def tracker_announce(self, request: Request) -> Response:
+        """BitTorrent tracker announce endpoint for private tracker."""
+        try:
+            from exo_pyo3_bindings import handle_tracker_announce  # type: ignore
+        except ImportError as e:
+            raise HTTPException(
+                status_code=501,
+                detail="Torrent support not available (exo_pyo3_bindings not installed)",
+            ) from e
+
+        # Parse announce parameters from query string
+        query_params = dict(request.query_params)
+
+        # Extract required parameters
+        try:
+            info_hash_hex = query_params.get("info_hash", "")
+            peer_id_hex = query_params.get("peer_id", "")
+
+            # URL decode and convert to bytes
+            info_hash = bytes.fromhex(info_hash_hex) if info_hash_hex else b""
+            peer_id = bytes.fromhex(peer_id_hex) if peer_id_hex else b""
+
+            if len(info_hash) != 20 or len(peer_id) != 20:
+                raise ValueError("info_hash and peer_id must be 20 bytes")
+
+            params = {
+                "info_hash": info_hash,
+                "peer_id": peer_id,
+                "port": int(query_params.get("port", "6881")),
+                "uploaded": int(query_params.get("uploaded", "0")),
+                "downloaded": int(query_params.get("downloaded", "0")),
+                "left": int(query_params.get("left", "0")),
+                "compact": query_params.get("compact", "1") == "1",
+            }
+        except (ValueError, KeyError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid announce parameters: {e}",
+            ) from e
+
+        # Build peer list from topology
+        # TODO: Implement _build_peer_list_from_topology() to extract peers from self.state.topology
+        peers = []  # For now, return empty peer list
+
+        # Call Rust tracker handler
+        try:
+            response_bytes: bytes = handle_tracker_announce(params, peers)  # type: ignore
+            return Response(
+                content=response_bytes,
+                media_type="text/plain",
+                headers={"Content-Type": "text/plain"},
+            )
+        except Exception as e:
+            logger.error(f"Tracker announce error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Tracker announce failed: {e}",
+            ) from e
 
     async def run(self):
         cfg = Config()

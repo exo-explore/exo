@@ -17,10 +17,12 @@
 
 extern crate core;
 mod allow_threading;
+pub(crate) mod downloads;
 mod examples;
 pub(crate) mod networking;
 pub(crate) mod pylibp2p;
 
+use crate::downloads::downloads_submodule;
 use crate::networking::networking_submodule;
 use crate::pylibp2p::ident::ident_submodule;
 use crate::pylibp2p::multiaddr::multiaddr_submodule;
@@ -207,6 +209,7 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ident_submodule(m)?;
     multiaddr_submodule(m)?;
     networking_submodule(m)?;
+    downloads_submodule(m)?;
 
     // top-level constructs
     // TODO: ...

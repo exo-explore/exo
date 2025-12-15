@@ -12,10 +12,17 @@ from exo.worker.download.download_utils import RepoDownloadProgress, download_sh
 from exo.worker.download.shard_downloader import ShardDownloader
 
 
-def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
-    return SingletonShardDownloader(
-        CachedShardDownloader(ResumableShardDownloader(max_parallel_downloads))
-    )
+def exo_shard_downloader(
+    max_parallel_downloads: int = 8, enable_torrents: bool = False
+) -> ShardDownloader:
+    if enable_torrents:
+        from exo.worker.download.torrent_downloader import TorrentShardDownloader
+
+        base = TorrentShardDownloader(max_parallel_downloads)
+    else:
+        base = ResumableShardDownloader(max_parallel_downloads)
+
+    return SingletonShardDownloader(CachedShardDownloader(base))
 
 
 async def build_base_shard(model_id: str) -> ShardMetadata:

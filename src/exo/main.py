@@ -35,6 +35,7 @@ class Node:
     api: API | None
 
     node_id: NodeId
+    enable_torrents: bool
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
 
     @classmethod
@@ -66,7 +67,8 @@ class Node:
             worker = Worker(
                 node_id,
                 session_id,
-                exo_shard_downloader(),
+                exo_shard_downloader(enable_torrents=args.enable_torrents),
+                initial_connection_messages=[],
                 connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
@@ -74,7 +76,6 @@ class Node:
             )
         else:
             worker = None
-
         # We start every node with a master
         master = Master(
             node_id,
@@ -98,7 +99,7 @@ class Node:
             election_result_sender=er_send,
         )
 
-        return cls(router, worker, election, er_recv, master, api, node_id)
+        return cls(router, worker, election, er_recv, master, api, node_id, args.enable_torrents)
 
     async def run(self):
         async with self._tg as tg:
@@ -175,7 +176,7 @@ class Node:
                         self.worker = Worker(
                             self.node_id,
                             result.session_id,
-                            exo_shard_downloader(),
+                            exo_shard_downloader(enable_torrents=self.enable_torrents),
                             connection_message_receiver=self.router.receiver(
                                 topics.CONNECTION_MESSAGES
                             ),
@@ -215,6 +216,7 @@ class Args(CamelCaseModel):
     api_port: PositiveInt = 52415
     tb_only: bool = False
     no_worker: bool = False
+    enable_torrents: bool = False
 
     @classmethod
     def parse(cls) -> Self:
@@ -255,6 +257,12 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--no-worker",
             action="store_true",
+        )
+        parser.add_argument(
+            "--enable-torrents",
+            action="store_true",
+            dest="enable_torrents",
+            help="Enable BitTorrent-based downloads (experimental)",
         )
 
         args = parser.parse_args()

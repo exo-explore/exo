@@ -23,6 +23,7 @@ workspace = true
 
 [dependencies]
 networking = { workspace = true }
+downloads = { workspace = true }
 
 # interop
 pyo3 = { version = "0.27.1", features = [
