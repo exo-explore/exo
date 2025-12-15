@@ -177,9 +177,14 @@ class DistributedDenoising:
 
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
-        # === PHASE 1: Create Embeddings (all stages compute, for consistency) ===
-        hidden_states = self.transformer.x_embedder(hidden_states)
-        encoder_hidden_states = self.transformer.context_embedder(prompt_embeds)
+        # === PHASE 1: Embeddings ===
+        # First stage: compute embeddings
+        # Non-first stages: will receive embedded values
+        if self.is_first_stage:
+            hidden_states = self.transformer.x_embedder(hidden_states)
+            encoder_hidden_states = self.transformer.context_embedder(prompt_embeds)
+
+        # All stages need these for their blocks
         text_embeddings = Transformer.compute_text_embeddings(
             t, pooled_prompt_embeds, self.transformer.time_text_embed, config
         )
@@ -188,27 +193,35 @@ class DistributedDenoising:
         )
 
         # === Initialize KV caches to populate during sync for async warmstart ===
-        batch_size = hidden_states.shape[0]
-        num_img_tokens = hidden_states.shape[1]
-        text_seq_len = encoder_hidden_states.shape[1]
+        batch_size = prev_latents.shape[0]
+        num_img_tokens = prev_latents.shape[1]
+        text_seq_len = prompt_embeds.shape[1]
+        hidden_dim = self.transformer.x_embedder.weight.shape[0]
 
         if self._joint_kv_caches is None:
             self._initialize_kv_caches(
                 batch_size=batch_size,
                 num_img_tokens=num_img_tokens,
-                dtype=hidden_states.dtype,
+                dtype=prev_latents.dtype,
             )
 
         # === PHASE 2: Joint Blocks with Communication and Caching ===
         if self.has_joint_blocks:
             # Receive from previous stage (if not first stage)
             if not self.is_first_stage:
+                recv_template = mx.zeros(
+                    (batch_size, num_img_tokens, hidden_dim), dtype=prev_latents.dtype
+                )
                 hidden_states = mx.distributed.recv_like(
-                    hidden_states, self.rank - 1, group=self.group
+                    recv_template, self.rank - 1, group=self.group
+                )
+                enc_template = mx.zeros(
+                    (batch_size, text_seq_len, hidden_dim), dtype=prev_latents.dtype
                 )
                 encoder_hidden_states = mx.distributed.recv_like(
-                    encoder_hidden_states, self.rank - 1, group=self.group
+                    enc_template, self.rank - 1, group=self.group
                 )
+                mx.eval(hidden_states, encoder_hidden_states)
 
             # Run assigned joint blocks with caching wrappers
             for block_idx, block in enumerate(self.transformer_blocks):
@@ -245,11 +258,12 @@ class DistributedDenoising:
         if self.has_single_blocks:
             # Receive from previous stage if we didn't do concatenation
             if not self.owns_concat_stage and not self.is_first_stage:
-                concatenated = mx.concatenate(
-                    [encoder_hidden_states, hidden_states], axis=1
+                recv_template = mx.zeros(
+                    (batch_size, text_seq_len + num_img_tokens, hidden_dim),
+                    dtype=prev_latents.dtype,
                 )
                 hidden_states = mx.distributed.recv_like(
-                    concatenated, self.rank - 1, group=self.group
+                    recv_template, self.rank - 1, group=self.group
                 )
                 mx.eval(hidden_states)
 
