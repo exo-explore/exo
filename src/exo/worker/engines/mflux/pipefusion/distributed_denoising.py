@@ -319,6 +319,8 @@ class DistributedDenoising:
             -hidden_states.shape[0] :
         ]
 
+        return hidden_states
+
     def _async_pipeline(
         self,
         t: int,
