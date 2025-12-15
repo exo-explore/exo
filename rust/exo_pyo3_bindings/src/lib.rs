@@ -84,12 +84,14 @@ pub(crate) mod ext {
 #[pymodule(name = "exo_pyo3_bindings")]
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
+    /*
     use log::LevelFilter;
     #[allow(clippy::expect_used)]
     pyo3_log::Logger::default()
         .filter(LevelFilter::Warn)
         .install()
         .expect("logger install");
+    */
 
     ident_submodule(m)?;
     networking_submodule(m)?;
