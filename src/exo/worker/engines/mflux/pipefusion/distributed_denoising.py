@@ -375,6 +375,7 @@ class DistributedDenoising:
                         patch, src=self.prev_rank, group=self.group
                     )
                     mx.eval(patch)
+                    patch_latents[patch_idx] = patch
                     logger.info(
                         "==============================================================\n\n"
                         + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, received patch: {patch.shape}"
@@ -468,6 +469,7 @@ class DistributedDenoising:
                         recv_template, src=self.prev_rank, group=self.group
                     )
                     mx.eval(patch)
+                    patch_latents[patch_idx] = patch
                     logger.info(
                         "==============================================================\n\n"
                         + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, received patch: {patch.shape}"
