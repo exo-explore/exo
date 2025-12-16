@@ -532,6 +532,7 @@ class DistributedDenoising:
                     patch_latents[patch_idx] = mx.distributed.recv_like(
                         patch_latents[patch_idx], src=self.prev_rank, group=self.group
                     )
+                    mx.eval(patch_latents[patch_idx])
 
             latents = mx.concatenate(patch_latents, axis=1)
 
