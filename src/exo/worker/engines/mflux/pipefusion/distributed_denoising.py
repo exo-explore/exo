@@ -164,6 +164,27 @@ class DistributedDenoising:
             for _ in range(len(self.single_transformer_blocks))
         ]
 
+    def _create_patches(
+        self,
+        latents: mx.array,
+        config: RuntimeConfig,
+    ) -> tuple[list[mx.array], list[tuple[int, int]]]:
+        # Calculate patch metadata
+        # TODO(ciaran): generalise
+        latent_height = config.height // 8
+        latent_width = config.width // 8
+        patch_size = 2  # Flux uses 2x2 patches
+
+        patch_heights, _ = calculate_patch_heights(
+            latent_height, self.num_patches, patch_size
+        )
+        token_indices = calculate_token_indices(patch_heights, latent_width, patch_size)
+
+        # Split latents into patches
+        patch_latents = [latents[:, start:end, :] for start, end in token_indices]
+
+        return patch_latents, token_indices
+
     def _sync_pipeline(
         self,
         t: int,
