@@ -195,7 +195,7 @@ class DistributedDenoising:
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
-    ):
+    ) -> mx.array:
         prev_latents = hidden_states
 
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
@@ -347,7 +347,7 @@ class DistributedDenoising:
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
-    ):
+    ) -> list[mx.array]:
         # TODO(ciaran): needed in general?
         # hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
@@ -523,9 +523,7 @@ class DistributedDenoising:
 
                 patch_latents[patch_idx] = patch
 
-        latents = mx.concatenate(patch_latents, axis=1)
-
-        return latents
+        return patch_latents
 
     def __call__(
         self,
@@ -550,7 +548,7 @@ class DistributedDenoising:
         else:
             patch_latents, token_indices = self._create_patches(hidden_states, config)
 
-            latents = self._async_pipeline(
+            patch_latents = self._async_pipeline(
                 t,
                 config,
                 patch_latents,
@@ -571,7 +569,7 @@ class DistributedDenoising:
                         patch_latents[patch_idx], src=self.prev_rank, group=self.group
                     )
 
-                latents = mx.concatenate(patch_latents, axis=1)
+            latents = mx.concatenate(patch_latents, axis=1)
 
         return latents
 
