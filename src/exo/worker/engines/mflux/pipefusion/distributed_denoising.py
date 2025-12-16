@@ -437,6 +437,13 @@ class DistributedDenoising:
                     )
 
             elif self.has_joint_blocks and not self.is_last_stage:
+                mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+                logger.info(
+                    "==============================================================\n\n"
+                    + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent patch: {patch.shape}"
+                    + "\n\n=============================================================="
+                )
+
                 if patch_idx == 0:
                     mx.eval(
                         mx.distributed.send(
@@ -448,13 +455,6 @@ class DistributedDenoising:
                         + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent encoder_hidden_states: {encoder_hidden_states.shape}"
                         + "\n\n=============================================================="
                     )
-
-                mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
-                logger.info(
-                    "==============================================================\n\n"
-                    + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent patch: {patch.shape}"
-                    + "\n\n=============================================================="
-                )
 
             if self.has_single_blocks:
                 if not self.owns_concat_stage and not self.is_first_stage:
