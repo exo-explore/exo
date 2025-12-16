@@ -13,7 +13,7 @@ from exo.worker.engines.mflux.pipefusion.patched_blocks import (
     PatchedJointTransformerBlock,
     PatchedSingleTransformerBlock,
 )
-from exo.worker.engines.mlx.utils_mlx import mx_barrier
+from exo.worker.runner.bootstrap import logger
 
 
 def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: int):
@@ -378,6 +378,11 @@ class DistributedDenoising:
                         patch, src=self.prev_rank, group=self.group
                     )
                     mx.eval(patch)
+                    logger.info(
+                        "==============================================================\n\n"
+                        + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, received patch: {patch.shape}"
+                        + "\n\n=============================================================="
+                    )
 
                     if not self.is_first_stage and patch_idx == 0:
                         enc_template = mx.zeros(
@@ -388,6 +393,11 @@ class DistributedDenoising:
                             enc_template, src=self.prev_rank, group=self.group
                         )
                         mx.eval(encoder_hidden_states)
+                        logger.info(
+                            "==============================================================\n\n"
+                            + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, received encoder_hidden_states: {encoder_hidden_states.shape}"
+                            + "\n\n=============================================================="
+                        )
 
                 if self.is_first_stage:
                     patch = self.transformer.x_embedder(patch)
@@ -420,6 +430,11 @@ class DistributedDenoising:
                             patch_concat, self.next_rank, group=self.group
                         )
                     )
+                    logger.info(
+                        "==============================================================\n\n"
+                        + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent patch_concat: {patch_concat.shape}"
+                        + "\n\n=============================================================="
+                    )
 
             elif self.has_joint_blocks and not self.is_last_stage:
                 if patch_idx == 0:
@@ -428,8 +443,18 @@ class DistributedDenoising:
                             encoder_hidden_states, self.next_rank, group=self.group
                         )
                     )
+                    logger.info(
+                        "==============================================================\n\n"
+                        + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent encoder_hidden_states: {encoder_hidden_states.shape}"
+                        + "\n\n=============================================================="
+                    )
 
                 mx.eval(mx.distributed.send(patch, self.next_rank, group=self.group))
+                logger.info(
+                    "==============================================================\n\n"
+                    + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent patch: {patch.shape}"
+                    + "\n\n=============================================================="
+                )
 
             if self.has_single_blocks:
                 if not self.owns_concat_stage and not self.is_first_stage:
@@ -441,6 +466,11 @@ class DistributedDenoising:
                         recv_template, src=self.prev_rank, group=self.group
                     )
                     mx.eval(patch)
+                    logger.info(
+                        "==============================================================\n\n"
+                        + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, received patch: {patch.shape}"
+                        + "\n\n=============================================================="
+                    )
 
                 # Run assigned single blocks with KV cache
                 for block_idx, block in enumerate(self.single_transformer_blocks):
@@ -458,6 +488,11 @@ class DistributedDenoising:
                 if not self.is_last_stage:
                     mx.eval(
                         mx.distributed.send(patch, self.next_rank, group=self.group)
+                    )
+                    logger.info(
+                        "==============================================================\n\n"
+                        + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent patch: {patch.shape}"
+                        + "\n\n=============================================================="
                     )
 
             if self.is_last_stage:
@@ -477,6 +512,11 @@ class DistributedDenoising:
                 if not self.is_first_stage:
                     mx.eval(
                         mx.distributed.send(patch, self.next_rank, group=self.group)
+                    )
+                    logger.info(
+                        "==============================================================\n\n"
+                        + f"rank {self.rank}, t = {t}, patch_idx = {patch_idx}, sent patch: {patch.shape}"
+                        + "\n\n=============================================================="
                     )
 
         latents = mx.concatenate(patch_latents, axis=1)
