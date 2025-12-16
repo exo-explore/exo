@@ -63,6 +63,8 @@ class DistributedDenoising:
         self.group = group
         self.rank = shard_metadata.device_rank
         self.world_size = shard_metadata.world_size
+        self.next_rank = (self.rank + 1) % self.world_size
+        self.prev_rank = (self.rank - 1 + self.world_size) % self.world_size
         self.start_layer = shard_metadata.start_layer
         self.end_layer = shard_metadata.end_layer
 
