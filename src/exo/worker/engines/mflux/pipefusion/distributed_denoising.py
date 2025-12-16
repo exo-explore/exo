@@ -524,6 +524,8 @@ class DistributedDenoising:
                         + "\n\n=============================================================="
                     )
 
+                patch_latents[patch_idx] = patch
+
         latents = mx.concatenate(patch_latents, axis=1)
 
         return latents
@@ -566,9 +568,9 @@ class DistributedDenoising:
                 and self.is_first_stage
                 and not self.is_last_stage
             ):
-                for patch in patch_latents:
-                    patch = mx.distributed.recv_like(
-                        patch, src=self.prev_rank, group=self.group
+                for patch_idx in range(len(patch_latents)):
+                    patch_latents[patch_idx] = mx.distributed.recv_like(
+                        patch_latents[patch_idx], src=self.prev_rank, group=self.group
                     )
 
                 latents = mx.concatenate(patch_latents, axis=1)
