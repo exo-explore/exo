@@ -173,6 +173,12 @@ class DistributedDenoising:
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
     ):
+        if self.is_first_stage and not self.is_last_stage and t != 0:
+            hidden_states = mx.distributed.recv_like(
+                hidden_states, src=self.world_size - 1, group=self.group
+            )
+            mx.eval(hidden_states)
+
         prev_latents = hidden_states
 
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
@@ -302,22 +308,10 @@ class DistributedDenoising:
             if not self.is_first_stage:
                 mx.eval(mx.distributed.send(hidden_states, 0, group=self.group))
         else:
+            # For shape correctness
             hidden_states = prev_latents
 
-        if self.is_first_stage and not self.is_last_stage:
-            hidden_states = mx.distributed.recv_like(
-                hidden_states, self.world_size - 1, group=self.group
-            )
-
         mx.eval(hidden_states)
-
-        #
-        # === PHASE 5: All-gather Final Output ===
-        # All stages participate to receive the final output
-        mx_barrier(group=self.group)
-        hidden_states = mx.distributed.all_gather(hidden_states, group=self.group)[
-            -hidden_states.shape[0] :
-        ]
 
         return hidden_states
 
@@ -330,6 +324,12 @@ class DistributedDenoising:
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
     ):
+        if self.is_first_stage and not self.is_last_stage and t == self.num_sync_steps:
+            hidden_states = mx.distributed.recv_like(
+                hidden_states, src=self.world_size - 1, group=self.group
+            )
+            mx.eval(hidden_states)
+
         prev_latents = hidden_states
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
