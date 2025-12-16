@@ -561,6 +561,18 @@ class DistributedDenoising:
                 kontext_image_ids,
             )
 
+            if (
+                t == config.num_inference_steps - 1
+                and self.is_first_stage
+                and not self.is_last_stage
+            ):
+                for patch in patch_latents:
+                    patch = mx.distributed.recv_like(
+                        patch, src=self.prev_rank, group=self.group
+                    )
+
+                latents = mx.concatenate(patch_latents, axis=1)
+
         return latents
 
     # Delegate attribute access to the underlying transformer for compatibility
