@@ -70,8 +70,8 @@ class DistributedDenoising:
         self.num_patches = num_patches if num_patches else group.size()
 
         # Persistent KV caches (initialized on first async timestep, reused across timesteps)
-        self._joint_kv_caches: list[JointPatchKVCache] | None = None
-        self._single_kv_caches: list[PatchKVCache] | None = None
+        self.joint_kv_caches: list[JointPatchKVCache] | None = None
+        self.single_kv_caches: list[PatchKVCache] | None = None
 
         # Get block counts from the original transformer (before slicing)
         # Note: These are the ORIGINAL counts, not the sliced counts
@@ -143,7 +143,7 @@ class DistributedDenoising:
             num_img_tokens: Number of image tokens
             dtype: Data type for cache tensors
         """
-        self._joint_kv_caches = [
+        self.joint_kv_caches = [
             JointPatchKVCache(
                 batch_size=batch_size,
                 num_heads=24,
@@ -153,7 +153,7 @@ class DistributedDenoising:
             )
             for _ in range(len(self.transformer_blocks))
         ]
-        self._single_kv_caches = [
+        self.single_kv_caches = [
             PatchKVCache(
                 batch_size=batch_size,
                 num_heads=24,
@@ -226,7 +226,7 @@ class DistributedDenoising:
             # Run assigned joint blocks with caching wrappers
             for block_idx, block in enumerate(self.transformer_blocks):
                 caching_block = CachingJointTransformerBlock(
-                    block, self._joint_kv_caches[block_idx]
+                    block, self.joint_kv_caches[block_idx]
                 )
                 encoder_hidden_states, hidden_states = caching_block(
                     hidden_states=hidden_states,
@@ -270,7 +270,7 @@ class DistributedDenoising:
             # Run assigned single blocks with caching wrappers
             for block_idx, block in enumerate(self.single_transformer_blocks):
                 caching_block = CachingSingleTransformerBlock(
-                    block, self._single_kv_caches[block_idx]
+                    block, self.single_kv_caches[block_idx]
                 )
                 hidden_states = caching_block(
                     hidden_states=hidden_states,
