@@ -236,13 +236,13 @@ class DistributedDenoising:
                     (batch_size, num_img_tokens, hidden_dim), dtype=prev_latents.dtype
                 )
                 hidden_states = mx.distributed.recv_like(
-                    recv_template, self.rank - 1, group=self.group
+                    recv_template, self.prev_rank, group=self.group
                 )
                 enc_template = mx.zeros(
                     (batch_size, text_seq_len, hidden_dim), dtype=prev_latents.dtype
                 )
                 encoder_hidden_states = mx.distributed.recv_like(
-                    enc_template, self.rank - 1, group=self.group
+                    enc_template, self.prev_rank, group=self.group
                 )
                 mx.eval(hidden_states, encoder_hidden_states)
 
@@ -270,12 +270,12 @@ class DistributedDenoising:
                 hidden_states = concatenated
             else:
                 # Send concatenated state to next stage (which has single blocks)
-                mx.distributed.send(concatenated, self.rank + 1, group=self.group)
+                mx.distributed.send(concatenated, self.next_rank, group=self.group)
 
         elif self.has_joint_blocks and not self.is_last_stage:
             # Send joint block outputs to next stage (which has more joint blocks)
-            mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
-            mx.distributed.send(encoder_hidden_states, self.rank + 1, group=self.group)
+            mx.distributed.send(hidden_states, self.next_rank, group=self.group)
+            mx.distributed.send(encoder_hidden_states, self.next_rank, group=self.group)
 
         # === PHASE 4: Single Blocks with Communication and Caching ===
         if self.has_single_blocks:
@@ -286,7 +286,7 @@ class DistributedDenoising:
                     dtype=prev_latents.dtype,
                 )
                 hidden_states = mx.distributed.recv_like(
-                    recv_template, self.rank - 1, group=self.group
+                    recv_template, self.prev_rank, group=self.group
                 )
                 mx.eval(hidden_states)
 
@@ -305,7 +305,7 @@ class DistributedDenoising:
             # Send to next stage if not last
             if not self.is_last_stage:
                 mx.eval(
-                    mx.distributed.send(hidden_states, self.rank + 1, group=self.group)
+                    mx.distributed.send(hidden_states, self.next_rank, group=self.group)
                 )
 
         # === PHASE 5: Last Stage - Final Projection + Scheduler ===
