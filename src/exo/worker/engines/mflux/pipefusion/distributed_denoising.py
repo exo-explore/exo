@@ -480,7 +480,7 @@ class DistributedDenoising:
                 # Run assigned single blocks with KV cache
                 for block_idx, block in enumerate(self.single_transformer_blocks):
                     patched_block = PatchedSingleTransformerBlock(block)
-                    patch_hidden = patched_block(
+                    patch = patched_block(
                         patch_hidden=patch,
                         text_embeddings=text_embeddings,
                         image_rotary_emb=image_rotary_embeddings,
