@@ -458,8 +458,13 @@ class DistributedDenoising:
 
             if self.has_single_blocks:
                 if not self.owns_concat_stage and not self.is_first_stage:
-                    recv_template = mx.concatenate(
-                        [encoder_hidden_states, patch], axis=1
+                    recv_template = mx.zeros(
+                        [
+                            batch_size,
+                            text_seq_len + patch_latents[patch_idx].shape[1],
+                            hidden_dim,
+                        ],
+                        dtype=patch_latents[0].dtype,
                     )
 
                     patch = mx.distributed.recv_like(
