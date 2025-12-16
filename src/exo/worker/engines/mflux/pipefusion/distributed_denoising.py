@@ -351,8 +351,6 @@ class DistributedDenoising:
         # TODO(ciaran): needed in general?
         # hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
-        patch_latents_prev: list[mx.array] = []
-
         text_embeddings = Transformer.compute_text_embeddings(
             t, pooled_prompt_embeds, self.transformer.time_text_embed, config
         )
@@ -365,8 +363,7 @@ class DistributedDenoising:
         hidden_dim = self.transformer.x_embedder.weight.shape[0]
 
         for patch_idx, patch in enumerate(patch_latents):
-            if self.is_last_stage:
-                patch_latents_prev.append(patch)
+            patch_prev = patch
 
             start_token, end_token = token_indices[patch_idx]
 
@@ -511,7 +508,7 @@ class DistributedDenoising:
                 patch = config.scheduler.step(
                     model_output=patch_img_only,
                     timestep=t,
-                    sample=patch_latents_prev[patch_idx],
+                    sample=patch_prev,
                 )
 
                 if not self.is_first_stage:
@@ -563,6 +560,7 @@ class DistributedDenoising:
                 kontext_image_ids,
             )
 
+            # Receive final patches from last rank
             if (
                 t == config.num_inference_steps - 1
                 and self.is_first_stage
