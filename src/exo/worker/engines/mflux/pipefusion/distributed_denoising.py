@@ -304,7 +304,7 @@ class DistributedDenoising:
 
         elif self.is_first_stage:
             hidden_states = mx.distributed.recv_like(
-                hidden_states, src=self.world_size - 1, group=self.group
+                prev_latents, src=self.world_size - 1, group=self.group
             )
 
             mx.eval(hidden_states)
