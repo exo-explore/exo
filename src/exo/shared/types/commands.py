@@ -3,7 +3,7 @@ from pydantic import Field
 from exo.shared.types.api import ChatCompletionTaskParams
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.models import ModelMetadata
-from exo.shared.types.worker.instances import InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
@@ -20,11 +20,15 @@ class ChatCompletion(BaseCommand):
     request_params: ChatCompletionTaskParams
 
 
-class CreateInstance(BaseCommand):
+class PlaceInstance(BaseCommand):
     model_meta: ModelMetadata
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+
+
+class CreateInstance(BaseCommand):
+    instance: Instance
 
 
 class DeleteInstance(BaseCommand):
@@ -43,6 +47,7 @@ Command = (
     TestCommand
     | RequestEventLog
     | ChatCompletion
+    | PlaceInstance
     | CreateInstance
     | DeleteInstance
     | TaskFinished

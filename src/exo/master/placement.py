@@ -17,6 +17,7 @@ from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
+    PlaceInstance,
 )
 from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
@@ -35,12 +36,20 @@ def random_ephemeral_port() -> int:
     return random.randint(49152, 65535)
 
 
-def get_instance_placements_after_create(
+def add_instance_to_placements(
     command: CreateInstance,
     topology: Topology,
     current_instances: Mapping[InstanceId, Instance],
-    *,
-    tb_only: bool = False,
+) -> Mapping[InstanceId, Instance]:
+    # TODO: validate against topology
+
+    return {**current_instances, command.instance.instance_id: command.instance}
+
+
+def place_instance(
+    command: PlaceInstance,
+    topology: Topology,
+    current_instances: Mapping[InstanceId, Instance],
 ) -> dict[InstanceId, Instance]:
     all_nodes = list(topology.list_nodes())
 
@@ -64,9 +73,7 @@ def get_instance_placements_after_create(
         if topology.get_subgraph_from_nodes(cycle).is_thunderbolt_cycle(cycle)
     ]
 
-    if tb_only and smallest_tb_cycles == []:
-        raise ValueError("No TB cycles found with sufficient memory")
-    elif smallest_tb_cycles != []:
+    if smallest_tb_cycles != []:
         smallest_cycles = smallest_tb_cycles
 
     cycles_with_leaf_nodes: list[list[NodeInfo]] = [
@@ -138,7 +145,7 @@ def get_instance_placements_after_create(
     return target_instances
 
 
-def get_instance_placements_after_delete(
+def delete_instance(
     command: DeleteInstance,
     current_instances: Mapping[InstanceId, Instance],
 ) -> dict[InstanceId, Instance]:

@@ -5,9 +5,10 @@ from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.master.placement import (
-    get_instance_placements_after_create,
-    get_instance_placements_after_delete,
+    add_instance_to_placements,
+    delete_instance,
     get_transition_events,
+    place_instance,
 )
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
@@ -15,6 +16,7 @@ from exo.shared.types.commands import (
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    PlaceInstance,
     RequestEventLog,
     TaskFinished,
     TestCommand,
@@ -148,19 +150,26 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case DeleteInstance():
-                            placement = get_instance_placements_after_delete(
-                                command, self.state.instances
+                            placement = delete_instance(command, self.state.instances)
+                            transition_events = get_transition_events(
+                                self.state.instances, placement
+                            )
+                            generated_events.extend(transition_events)
+                        case PlaceInstance():
+                            placement = place_instance(
+                                command,
+                                self.state.topology,
+                                self.state.instances,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance():
-                            placement = get_instance_placements_after_create(
+                            placement = add_instance_to_placements(
                                 command,
                                 self.state.topology,
                                 self.state.instances,
-                                tb_only=self.tb_only,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement

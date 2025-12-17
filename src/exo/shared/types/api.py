@@ -1,11 +1,12 @@
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from pydantic_core import PydanticUseDefault
 
 from exo.shared.types.common import CommandId
-from exo.shared.types.models import ModelMetadata
-from exo.shared.types.worker.instances import InstanceId, InstanceMeta
+from exo.shared.types.models import ModelId
+from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 
 FinishReason = Literal[
@@ -24,6 +25,8 @@ class ModelListModel(BaseModel):
     description: str = Field(default="")
     context_length: int = Field(default=0)
     tags: list[str] = Field(default=[])
+    storage_size_megabytes: int = Field(default=0)
+    supports_tensor: bool = Field(default=False)
 
 
 class ModelList(BaseModel):
@@ -132,12 +135,36 @@ class ChatCompletionTaskParams(BaseModel):
     user: str | None = None
 
 
-class CreateInstanceTaskParams(BaseModel):
-    # TODO: in future the user could specify a specific Instance, not just a model_id
+class PlaceInstanceParams(BaseModel):
     model_id: str
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+
+    @field_validator("sharding", "instance_meta", mode="plain")
+    @classmethod
+    def use_default(cls, v: object):
+        if not v or not isinstance(v, (Sharding, InstanceMeta)):
+            raise PydanticUseDefault()
+        return v
+
+
+class CreateInstanceParams(BaseModel):
+    instance: Instance
+
+
+class PlacementPreview(BaseModel):
+    model_id: ModelId
+    sharding: Sharding
+    instance_meta: InstanceMeta
+    instance: Instance | None = None
+    # Keys are NodeId strings, values are additional bytes that would be used on that node
+    memory_delta_by_node: dict[str, int] | None = None
+    error: str | None = None
+
+
+class PlacementPreviewResponse(BaseModel):
+    previews: list[PlacementPreview]
 
 
 class DeleteInstanceTaskParams(BaseModel):
@@ -147,7 +174,6 @@ class DeleteInstanceTaskParams(BaseModel):
 class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
-    model_meta: ModelMetadata
 
 
 class DeleteInstanceResponse(BaseModel):

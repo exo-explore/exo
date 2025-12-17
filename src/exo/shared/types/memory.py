@@ -47,6 +47,11 @@ class Memory(CamelCaseModel):
         """Construct a new Memory object from a number of megabytes"""
         return cls(in_bytes=round(val * (1024**2)))
 
+    @classmethod
+    def from_gb(cls, val: float) -> Self:
+        """Construct a new Memory object from a number of megabytes"""
+        return cls(in_bytes=round(val * (1024**3)))
+
     @property
     def in_gb(self) -> float:
         """The approximate gigabytes this memory represents."""

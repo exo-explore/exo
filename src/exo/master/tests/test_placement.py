@@ -4,11 +4,11 @@ import pytest
 from loguru import logger
 
 from exo.master.placement import (
-    get_instance_placements_after_create,
     get_transition_events,
+    place_instance,
 )
 from exo.shared.topology import Topology
-from exo.shared.types.commands import CreateInstance
+from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
@@ -52,8 +52,8 @@ def model_meta() -> ModelMetadata:
     )
 
 
-def create_instance_command(model_meta: ModelMetadata) -> CreateInstance:
-    return CreateInstance(
+def place_instance_command(model_meta: ModelMetadata) -> PlaceInstance:
+    return PlaceInstance(
         command_id=CommandId(),
         model_meta=model_meta,
         sharding=Sharding.Pipeline,
@@ -85,7 +85,7 @@ def test_get_instance_placements_create_instance(
         available_memory
     )  # make it exactly fit across all nodes
 
-    cic = create_instance_command(model_meta)
+    cic = place_instance_command(model_meta)
     node_id_a = NodeId()
     node_id_b = NodeId()
     node_id_c = NodeId()
@@ -97,7 +97,7 @@ def test_get_instance_placements_create_instance(
     topology.add_connection(create_connection(node_id_c, node_id_a))
 
     # act
-    placements = get_instance_placements_after_create(cic, topology, {})
+    placements = place_instance(cic, topology, {})
 
     # assert
     assert len(placements) == 1
@@ -129,7 +129,7 @@ def test_get_instance_placements_one_node_exact_fit(
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
-    cic = create_instance_command(
+    cic = place_instance_command(
         ModelMetadata(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
@@ -137,7 +137,7 @@ def test_get_instance_placements_one_node_exact_fit(
             n_layers=10,
         ),
     )
-    placements = get_instance_placements_after_create(cic, topology, {})
+    placements = place_instance(cic, topology, {})
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -154,7 +154,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1001 * 1024, node_id))
-    cic = create_instance_command(
+    cic = place_instance_command(
         ModelMetadata(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1000),
@@ -162,7 +162,7 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
             n_layers=10,
         ),
     )
-    placements = get_instance_placements_after_create(cic, topology, {})
+    placements = place_instance(cic, topology, {})
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
@@ -179,7 +179,7 @@ def test_get_instance_placements_one_node_not_fit(
     topology = Topology()
     node_id = NodeId()
     topology.add_node(create_node(1000 * 1024, node_id))
-    cic = create_instance_command(
+    cic = place_instance_command(
         model_meta=ModelMetadata(
             model_id=ModelId("test-model"),
             storage_size=Memory.from_kb(1001),
@@ -189,7 +189,7 @@ def test_get_instance_placements_one_node_not_fit(
     )
 
     with pytest.raises(ValueError, match="No cycles found with sufficient memory"):
-        get_instance_placements_after_create(cic, topology, {})
+        place_instance(cic, topology, {})
 
 
 def test_get_transition_events_no_change(instance: Instance):
@@ -292,12 +292,12 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     topology.add_connection(create_connection(node_id_e, node_id_y))
     topology.add_connection(create_connection(node_id_f, node_id_z))
 
-    cic = create_instance_command(
+    cic = place_instance_command(
         model_meta=model_meta,
     )
 
     # Act
-    placements = get_instance_placements_after_create(cic, topology, {})
+    placements = place_instance(cic, topology, {})
 
     # Assert the chosen cycle is A-B-C (contains at least one leaf node), even though
     # D-E-F has more total memory.
@@ -420,7 +420,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_connection(conn_c_b)
     topology.add_connection(conn_a_c)
 
-    cic = CreateInstance(
+    cic = PlaceInstance(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
         command_id=CommandId(),
@@ -428,7 +428,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
         min_nodes=1,
     )
 
-    placements = get_instance_placements_after_create(cic, topology, {})
+    placements = place_instance(cic, topology, {})
 
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]

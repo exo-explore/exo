@@ -20,7 +20,19 @@ rust-rebuild:
     cargo run --bin stub_gen
     just sync-clean
 
+build-dashboard:
+    #!/usr/bin/env bash
+    cd dashboard
+    npm install
+    npm run build
+
+package:
+    uv run pyinstaller packaging/pyinstaller/exo.spec
+
 clean:
     rm -rf **/__pycache__
     rm -rf target/
     rm -rf .venv
+    rm -rf dashboard/node_modules
+    rm -rf dashboard/.svelte-kit
+    rm -rf dashboard/build

@@ -81,6 +81,9 @@
               # NIX
               nixpkgs-fmt
 
+              # SVELTE
+              nodejs
+
               # MISC
               just
               jq
@@ -96,7 +99,6 @@
 
           shellHook = ''
             # PYTHON
-            export DASHBOARD_DIR="$(git rev-parse --show-toplevel)/dashboard"
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.python313}/lib"
             echo
             echo "🍎🍎 Run 'just <recipe>' to get started"

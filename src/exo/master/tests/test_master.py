@@ -11,8 +11,8 @@ from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import (
     ChatCompletion,
     CommandId,
-    CreateInstance,
     ForwarderCommand,
+    PlaceInstance,
 )
 from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
@@ -117,7 +117,7 @@ async def test_master():
             ForwarderCommand(
                 origin=node_id,
                 command=(
-                    CreateInstance(
+                    PlaceInstance(
                         command_id=CommandId(),
                         model_meta=ModelMetadata(
                             model_id=ModelId("llama-3.2-1b"),
