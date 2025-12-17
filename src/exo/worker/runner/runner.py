@@ -44,8 +44,11 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
-from exo.worker.engines.mflux.distributed_flux import DistributedFlux1
-from exo.worker.engines.mflux.generator.generate import mflux_generate, warmup_mflux
+from exo.worker.engines.image import (
+    ImageGenerator,
+    generate_image,
+    warmup_image_generator,
+)
 from exo.worker.engines.mflux.utils_mflux import initialize_mflux
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
@@ -157,7 +160,7 @@ def main(
                         logger.info(f"warming up inference for instance: {instance}")
                         if ModelTask.TextGeneration in model_tasks:
                             # assert isinstance(model, Model) TODO: not actually Model
-                            assert model and not isinstance(model, DistributedFlux1)
+                            assert model and not isinstance(model, ImageGenerator)
                             assert tokenizer
                             assert sampler
 
@@ -175,8 +178,8 @@ def main(
                             ModelTask.TextToImage in model_tasks
                             or ModelTask.ImageToImage in model_tasks
                         ):
-                            assert isinstance(model, DistributedFlux1)
-                            image = warmup_mflux(model=model)
+                            assert isinstance(model, ImageGenerator)
+                            image = warmup_image_generator(model=model)
                             if image is not None:
                                 logger.info(
                                     f"warmed up by generating {image.size} image"
@@ -190,7 +193,7 @@ def main(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
                         # assert isinstance(model, Model) TODO: not actually Model
-                        assert model and not isinstance(model, DistributedFlux1)
+                        assert model and not isinstance(model, ImageGenerator)
                         assert tokenizer
                         assert sampler
                         logger.info(f"received chat request: {str(task)[:500]}")
@@ -239,7 +242,7 @@ def main(
                     case ImageGeneration(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
-                        assert isinstance(model, DistributedFlux1)
+                        assert isinstance(model, ImageGenerator)
                         logger.info(
                             f"received image generation request: {str(task)[:500]}"
                         )
@@ -251,9 +254,9 @@ def main(
                             )
                         )
 
-                        # Generate images using MFlux (MLX) diffusion
+                        # Generate images using the image generation backend
                         for image_index, response in enumerate(
-                            mflux_generate(
+                            generate_image(
                                 model=model,
                                 task=task_params,
                             )
@@ -305,10 +308,8 @@ def main(
                     case ImageEdits(task_params=task_params, command_id=command_id) if (
                         isinstance(current_status, RunnerReady)
                     ):
-                        assert isinstance(model, DistributedFlux1)
-                        logger.info(
-                            f"received image generation request: {str(task)[:500]}"
-                        )
+                        assert isinstance(model, ImageGenerator)
+                        logger.info(f"received image edits request: {str(task)[:500]}")
                         current_status = RunnerRunning()
                         logger.info("runner running")
                         event_sender.send(
@@ -317,9 +318,8 @@ def main(
                             )
                         )
 
-                        # Generate images using MFlux (MLX) diffusion
                         for image_index, response in enumerate(
-                            mflux_generate(
+                            generate_image(
                                 model=model,
                                 task=task_params,
                             )
