@@ -269,12 +269,18 @@ class DistributedDenoising:
                 hidden_states = concatenated
             else:
                 # Send concatenated state to next stage (which has single blocks)
-                mx.distributed.send(concatenated, self.next_rank, group=self.group)
+                mx.eval(
+                    mx.distributed.send(concatenated, self.next_rank, group=self.group)
+                )
 
         elif self.has_joint_blocks and not self.is_last_stage:
             # Send joint block outputs to next stage (which has more joint blocks)
-            mx.distributed.send(hidden_states, self.next_rank, group=self.group)
-            mx.distributed.send(encoder_hidden_states, self.next_rank, group=self.group)
+            mx.eval(
+                mx.distributed.send(hidden_states, self.next_rank, group=self.group),
+                mx.distributed.send(
+                    encoder_hidden_states, self.next_rank, group=self.group
+                ),
+            )
 
         # === PHASE 4: Single Blocks with Communication and Caching ===
         if self.has_single_blocks:
