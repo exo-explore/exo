@@ -7,7 +7,8 @@ Thank you for your interest in contributing to EXO!
 To run EXO from source:
 ```bash
 git clone https://github.com/exo-explore/exo.git
-cd exo
+cd exo/dashboard
+npm install && npm run build
 uv run exo
 ```
 
@@ -50,5 +51,4 @@ If you find a bug or have a feature request, please open an issue on GitHub with
 ## Questions?
 
 Join our community:
-- [Discord](https://discord.gg/EUnjGpsmWw)
 - [X](https://x.com/exolabs)
