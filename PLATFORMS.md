@@ -29,3 +29,10 @@ Linux Vulkan Support -- depends heavily on ecosystem
 
 Linux CUDA Support -- depends heavily on ecosystem
 - Framework Desktop
+
+## Longer term!
+
+Windows CUDA Support
+
+Windows CPU Support
+
