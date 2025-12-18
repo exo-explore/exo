@@ -1,0 +1,10 @@
+name: Lint Check
+
+description: "Check for lint errors"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Lint check
+      run: nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just lint-check
+      shell: bash

@@ -1,0 +1,183 @@
+name: ci-pipeline
+
+on:
+  push:
+  pull_request:
+    branches:
+      - staging
+      - main
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Configure git user
+        run: |
+          git config --local user.email "github-actions@users.noreply.github.com"
+          git config --local user.name  "github-actions bot"
+        shell: bash
+
+      - name: Pull LFS files
+        run: |
+          echo "Pulling Git LFS files..."
+          git lfs pull
+        shell: bash
+
+      - name: Setup Nix Environment
+        run: |
+          echo "Checking for nix installation..."
+          
+          # Check if nix binary exists directly
+          if [ -f /nix/var/nix/profiles/default/bin/nix ]; then
+            echo "Found nix binary at /nix/var/nix/profiles/default/bin/nix"
+            export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+            echo "PATH=$PATH" >> $GITHUB_ENV
+            nix --version
+          elif [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+            echo "Found nix profile script, sourcing..."
+            source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+            nix --version
+          elif command -v nix >/dev/null 2>&1; then
+            echo "Nix already in PATH"
+            nix --version
+          else
+            echo "Nix not found. Debugging info:"
+            echo "Contents of /nix/var/nix/profiles/default/:"
+            ls -la /nix/var/nix/profiles/default/ 2>/dev/null || echo "Directory not found"
+            echo "Contents of /nix/var/nix/profiles/default/bin/:"
+            ls -la /nix/var/nix/profiles/default/bin/ 2>/dev/null || echo "Directory not found"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Configure basedpyright include for local MLX
+        run: |
+          RUNNER_LABELS='${{ toJSON(runner.labels) }}'
+          if echo "$RUNNER_LABELS" | grep -q "local_mlx"; then
+            if [ -d "/Users/Shared/mlx" ]; then
+              echo "Updating [tool.basedpyright].include to use /Users/Shared/mlx"
+              awk '
+                BEGIN { in=0 }
+                /^\[tool\.basedpyright\]/ { in=1; print; next }
+                in && /^\[/ { in=0 }  # next section
+                in && /^[ \t]*include[ \t]*=/ {
+                  print "include = [\"/Users/Shared/mlx\"]"
+                  next
+                }
+                { print }
+              ' pyproject.toml > pyproject.toml.tmp && mv pyproject.toml.tmp pyproject.toml
+
+              echo "New [tool.basedpyright] section:"
+              sed -n '/^\[tool\.basedpyright\]/,/^\[/p' pyproject.toml | sed '$d' || true
+            else
+              echo "local_mlx tag present but /Users/Shared/mlx not found; leaving pyproject unchanged."
+            fi
+          else
+            echo "Runner does not have 'local_mlx' tag; leaving pyproject unchanged."
+          fi
+        shell: bash
+
+      - uses: ./.github/actions/typecheck
+
+  nix-flake-check:
+    name: Check Nix flake
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Run nix flake check
+        run: |
+          nix flake check
+        shell: bash
+
+#  ci:
+#    needs: typecheck
+#    runs-on: ubuntu-latest
+#    permissions:
+#      contents: read
+#    env:
+#      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#    steps:
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+#        with:
+#          fetch-depth: 0
+#          token: ${{ secrets.GITHUB_TOKEN }}
+#          lfs: true
+#
+#      - name: Configure git user
+#        run: |
+#          git config --local user.email "github-actions@users.noreply.github.com"
+#          git config --local user.name  "github-actions bot"
+#        shell: bash
+#
+#      - name: Pull LFS files
+#        run: |
+#          echo "Pulling Git LFS files..."
+#          git lfs pull
+#        shell: bash
+#
+#      - name: Setup EXO_HOME and API_PORT
+#        run: |
+#          EXO_HOME=$(mktemp -d -t exo-ci-XXXXXXXX)
+#          # Generate random port (macOS compatible method)
+#          API_PORT=$((49152 + RANDOM % (65535 - 49152 + 1)))
+#          echo "EXO_HOME=$EXO_HOME" >> $GITHUB_ENV
+#          echo "API_PORT=$API_PORT" >> $GITHUB_ENV
+#          echo "Created EXO_HOME: $EXO_HOME"
+#          echo "Generated API_PORT: $API_PORT"
+#        shell: bash
+#
+#      - name: Setup Nix Environment
+#        run: |
+#          echo "Checking for nix installation..."
+#          
+#          # Check if nix binary exists directly
+#          if [ -f /nix/var/nix/profiles/default/bin/nix ]; then
+#            echo "Found nix binary at /nix/var/nix/profiles/default/bin/nix"
+#            export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+#            echo "PATH=$PATH" >> $GITHUB_ENV
+#            nix --version
+#          elif [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+#            echo "Found nix profile script, sourcing..."
+#            source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+#            nix --version
+#          elif command -v nix >/dev/null 2>&1; then
+#            echo "Nix already in PATH"
+#            nix --version
+#          else
+#            echo "Nix not found. Debugging info:"
+#            echo "Contents of /nix/var/nix/profiles/default/:"
+#            ls -la /nix/var/nix/profiles/default/ 2>/dev/null || echo "Directory not found"
+#            echo "Contents of /nix/var/nix/profiles/default/bin/:"
+#            ls -la /nix/var/nix/profiles/default/bin/ 2>/dev/null || echo "Directory not found"
+#            exit 1
+#          fi
+#        shell: bash
+#
+#      - uses: ./.github/actions/lint-check
+#
+#      - uses: ./.github/actions/unit-test
+#
+#      - name: Cleanup EXO_HOME
+#        run: |
+#          echo "Cleaning up EXO_HOME: $EXO_HOME"
+#          rm -rf "$EXO_HOME"
+#        shell: bash
+#        if: always()

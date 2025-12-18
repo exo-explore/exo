@@ -1,0 +1,10 @@
+name: Lint Code
+
+description: "Run code linter"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Lint code
+      run: nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c just lint
+      shell: bash

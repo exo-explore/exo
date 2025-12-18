@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="FacetManager">
+    <facet type="Python" name="Python facet">
+      <configuration sdkName="Python 3.13 virtualenv at ~/Desktop/exo/.venv" />
+    </facet>
+  </component>
+  <component name="Go" enabled="true" />
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/scripts/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/exo_pyo3_bindings/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/exo_pyo3_bindings/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/util/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/networking/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/networking/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/networking/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/rust/system_custodian/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/.direnv" />
+      <excludeFolder url="file://$MODULE_DIR$/build" />
+      <excludeFolder url="file://$MODULE_DIR$/dist" />
+      <excludeFolder url="file://$MODULE_DIR$/.go_cache" />
+      <excludeFolder url="file://$MODULE_DIR$/rust/target" />
+    </content>
+    <orderEntry type="jdk" jdkName="Python 3.13 (exo)" jdkType="Python SDK" />
+    <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="library" name="Python 3.13 virtualenv at ~/Desktop/exo/.venv interpreter library" level="application" />
+  </component>
+</module>

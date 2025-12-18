@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="com.insyncwithfoo.pyright.configurations.Local">
+    <option name="diagnosticMode" value="WORKSPACE" />
+    <option name="inlayHintsGenericTypes" value="true" />
+    <option name="prefixTooltipMessages" value="true" />
+    <option name="useEditorFontForTooltips" value="true" />
+  </component>
+</project>

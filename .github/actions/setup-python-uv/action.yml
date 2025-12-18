@@ -1,0 +1,20 @@
+name: Setup Python & uv
+
+description: "Regenerate Python environment from uv.lock"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+
+    - name: Install Python
+      run: uv python install
+      shell: bash
+
+    - name: Sync
+      run: uv sync --locked --all-extras --dev
+      shell: bash

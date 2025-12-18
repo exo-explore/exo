@@ -1,0 +1,24 @@
+# gitingest
+digest.txt
+
+# python
+**/__pycache__
+
+# nix
+.direnv/
+
+
+# xcode / macos
+*.xcuserstate
+**/.DS_Store
+
+
+# rust
+target/
+**/*.rs.bk
+*.pdb
+
+# svelte
+dashboard/build/
+dashboard/node_modules/
+dashboard/.svelte-kit/

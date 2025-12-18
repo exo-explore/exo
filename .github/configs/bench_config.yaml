@@ -1,0 +1,49 @@
+# EXO Staged Benchmark Configuration
+# This configuration defines a multi-stage load test for EXO clusters
+
+# Hardware configuration - maps runner labels to instance counts
+hardware_plan:
+  M3ULTRA_GPU80_512GB: 4
+
+# Environment variables to set on each node (optional)
+environment:
+  OVERRIDE_MEMORY_MB: 512
+
+# Timeout for instance and runner readiness (seconds)
+timeout_seconds: 600
+
+# Multiple instances run concurrently on the cluster
+model_ids:
+  - "mlx-community/Qwen3-0.6B-4bit"
+  - "mlx-community/Qwen3-0.6B-4bit"
+
+# Stages run sequentially, each with its own characteristics
+stages:
+  # Stage 1: Light load with short prompts
+  - name: "warmup"
+    prompt_length: 50          # Number of tokens in prompt
+    generation_length: 100     # Max tokens to generate
+    time_between_requests: 5.0 # Seconds between firing requests
+    iterations: 10             # Number of requests to send in this stage
+    
+  # Stage 2: Medium load with medium prompts
+  - name: "medium_load"
+    prompt_length: 200
+    generation_length: 150
+    time_between_requests: 3.0
+    iterations: 20
+    
+  # Stage 3: Heavy load with long prompts - requests will overlap
+  - name: "stress_test"
+    prompt_length: 500
+    generation_length: 200
+    time_between_requests: 1.0  # Fast firing - will definitely overlap
+    iterations: 30
+    
+  # Stage 4: Cool down with simple prompts
+  - name: "cooldown"
+    prompt_length: 50
+    generation_length: 50
+    time_between_requests: 10.0
+    iterations: 5
+

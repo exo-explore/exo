@@ -1,0 +1,1641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EXO Benchmark Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1691.0.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+            color: #ffffff;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #00d4ff, #7b2ff7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .header .subtitle {
+            font-size: 1.2rem;
+            color: #aaaaaa;
+            margin-top: 0.5rem;
+        }
+
+        .credentials-banner {
+            background: rgba(255, 165, 0, 0.1);
+            border: 2px solid rgba(255, 165, 0, 0.3);
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .credentials-banner button {
+            background: #00d4ff;
+            color: #0a0a0a;
+            border: none;
+            padding: 0.5rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 0.5rem;
+        }
+
+        .credentials-banner button:hover {
+            background: #00b8e6;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1a1a2e;
+            padding: 2rem;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 90%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .modal-content h2 {
+            margin-bottom: 1rem;
+            color: #00d4ff;
+        }
+
+        .modal-content input {
+            width: 100%;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 1rem;
+        }
+
+        .modal-content .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+
+        .modal-content button {
+            flex: 1;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .modal-content .btn-primary {
+            background: #00d4ff;
+            color: #0a0a0a;
+        }
+
+        .modal-content .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
+        }
+
+        .stat-card .label {
+            font-size: 0.9rem;
+            color: #aaaaaa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #00d4ff;
+        }
+
+        .stat-card .trend {
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        .trend.up {
+            color: #00ff88;
+        }
+
+        .trend.down {
+            color: #ff4444;
+        }
+
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        .chart-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chart-card h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: #00d4ff;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 400px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 4rem;
+            font-size: 1.5rem;
+            color: #aaaaaa;
+        }
+
+        .error {
+            text-align: center;
+            padding: 4rem;
+            font-size: 1.2rem;
+            color: #ff4444;
+            background: rgba(255, 68, 68, 0.1);
+            border-radius: 15px;
+        }
+
+        .last-update {
+            text-align: center;
+            margin-top: 2rem;
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .summary-table {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 3rem;
+            overflow-x: auto;
+        }
+
+        .summary-table h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: #00d4ff;
+        }
+
+        .summary-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .summary-table th {
+            background: rgba(0, 212, 255, 0.1);
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: #00d4ff;
+            border-bottom: 2px solid rgba(0, 212, 255, 0.3);
+            white-space: nowrap;
+        }
+
+        .summary-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .summary-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .summary-table .config-name {
+            font-family: 'Courier New', monospace;
+            color: #ffd93d;
+            font-size: 0.9rem;
+        }
+
+        .summary-table .metric-value {
+            font-weight: 600;
+            color: #00ff88;
+            text-align: right;
+        }
+
+        .summary-table .metric-value.warning {
+            color: #ff9800;
+        }
+
+        .summary-table .metric-value.error {
+            color: #ff4444;
+        }
+    </style>
+</head>
+<body>
+    <div class="credentials-banner" id="credentialsBanner" style="display: none;">
+        <p>⚠️ AWS credentials not configured. Click below to set them.</p>
+        <button onclick="showCredentialsModal()">Configure AWS Credentials</button>
+    </div>
+
+    <div class="modal" id="credentialsModal">
+        <div class="modal-content">
+            <h2>Configure AWS Credentials</h2>
+            <p style="color: #aaa; margin-bottom: 1rem;">Enter your AWS credentials to access benchmark results from S3.</p>
+            <input type="text" id="accessKeyInput" placeholder="AWS Access Key ID" />
+            <input type="password" id="secretKeyInput" placeholder="AWS Secret Access Key" />
+            <input type="text" id="regionInput" placeholder="AWS Region (default: us-east-1)" value="us-east-1" />
+            <div class="button-group">
+                <button class="btn-primary" onclick="saveCredentials()">Save & Load Data</button>
+                <button class="btn-secondary" onclick="closeCredentialsModal()">Cancel</button>
+            </div>
+            <p style="color: #666; font-size: 0.85rem; margin-top: 1rem;">
+                Credentials are stored in browser localStorage only. They never leave your device.
+            </p>
+        </div>
+    </div>
+
+    <div class="header">
+        <h1>🚀 EXO Benchmark Dashboard</h1>
+        <p class="subtitle">Real-time performance tracking across commits</p>
+        <div class="last-update" id="lastUpdate">Loading...</div>
+    </div>
+
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+            <div class="label">Latest Success Rate</div>
+            <div class="value" id="latestSuccessRate">--%</div>
+            <div class="trend" id="successRateTrend"></div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Avg Response Time</div>
+            <div class="value" id="latestAvgTime">-- ms</div>
+            <div class="trend" id="avgTimeTrend"></div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Time to First Token</div>
+            <div class="value" id="latestTTFT">-- ms</div>
+            <div class="trend" id="ttftTrend"></div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Decode Speed</div>
+            <div class="value" id="latestDecodeTPS">-- t/s</div>
+            <div class="trend" id="decodeTpsTrend"></div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Total Benchmarks</div>
+            <div class="value" id="totalBenchmarks">--</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Active Configurations</div>
+            <div class="value" id="activeConfigs">--</div>
+        </div>
+    </div>
+
+    <div class="summary-table">
+        <h2>📋 All Tests Summary</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Strategy</th>
+                    <th>Success Rate</th>
+                    <th>Prefill Time</th>
+                    <th>ms per token</th>
+                </tr>
+            </thead>
+            <tbody id="summaryTableBody">
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #aaa;">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div style="text-align: center; margin: 2rem 0;">
+        <button id="showDetailsButton" onclick="loadDetailedCharts()" style="
+            background: linear-gradient(135deg, #00d4ff, #7b2ff7);
+            color: #ffffff;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            display: none;
+        " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(0, 212, 255, 0.6)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 4px 15px rgba(0, 212, 255, 0.4)'">
+            📊 Load Detailed Charts
+        </button>
+    </div>
+
+    <div class="charts-container" id="chartsContainer">
+        <div class="loading">Loading benchmark data...</div>
+    </div>
+
+    <script>
+        const BUCKET_NAME = 'exo-benchmark-results';
+        const REFRESH_INTERVAL = 60000; // 1 minute
+        
+        let charts = {};
+        let allResults = [];
+        let s3Client = null;
+        let detailedChartsLoaded = false;
+
+        // Check for credentials in URL parameters (for easy setup)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('accessKey')) {
+            localStorage.setItem('aws_access_key_id', urlParams.get('accessKey'));
+            localStorage.setItem('aws_secret_access_key', urlParams.get('secretKey'));
+            localStorage.setItem('aws_region', urlParams.get('region') || 'us-east-1');
+            // Remove credentials from URL for security
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        function getStoredCredentials() {
+            return {
+                accessKeyId: localStorage.getItem('aws_access_key_id'),
+                secretAccessKey: localStorage.getItem('aws_secret_access_key'),
+                region: localStorage.getItem('aws_region') || 'us-east-1'
+            };
+        }
+
+        function hasCredentials() {
+            const creds = getStoredCredentials();
+            return creds.accessKeyId && creds.secretAccessKey;
+        }
+
+        function initializeS3Client() {
+            const creds = getStoredCredentials();
+            if (!creds.accessKeyId || !creds.secretAccessKey) {
+                return null;
+            }
+
+            AWS.config.update({
+                accessKeyId: creds.accessKeyId,
+                secretAccessKey: creds.secretAccessKey,
+                region: creds.region
+            });
+
+            return new AWS.S3();
+        }
+
+        function showCredentialsModal() {
+            document.getElementById('credentialsModal').classList.add('active');
+            const creds = getStoredCredentials();
+            document.getElementById('accessKeyInput').value = creds.accessKeyId || '';
+            document.getElementById('secretKeyInput').value = creds.secretAccessKey || '';
+            document.getElementById('regionInput').value = creds.region || 'us-east-1';
+        }
+
+        function closeCredentialsModal() {
+            document.getElementById('credentialsModal').classList.remove('active');
+        }
+
+        function saveCredentials() {
+            const accessKey = document.getElementById('accessKeyInput').value.trim();
+            const secretKey = document.getElementById('secretKeyInput').value.trim();
+            const region = document.getElementById('regionInput').value.trim() || 'us-east-1';
+
+            if (!accessKey || !secretKey) {
+                alert('Please enter both Access Key ID and Secret Access Key');
+                return;
+            }
+
+            localStorage.setItem('aws_access_key_id', accessKey);
+            localStorage.setItem('aws_secret_access_key', secretKey);
+            localStorage.setItem('aws_region', region);
+
+            closeCredentialsModal();
+            document.getElementById('credentialsBanner').style.display = 'none';
+            
+            // Reinitialize and load data
+            s3Client = initializeS3Client();
+            loadAndDisplayData();
+        }
+
+        async function fetchBenchmarkResults() {
+            if (!s3Client) {
+                throw new Error('AWS credentials not configured');
+            }
+
+            try {
+                // List all objects in the bench/ prefix
+                const listParams = {
+                    Bucket: BUCKET_NAME,
+                    Prefix: 'bench/',
+                };
+
+                const listResponse = await s3Client.listObjectsV2(listParams).promise();
+                
+                if (!listResponse.Contents || listResponse.Contents.length === 0) {
+                    return [];
+                }
+
+                // Fetch each result file
+                const results = [];
+                for (const obj of listResponse.Contents) {
+                    if (!obj.Key.endsWith('.json')) continue;
+
+                    try {
+                        const getParams = {
+                            Bucket: BUCKET_NAME,
+                            Key: obj.Key
+                        };
+                        const data = await s3Client.getObject(getParams).promise();
+                        const result = JSON.parse(data.Body.toString('utf-8'));
+                        results.push(result);
+                    } catch (error) {
+                        console.error(`Error fetching ${obj.Key}:`, error);
+                    }
+                }
+
+                // Sort by timestamp
+                results.sort((a, b) => 
+                    a.metadata.benchmark_completed_at - b.metadata.benchmark_completed_at
+                );
+
+                return results;
+
+            } catch (error) {
+                console.error('Error fetching from S3:', error);
+                throw error;
+            }
+        }
+
+        // Chart.js default configuration
+        Chart.defaults.color = '#ffffff';
+        Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.1)';
+        
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: {
+                        color: '#ffffff',
+                        font: { size: 14 }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'day',
+                        displayFormats: {
+                            day: 'MMM dd'
+                        }
+                    },
+                    ticks: { color: '#aaaaaa' },
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                },
+                y: {
+                    ticks: { color: '#aaaaaa' },
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                }
+            }
+        };
+
+        function updateSummaryTable(results) {
+            const tableBody = document.getElementById('summaryTableBody');
+            
+            if (results.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #aaa;">No test data available</td></tr>';
+                return;
+            }
+            
+            let rows = '';
+            
+            results.forEach((result, idx) => {
+                const cluster = result.cluster || {};
+                const config = result.configuration || {};
+                const stages = config.stages || [];
+                const metadata = result.metadata || {};
+                const resultStages = result.results?.stages || [];
+                
+                // Get model IDs
+                const modelIds = cluster.model_ids || ['unknown'];
+                const modelName = modelIds.length === 1 ? modelIds[0] : `${modelIds.length} models`;
+                
+                // Get strategy (backwards compatible with old format)
+                // New format: sharding + instance_meta, e.g. "Pipeline (MLX Ring)"
+                // Old format: strategy field
+                let strategy = 'N/A';
+                if (cluster.strategy) {
+                    // Backwards compatibility: use old strategy field
+                    strategy = cluster.strategy;
+                } else if (cluster.sharding || cluster.instance_meta) {
+                    // New format: combine sharding and instance_meta
+                    const sharding = cluster.sharding || '';
+                    const instanceMeta = cluster.instance_meta || '';
+                    
+                    // Format instance_meta: convert camelCase/PascalCase to readable format
+                    const formatInstanceMeta = (meta) => {
+                        if (!meta) return '';
+                        // Insert spaces before capital letters and handle common acronyms
+                        return meta
+                            .replace(/([A-Z])/g, ' $1')
+                            .trim()
+                            .replace(/\bMlx\b/g, 'MLX')
+                            .replace(/\bIbv\b/g, 'IBV');
+                    };
+                    
+                    if (sharding && instanceMeta) {
+                        strategy = `${sharding} (${formatInstanceMeta(instanceMeta)})`;
+                    } else if (sharding) {
+                        strategy = sharding;
+                    } else if (instanceMeta) {
+                        strategy = formatInstanceMeta(instanceMeta);
+                    }
+                }
+                
+                // For each stage in the configuration, create a row
+                stages.forEach((stageConfig, stageIdx) => {
+                    const resultStage = resultStages[stageIdx];
+                    
+                    if (!resultStage) return;
+                    
+                    // Format: stage_name: model [prompt_len/generation_len] iterations every time_between_requests secs
+                    const stageName = stageConfig.name || `Stage ${stageIdx + 1}`;
+                    const name = `${stageName}: ${modelName} [${stageConfig.prompt_length}/${stageConfig.generation_length}] ${stageConfig.iterations}× @ ${stageConfig.time_between_requests}s`;
+                    
+                    // Success Rate
+                    let successRate = 'N/A';
+                    let successRateClass = '';
+                    if (resultStage.success_rate !== null && resultStage.success_rate !== undefined) {
+                        const rate = resultStage.success_rate * 100;
+                        successRate = `${rate.toFixed(1)}%`;
+                        
+                        // Color code based on success rate
+                        if (rate >= 95) {
+                            successRateClass = 'metric-value';
+                        } else if (rate >= 80) {
+                            successRateClass = 'metric-value warning';
+                        } else {
+                            successRateClass = 'metric-value error';
+                        }
+                    }
+                    
+                    // Prefill Time (TTFT)
+                    let prefillTime = 'N/A';
+                    if (resultStage.avg_time_to_first_token !== null && resultStage.avg_time_to_first_token !== undefined) {
+                        const ttftMs = resultStage.avg_time_to_first_token * 1000;
+                        if (resultStage.std_time_to_first_token !== null && resultStage.std_time_to_first_token !== undefined) {
+                            const stdMs = resultStage.std_time_to_first_token * 1000;
+                            prefillTime = `${ttftMs.toFixed(0)} ± ${stdMs.toFixed(0)} ms`;
+                        } else {
+                            prefillTime = `${ttftMs.toFixed(0)} ms`;
+                        }
+                    }
+                    
+                    // ms per token (1000 / decode_tps)
+                    let msPerToken = 'N/A';
+                    let msPerTokenClass = '';
+                    if (resultStage.avg_ms_per_token !== null && resultStage.avg_ms_per_token !== undefined) {
+                        const ms = resultStage.avg_ms_per_token;
+                        if (resultStage.std_ms_per_token !== null && resultStage.std_ms_per_token !== undefined) {
+                            const stdMs = resultStage.std_ms_per_token;
+                            msPerToken = `${ms.toFixed(1)} ± ${stdMs.toFixed(1)} ms`;
+                        } else {
+                            msPerToken = `${ms.toFixed(1)} ms`;
+                        }
+                        
+                        // Color code based on performance
+                        if (ms < 50) {
+                            msPerTokenClass = 'metric-value';
+                        } else if (ms < 100) {
+                            msPerTokenClass = 'metric-value warning';
+                        } else {
+                            msPerTokenClass = 'metric-value error';
+                        }
+                    }
+                    
+                    rows += `
+                        <tr>
+                            <td class="config-name">${name}</td>
+                            <td class="metric-value">${strategy}</td>
+                            <td class="${successRateClass || 'metric-value'}">${successRate}</td>
+                            <td class="metric-value">${prefillTime}</td>
+                            <td class="${msPerTokenClass || 'metric-value'}">${msPerToken}</td>
+                        </tr>
+                    `;
+                });
+            });
+            
+            tableBody.innerHTML = rows || '<tr><td colspan="5" style="text-align: center; color: #aaa;">No valid test data</td></tr>';
+        }
+
+        function updateStats(results) {
+            if (results.length === 0) return;
+            
+            const latest = results[results.length - 1];
+            const latestStage = latest.results.stages[0];
+            
+            document.getElementById('latestSuccessRate').textContent = 
+                `${(latestStage.success_rate * 100).toFixed(1)}%`;
+            
+            document.getElementById('latestAvgTime').textContent = 
+                `${(latestStage.avg_time_per_request * 1000).toFixed(0)} ms`;
+            
+            // Display TTFT and Decode TPS
+            if (latestStage.avg_time_to_first_token !== null && latestStage.avg_time_to_first_token !== undefined) {
+                document.getElementById('latestTTFT').textContent = 
+                    `${(latestStage.avg_time_to_first_token * 1000).toFixed(0)} ms`;
+            } else {
+                document.getElementById('latestTTFT').textContent = 'N/A';
+            }
+            
+            if (latestStage.avg_decode_tps !== null && latestStage.avg_decode_tps !== undefined) {
+                document.getElementById('latestDecodeTPS').textContent = 
+                    `${latestStage.avg_decode_tps.toFixed(1)} t/s`;
+            } else {
+                document.getElementById('latestDecodeTPS').textContent = 'N/A';
+            }
+            
+            document.getElementById('totalBenchmarks').textContent = results.length;
+            
+            const uniqueConfigs = new Set(results.map(r => r.metadata.config_file || 'unknown'));
+            document.getElementById('activeConfigs').textContent = uniqueConfigs.size;
+            
+            // Calculate trends
+            if (results.length >= 2) {
+                const previous = results[results.length - 2].results.stages[0];
+                
+                const successDiff = latestStage.success_rate - previous.success_rate;
+                const successTrend = document.getElementById('successRateTrend');
+                if (successDiff > 0) {
+                    successTrend.textContent = `↑ ${(successDiff * 100).toFixed(1)}%`;
+                    successTrend.className = 'trend up';
+                } else if (successDiff < 0) {
+                    successTrend.textContent = `↓ ${(Math.abs(successDiff) * 100).toFixed(1)}%`;
+                    successTrend.className = 'trend down';
+                } else {
+                    successTrend.textContent = '→ No change';
+                    successTrend.className = 'trend';
+                }
+                
+                const timeDiff = latestStage.avg_time_per_request - previous.avg_time_per_request;
+                const timeTrend = document.getElementById('avgTimeTrend');
+                if (timeDiff < 0) {
+                    timeTrend.textContent = `↑ ${(Math.abs(timeDiff) * 1000).toFixed(0)}ms faster`;
+                    timeTrend.className = 'trend up';
+                } else if (timeDiff > 0) {
+                    timeTrend.textContent = `↓ ${(timeDiff * 1000).toFixed(0)}ms slower`;
+                    timeTrend.className = 'trend down';
+                } else {
+                    timeTrend.textContent = '→ No change';
+                    timeTrend.className = 'trend';
+                }
+                
+                // TTFT trend
+                if (latestStage.avg_time_to_first_token !== null && previous.avg_time_to_first_token !== null) {
+                    const ttftDiff = latestStage.avg_time_to_first_token - previous.avg_time_to_first_token;
+                    const ttftTrend = document.getElementById('ttftTrend');
+                    if (ttftDiff < 0) {
+                        ttftTrend.textContent = `↑ ${(Math.abs(ttftDiff) * 1000).toFixed(0)}ms faster`;
+                        ttftTrend.className = 'trend up';
+                    } else if (ttftDiff > 0) {
+                        ttftTrend.textContent = `↓ ${(ttftDiff * 1000).toFixed(0)}ms slower`;
+                        ttftTrend.className = 'trend down';
+                    } else {
+                        ttftTrend.textContent = '→ No change';
+                        ttftTrend.className = 'trend';
+                    }
+                }
+                
+                // Decode TPS trend
+                if (latestStage.avg_decode_tps !== null && previous.avg_decode_tps !== null) {
+                    const tpsDiff = latestStage.avg_decode_tps - previous.avg_decode_tps;
+                    const tpsTrend = document.getElementById('decodeTpsTrend');
+                    if (tpsDiff > 0) {
+                        tpsTrend.textContent = `↑ ${tpsDiff.toFixed(1)} t/s faster`;
+                        tpsTrend.className = 'trend up';
+                    } else if (tpsDiff < 0) {
+                        tpsTrend.textContent = `↓ ${Math.abs(tpsDiff).toFixed(1)} t/s slower`;
+                        tpsTrend.className = 'trend down';
+                    } else {
+                        tpsTrend.textContent = '→ No change';
+                        tpsTrend.className = 'trend';
+                    }
+                }
+            }
+            
+            const updateTime = new Date(latest.metadata.benchmark_completed_at * 1000);
+            document.getElementById('lastUpdate').textContent = 
+                `Last benchmark: ${updateTime.toLocaleString()}`;
+        }
+
+        function createAggregateChartsHTML() {
+            const container = document.getElementById('chartsContainer');
+            
+            // Create aggregate charts section only
+            let html = `
+                <div style="margin-bottom: 3rem;">
+                    <h1 style="font-size: 2rem; margin-bottom: 2rem; color: #00d4ff;">📊 Aggregate Performance Metrics</h1>
+                    
+                    <div class="chart-card">
+                        <h2>📊 Success Rate Over Time</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="successRateChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h2>⚡ Average Response Time</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="responseTimeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h2>🎯 Throughput (Tokens/Second)</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="throughputChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h2>⏱️ Time to First Token (TTFT)</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="ttftChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h2>🚀 Decode Speed (Tokens/Second)</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="decodeTpsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h2>📈 Request Success/Failure Distribution</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="requestDistChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+        }
+
+        function createIndividualChartsHTML(results) {
+            const container = document.getElementById('chartsContainer');
+            
+            // Append individual test sections to existing content
+            let html = container.innerHTML;
+            html += `<div id="individualChartsSection" style="margin-top: 4rem;">
+                <h1 style="font-size: 2rem; margin-bottom: 2rem; color: #00d4ff;">🔬 Individual Test Results</h1>
+            `;
+            
+            results.forEach((result, idx) => {
+                const timestamp = new Date(result.metadata.benchmark_completed_at * 1000);
+                const config = result.configuration || {};
+                const stages = config.stages || [];
+                const metadata = result.metadata || {};
+                const cluster = result.cluster || {};
+                
+                html += `
+                    <div class="chart-card" style="margin-bottom: 2rem;">
+                        <h2 style="margin-bottom: 1rem;">Test #${idx + 1} - ${timestamp.toLocaleString()}</h2>
+                        
+                        <div style="background: rgba(0, 0, 0, 0.3); padding: 1rem; border-radius: 10px; margin-bottom: 1.5rem;">
+                            <h3 style="color: #00d4ff; margin-bottom: 0.75rem;">Configuration</h3>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; font-size: 0.9rem;">
+                                <div><strong>Git Commit:</strong> ${metadata.git_commit || 'N/A'}</div>
+                                <div><strong>Config File:</strong> ${metadata.config_file || 'N/A'}</div>
+                                <div><strong>Expected Nodes:</strong> ${metadata.expected_nodes || 'N/A'}</div>
+                                <div><strong>Model IDs:</strong> ${cluster.model_ids ? cluster.model_ids.join(', ') : 'N/A'}</div>
+                                <div><strong>Instances:</strong> ${cluster.instance_count || 0}</div>
+                                <div><strong>Runners:</strong> ${cluster.runner_count || 0}</div>
+                                <div><strong>Duration:</strong> ${metadata.total_duration_s ? metadata.total_duration_s.toFixed(1) + 's' : 'N/A'}</div>
+                            </div>
+                            
+                            ${stages.length > 0 ? `
+                                <h4 style="color: #00d4ff; margin-top: 1rem; margin-bottom: 0.5rem;">Stages:</h4>
+                                <div style="display: grid; gap: 0.5rem;">
+                                    ${stages.map((stage, sidx) => `
+                                        <div style="background: rgba(255, 255, 255, 0.05); padding: 0.5rem; border-radius: 5px; font-size: 0.85rem;">
+                                            <strong>${sidx + 1}. ${stage.name}</strong> - 
+                                            Prompt: ${stage.prompt_length} tokens, 
+                                            Gen: ${stage.generation_length} tokens, 
+                                            Iterations: ${stage.iterations}, 
+                                            Interval: ${stage.time_between_requests}s
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                        
+                        <div style="margin-bottom: 1.5rem;">
+                            <h3 style="color: #ffd93d; margin-bottom: 0.5rem;">📊 Request Success/Failure Breakdown</h3>
+                            <div id="requestBreakdownPlot_${idx}" style="width: 100%; height: 400px;"></div>
+                        </div>
+                        
+                        ${result.metrics && result.metrics.snapshots && result.metrics.snapshots.length > 0 ? `
+                            <div style="margin-bottom: 1.5rem;">
+                                <h3 style="color: #00ff88; margin-bottom: 0.5rem;">🖥️ Running Tasks Per Node</h3>
+                                <p style="color: #aaa; font-size: 0.85rem; margin-bottom: 0.5rem;">Interactive chart - click and drag to zoom, double-click to reset</p>
+                                <div id="nodeTasksPlot_${idx}" style="width: 100%; height: 500px;"></div>
+                            </div>
+                            
+                            <div style="margin-bottom: 1.5rem;">
+                                <h3 style="color: #ff8c00; margin-bottom: 0.5rem;">📦 Running Tasks Per Instance</h3>
+                                <p style="color: #aaa; font-size: 0.85rem; margin-bottom: 0.5rem;">Interactive chart - click and drag to zoom, double-click to reset</p>
+                                <div id="instanceTasksPlot_${idx}" style="width: 100%; height: 500px;"></div>
+                            </div>
+                            
+                            <div style="margin-bottom: 1.5rem;">
+                                <h3 style="color: #00d4ff; margin-bottom: 0.5rem;">📋 Cluster-wide Task Summary</h3>
+                                <p style="color: #aaa; font-size: 0.85rem; margin-bottom: 0.5rem;">Interactive chart - click and drag to zoom, double-click to reset</p>
+                                <div id="clusterTasksPlot_${idx}" style="width: 100%; height: 400px;"></div>
+                            </div>
+                            
+                            <div style="margin-bottom: 1.5rem;">
+                                <h3 style="color: #7b2ff7; margin-bottom: 0.5rem;">💾 Memory Usage Per Node</h3>
+                                <p style="color: #aaa; font-size: 0.85rem; margin-bottom: 0.5rem;">Interactive chart - click and drag to zoom, double-click to reset</p>
+                                <div id="memoryPlot_${idx}" style="width: 100%; height: 400px;"></div>
+                            </div>
+                        ` : '<p style="color: #aaa;">No metrics data available for this test.</p>'}
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+            container.innerHTML = html;
+        }
+
+        function createAggregateCharts(results) {
+            createAggregateChartsHTML();
+            
+            const timestamps = results.map(r => new Date(r.metadata.benchmark_completed_at * 1000));
+            const successRates = results.map(r => r.results.stages[0].success_rate * 100);
+            const avgTimes = results.map(r => r.results.stages[0].avg_time_per_request * 1000);
+            const throughput = results.map(r => {
+                const stage = r.results.stages[0];
+                return stage.avg_tokens_per_request / stage.avg_time_per_request;
+            });
+            const ttftValues = results.map(r => {
+                const ttft = r.results.stages[0].avg_time_to_first_token;
+                return ttft !== null && ttft !== undefined ? ttft * 1000 : null;
+            });
+            const decodeTpsValues = results.map(r => {
+                const tps = r.results.stages[0].avg_decode_tps;
+                return tps !== null && tps !== undefined ? tps : null;
+            });
+            const successful = results.map(r => r.results.stages[0].successful_requests);
+            const failed = results.map(r => r.results.stages[0].failed_requests);
+
+            charts.successRate = new Chart(
+                document.getElementById('successRateChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: 'Success Rate (%)',
+                            data: successRates,
+                            borderColor: '#00ff88',
+                            backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                        }]
+                    },
+                    options: {
+                        ...chartOptions,
+                        scales: {
+                            ...chartOptions.scales,
+                            y: {
+                                ...chartOptions.scales.y,
+                                min: 0,
+                                max: 100,
+                                ticks: {
+                                    ...chartOptions.scales.y.ticks,
+                                    callback: (value) => value + '%'
+                                }
+                            }
+                        }
+                    }
+                }
+            );
+
+            charts.responseTime = new Chart(
+                document.getElementById('responseTimeChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: 'Avg Response Time (ms)',
+                            data: avgTimes,
+                            borderColor: '#7b2ff7',
+                            backgroundColor: 'rgba(123, 47, 247, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                        }]
+                    },
+                    options: {
+                        ...chartOptions,
+                        scales: {
+                            ...chartOptions.scales,
+                            y: {
+                                ...chartOptions.scales.y,
+                                ticks: {
+                                    ...chartOptions.scales.y.ticks,
+                                    callback: (value) => value.toFixed(0) + ' ms'
+                                }
+                            }
+                        }
+                    }
+                }
+            );
+
+            charts.throughput = new Chart(
+                document.getElementById('throughputChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: 'Tokens/Second',
+                            data: throughput,
+                            borderColor: '#00d4ff',
+                            backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                        }]
+                    },
+                    options: {
+                        ...chartOptions,
+                        scales: {
+                            ...chartOptions.scales,
+                            y: {
+                                ...chartOptions.scales.y,
+                                ticks: {
+                                    ...chartOptions.scales.y.ticks,
+                                    callback: (value) => value.toFixed(1) + ' t/s'
+                                }
+                            }
+                        }
+                    }
+                }
+            );
+
+            charts.ttft = new Chart(
+                document.getElementById('ttftChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: 'Time to First Token (ms)',
+                            data: ttftValues,
+                            borderColor: '#ffd93d',
+                            backgroundColor: 'rgba(255, 217, 61, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                        }]
+                    },
+                    options: {
+                        ...chartOptions,
+                        scales: {
+                            ...chartOptions.scales,
+                            y: {
+                                ...chartOptions.scales.y,
+                                ticks: {
+                                    ...chartOptions.scales.y.ticks,
+                                    callback: (value) => value.toFixed(0) + ' ms'
+                                }
+                            }
+                        }
+                    }
+                }
+            );
+
+            charts.decodeTps = new Chart(
+                document.getElementById('decodeTpsChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: timestamps,
+                        datasets: [{
+                            label: 'Decode Speed (tokens/s)',
+                            data: decodeTpsValues,
+                            borderColor: '#ff6b9d',
+                            backgroundColor: 'rgba(255, 107, 157, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                        }]
+                    },
+                    options: {
+                        ...chartOptions,
+                        scales: {
+                            ...chartOptions.scales,
+                            y: {
+                                ...chartOptions.scales.y,
+                                ticks: {
+                                    ...chartOptions.scales.y.ticks,
+                                    callback: (value) => value.toFixed(1) + ' t/s'
+                                }
+                            }
+                        }
+                    }
+                }
+            );
+
+            charts.requestDist = new Chart(
+                document.getElementById('requestDistChart'),
+                {
+                    type: 'bar',
+                    data: {
+                        labels: timestamps,
+                        datasets: [
+                            {
+                                label: 'Successful',
+                                data: successful,
+                                backgroundColor: 'rgba(0, 255, 136, 0.8)',
+                                borderColor: '#00ff88',
+                                borderWidth: 1,
+                            },
+                            {
+                                label: 'Failed',
+                                data: failed,
+                                backgroundColor: 'rgba(255, 68, 68, 0.8)',
+                                borderColor: '#ff4444',
+                                borderWidth: 1,
+                            }
+                        ]
+                    },
+                    options: {
+                        ...chartOptions,
+                        scales: {
+                            ...chartOptions.scales,
+                            y: {
+                                ...chartOptions.scales.y,
+                                stacked: true,
+                            },
+                            x: {
+                                ...chartOptions.scales.x,
+                                stacked: true,
+                            }
+                        }
+                    }
+                }
+            );
+        }
+
+        function createDetailedCharts(results) {
+            createIndividualChartsHTML(results);
+            
+            // Create individual test charts for each result
+            results.forEach((result, idx) => {
+                createRequestBreakdownChart(result, idx);
+                if (result.metrics && result.metrics.snapshots && result.metrics.snapshots.length > 0) {
+                    createIndividualTestCharts(result, idx);
+                }
+            });
+        }
+
+        function createRequestBreakdownChart(result, testIndex) {
+            // Aggregate all requests from all stages
+            const allRequests = [];
+            if (result.results && result.results.stages) {
+                result.results.stages.forEach(stage => {
+                    if (stage.requests) {
+                        allRequests.push(...stage.requests);
+                    }
+                });
+            }
+
+            if (allRequests.length === 0) {
+                return;
+            }
+
+            // Count successful requests
+            const successfulCount = allRequests.filter(r => r.success).length;
+            
+            // Group failed requests by error reason
+            const failureReasons = {};
+            allRequests.filter(r => !r.success).forEach(r => {
+                const reason = r.error || 'Unknown error';
+                // Truncate long error messages for readability
+                const shortReason = reason.length > 60 ? reason.substring(0, 57) + '...' : reason;
+                failureReasons[shortReason] = (failureReasons[shortReason] || 0) + 1;
+            });
+
+            // Create bar chart data
+            const labels = ['✅ Successful'];
+            const values = [successfulCount];
+            const colors = ['#00ff88'];
+
+            // Add failure reasons
+            Object.entries(failureReasons)
+                .sort((a, b) => b[1] - a[1]) // Sort by count descending
+                .forEach(([reason, count]) => {
+                    labels.push(`❌ ${reason}`);
+                    values.push(count);
+                    colors.push('#ff6b6b');
+                });
+
+            const trace = {
+                x: values,
+                y: labels,
+                type: 'bar',
+                orientation: 'h',
+                marker: {
+                    color: colors,
+                    line: {
+                        color: colors.map(c => c === '#00ff88' ? '#00d47a' : '#ff5555'),
+                        width: 2
+                    }
+                },
+                text: values.map(v => v.toString()),
+                textposition: 'outside',
+                hovertemplate: '<b>%{y}</b><br>Count: %{x}<extra></extra>'
+            };
+
+            Plotly.newPlot(`requestBreakdownPlot_${testIndex}`, [trace], {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0.2)',
+                font: { color: '#ffffff', size: 12 },
+                xaxis: {
+                    title: 'Number of Requests',
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: false
+                },
+                yaxis: {
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: false,
+                    automargin: true
+                },
+                margin: { l: 250, r: 50, t: 20, b: 50 },
+                showlegend: false
+            }, {
+                responsive: true,
+                displayModeBar: true,
+                modeBarButtonsToRemove: ['lasso2d', 'select2d', 'zoom2d', 'pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d'],
+                displaylogo: false
+            });
+        }
+
+        function createIndividualTestCharts(result, testIndex) {
+            if (!result.metrics || !result.metrics.snapshots) {
+                return;
+            }
+
+            const snapshots = result.metrics.snapshots;
+            const startTime = result.metadata.benchmark_started_at;
+            
+            // Extract timestamps relative to benchmark start
+            const relativeTimestamps = snapshots.map(s => (s.timestamp - startTime));
+            
+            // Distinct color palette (10 colors - very different from each other)
+            const distinctColors = [
+                '#FF6B6B', // Red
+                '#4ECDC4', // Teal
+                '#FFD93D', // Yellow
+                '#6BCF7F', // Green
+                '#A78BFA', // Purple
+                '#FB8500', // Orange
+                '#219EBC', // Blue
+                '#F72585', // Pink
+                '#95D5B2', // Mint
+                '#FFB627', // Gold
+            ];
+
+            // 1. RUNNING TASKS PER NODE (Most Important!)
+            if (snapshots[0].node_tasks && snapshots[0].node_tasks.length > 0) {
+                const nodeIds = snapshots[0].node_tasks.map(n => n.node_id);
+                const nodeTraces = nodeIds.map((nodeId, idx) => {
+                    const color = distinctColors[idx % distinctColors.length];
+                    return {
+                        x: relativeTimestamps,
+                        y: snapshots.map(s => {
+                            const nodeData = s.node_tasks.find(n => n.node_id === nodeId);
+                            return nodeData ? nodeData.running_tasks : 0;
+                        }),
+                        name: `...${nodeId.slice(-4)}`,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        line: { color: color, width: 3 },
+                        marker: { size: 6 }
+                    };
+                });
+
+                Plotly.newPlot(`nodeTasksPlot_${testIndex}`, nodeTraces, {
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0.2)',
+                    font: { color: '#ffffff' },
+                    xaxis: { 
+                        title: 'Time (seconds)', 
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false
+                    },
+                    yaxis: { 
+                        title: 'Running Tasks', 
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false
+                    },
+                    hovermode: 'closest',
+                    showlegend: true,
+                    legend: { 
+                        bgcolor: 'rgba(0,0,0,0.5)',
+                        bordercolor: 'rgba(255,255,255,0.2)',
+                        borderwidth: 1
+                    }
+                }, {
+                    responsive: true,
+                    displayModeBar: true,
+                    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                    displaylogo: false
+                });
+            }
+
+            // 2. RUNNING TASKS PER INSTANCE
+            if (snapshots[0].instance_tasks && snapshots[0].instance_tasks.length > 0) {
+                const instanceIds = snapshots[0].instance_tasks.map(i => i.instance_id);
+                const instanceTraces = instanceIds.map((instanceId, idx) => {
+                    const color = distinctColors[idx % distinctColors.length];
+                    return {
+                        x: relativeTimestamps,
+                        y: snapshots.map(s => {
+                            const instData = s.instance_tasks.find(i => i.instance_id === instanceId);
+                            return instData ? instData.running_tasks : 0;
+                        }),
+                        name: `...${instanceId.slice(-4)}`,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        line: { color: color, width: 3 },
+                        marker: { size: 6 }
+                    };
+                });
+
+                Plotly.newPlot(`instanceTasksPlot_${testIndex}`, instanceTraces, {
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0.2)',
+                    font: { color: '#ffffff' },
+                    xaxis: { 
+                        title: 'Time (seconds)', 
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false
+                    },
+                    yaxis: { 
+                        title: 'Running Tasks', 
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false
+                    },
+                    hovermode: 'closest',
+                    showlegend: true,
+                    legend: { 
+                        bgcolor: 'rgba(0,0,0,0.5)',
+                        bordercolor: 'rgba(255,255,255,0.2)',
+                        borderwidth: 1
+                    }
+                }, {
+                    responsive: true,
+                    displayModeBar: true,
+                    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                    displaylogo: false
+                });
+            }
+
+            // 3. CLUSTER-WIDE TASK SUMMARY
+            const totalRunning = snapshots.map(s => 
+                s.instance_tasks.reduce((sum, inst) => sum + inst.running_tasks, 0)
+            );
+            const totalPending = snapshots.map(s => 
+                s.instance_tasks.reduce((sum, inst) => sum + inst.pending_tasks, 0)
+            );
+            const totalActive = snapshots.map(s => 
+                s.instance_tasks.reduce((sum, inst) => sum + inst.total_active_tasks, 0)
+            );
+
+            const clusterTraces = [
+                {
+                    x: relativeTimestamps,
+                    y: totalActive,
+                    name: 'Total Active',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#00d4ff', width: 3 },
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(0, 212, 255, 0.1)'
+                },
+                {
+                    x: relativeTimestamps,
+                    y: totalRunning,
+                    name: 'Running',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#00ff88', width: 2, dash: 'dash' }
+                },
+                {
+                    x: relativeTimestamps,
+                    y: totalPending,
+                    name: 'Pending',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ffd700', width: 2, dash: 'dot' }
+                }
+            ];
+
+            Plotly.newPlot(`clusterTasksPlot_${testIndex}`, clusterTraces, {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0.2)',
+                font: { color: '#ffffff' },
+                xaxis: { 
+                    title: 'Time (seconds)', 
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: false
+                },
+                yaxis: { 
+                    title: 'Task Count', 
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: false
+                },
+                hovermode: 'x unified',
+                showlegend: true,
+                legend: { 
+                    bgcolor: 'rgba(0,0,0,0.5)',
+                    bordercolor: 'rgba(255,255,255,0.2)',
+                    borderwidth: 1
+                }
+            }, {
+                responsive: true,
+                displayModeBar: true,
+                modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                displaylogo: false
+            });
+
+            // 4. MEMORY USAGE PER NODE
+            const nodeIds = Object.keys(snapshots[0].node_memory || {});
+            if (nodeIds.length > 0) {
+                const memoryTraces = nodeIds.map((nodeId, idx) => {
+                    const color = distinctColors[idx % distinctColors.length];
+                    return {
+                        x: relativeTimestamps,
+                        y: snapshots.map(s => {
+                            const mem = s.node_memory[nodeId];
+                            return mem ? mem.ram_used_bytes / (1024 ** 3) : 0; // Convert to GB
+                        }),
+                        name: `...${nodeId.slice(-4)}`,
+                        type: 'scatter',
+                        mode: 'lines',
+                        line: { color: color, width: 2 }
+                    };
+                });
+
+                Plotly.newPlot(`memoryPlot_${testIndex}`, memoryTraces, {
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0.2)',
+                    font: { color: '#ffffff' },
+                    xaxis: { 
+                        title: 'Time (seconds)', 
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false
+                    },
+                    yaxis: { 
+                        title: 'RAM Used (GB)', 
+                        gridcolor: 'rgba(255,255,255,0.1)',
+                        zeroline: false
+                    },
+                    hovermode: 'closest',
+                    showlegend: true,
+                    legend: { 
+                        bgcolor: 'rgba(0,0,0,0.5)',
+                        bordercolor: 'rgba(255,255,255,0.2)',
+                        borderwidth: 1
+                    }
+                }, {
+                    responsive: true,
+                    displayModeBar: true,
+                    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                    displaylogo: false
+                });
+            }
+
+        }
+
+        function loadDetailedCharts() {
+            if (detailedChartsLoaded) {
+                // Already loaded, just scroll to it
+                document.getElementById('individualChartsSection')?.scrollIntoView({ behavior: 'smooth' });
+                return;
+            }
+            
+            if (allResults.length === 0) {
+                console.error('No results available to create detailed charts');
+                return;
+            }
+            
+            // Hide the button and show loading
+            const button = document.getElementById('showDetailsButton');
+            button.textContent = '⏳ Loading detailed charts...';
+            button.disabled = true;
+            
+            // Use setTimeout to allow UI to update before heavy rendering
+            setTimeout(() => {
+                createDetailedCharts(allResults);
+                detailedChartsLoaded = true;
+                button.style.display = 'none';
+            }, 100);
+        }
+
+        function destroyAggregateCharts() {
+            // Only destroy Chart.js charts (aggregate charts)
+            Object.values(charts).forEach(chart => {
+                if (chart && typeof chart.destroy === 'function') {
+                    chart.destroy();
+                }
+            });
+            charts = {};
+        }
+
+        function destroyDetailedCharts() {
+            // Destroy all Plotly charts (detailed individual charts)
+            if (allResults.length > 0) {
+                allResults.forEach((_, idx) => {
+                    const plotIds = [
+                        `requestBreakdownPlot_${idx}`,
+                        `nodeTasksPlot_${idx}`,
+                        `instanceTasksPlot_${idx}`,
+                        `clusterTasksPlot_${idx}`,
+                        `memoryPlot_${idx}`
+                    ];
+                    plotIds.forEach(id => {
+                        const element = document.getElementById(id);
+                        if (element) {
+                            Plotly.purge(element);
+                        }
+                    });
+                });
+            }
+        }
+
+        function updateCharts(results) {
+            // Destroy existing charts
+            destroyAggregateCharts();
+            
+            if (detailedChartsLoaded) {
+                destroyDetailedCharts();
+                detailedChartsLoaded = false;
+            }
+            
+            // Recreate aggregate charts
+            createAggregateCharts(results);
+            
+            // Show the button again if we have results
+            if (results.length > 0) {
+                document.getElementById('showDetailsButton').style.display = 'inline-block';
+            }
+        }
+
+        async function loadAndDisplayData() {
+            if (!hasCredentials()) {
+                document.getElementById('credentialsBanner').style.display = 'block';
+                document.getElementById('chartsContainer').innerHTML = 
+                    '<div class="error">AWS credentials required. Please configure them above.</div>';
+                document.getElementById('summaryTableBody').innerHTML = 
+                    '<tr><td colspan="5" style="text-align: center; color: #aaa;">AWS credentials required</td></tr>';
+                return;
+            }
+
+            if (!s3Client) {
+                s3Client = initializeS3Client();
+            }
+
+            try {
+                document.getElementById('lastUpdate').textContent = 'Fetching latest results...';
+                
+                const results = await fetchBenchmarkResults();
+                allResults = results;
+                
+                if (allResults.length === 0) {
+                    document.getElementById('chartsContainer').innerHTML = 
+                        '<div class="error">No benchmark results found in S3 bucket</div>';
+                    document.getElementById('lastUpdate').textContent = 'No data available';
+                    return;
+                }
+
+                updateStats(allResults);
+                updateSummaryTable(allResults);
+                
+                if (Object.keys(charts).length === 0) {
+                    createAggregateCharts(allResults);
+                    // Show the button to load detailed charts
+                    document.getElementById('showDetailsButton').style.display = 'inline-block';
+                } else {
+                    updateCharts(allResults);
+                }
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('chartsContainer').innerHTML = 
+                    `<div class="error">Error loading benchmark data: ${error.message}<br><br>
+                    <button onclick="showCredentialsModal()" style="padding: 0.75rem 1.5rem; background: #00d4ff; color: #0a0a0a; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer;">
+                        Reconfigure Credentials
+                    </button></div>`;
+                document.getElementById('lastUpdate').textContent = 'Error loading data';
+            }
+        }
+
+        // Initialize
+        if (hasCredentials()) {
+            s3Client = initializeS3Client();
+            loadAndDisplayData();
+            // Auto-refresh
+            setInterval(loadAndDisplayData, REFRESH_INTERVAL);
+        } else {
+            document.getElementById('credentialsBanner').style.display = 'block';
+            document.getElementById('chartsContainer').innerHTML = 
+                '<div class="error">AWS credentials required. Please configure them above.</div>';
+            document.getElementById('summaryTableBody').innerHTML = 
+                '<tr><td colspan="5" style="text-align: center; color: #aaa;">AWS credentials required</td></tr>';
+        }
+    </script>
+</body>
+</html>
