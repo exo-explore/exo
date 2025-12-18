@@ -28,7 +28,7 @@ EXO underwent a full rewrite for v1. For legacy exo, see this repo's history or 
 - **Automatic discovery**: Devices running EXO automatically find each other on your local network - no manual configuration.
 - **RDMA over Thunderbolt**: Ultra-low latency communication between macOS devices using RDMA over Thunderbolt.
 - **Super-linear scaling**: Get up to 3.2x performance running large models across 4 machines with Tensor parallelism and RDMA.
-- **MLX Support**: Uses the [mlx-explore/mlx](https://github.com/ml-explore/mlx) library for compute, enabling efficient and flexible machine learning on Apple silicon.
+- **MLX Support**: Uses the [ml-explore/mlx](https://github.com/ml-explore/mlx) library for compute, enabling efficient and flexible machine learning on Apple silicon.
 
 ---
 
