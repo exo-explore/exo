@@ -10,7 +10,10 @@ digest.txt
 
 # xcode / macos
 *.xcuserstate
+*.xcuserdata
+*.xcuserdatad/
 **/.DS_Store
+app/EXO/build/
 
 
 # rust
