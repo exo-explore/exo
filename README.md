@@ -28,6 +28,7 @@ EXO underwent a full rewrite for v1. For legacy exo, see this repo's history or 
 - **Automatic discovery**: Devices running EXO automatically find each other on your local network - no manual configuration.
 - **RDMA over Thunderbolt**: Ultra-low latency communication between macOS devices using RDMA over Thunderbolt.
 - **Super-linear scaling**: Get up to 3.2x performance running large models across 4 machines with Tensor parallelism and RDMA.
+- **MLX Support**: Uses the [mlx-explore/mlx](https://github.com/ml-explore/mlx) library for compute, enabling efficient and flexible machine learning on Apple silicon.
 
 ---
 
@@ -50,7 +51,7 @@ After starting with either of these methods go to `http://localhost:8000` in you
   - Older macOS versions may work without RDMA, but only 26.2+ is officially supported
 - For RDMA over Thunderbolt: a high quality Thunderbolt 5 cable
 
-We intend to add support for other hardware platforms like the DGX Spark in the future, but they are not currently supported. If you'd like support for a new hardware platform, please search for an existing feature request and add a thumbs up so we know what hardware is important to the community.
+We intend to add support for other hardware platforms [like the DGX Spark](https://x.com/exolabs/status/1978525767739883736) in the future, but they are not currently supported. If you'd like support for a new hardware platform, please search for an existing feature request and add a thumbs up so we know what hardware is important to the community.
 
 ---
 
