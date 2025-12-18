@@ -38,7 +38,7 @@ You need at least one Mac device running macOS Tahoe 26.2 (released December 12t
 
 You can download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg). It will ask for permission to modify system settings and install a new Network profile. We hope to make this smoother in the future!
 
-To run from source, clone the repo and run `uv run exo`.
+To run from source, clone the repo, build the dashboard with `cd dashboard && npm install && npm run build` and run `uv run exo`.
 
 After starting with either of these methods go to `http://localhost:8000` in your browser, and you'll have EXO.
 
