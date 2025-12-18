@@ -17,18 +17,13 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
-EXO lets you run your own AI cluster at home with everyday devices. We take advantage of Apple's M-series hardware and unified memory to run large language models, building a cluster to enable even more memory.
-
-EXO underwent a full rewrite for v1. For legacy exo, see this repo's history or [exo-explore/ex-exo](https://github.com/exo-explore/ex-exo) for a snapshot.
-
----
-
 ## Features
 
-- **Automatic discovery**: Devices running EXO automatically find each other on your local network - no manual configuration.
-- **RDMA over Thunderbolt**: Ultra-low latency communication between macOS devices using RDMA over Thunderbolt.
-- **Super-linear scaling**: Get up to 3.2x performance running large models across 4 machines with Tensor parallelism and RDMA.
-- **MLX Support**: Uses the [ml-explore/mlx](https://github.com/ml-explore/mlx) library for compute, enabling efficient and flexible machine learning on Apple silicon.
+- **Automatic Device Discovery**: Devices running EXO automatically discover each other on your local network - no manual configuration.
+- **RDMA over Thunderbolt**: EXO ships with Day-0 support for RDMA over Thunderbolt 5, enabling 99% reduction in latency between devices.
+- **Auto Parallel**: EXO automatically splits up models to run distributed across devices.
+- **Tensor Parallelism**: EXO supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
+- **MLX Support**: EXO uses [ml-explore/mlx](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
 
 ---
 
