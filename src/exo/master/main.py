@@ -57,7 +57,6 @@ class Master:
         # Send events to the forwarder to be indexed (usually from command processing)
         # Ideally these would be MasterForwarderEvents but type system says no :(
         global_event_sender: Sender[ForwarderEvent],
-        tb_only: bool = False,
     ):
         self.state = State()
         self._tg: TaskGroup = anyio.create_task_group()
@@ -76,7 +75,6 @@ class Master:
         self._multi_buffer = MultiSourceBuffer[NodeId, Event]()
         # TODO: not have this
         self._event_log: list[Event] = []
-        self.tb_only = tb_only
 
     async def run(self):
         logger.info("Starting Master")

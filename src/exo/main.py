@@ -77,7 +77,6 @@ class Node:
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
-            tb_only=args.tb_only,
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -244,11 +243,6 @@ class Args(CamelCaseModel):
             type=int,
             dest="api_port",
             default=52415,
-        )
-        parser.add_argument(
-            "--tb-only",
-            action="store_true",
-            dest="tb_only",
         )
 
         args = parser.parse_args()
