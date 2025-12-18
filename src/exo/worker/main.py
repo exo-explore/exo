@@ -421,10 +421,10 @@ class Worker:
                         local_node_id=self.node_id,
                         send_back_node_id=nid,
                         # nonsense multiaddr
-                        send_back_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/8000")
+                        send_back_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
                         if "." in ip
                         # nonsense multiaddr
-                        else Multiaddr(address=f"/ip6/{ip}/tcp/8000"),
+                        else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
                     )
                     if edge not in edges:
                         logger.debug(f"ping discovered {edge=}")

@@ -10,7 +10,7 @@ HOST="$1"
 shift
 QUERY="$*"
 
-curl -sN -X POST "http://$HOST:8000/v1/chat/completions" \
+curl -sN -X POST "http://$HOST:52415/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "{
         \"model\": \"mlx-community/Kimi-K2-Thinking\",
