@@ -8,12 +8,6 @@
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
 
 
-<h3>
-
-[Discord](https://discord.gg/EUnjGpsmWw) | [X](https://x.com/exolabs)
-
-</h3>
-
 [![GitHub Repo stars](https://img.shields.io/github/stars/exo-explore/exo)](https://github.com/exo-explore/exo/stargazers)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
 
