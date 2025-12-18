@@ -40,6 +40,10 @@ class LoadModel(BaseTask):  # emitted by Worker
     pass
 
 
+class ConnectToGroup(BaseTask):  # emitted by Worker
+    pass
+
+
 class StartWarmup(BaseTask):  # emitted by Worker
     pass
 
@@ -57,5 +61,11 @@ class Shutdown(BaseTask):  # emitted by Worker
 
 
 Task = (
-    CreateRunner | DownloadModel | LoadModel | StartWarmup | ChatCompletion | Shutdown
+    CreateRunner
+    | DownloadModel
+    | LoadModel
+    | StartWarmup
+    | ChatCompletion
+    | Shutdown
+    | ConnectToGroup
 )

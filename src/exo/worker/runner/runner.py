@@ -16,6 +16,7 @@ from exo.shared.types.tasks import (
     StartWarmup,
     Task,
     TaskStatus,
+    ConnectToGroup,
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
@@ -29,7 +30,9 @@ from exo.shared.types.worker.runners import (
     RunnerRunning,
     RunnerShutdown,
     RunnerStatus,
-    RunnerWaitingForModel,
+    RunnerConnecting,
+    RunnerConnected,
+    RunnerIdle,
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
@@ -64,7 +67,7 @@ def main(
         tokenizer = None
         sampler = None
 
-        current_status: RunnerStatus = RunnerWaitingForModel()
+        current_status: RunnerStatus = RunnerIdle()
         logger.info("runner waiting for model")
         event_sender.send(
             RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
@@ -78,8 +81,22 @@ def main(
                 )
                 event_sender.send(TaskAcknowledged(task_id=task.task_id))
                 match task:
+                    case ConnectToGroup() if isinstance (RunnerIdle, RunnerFailed):
+                        logger.info("runner connecting")
+                        current_status = RunnerConnecting()
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        model, tokenizer, sampler = initialize_mlx(bound_instance)
+
+                        logger.info("runner connected")
+                        current_status = RunnerConnected()
+
+
                     case LoadModel() if isinstance(
-                        current_status, (RunnerWaitingForModel, RunnerFailed)
+                        current_status, RunnerConnected
                     ):
                         current_status = RunnerLoading()
                         logger.info("runner loading")
