@@ -33,7 +33,8 @@ from exo.shared.types.worker.instances import (
 
 
 def random_ephemeral_port() -> int:
-    return random.randint(49152, 65535)
+    port = random.randint(49153, 65535)
+    return port - 1 if port <= 52415 else 52414
 
 
 def add_instance_to_placements(

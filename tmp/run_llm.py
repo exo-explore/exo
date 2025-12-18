@@ -7,7 +7,7 @@ import requests
 
 
 def stream_chat(host: str, query: str) -> None:
-    url = f"http://{host}:8000/v1/chat/completions"
+    url = f"http://{host}:52415/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
     payload = {
         "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",

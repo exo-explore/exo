@@ -90,7 +90,7 @@ class API:
         node_id: NodeId,
         session_id: SessionId,
         *,
-        port: int = 8000,
+        port: int,
         # Ideally this would be a MasterForwarderEvent but type system says no :(
         global_event_receiver: Receiver[ForwarderEvent],
         command_sender: Sender[ForwarderCommand],

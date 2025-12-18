@@ -205,7 +205,8 @@ class Args(CamelCaseModel):
     verbosity: int = 0
     force_master: bool = False
     spawn_api: bool = False
-    api_port: PositiveInt = 8000
+    api_port: PositiveInt = 52415
+    tb_only: bool = False
 
     @classmethod
     def parse(cls) -> Self:
@@ -241,7 +242,7 @@ class Args(CamelCaseModel):
             "--api-port",
             type=int,
             dest="api_port",
-            default=8000,
+            default=52415,
         )
 
         args = parser.parse_args()

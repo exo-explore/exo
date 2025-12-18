@@ -13,7 +13,7 @@ async def check_reachability(
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(1)  # 1 second timeout
     try:
-        result = await to_thread.run_sync(sock.connect_ex, (target_ip, 8000))
+        result = await to_thread.run_sync(sock.connect_ex, (target_ip, 52415))
     except socket.gaierror:
         # seems to throw on ipv6 loopback. oh well
         # logger.warning(f"invalid {target_ip=}")

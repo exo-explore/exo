@@ -40,7 +40,7 @@ You can download the latest build here: [EXO-latest.dmg](https://assets.exolabs.
 
 To run from source, clone the repo, build the dashboard with `cd dashboard && npm install && npm run build` and run `uv run exo`.
 
-After starting with either of these methods go to `http://localhost:8000` in your browser, and you'll have EXO.
+After starting with either of these methods go to `http://localhost:52415` in your browser, and you'll have EXO.
 
 ---
 
