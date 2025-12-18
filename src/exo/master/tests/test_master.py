@@ -69,7 +69,6 @@ async def test_master():
         global_event_sender=ge_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
-        tb_only=False,
     )
     logger.info("run the master")
     async with anyio.create_task_group() as tg:
