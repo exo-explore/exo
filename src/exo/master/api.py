@@ -252,6 +252,7 @@ class API:
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
                 ),
+                node_profiles=self.state.node_profiles,
                 topology=self.state.topology,
                 current_instances=self.state.instances,
             )
@@ -307,6 +308,7 @@ class API:
                             instance_meta=instance_meta,
                             min_nodes=min_nodes,
                         ),
+                        node_profiles=self.state.node_profiles,
                         topology=self.state.topology,
                         current_instances=self.state.instances,
                     )
@@ -601,8 +603,8 @@ class API:
         total_available = Memory()
 
         for node in self.state.topology.list_nodes():
-            if node.node_profile is not None:
-                total_available += node.node_profile.memory.ram_available
+            if node in self.state.node_profiles:
+                total_available += self.state.node_profiles[node].memory.ram_available
 
         return total_available
 
