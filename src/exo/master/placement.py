@@ -6,13 +6,13 @@ from typing import Sequence
 from loguru import logger
 
 from exo.master.placement_utils import (
+    NodeWithProfile,
     filter_cycles_by_memory,
     get_mlx_ibv_devices_matrix,
     get_mlx_jaccl_coordinators,
     get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
-    NodeWithProfile
 )
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
@@ -97,7 +97,9 @@ def place_instance(
     smallest_tb_cycles = [
         cycle
         for cycle in smallest_cycles
-        if topology.get_subgraph_from_nodes([node.node_id for node in cycle]).is_thunderbolt_cycle([node.node_id for node in cycle])
+        if topology.get_subgraph_from_nodes(
+            [node.node_id for node in cycle]
+        ).is_thunderbolt_cycle([node.node_id for node in cycle])
     ]
 
     if smallest_tb_cycles != []:
@@ -112,10 +114,7 @@ def place_instance(
     selected_cycle = max(
         cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
-            (
-                node.node_profile.memory.ram_available
-                for node in cycle
-            ),
+            (node.node_profile.memory.ram_available for node in cycle),
             start=Memory(),
         ),
     )
@@ -124,7 +123,9 @@ def place_instance(
         command.model_meta, selected_cycle, command.sharding
     )
 
-    cycle_digraph: Topology = topology.get_subgraph_from_nodes([node.node_id for node in selected_cycle])
+    cycle_digraph: Topology = topology.get_subgraph_from_nodes(
+        [node.node_id for node in selected_cycle]
+    )
 
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))

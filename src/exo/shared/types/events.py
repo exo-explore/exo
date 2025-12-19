@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from exo.shared.topology import Connection
+from exo.shared.topology import SocketConnection
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
@@ -97,11 +97,15 @@ class ChunkGenerated(BaseEvent):
 
 
 class TopologyEdgeCreated(BaseEvent):
-    edge: Connection
+    source: NodeId
+    sink: NodeId
+    edge: SocketConnection
 
 
 class TopologyEdgeDeleted(BaseEvent):
-    edge: Connection
+    source: NodeId
+    sink: NodeId
+    edge: SocketConnection
 
 
 Event = (
