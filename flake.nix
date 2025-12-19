@@ -91,6 +91,10 @@
             ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
               # IFCONFIG
               unixtools.ifconfig
+
+              # Build dependencies for Linux
+              pkg-config
+              openssl
             ])
             ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
               # MACMON
@@ -100,6 +104,11 @@
           shellHook = ''
             # PYTHON
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.python313}/lib"
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              # Build environment for Linux
+              export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
+              export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
+            ''}
             echo
             echo "🍎🍎 Run 'just <recipe>' to get started"
             just --list
