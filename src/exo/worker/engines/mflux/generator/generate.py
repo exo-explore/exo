@@ -6,7 +6,7 @@ from PIL import Image
 
 from exo.shared.types.api import ImageGenerationTaskParams
 from exo.shared.types.worker.runner_response import ImageGenerationResponse
-from exo.worker.engines.mflux.distributed_flux import DistributedFlux1
+from exo.worker.engines.mflux.distributed_model import DistributedImageModel
 
 image_generation_stream = mx.new_stream(mx.default_device())
 
@@ -30,7 +30,7 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
     return (1024, 1024)
 
 
-def warmup_mflux(model: DistributedFlux1) -> Image.Image | None:
+def warmup_mflux(model: DistributedImageModel) -> Image.Image | None:
     """
     Warmup the model by generating a small image.
 
@@ -46,11 +46,11 @@ def warmup_mflux(model: DistributedFlux1) -> Image.Image | None:
 
 
 def mflux_generate(
-    model: DistributedFlux1,
+    model: DistributedImageModel,
     task: ImageGenerationTaskParams,
 ) -> Generator[ImageGenerationResponse, None, None]:
     """
-    Generate an image using the DistributedFlux1 model.
+    Generate an image using the DistributedImageModel.
 
     For distributed inference, only rank 0 yields the response.
     Other ranks participate in the pipeline but yield nothing.
