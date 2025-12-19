@@ -171,11 +171,11 @@ class DistributedDenoising:
     def _create_patches(
         self,
         latents: mx.array,
-        runtime_config: RuntimeConfig,
+        config: RuntimeConfig,
     ) -> tuple[list[mx.array], list[tuple[int, int]]]:
         # Calculate patch metadata using model config
-        latent_height = runtime_config.height // self.config.vae_scale_factor
-        latent_width = runtime_config.width // self.config.vae_scale_factor
+        latent_height = config.height // self.config.vae_scale_factor
+        latent_width = config.width // self.config.vae_scale_factor
         patch_size = self.config.patch_size
 
         patch_heights, _ = calculate_patch_heights(
@@ -191,7 +191,7 @@ class DistributedDenoising:
     def _sync_pipeline(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        config: RuntimeConfig,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
@@ -199,7 +199,7 @@ class DistributedDenoising:
     ) -> mx.array:
         prev_latents = hidden_states
 
-        hidden_states = runtime_config.scheduler.scale_model_input(hidden_states, t)
+        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
         # === PHASE 1: Embeddings ===
         # First stage: compute embeddings
@@ -211,12 +211,12 @@ class DistributedDenoising:
 
         # All stages need these for their blocks
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, self.transformer, runtime_config
+            t, pooled_prompt_embeds, self.transformer, config
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
             self.transformer,
-            runtime_config,
+            config,
             kontext_image_ids=kontext_image_ids,
         )
 
@@ -335,7 +335,7 @@ class DistributedDenoising:
                 hidden_states, text_embeddings, self.transformer
             )
 
-            hidden_states = runtime_config.scheduler.step(
+            hidden_states = config.scheduler.step(
                 model_output=hidden_states,
                 timestep=t,
                 sample=prev_latents,
@@ -360,7 +360,7 @@ class DistributedDenoising:
     def _async_pipeline(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        config: RuntimeConfig,
         patch_latents: list[mx.array],
         token_indices: list[tuple[int, int]],
         prompt_embeds: mx.array,
@@ -371,15 +371,15 @@ class DistributedDenoising:
         assert self.single_kv_caches is not None
 
         # TODO(ciaran): needed in general?
-        # hidden_states = runtime_config.scheduler.scale_model_input(hidden_states, t)
+        # hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, self.transformer, runtime_config
+            t, pooled_prompt_embeds, self.transformer, config
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
             self.transformer,
-            runtime_config,
+            config,
             kontext_image_ids=kontext_image_ids,
         )
 
@@ -503,7 +503,7 @@ class DistributedDenoising:
                     patch_img_only, text_embeddings, self.transformer
                 )
 
-                patch = runtime_config.scheduler.step(
+                patch = config.scheduler.step(
                     model_output=patch_img_only,
                     timestep=t,
                     sample=patch_prev,
@@ -521,7 +521,7 @@ class DistributedDenoising:
     def __call__(
         self,
         t: int,
-        runtime_config: RuntimeConfig,
+        config: RuntimeConfig,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
@@ -532,20 +532,18 @@ class DistributedDenoising:
         if t < self.num_sync_steps:
             latents = self._sync_pipeline(
                 t,
-                runtime_config,
+                config,
                 hidden_states,
                 prompt_embeds,
                 pooled_prompt_embeds,
                 kontext_image_ids,
             )
         else:
-            patch_latents, token_indices = self._create_patches(
-                hidden_states, runtime_config
-            )
+            patch_latents, token_indices = self._create_patches(hidden_states, config)
 
             patch_latents = self._async_pipeline(
                 t,
-                runtime_config,
+                config,
                 patch_latents,
                 token_indices,
                 prompt_embeds,
@@ -555,7 +553,7 @@ class DistributedDenoising:
 
             # Receive final patches from last rank
             if (
-                t == runtime_config.num_inference_steps - 1
+                t == config.num_inference_steps - 1
                 and self.is_first_stage
                 and not self.is_last_stage
             ):
