@@ -197,8 +197,8 @@ class InfoGatherer:
             async with await open_process(
                 [macmon_path, "pipe", "--interval", str(self.macmon_interval * 1000)]
             ) as p:
-                logger.critical("MacMon closed stdout")
                 if not p.stdout:
+                    logger.critical("MacMon closed stdout")
                     return
                 async for text in TextReceiveStream(p.stdout):
                     await self.info_sender.send(MacmonMetrics.from_raw_json(text))
@@ -215,4 +215,3 @@ class InfoGatherer:
             logger.warning(
                 f"MacMon failed with return code {e.returncode}: {stderr_msg}"
             )
-
