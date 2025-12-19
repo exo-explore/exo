@@ -1,12 +1,14 @@
+from collections.abc import Sequence
 from typing import Self
 
 import psutil
 
 from exo.shared.types.memory import Memory
+from exo.shared.types.thunderbolt import TBIdentifier
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
-class MemoryPerformanceProfile(CamelCaseModel):
+class MemoryUsage(CamelCaseModel):
     ram_total: Memory
     ram_available: Memory
     swap_total: Memory
@@ -44,7 +46,6 @@ class SystemPerformanceProfile(CamelCaseModel):
     sys_power: float = 0.0
     pcpu_usage: float = 0.0
     ecpu_usage: float = 0.0
-    ane_power: float = 0.0
 
 
 class NetworkInterfaceInfo(CamelCaseModel):
@@ -53,15 +54,14 @@ class NetworkInterfaceInfo(CamelCaseModel):
 
 
 class NodePerformanceProfile(CamelCaseModel):
-    model_id: str
-    chip_id: str
-    friendly_name: str
-    memory: MemoryPerformanceProfile
-    network_interfaces: list[NetworkInterfaceInfo] = []
-    system: SystemPerformanceProfile
+    model_id: str = "Unknown"
+    chip_id: str = "Unknown"
+    friendly_name: str = "Unknown"
+    memory: MemoryUsage = MemoryUsage.from_bytes(ram_total=0, ram_available=0, swap_total=0, swap_available=0)
+    network_interfaces: Sequence[NetworkInterfaceInfo] = []
+    tb_interfaces: Sequence[TBIdentifier] = []
+    system: SystemPerformanceProfile = SystemPerformanceProfile()
 
 
 class ConnectionProfile(CamelCaseModel):
-    throughput: float
-    latency: float
-    jitter: float
+    pass
