@@ -29,13 +29,20 @@ from exo.shared.types.events import (
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-# from exo.shared.types.topology import NodeInfo
+from exo.shared.types.topology import RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
-MacmonMetrics    , MemoryUsage, NetworkInterfaceInfo, TBIdentifier, TBConnection, NodeConfig, MiscData, StaticNodeInformation
-    )
+    MacmonMetrics,
+    MemoryUsage,
+    MiscData,
+    NetworkInterfaceInfo,
+    NodeConfig,
+    StaticNodeInformation,
+    TBConnection,
+    TBIdentifier,
+)
 
 
 def event_apply(event: Event, state: State) -> State:
@@ -204,6 +211,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
 
 
 def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
+    topology = copy.deepcopy(state.topology)
     info = event.info
     profile = state.node_profiles.get(event.node_id, NodePerformanceProfile())
     match info:
@@ -224,22 +232,53 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             if info != []:
                 match info[0]:
                     case NetworkInterfaceInfo():
-                        profile.network_interfaces = cast(Sequence[NetworkInterfaceInfo], info)
+                        profile.network_interfaces = cast(
+                            Sequence[NetworkInterfaceInfo], info
+                        )
                     case TBIdentifier():
                         profile.tb_interfaces = cast(Sequence[TBIdentifier], info)
                     case TBConnection():
+                        new_out_tb_conns = [
+                            (nid, tb_conn)
+                            for nid in state.node_profiles
+                            if any(tb for tb in state.node_profiles[nid].tb_interfaces)
+                            for tb_conn in cast(Sequence[TBConnection], info)
+                        ]
+                        as_rdma_conns = [
+                            (
+                                nid,
+                                RDMAConnection(
+                                    source_rdma_iface=next(
+                                        iface.rdma_interface
+                                        for iface in profile.tb_interfaces
+                                        if iface.domain_uuid == tb_conn.source_uuid
+                                    ),
+                                    sink_rdma_iface=next(
+                                        iface.rdma_interface
+                                        for iface in state.node_profiles[
+                                            nid
+                                        ].tb_interfaces
+                                        if iface.domain_uuid == tb_conn.sink_uuid
+                                    ),
+                                ),
+                            )
+                            for nid, tb_conn in new_out_tb_conns
+                        ]
+                        topology.replace_all_out_tb_connections(
+                            event.node_id, as_rdma_conns
+                        )
                         # TODO:
-                        pass
 
     last_seen = {**state.last_seen, event.node_id: datetime.fromisoformat(event.when)}
     new_profiles = {**state.node_profiles, event.node_id: profile}
-    return state.model_copy(update={"node_profiles": new_profiles, "last_seen": last_seen})
-
+    return state.model_copy(
+        update={"node_profiles": new_profiles, "last_seen": last_seen}
+    )
 
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
     topology = copy.deepcopy(state.topology)
-    topology.add_connection(event.edge)
+    topology.add_connection(event.source, event.sink, event.edge)
     return state.model_copy(update={"topology": topology})
 
 

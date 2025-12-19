@@ -2,8 +2,8 @@ from typing import Self
 
 from pydantic import BaseModel
 
-from exo.utils.pydantic_ext import CamelCaseModel
 from exo.shared.types.profiling import MemoryUsage, SystemPerformanceProfile
+from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class _TempMetrics(BaseModel, extra="ignore"):
@@ -50,15 +50,18 @@ class MacmonMetrics(CamelCaseModel):
     @classmethod
     def from_raw(cls, raw: RawMacmonMetrics) -> Self:
         return cls(
-            system_profile = SystemPerformanceProfile(
-                    gpu_usage=raw.gpu_usage[1],
-                    temp=raw.temp.gpu_temp_avg,
-                    sys_power=raw.sys_power,
-                    pcpu_usage= raw.pcpu_usage[1],
-                    ecpu_usage= raw.ecpu_usage[1]
+            system_profile=SystemPerformanceProfile(
+                gpu_usage=raw.gpu_usage[1],
+                temp=raw.temp.gpu_temp_avg,
+                sys_power=raw.sys_power,
+                pcpu_usage=raw.pcpu_usage[1],
+                ecpu_usage=raw.ecpu_usage[1],
             ),
             memory=MemoryUsage.from_bytes(
-                ram_total= raw.memory.ram_total, ram_available=(raw.memory.ram_total - raw.memory.ram_usage), swap_total=raw.memory.swap_total, swap_available=(raw.memory.swap_total - raw.memory.swap_usage)
+                ram_total=raw.memory.ram_total,
+                ram_available=(raw.memory.ram_total - raw.memory.ram_usage),
+                swap_total=raw.memory.swap_total,
+                swap_available=(raw.memory.swap_total - raw.memory.swap_usage),
             ),
         )
 

@@ -57,7 +57,9 @@ class NodePerformanceProfile(CamelCaseModel):
     model_id: str = "Unknown"
     chip_id: str = "Unknown"
     friendly_name: str = "Unknown"
-    memory: MemoryUsage = MemoryUsage.from_bytes(ram_total=0, ram_available=0, swap_total=0, swap_available=0)
+    memory: MemoryUsage = MemoryUsage.from_bytes(
+        ram_total=0, ram_available=0, swap_total=0, swap_available=0
+    )
     network_interfaces: Sequence[NetworkInterfaceInfo] = []
     tb_interfaces: Sequence[TBIdentifier] = []
     system: SystemPerformanceProfile = SystemPerformanceProfile()
