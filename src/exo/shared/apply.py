@@ -214,6 +214,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
     topology = copy.deepcopy(state.topology)
     info = event.info
     profile = state.node_profiles.get(event.node_id, NodePerformanceProfile())
+    # TODO: should be broken up into individual events instead of this monster
     match info:
         case MacmonMetrics():
             profile.system = info.system_profile
@@ -272,7 +273,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
     last_seen = {**state.last_seen, event.node_id: datetime.fromisoformat(event.when)}
     new_profiles = {**state.node_profiles, event.node_id: profile}
     return state.model_copy(
-        update={"node_profiles": new_profiles, "last_seen": last_seen}
+        update={"node_profiles": new_profiles, "last_seen": last_seen, "topology": topology}
     )
 
 
