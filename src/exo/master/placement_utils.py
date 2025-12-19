@@ -8,7 +8,7 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import NodePerformanceProfile
-from exo.shared.types.topology import SocketConnection, TBConnection
+from exo.shared.types.topology import SocketConnection, RDMAConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -266,7 +266,7 @@ def get_mlx_ibv_devices_matrix(
                 continue
 
             for conn in cycle_digraph.get_all_connections_between(node_i, node_j):
-                if isinstance(conn, TBConnection):
+                if isinstance(conn, RDMAConnection):
                     matrix[i][j] = conn.source_rdma_iface
                 break
             else:
