@@ -2,14 +2,14 @@ from datetime import datetime
 
 from pydantic import Field
 
-from exo.shared.topology import Connection, NodePerformanceProfile
+from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
-from exo.shared.types.profiling import MemoryPerformanceProfile
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
+from exo.utils.info_gatherer.info_gatherer import GatheredInfo
 from exo.utils.pydantic_ext import CamelCaseModel, TaggedModel
 
 
@@ -76,25 +76,15 @@ class RunnerDeleted(BaseEvent):
     runner_id: RunnerId
 
 
-# TODO
-class NodeCreated(BaseEvent):
-    node_id: NodeId
-
-
 class NodeTimedOut(BaseEvent):
     node_id: NodeId
 
 
-class NodePerformanceMeasured(BaseEvent):
+# TODO: bikeshed this naem
+class NodeGatheredInfo(BaseEvent):
     node_id: NodeId
     when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
-    node_profile: NodePerformanceProfile
-
-
-class NodeMemoryMeasured(BaseEvent):
-    node_id: NodeId
-    when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
-    memory: MemoryPerformanceProfile
+    info: GatheredInfo  # NB: this model is UNTAGGED!!! be warned for ser/de errors.
 
 
 class NodeDownloadProgress(BaseEvent):
@@ -125,10 +115,8 @@ Event = (
     | InstanceDeleted
     | RunnerStatusUpdated
     | RunnerDeleted
-    | NodeCreated
     | NodeTimedOut
-    | NodePerformanceMeasured
-    | NodeMemoryMeasured
+    | NodeGatheredInfo
     | NodeDownloadProgress
     | ChunkGenerated
     | TopologyEdgeCreated
