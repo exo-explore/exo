@@ -29,7 +29,7 @@ class SocketConnection(CamelCaseModel):
     sink_multiaddr: Multiaddr
 
     def __hash__(self) -> int:
-        return hash(self.sink_multiaddr)
+        return hash(self.sink_multiaddr.ip_address)
 
     def is_thunderbolt(self) -> bool:
         return str(self.sink_multiaddr.ipv4_address).startswith("169.254")

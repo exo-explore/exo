@@ -248,21 +248,21 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                             (
                                 nid,
                                 RDMAConnection(
-                                    source_rdma_iface=next(
-                                        iface.rdma_interface
-                                        for iface in profile.tb_interfaces
-                                        if iface.domain_uuid == tb_conn.source_uuid
-                                    ),
-                                    sink_rdma_iface=next(
-                                        iface.rdma_interface
-                                        for iface in state.node_profiles[
-                                            nid
-                                        ].tb_interfaces
-                                        if iface.domain_uuid == tb_conn.sink_uuid
-                                    ),
+                                    source_rdma_iface=source_iface,
+                                    sink_rdma_iface=sink_iface,
                                 ),
                             )
                             for nid, tb_conn in new_out_tb_conns
+                            if any(
+                                sink_iface := iface.rdma_interface
+                                for iface in state.node_profiles[nid].tb_interfaces
+                                if iface.domain_uuid == tb_conn.sink_uuid
+                            )
+                            if any(
+                                source_iface := iface.rdma_interface
+                                for iface in profile.tb_interfaces
+                                if iface.domain_uuid == tb_conn.source_uuid
+                            )
                         ]
                         topology.replace_all_out_tb_connections(
                             event.node_id, as_rdma_conns
