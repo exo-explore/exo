@@ -424,6 +424,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		};
 	}
 
+	// Helper function for getModelDownloadStatus
+	function meanValue(values: number[]): number {
+		if (values.length === 0) return 0;
+		const sum = values.reduce((acc, val) => acc + val, 0);
+		return sum / values.length;
+	}
+
 	// Helper to get download status for a model (checks all downloads for matching model ID)
 	function getModelDownloadStatus(modelId: string): { 
 		isDownloading: boolean; 
@@ -489,13 +496,16 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			return { isDownloading: false, progress: null, perNode: [] };
 		}
 
+		// Calculate mean speed across nodes to avoid inflated speed values
+		const meanSpeed = perNode.length > 0 ? meanValue(perNode.map(p => p.progress.speed)) : totalSpeed;
+
 		return {
 			isDownloading: true,
 			progress: {
 				totalBytes,
 				downloadedBytes,
-				speed: totalSpeed,
-				etaMs: totalSpeed > 0 ? ((totalBytes - downloadedBytes) / totalSpeed) * 1000 : 0,
+				speed: meanSpeed,
+				etaMs: meanSpeed > 0 ? ((totalBytes - downloadedBytes) / meanSpeed) * 1000 : 0,
 				percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
 				completedFiles,
 				totalFiles,
