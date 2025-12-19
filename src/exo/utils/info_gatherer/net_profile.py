@@ -5,6 +5,7 @@ from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
+from exo.shared.types.profiling import NodePerformanceProfile
 
 REACHABILITY_ATTEMPTS = 3
 

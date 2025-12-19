@@ -32,7 +32,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.topology import Connection
+from exo.shared.types.topology import SocketConnection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
@@ -253,10 +253,10 @@ class Worker:
         match msg.connection_type:
             case ConnectionMessageType.Connected:
                 return TopologyEdgeCreated(
-                    edge=Connection(
-                        local_node_id=self.node_id,
-                        send_back_node_id=msg.node_id,
-                        send_back_multiaddr=Multiaddr(
+                    source=self.node_id,
+                    sink=msg.node_id,
+                    edge=SocketConnection(
+                        sink_multiaddr=Multiaddr(
                             address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
                         ),
                     )
@@ -264,10 +264,10 @@ class Worker:
 
             case ConnectionMessageType.Disconnected:
                 return TopologyEdgeDeleted(
-                    edge=Connection(
-                        local_node_id=self.node_id,
-                        send_back_node_id=msg.node_id,
-                        send_back_multiaddr=Multiaddr(
+                    source=self.node_id,
+                    sink=msg.node_id,
+                    edge=SocketConnection(
+                        sink_multiaddr=Multiaddr(
                             address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
                         ),
                     )
@@ -403,7 +403,7 @@ class Worker:
         while True:
             # TODO: EdgeDeleted
             edges = set(self.state.topology.list_connections())
-            conns = await check_reachable(self.state.topology, self.node_id)
+            conns = await check_reachable(self.state.topology, self.state.node_profiles, self.node_id)
             for nid in conns:
                 for ip in conns[nid]:
                     if "127.0.0.1" in ip or "localhost" in ip:
@@ -411,26 +411,26 @@ class Worker:
                             f"Loopback connection should not happen: {ip=} for {nid=}"
                         )
 
-                    edge = Connection(
-                        local_node_id=self.node_id,
-                        send_back_node_id=nid,
+                    edge = SocketConnection(
                         # nonsense multiaddr
-                        send_back_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
+                        sink_multiaddr=Multiaddr(address=f"/ip4/{ip}/tcp/52415")
                         if "." in ip
                         # nonsense multiaddr
                         else Multiaddr(address=f"/ip6/{ip}/tcp/52415"),
                     )
                     if edge not in edges:
                         logger.debug(f"ping discovered {edge=}")
-                        await self.event_sender.send(TopologyEdgeCreated(edge=edge))
+                        await self.event_sender.send(TopologyEdgeCreated(source=self.node_id, sink=nid, edge=edge))
 
             for nid, conn in self.state.topology.out_edges(self.node_id):
+                if not isinstance(conn, SocketConnection):
+                    continue
                 if (
                     nid not in conns
-                    or conn.send_back_multiaddr.ip_address not in conns.get(nid, set())
+                    or conn.sink_multiaddr.ip_address not in conns.get(nid, set())
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
-                    await self.event_sender.send(TopologyEdgeDeleted(edge=conn))
+                    await self.event_sender.send(TopologyEdgeDeleted(source=self.node_id, sink=nid, edge=conn))
 
             await anyio.sleep(10)
 

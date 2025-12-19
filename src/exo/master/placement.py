@@ -141,7 +141,7 @@ def place_instance(
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
             mlx_ibv_devices = get_mlx_ibv_devices_matrix(
-                selected_cycle,
+                [node.node_id for node in selected_cycle],
                 cycle_digraph,
             )
             mlx_jaccl_coordinators = get_mlx_jaccl_coordinators(
