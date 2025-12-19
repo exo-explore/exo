@@ -6,7 +6,7 @@ from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.engines.mflux.pipefusion.kv_cache import JointPatchKVCache, PatchKVCache
+from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 from exo.worker.engines.mflux.pipefusion.patched_blocks import (
     CachingJointTransformerBlock,
     CachingSingleTransformerBlock,
@@ -71,8 +71,8 @@ class DistributedDenoising:
         self.num_patches = num_patches if num_patches else group.size()
 
         # Persistent KV caches (initialized on first async timestep, reused across timesteps)
-        self.joint_kv_caches: list[JointPatchKVCache] | None = None
-        self.single_kv_caches: list[PatchKVCache] | None = None
+        self.joint_kv_caches: list[ImagePatchKVCache] | None = None
+        self.single_kv_caches: list[ImagePatchKVCache] | None = None
 
         # Get block counts from the original transformer (before slicing)
         # Note: These are the ORIGINAL counts, not the sliced counts
@@ -145,7 +145,7 @@ class DistributedDenoising:
             dtype: Data type for cache tensors
         """
         self.joint_kv_caches = [
-            JointPatchKVCache(
+            ImagePatchKVCache(
                 batch_size=batch_size,
                 num_heads=24,
                 image_seq_len=num_img_tokens,
@@ -155,7 +155,7 @@ class DistributedDenoising:
             for _ in range(len(self.transformer_blocks))
         ]
         self.single_kv_caches = [
-            PatchKVCache(
+            ImagePatchKVCache(
                 batch_size=batch_size,
                 num_heads=24,
                 image_seq_len=num_img_tokens,
