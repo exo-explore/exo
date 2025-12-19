@@ -5,12 +5,12 @@ import rustworkx as rx
 from pydantic import BaseModel, ConfigDict
 
 from exo.shared.types.common import NodeId
-from exo.shared.types.profiling import ConnectionProfile, NodePerformanceProfile
-from exo.shared.types.topology import Connection, NodeInfo
+from exo.shared.types.profiling import ConnectionProfile
+from exo.shared.types.topology import Connection
 
 
 class TopologySnapshot(BaseModel):
-    nodes: list[NodeInfo]
+    nodes: list[NodeId]
     connections: list[Connection]
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
@@ -18,7 +18,7 @@ class TopologySnapshot(BaseModel):
 
 class Topology:
     def __init__(self) -> None:
-        self._graph: rx.PyDiGraph[NodeInfo, Connection] = rx.PyDiGraph()
+        self._graph: rx.PyDiGraph[NodeId, Connection] = rx.PyDiGraph()
         self._node_id_to_rx_id_map: dict[NodeId, int] = dict()
         self._rx_id_to_node_id_map: dict[int, NodeId] = dict()
         self._edge_id_to_rx_id_map: dict[Connection, int] = dict()
@@ -42,12 +42,12 @@ class Topology:
 
         return topology
 
-    def add_node(self, node: NodeInfo) -> None:
-        if node.node_id in self._node_id_to_rx_id_map:
+    def add_node(self, node: NodeId) -> None:
+        if node in self._node_id_to_rx_id_map:
             return
         rx_id = self._graph.add_node(node)
-        self._node_id_to_rx_id_map[node.node_id] = rx_id
-        self._rx_id_to_node_id_map[rx_id] = node.node_id
+        self._node_id_to_rx_id_map[node] = rx_id
+        self._rx_id_to_node_id_map[rx_id] = node
 
     def node_is_leaf(self, node_id: NodeId) -> bool:
         return (
@@ -82,9 +82,9 @@ class Topology:
         connection: Connection,
     ) -> None:
         if connection.local_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(NodeInfo(node_id=connection.local_node_id))
+            self.add_node(connection.local_node_id)
         if connection.send_back_node_id not in self._node_id_to_rx_id_map:
-            self.add_node(NodeInfo(node_id=connection.send_back_node_id))
+            self.add_node(connection.send_back_node_id)
 
         if connection in self._edge_id_to_rx_id_map:
             return
@@ -95,24 +95,11 @@ class Topology:
         rx_id = self._graph.add_edge(src_id, sink_id, connection)
         self._edge_id_to_rx_id_map[connection] = rx_id
 
-    def list_nodes(self) -> Iterable[NodeInfo]:
+    def list_nodes(self) -> Iterable[NodeId]:
         return (self._graph[i] for i in self._graph.node_indices())
 
     def list_connections(self) -> Iterable[Connection]:
         return (connection for _, _, connection in self._graph.weighted_edge_list())
-
-    def get_node_profile(self, node_id: NodeId) -> NodePerformanceProfile | None:
-        try:
-            rx_idx = self._node_id_to_rx_id_map[node_id]
-            return self._graph.get_node_data(rx_idx).node_profile
-        except KeyError:
-            return None
-
-    def update_node_profile(
-        self, node_id: NodeId, node_profile: NodePerformanceProfile
-    ) -> None:
-        rx_idx = self._node_id_to_rx_id_map[node_id]
-        self._graph[rx_idx].node_profile = node_profile
 
     def update_connection_profile(self, connection: Connection) -> None:
         rx_idx = self._edge_id_to_rx_id_map[connection]
@@ -151,38 +138,38 @@ class Topology:
         self._graph.remove_edge_from_index(rx_idx)
         del self._edge_id_to_rx_id_map[connection]
 
-    def get_cycles(self) -> list[list[NodeInfo]]:
+    def get_cycles(self) -> list[list[NodeId]]:
         cycle_idxs = rx.simple_cycles(self._graph)
-        cycles: list[list[NodeInfo]] = []
+        cycles: list[list[NodeId]] = []
         for cycle_idx in cycle_idxs:
             cycle = [self._graph[idx] for idx in cycle_idx]
             cycles.append(cycle)
 
         return cycles
 
-    def get_cycles_tb(self) -> list[list[NodeInfo]]:
+    def get_cycles_tb(self) -> list[list[NodeId]]:
         tb_edges = [
             (u, v, conn)
             for u, v, conn in self._graph.weighted_edge_list()
             if conn.is_thunderbolt()
         ]
 
-        tb_graph: rx.PyDiGraph[NodeInfo, Connection] = rx.PyDiGraph()
+        tb_graph: rx.PyDiGraph[NodeId, Connection] = rx.PyDiGraph()
         tb_graph.add_nodes_from(self._graph.nodes())
 
         for u, v, conn in tb_edges:
             tb_graph.add_edge(u, v, conn)
 
         cycle_idxs = rx.simple_cycles(tb_graph)
-        cycles: list[list[NodeInfo]] = []
+        cycles: list[list[NodeId]] = []
         for cycle_idx in cycle_idxs:
             cycle = [tb_graph[idx] for idx in cycle_idx]
             cycles.append(cycle)
 
         return cycles
 
-    def get_subgraph_from_nodes(self, nodes: list[NodeInfo]) -> "Topology":
-        node_idxs = [node.node_id for node in nodes]
+    def get_subgraph_from_nodes(self, nodes: list[NodeId]) -> "Topology":
+        node_idxs = [node for node in nodes]
         rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
         topology = Topology()
         for rx_idx in rx_idxs:
@@ -195,8 +182,8 @@ class Topology:
                 topology.add_connection(connection)
         return topology
 
-    def is_thunderbolt_cycle(self, cycle: list[NodeInfo]) -> bool:
-        node_idxs = [node.node_id for node in cycle]
+    def is_thunderbolt_cycle(self, cycle: list[NodeId]) -> bool:
+        node_idxs = [node for node in cycle]
         rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
         for rid in rx_idxs:
             for neighbor_rid in self._graph.neighbors(rid):

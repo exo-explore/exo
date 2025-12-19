@@ -1,12 +1,7 @@
 from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import ConnectionProfile, NodePerformanceProfile
+from exo.shared.types.profiling import ConnectionProfile
 from exo.utils.pydantic_ext import CamelCaseModel
-
-
-class NodeInfo(CamelCaseModel):
-    node_id: NodeId
-    node_profile: NodePerformanceProfile | None = None
 
 
 class Connection(CamelCaseModel):
