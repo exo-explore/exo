@@ -1,0 +1,546 @@
+from typing import Any
+
+import mlx.core as mx
+from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.flux.model.flux_transformer.common.attention_utils import (
+    AttentionUtils,
+)
+from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
+    JointTransformerBlock,
+)
+from mflux.models.flux.model.flux_transformer.transformer import Transformer
+
+from exo.worker.engines.mflux.config.model_config import ImageModelConfig
+from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode
+from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
+
+
+class FluxModelAdapter:
+    """Adapter for Flux models (schnell, dev, kontext).
+
+    Handles Flux-specific operations:
+    - JointAttention with separate text/image streams
+    - SingleBlockAttention with concatenated streams
+    - AttentionUtils for QKV processing and RoPE
+    """
+
+    def __init__(self, config: ImageModelConfig):
+        self._config = config
+
+    @property
+    def config(self) -> ImageModelConfig:
+        return self._config
+
+    def compute_embeddings(
+        self,
+        hidden_states: mx.array,
+        prompt_embeds: mx.array,
+        transformer: Transformer,
+    ) -> tuple[mx.array, mx.array]:
+        embedded_hidden = transformer.x_embedder(hidden_states)
+        embedded_encoder = transformer.context_embedder(prompt_embeds)
+        return embedded_hidden, embedded_encoder
+
+    def compute_text_embeddings(
+        self,
+        t: int,
+        pooled_prompt_embeds: mx.array,
+        transformer: Transformer,
+        runtime_config: RuntimeConfig,
+    ) -> mx.array:
+        return Transformer.compute_text_embeddings(
+            t, pooled_prompt_embeds, transformer.time_text_embed, runtime_config
+        )
+
+    def compute_rotary_embeddings(
+        self,
+        prompt_embeds: mx.array,
+        transformer: Transformer,
+        runtime_config: RuntimeConfig,
+        **kwargs: Any,
+    ) -> mx.array:
+        kontext_image_ids = kwargs.get("kontext_image_ids")
+        return Transformer.compute_rotary_embeddings(
+            prompt_embeds, transformer.pos_embed, runtime_config, kontext_image_ids
+        )
+
+    def apply_joint_block(
+        self,
+        block: JointTransformerBlock,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache | None,
+        mode: BlockWrapperMode,
+        text_seq_len: int,
+        patch_start: int | None = None,
+        patch_end: int | None = None,
+    ) -> tuple[mx.array, mx.array]:
+        if mode == BlockWrapperMode.CACHING:
+            return self._apply_joint_block_caching(
+                block=block,
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                kv_cache=kv_cache,
+                text_seq_len=text_seq_len,
+            )
+        else:
+            assert patch_start is not None and patch_end is not None
+            assert kv_cache is not None
+            return self._apply_joint_block_patched(
+                block=block,
+                patch_hidden=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                kv_cache=kv_cache,
+                text_seq_len=text_seq_len,
+                patch_start=patch_start,
+                patch_end=patch_end,
+            )
+
+    def apply_single_block(
+        self,
+        block: Any,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache | None,
+        mode: BlockWrapperMode,
+        text_seq_len: int,
+        patch_start: int | None = None,
+        patch_end: int | None = None,
+    ) -> mx.array:
+        if mode == BlockWrapperMode.CACHING:
+            return self._apply_single_block_caching(
+                block=block,
+                hidden_states=hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                kv_cache=kv_cache,
+                text_seq_len=text_seq_len,
+            )
+        else:
+            assert patch_start is not None and patch_end is not None
+            assert kv_cache is not None
+            return self._apply_single_block_patched(
+                block=block,
+                patch_hidden=hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                kv_cache=kv_cache,
+                text_seq_len=text_seq_len,
+                patch_start=patch_start,
+                patch_end=patch_end,
+            )
+
+    def final_projection(
+        self,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        transformer: Transformer,
+    ) -> mx.array:
+        hidden_states = transformer.norm_out(hidden_states, text_embeddings)
+        return transformer.proj_out(hidden_states)
+
+    # -------------------------------------------------------------------------
+    # Joint block implementations
+    # -------------------------------------------------------------------------
+
+    def _apply_joint_block_caching(
+        self,
+        block: JointTransformerBlock,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache | None,
+        text_seq_len: int,
+    ) -> tuple[mx.array, mx.array]:
+        """Apply joint block in caching mode - full sequence, populate cache."""
+        num_img_tokens = hidden_states.shape[1]
+        batch_size = hidden_states.shape[0]
+        attn = block.attn
+        num_heads = attn.num_heads
+        head_dim = attn.head_dimension
+
+        # 1. Compute norms
+        norm_hidden, gate_msa, shift_mlp, scale_mlp, gate_mlp = block.norm1(
+            hidden_states=hidden_states,
+            text_embeddings=text_embeddings,
+        )
+        norm_encoder, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = (
+            block.norm1_context(
+                hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+            )
+        )
+
+        # 2. Compute Q, K, V for full image
+        img_query, img_key, img_value = AttentionUtils.process_qkv(
+            hidden_states=norm_hidden,
+            to_q=attn.to_q,
+            to_k=attn.to_k,
+            to_v=attn.to_v,
+            norm_q=attn.norm_q,
+            norm_k=attn.norm_k,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 3. Compute Q, K, V for text
+        txt_query, txt_key, txt_value = AttentionUtils.process_qkv(
+            hidden_states=norm_encoder,
+            to_q=attn.add_q_proj,
+            to_k=attn.add_k_proj,
+            to_v=attn.add_v_proj,
+            norm_q=attn.norm_added_q,
+            norm_k=attn.norm_added_k,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 4. Concatenate Q, K, V: [text, image]
+        query = mx.concatenate([txt_query, img_query], axis=2)
+        key = mx.concatenate([txt_key, img_key], axis=2)
+        value = mx.concatenate([txt_value, img_value], axis=2)
+
+        # 5. Apply RoPE
+        query, key = AttentionUtils.apply_rope(
+            xq=query, xk=key, freqs_cis=rotary_embeddings
+        )
+
+        # 6. Store IMAGE K/V in cache for async pipeline
+        if kv_cache is not None:
+            kv_cache.update_image_patch(
+                patch_start=0,
+                patch_end=num_img_tokens,
+                key=key[:, :, text_seq_len:, :],
+                value=value[:, :, text_seq_len:, :],
+            )
+
+        # 7. Compute full attention
+        attn_output = AttentionUtils.compute_attention(
+            query=query,
+            key=key,
+            value=value,
+            batch_size=batch_size,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 8. Extract and project outputs
+        context_attn_output = attn_output[:, :text_seq_len, :]
+        attn_output = attn_output[:, text_seq_len:, :]
+
+        attn_output = attn.to_out[0](attn_output)
+        context_attn_output = attn.to_add_out(context_attn_output)
+
+        # 9. Apply norm and feed forward
+        hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=hidden_states,
+            attn_output=attn_output,
+            gate_mlp=gate_mlp,
+            gate_msa=gate_msa,
+            scale_mlp=scale_mlp,
+            shift_mlp=shift_mlp,
+            norm_layer=block.norm2,
+            ff_layer=block.ff,
+        )
+        encoder_hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=encoder_hidden_states,
+            attn_output=context_attn_output,
+            gate_mlp=c_gate_mlp,
+            gate_msa=c_gate_msa,
+            scale_mlp=c_scale_mlp,
+            shift_mlp=c_shift_mlp,
+            norm_layer=block.norm2_context,
+            ff_layer=block.ff_context,
+        )
+
+        return encoder_hidden_states, hidden_states
+
+    def _apply_joint_block_patched(
+        self,
+        block: JointTransformerBlock,
+        patch_hidden: mx.array,
+        encoder_hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache,
+        text_seq_len: int,
+        patch_start: int,
+        patch_end: int,
+    ) -> tuple[mx.array, mx.array]:
+        """Apply joint block in patched mode - patch only, use cached KV."""
+        batch_size = patch_hidden.shape[0]
+        attn = block.attn
+        num_heads = attn.num_heads
+        head_dim = attn.head_dimension
+
+        # 1. Compute norms
+        norm_hidden, gate_msa, shift_mlp, scale_mlp, gate_mlp = block.norm1(
+            hidden_states=patch_hidden,
+            text_embeddings=text_embeddings,
+        )
+        norm_encoder, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = (
+            block.norm1_context(
+                hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+            )
+        )
+
+        # 2. Compute Q, K, V for image patch
+        img_query, img_key, img_value = AttentionUtils.process_qkv(
+            hidden_states=norm_hidden,
+            to_q=attn.to_q,
+            to_k=attn.to_k,
+            to_v=attn.to_v,
+            norm_q=attn.norm_q,
+            norm_k=attn.norm_k,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 3. Compute Q, K, V for text
+        txt_query, txt_key, txt_value = AttentionUtils.process_qkv(
+            hidden_states=norm_encoder,
+            to_q=attn.add_q_proj,
+            to_k=attn.add_k_proj,
+            to_v=attn.add_v_proj,
+            norm_q=attn.norm_added_q,
+            norm_k=attn.norm_added_k,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 4. Concatenate Q, K, V for patch: [text, patch]
+        query = mx.concatenate([txt_query, img_query], axis=2)
+        patch_key = mx.concatenate([txt_key, img_key], axis=2)
+        patch_value = mx.concatenate([txt_value, img_value], axis=2)
+
+        # 5. Extract RoPE for [text + current_patch]
+        text_rope = rotary_embeddings[:, :, :text_seq_len, ...]
+        patch_img_rope = rotary_embeddings[
+            :, :, text_seq_len + patch_start : text_seq_len + patch_end, ...
+        ]
+        patch_rope = mx.concatenate([text_rope, patch_img_rope], axis=2)
+
+        # 6. Apply RoPE
+        query, patch_key = AttentionUtils.apply_rope(
+            xq=query, xk=patch_key, freqs_cis=patch_rope
+        )
+
+        # 7. Update cache with this patch's IMAGE K/V
+        kv_cache.update_image_patch(
+            patch_start=patch_start,
+            patch_end=patch_end,
+            key=patch_key[:, :, text_seq_len:, :],
+            value=patch_value[:, :, text_seq_len:, :],
+        )
+
+        # 8. Get full K, V from cache
+        full_key, full_value = kv_cache.get_full_kv(
+            text_key=patch_key[:, :, :text_seq_len, :],
+            text_value=patch_value[:, :, :text_seq_len, :],
+        )
+
+        # 9. Compute attention
+        attn_output = AttentionUtils.compute_attention(
+            query=query,
+            key=full_key,
+            value=full_value,
+            batch_size=batch_size,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 10. Extract and project outputs
+        context_attn_output = attn_output[:, :text_seq_len, :]
+        hidden_attn_output = attn_output[:, text_seq_len:, :]
+
+        hidden_attn_output = attn.to_out[0](hidden_attn_output)
+        context_attn_output = attn.to_add_out(context_attn_output)
+
+        # 11. Apply norm and feed forward
+        patch_hidden = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=patch_hidden,
+            attn_output=hidden_attn_output,
+            gate_mlp=gate_mlp,
+            gate_msa=gate_msa,
+            scale_mlp=scale_mlp,
+            shift_mlp=shift_mlp,
+            norm_layer=block.norm2,
+            ff_layer=block.ff,
+        )
+        encoder_hidden_states = JointTransformerBlock.apply_norm_and_feed_forward(
+            hidden_states=encoder_hidden_states,
+            attn_output=context_attn_output,
+            gate_mlp=c_gate_mlp,
+            gate_msa=c_gate_msa,
+            scale_mlp=c_scale_mlp,
+            shift_mlp=c_shift_mlp,
+            norm_layer=block.norm2_context,
+            ff_layer=block.ff_context,
+        )
+
+        return encoder_hidden_states, patch_hidden
+
+    # -------------------------------------------------------------------------
+    # Single block implementations
+    # -------------------------------------------------------------------------
+
+    def _apply_single_block_caching(
+        self,
+        block: Any,
+        hidden_states: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache | None,
+        text_seq_len: int,
+    ) -> mx.array:
+        """Apply single block in caching mode - full sequence, populate cache."""
+        total_seq_len = hidden_states.shape[1]
+        num_img_tokens = total_seq_len - text_seq_len
+        batch_size = hidden_states.shape[0]
+        attn = block.attn
+        num_heads = attn.num_heads
+        head_dim = attn.head_dimension
+
+        # Residual connection
+        residual = hidden_states
+
+        # 1. Compute norm
+        norm_hidden, gate = block.norm(
+            hidden_states=hidden_states,
+            text_embeddings=text_embeddings,
+        )
+
+        # 2. Compute Q, K, V
+        query, key, value = AttentionUtils.process_qkv(
+            hidden_states=norm_hidden,
+            to_q=attn.to_q,
+            to_k=attn.to_k,
+            to_v=attn.to_v,
+            norm_q=attn.norm_q,
+            norm_k=attn.norm_k,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 3. Apply RoPE
+        query, key = AttentionUtils.apply_rope(
+            xq=query, xk=key, freqs_cis=rotary_embeddings
+        )
+
+        # 4. Store IMAGE K/V in cache
+        if kv_cache is not None:
+            kv_cache.update_image_patch(
+                patch_start=0,
+                patch_end=num_img_tokens,
+                key=key[:, :, text_seq_len:, :],
+                value=value[:, :, text_seq_len:, :],
+            )
+
+        # 5. Compute attention
+        attn_output = AttentionUtils.compute_attention(
+            query=query,
+            key=key,
+            value=value,
+            batch_size=batch_size,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 6. Apply feed forward and projection
+        hidden_states = block._apply_feed_forward_and_projection(
+            norm_hidden_states=norm_hidden,
+            attn_output=attn_output,
+            gate=gate,
+        )
+
+        return residual + hidden_states
+
+    def _apply_single_block_patched(
+        self,
+        block: Any,
+        patch_hidden: mx.array,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache,
+        text_seq_len: int,
+        patch_start: int,
+        patch_end: int,
+    ) -> mx.array:
+        """Apply single block in patched mode - patch only, use cached KV."""
+        batch_size = patch_hidden.shape[0]
+        attn = block.attn
+        num_heads = attn.num_heads
+        head_dim = attn.head_dimension
+
+        # Residual connection
+        residual = patch_hidden
+
+        # 1. Compute norm
+        norm_hidden, gate = block.norm(
+            hidden_states=patch_hidden,
+            text_embeddings=text_embeddings,
+        )
+
+        # 2. Compute Q, K, V
+        query, key, value = AttentionUtils.process_qkv(
+            hidden_states=norm_hidden,
+            to_q=attn.to_q,
+            to_k=attn.to_k,
+            to_v=attn.to_v,
+            norm_q=attn.norm_q,
+            norm_k=attn.norm_k,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 3. Extract RoPE for [text + current_patch]
+        text_rope = rotary_embeddings[:, :, :text_seq_len, ...]
+        patch_img_rope = rotary_embeddings[
+            :, :, text_seq_len + patch_start : text_seq_len + patch_end, ...
+        ]
+        patch_rope = mx.concatenate([text_rope, patch_img_rope], axis=2)
+
+        # 4. Apply RoPE
+        query, key = AttentionUtils.apply_rope(xq=query, xk=key, freqs_cis=patch_rope)
+
+        # 5. Update cache with this patch's IMAGE K/V
+        kv_cache.update_image_patch(
+            patch_start=patch_start,
+            patch_end=patch_end,
+            key=key[:, :, text_seq_len:, :],
+            value=value[:, :, text_seq_len:, :],
+        )
+
+        # 6. Get full K, V from cache
+        full_key, full_value = kv_cache.get_full_kv(
+            text_key=key[:, :, :text_seq_len, :],
+            text_value=value[:, :, :text_seq_len, :],
+        )
+
+        # 7. Compute attention
+        attn_output = AttentionUtils.compute_attention(
+            query=query,
+            key=full_key,
+            value=full_value,
+            batch_size=batch_size,
+            num_heads=num_heads,
+            head_dim=head_dim,
+        )
+
+        # 8. Apply feed forward and projection
+        hidden_states = block._apply_feed_forward_and_projection(
+            norm_hidden_states=norm_hidden,
+            attn_output=attn_output,
+            gate=gate,
+        )
+
+        return residual + hidden_states
