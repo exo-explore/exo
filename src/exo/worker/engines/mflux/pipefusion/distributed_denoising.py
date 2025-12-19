@@ -6,13 +6,13 @@ from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
-from exo.worker.engines.mflux.pipefusion.patched_blocks import (
-    CachingJointTransformerBlock,
-    CachingSingleTransformerBlock,
-    PatchedJointTransformerBlock,
-    PatchedSingleTransformerBlock,
+from exo.worker.engines.mflux.config.model_config import ImageModelConfig
+from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode, ModelAdapter
+from exo.worker.engines.mflux.pipefusion.block_wrapper import (
+    JointBlockWrapper,
+    SingleBlockWrapper,
 )
+from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
 def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: int):
@@ -53,12 +53,16 @@ class DistributedDenoising:
     def __init__(
         self,
         transformer: Transformer,
+        config: ImageModelConfig,
+        adapter: ModelAdapter,
         group: mx.distributed.Group,
         shard_metadata: PipelineShardMetadata,
         num_sync_steps: int = 1,
         num_patches: Optional[int] = None,
     ):
         self.transformer = transformer
+        self.config = config
+        self.adapter = adapter
         self.group = group
         self.rank = shard_metadata.device_rank
         self.world_size = shard_metadata.world_size
@@ -74,11 +78,10 @@ class DistributedDenoising:
         self.joint_kv_caches: list[ImagePatchKVCache] | None = None
         self.single_kv_caches: list[ImagePatchKVCache] | None = None
 
-        # Get block counts from the original transformer (before slicing)
-        # Note: These are the ORIGINAL counts, not the sliced counts
-        self.total_joint = 19  # Flux has 19 joint blocks
-        self.total_single = 38  # Flux has 38 single blocks
-        self.total_layers = self.total_joint + self.total_single
+        # Get block counts from config (model-agnostic)
+        self.total_joint = config.joint_block_count
+        self.total_single = config.single_block_count
+        self.total_layers = config.total_blocks
 
         self._compute_assigned_blocks()
 
@@ -147,9 +150,9 @@ class DistributedDenoising:
         self.joint_kv_caches = [
             ImagePatchKVCache(
                 batch_size=batch_size,
-                num_heads=24,
+                num_heads=self.config.num_heads,
                 image_seq_len=num_img_tokens,
-                head_dim=128,
+                head_dim=self.config.head_dim,
                 dtype=dtype,
             )
             for _ in range(len(self.transformer_blocks))
@@ -157,9 +160,9 @@ class DistributedDenoising:
         self.single_kv_caches = [
             ImagePatchKVCache(
                 batch_size=batch_size,
-                num_heads=24,
+                num_heads=self.config.num_heads,
                 image_seq_len=num_img_tokens,
-                head_dim=128,
+                head_dim=self.config.head_dim,
                 dtype=dtype,
             )
             for _ in range(len(self.single_transformer_blocks))
@@ -168,13 +171,12 @@ class DistributedDenoising:
     def _create_patches(
         self,
         latents: mx.array,
-        config: RuntimeConfig,
+        runtime_config: RuntimeConfig,
     ) -> tuple[list[mx.array], list[tuple[int, int]]]:
-        # Calculate patch metadata
-        # TODO(ciaran): generalise
-        latent_height = config.height // 8
-        latent_width = config.width // 8
-        patch_size = 2  # Flux uses 2x2 patches
+        # Calculate patch metadata using model config
+        latent_height = runtime_config.height // self.config.vae_scale_factor
+        latent_width = runtime_config.width // self.config.vae_scale_factor
+        patch_size = self.config.patch_size
 
         patch_heights, _ = calculate_patch_heights(
             latent_height, self.num_patches, patch_size
@@ -189,7 +191,7 @@ class DistributedDenoising:
     def _sync_pipeline(
         self,
         t: int,
-        config: RuntimeConfig,
+        runtime_config: RuntimeConfig,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
@@ -197,21 +199,25 @@ class DistributedDenoising:
     ) -> mx.array:
         prev_latents = hidden_states
 
-        hidden_states = config.scheduler.scale_model_input(hidden_states, t)
+        hidden_states = runtime_config.scheduler.scale_model_input(hidden_states, t)
 
         # === PHASE 1: Embeddings ===
         # First stage: compute embeddings
         # Non-first stages: will receive embedded values
         if self.is_first_stage:
-            hidden_states = self.transformer.x_embedder(hidden_states)
-            encoder_hidden_states = self.transformer.context_embedder(prompt_embeds)
+            hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
+                hidden_states, prompt_embeds, self.transformer
+            )
 
         # All stages need these for their blocks
-        text_embeddings = Transformer.compute_text_embeddings(
-            t, pooled_prompt_embeds, self.transformer.time_text_embed, config
+        text_embeddings = self.adapter.compute_text_embeddings(
+            t, pooled_prompt_embeds, self.transformer, runtime_config
         )
-        image_rotary_embeddings = Transformer.compute_rotary_embeddings(
-            prompt_embeds, self.transformer.pos_embed, config, kontext_image_ids
+        image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
+            prompt_embeds,
+            self.transformer,
+            runtime_config,
+            kontext_image_ids=kontext_image_ids,
         )
 
         # === Initialize KV caches to populate during sync for async warmstart ===
@@ -247,14 +253,18 @@ class DistributedDenoising:
 
             # Run assigned joint blocks with caching wrappers
             for block_idx, block in enumerate(self.transformer_blocks):
-                caching_block = CachingJointTransformerBlock(
-                    block, self.joint_kv_caches[block_idx]
+                wrapper = JointBlockWrapper(
+                    block=block,
+                    adapter=self.adapter,
+                    kv_cache=self.joint_kv_caches[block_idx],
+                    mode=BlockWrapperMode.CACHING,
                 )
-                encoder_hidden_states, hidden_states = caching_block(
+                encoder_hidden_states, hidden_states = wrapper(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
+                    text_seq_len=text_seq_len,
                 )
 
         # === PHASE 3: Joint→Single Transition ===
@@ -297,10 +307,13 @@ class DistributedDenoising:
 
             # Run assigned single blocks with caching wrappers
             for block_idx, block in enumerate(self.single_transformer_blocks):
-                caching_block = CachingSingleTransformerBlock(
-                    block, self.single_kv_caches[block_idx]
+                wrapper = SingleBlockWrapper(
+                    block=block,
+                    adapter=self.adapter,
+                    kv_cache=self.single_kv_caches[block_idx],
+                    mode=BlockWrapperMode.CACHING,
                 )
-                hidden_states = caching_block(
+                hidden_states = wrapper(
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
@@ -318,10 +331,11 @@ class DistributedDenoising:
         hidden_states = hidden_states[:, text_seq_len:, ...]
 
         if self.is_last_stage:
-            hidden_states = self.transformer.norm_out(hidden_states, text_embeddings)
-            hidden_states = self.transformer.proj_out(hidden_states)
+            hidden_states = self.adapter.final_projection(
+                hidden_states, text_embeddings, self.transformer
+            )
 
-            hidden_states = config.scheduler.step(
+            hidden_states = runtime_config.scheduler.step(
                 model_output=hidden_states,
                 timestep=t,
                 sample=prev_latents,
@@ -346,7 +360,7 @@ class DistributedDenoising:
     def _async_pipeline(
         self,
         t: int,
-        config: RuntimeConfig,
+        runtime_config: RuntimeConfig,
         patch_latents: list[mx.array],
         token_indices: list[tuple[int, int]],
         prompt_embeds: mx.array,
@@ -357,13 +371,16 @@ class DistributedDenoising:
         assert self.single_kv_caches is not None
 
         # TODO(ciaran): needed in general?
-        # hidden_states = config.scheduler.scale_model_input(hidden_states, t)
+        # hidden_states = runtime_config.scheduler.scale_model_input(hidden_states, t)
 
-        text_embeddings = Transformer.compute_text_embeddings(
-            t, pooled_prompt_embeds, self.transformer.time_text_embed, config
+        text_embeddings = self.adapter.compute_text_embeddings(
+            t, pooled_prompt_embeds, self.transformer, runtime_config
         )
-        image_rotary_embeddings = Transformer.compute_rotary_embeddings(
-            prompt_embeds, self.transformer.pos_embed, config, kontext_image_ids
+        image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
+            prompt_embeds,
+            self.transformer,
+            runtime_config,
+            kontext_image_ids=kontext_image_ids,
         )
 
         batch_size = patch_latents[0].shape[0]
@@ -396,23 +413,26 @@ class DistributedDenoising:
                         mx.eval(encoder_hidden_states)
 
                 if self.is_first_stage:
-                    patch = self.transformer.x_embedder(patch)
-                    encoder_hidden_states = self.transformer.context_embedder(
-                        prompt_embeds
+                    patch, encoder_hidden_states = self.adapter.compute_embeddings(
+                        patch, prompt_embeds, self.transformer
                     )
 
                 # Run assigned joint blocks with KV cache
                 for block_idx, block in enumerate(self.transformer_blocks):
-                    patched_block = PatchedJointTransformerBlock(block)
-                    encoder_hidden_states, patch = patched_block(
-                        patch_hidden=patch,
+                    wrapper = JointBlockWrapper(
+                        block=block,
+                        adapter=self.adapter,
+                        kv_cache=self.joint_kv_caches[block_idx],
+                        mode=BlockWrapperMode.PATCHED,
+                    )
+                    encoder_hidden_states, patch = wrapper(
+                        hidden_states=patch,
                         encoder_hidden_states=encoder_hidden_states,
                         text_embeddings=text_embeddings,
-                        image_rotary_emb=image_rotary_embeddings,
-                        kv_cache=self.joint_kv_caches[block_idx],
+                        rotary_embeddings=image_rotary_embeddings,
+                        text_seq_len=text_seq_len,
                         patch_start=start_token,
                         patch_end=end_token,
-                        text_seq_len=text_seq_len,
                     )
 
             if self.owns_concat_stage:
@@ -456,15 +476,19 @@ class DistributedDenoising:
 
                 # Run assigned single blocks with KV cache
                 for block_idx, block in enumerate(self.single_transformer_blocks):
-                    patched_block = PatchedSingleTransformerBlock(block)
-                    patch = patched_block(
-                        patch_hidden=patch,
-                        text_embeddings=text_embeddings,
-                        image_rotary_emb=image_rotary_embeddings,
+                    wrapper = SingleBlockWrapper(
+                        block=block,
+                        adapter=self.adapter,
                         kv_cache=self.single_kv_caches[block_idx],
+                        mode=BlockWrapperMode.PATCHED,
+                    )
+                    patch = wrapper(
+                        hidden_states=patch,
+                        text_embeddings=text_embeddings,
+                        rotary_embeddings=image_rotary_embeddings,
+                        text_seq_len=text_seq_len,
                         patch_start=start_token,
                         patch_end=end_token,
-                        text_seq_len=text_seq_len,
                     )
 
                 if not self.is_last_stage:
@@ -475,12 +499,11 @@ class DistributedDenoising:
             if self.is_last_stage:
                 patch_img_only = patch[:, text_seq_len:, :]
 
-                patch_img_only = self.transformer.norm_out(
-                    patch_img_only, text_embeddings
+                patch_img_only = self.adapter.final_projection(
+                    patch_img_only, text_embeddings, self.transformer
                 )
-                patch_img_only = self.transformer.proj_out(patch_img_only)
 
-                patch = config.scheduler.step(
+                patch = runtime_config.scheduler.step(
                     model_output=patch_img_only,
                     timestep=t,
                     sample=patch_prev,
@@ -498,7 +521,7 @@ class DistributedDenoising:
     def __call__(
         self,
         t: int,
-        config: RuntimeConfig,
+        runtime_config: RuntimeConfig,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
@@ -509,18 +532,20 @@ class DistributedDenoising:
         if t < self.num_sync_steps:
             latents = self._sync_pipeline(
                 t,
-                config,
+                runtime_config,
                 hidden_states,
                 prompt_embeds,
                 pooled_prompt_embeds,
                 kontext_image_ids,
             )
         else:
-            patch_latents, token_indices = self._create_patches(hidden_states, config)
+            patch_latents, token_indices = self._create_patches(
+                hidden_states, runtime_config
+            )
 
             patch_latents = self._async_pipeline(
                 t,
-                config,
+                runtime_config,
                 patch_latents,
                 token_indices,
                 prompt_embeds,
@@ -530,7 +555,7 @@ class DistributedDenoising:
 
             # Receive final patches from last rank
             if (
-                t == config.num_inference_steps - 1
+                t == runtime_config.num_inference_steps - 1
                 and self.is_first_stage
                 and not self.is_last_stage
             ):
