@@ -1,5 +1,5 @@
 import anyio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from exo.utils.pydantic_ext import CamelCaseModel
 
@@ -28,7 +28,7 @@ class TBConnectivityItem(BaseModel, extra="ignore"):
 class TBConnectivityData(BaseModel, extra="ignore"):
     domain_uuid_key: str | None
     device_name_key: str
-    _items: list[TBConnectivityItem] | None
+    items: list[TBConnectivityItem] | None = Field(None, alias="_items")
     receptacle_1_tag: TBReceptacleTag
 
     def ident(self, ifaces: dict[str, str]) -> TBIdentifier | None:
@@ -39,12 +39,12 @@ class TBConnectivityData(BaseModel, extra="ignore"):
         return TBIdentifier(rdma_interface=iface, domain_uuid=self.domain_uuid_key)
 
     def conn(self) -> TBConnection | None:
-        if self.domain_uuid_key is None or self._items is None:
+        if self.domain_uuid_key is None or self.items is None:
             return
 
         sink_key = next(
             item.domain_uuid_key
-            for item in self._items
+            for item in self.items
             if item.domain_uuid_key is not None
         )
         return TBConnection(source_uuid=self.domain_uuid_key, sink_uuid=sink_key)

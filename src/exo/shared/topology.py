@@ -13,7 +13,7 @@ class TopologySnapshot(BaseModel):
     nodes: list[NodeId]
     connections: list[tuple[NodeId, NodeId, SocketConnection | RDMAConnection]]
 
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class Topology:

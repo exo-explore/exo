@@ -259,7 +259,7 @@ class Worker:
                         sink_multiaddr=Multiaddr(
                             address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
                         ),
-                    )
+                    ),
                 )
 
             case ConnectionMessageType.Disconnected:
@@ -270,7 +270,7 @@ class Worker:
                         sink_multiaddr=Multiaddr(
                             address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
                         ),
-                    )
+                    ),
                 )
 
     async def _nack_request(self, since_idx: int) -> None:
@@ -420,17 +420,22 @@ class Worker:
                     )
                     if edge not in edges:
                         logger.debug(f"ping discovered {edge=}")
-                        await self.event_sender.send(TopologyEdgeCreated(source=self.node_id, sink=nid, edge=edge))
+                        await self.event_sender.send(
+                            TopologyEdgeCreated(
+                                source=self.node_id, sink=nid, edge=edge
+                            )
+                        )
 
             for nid, conn in self.state.topology.out_edges(self.node_id):
                 if not isinstance(conn, SocketConnection):
                     continue
-                if (
-                    nid not in conns
-                    or conn.sink_multiaddr.ip_address not in conns.get(nid, set())
+                if nid not in conns or conn.sink_multiaddr.ip_address not in conns.get(
+                    nid, set()
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
-                    await self.event_sender.send(TopologyEdgeDeleted(source=self.node_id, sink=nid, edge=conn))
+                    await self.event_sender.send(
+                        TopologyEdgeDeleted(source=self.node_id, sink=nid, edge=conn)
+                    )
 
             await anyio.sleep(10)
 
