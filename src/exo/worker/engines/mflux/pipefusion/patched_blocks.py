@@ -13,7 +13,7 @@ from mflux.models.flux.model.flux_transformer.single_transformer_block import (
     SingleTransformerBlock,
 )
 
-from exo.worker.engines.mflux.pipefusion.kv_cache import JointPatchKVCache, PatchKVCache
+from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
 class CachedJointAttention:
@@ -41,7 +41,7 @@ class CachedJointAttention:
         norm_hidden: mx.array,
         norm_encoder: mx.array,
         image_rotary_emb: mx.array,
-        kv_cache: JointPatchKVCache,
+        kv_cache: ImagePatchKVCache,
         patch_start: int,
         patch_end: int,
         text_seq_len: int,
@@ -169,7 +169,7 @@ class CachedSingleBlockAttention:
         self,
         norm_hidden: mx.array,
         image_rotary_emb: mx.array,
-        kv_cache: PatchKVCache,
+        kv_cache: ImagePatchKVCache,
         patch_start: int,
         patch_end: int,
         text_seq_len: int,
@@ -262,7 +262,7 @@ class PatchedJointTransformerBlock:
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
         image_rotary_emb: mx.array,
-        kv_cache: JointPatchKVCache,
+        kv_cache: ImagePatchKVCache,
         patch_start: int,
         patch_end: int,
         text_seq_len: int,
@@ -355,7 +355,7 @@ class PatchedSingleTransformerBlock:
         patch_hidden: mx.array,
         text_embeddings: mx.array,
         image_rotary_emb: mx.array,
-        kv_cache: PatchKVCache,
+        kv_cache: ImagePatchKVCache,
         patch_start: int,
         patch_end: int,
         text_seq_len: int,
@@ -410,7 +410,7 @@ class CachingJointTransformerBlock:
     subsequent async timesteps to use as stale values. Computes K/V only once.
     """
 
-    def __init__(self, block: JointTransformerBlock, kv_cache: JointPatchKVCache):
+    def __init__(self, block: JointTransformerBlock, kv_cache: ImagePatchKVCache):
         """Wrap an existing JointTransformerBlock with a KV cache.
 
         Args:
@@ -554,7 +554,7 @@ class CachingSingleTransformerBlock:
     subsequent async timesteps to use as stale values. Computes K/V only once.
     """
 
-    def __init__(self, block: SingleTransformerBlock, kv_cache: PatchKVCache):
+    def __init__(self, block: SingleTransformerBlock, kv_cache: ImagePatchKVCache):
         """Wrap an existing SingleTransformerBlock with a KV cache.
 
         Args:
