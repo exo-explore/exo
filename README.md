@@ -25,7 +25,7 @@ EXO connects all your devices into an AI cluster. It pools together the resource
 - **RDMA over Thunderbolt**: EXO ships with [day-0 support for RDMA over Thunderbolt 5](https://x.com/exolabs/status/2001817749744476256?s=20), enabling 99% reduction in latency between devices.
 - **Topology-Aware Auto Parallel**: EXO figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
 - **Tensor Parallelism**: EXO supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
-- **MLX Support**: EXO uses [ml-explore/mlx](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
+- **MLX Support**: EXO uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
 
 ## Benchmarks
 
@@ -82,7 +82,7 @@ git clone https://github.com/exo-explore/exo && cd exo/dashboard && npm i && npm
 
 EXO ships a macOS app that runs in the background on your Mac.
 
-<img src="docs/macos-app-one-macbook.png" alt="EXO macOS App - running on a MacBook" width="80%" />
+<img src="docs/macos-app-one-macbook.png" alt="EXO macOS App - running on a MacBook" width="35%" />
 
 The macOS app requires macOS Tahoe 26.2 or later.
 
