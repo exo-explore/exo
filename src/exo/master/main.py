@@ -201,9 +201,7 @@ class Master:
     async def _plan(self) -> None:
         while True:
             # kill broken instances
-            connected_node_ids = set(
-                [x.node_id for x in self.state.topology.list_nodes()]
-            )
+            connected_node_ids = set([x for x in self.state.topology.list_nodes()])
             for instance_id, instance in self.state.instances.items():
                 for node_id in instance.shard_assignments.node_to_runner:
                     if node_id not in connected_node_ids:

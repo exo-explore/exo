@@ -8,6 +8,7 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import NodePerformanceProfile
+from exo.shared.types.topology import SocketConnection, TBConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -21,24 +22,33 @@ class NodeWithProfile(BaseModel):
     node_id: NodeId
     node_profile: NodePerformanceProfile
 
+
 def filter_cycles_by_memory(
-    cycles: list[list[NodeId]], node_profiles: Mapping[NodeId, NodePerformanceProfile], required_memory: Memory
+    cycles: list[list[NodeId]],
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
+    required_memory: Memory,
 ) -> list[list[NodeWithProfile]]:
     filtered_cycles: list[list[NodeWithProfile]] = []
     for cycle in cycles:
-        if not all(id in node_profiles for id in cycle):
+        if not all(node in node_profiles for node in cycle):
             continue
-
 
         total_mem = sum(
             (node_profiles[node].memory.ram_available for node in cycle), start=Memory()
         )
         if total_mem >= required_memory:
-            filtered_cycles.append([NodeWithProfile(node_id = node, node_profile=node_profiles[node]) for node in cycle])
+            filtered_cycles.append(
+                [
+                    NodeWithProfile(node_id=node, node_profile=node_profiles[node])
+                    for node in cycle
+                ]
+            )
     return filtered_cycles
 
 
-def get_smallest_cycles(cycles: list[list[NodeWithProfile]]) -> list[list[NodeWithProfile]]:
+def get_smallest_cycles(
+    cycles: list[list[NodeWithProfile]],
+) -> list[list[NodeWithProfile]]:
     min_nodes = min(len(cycle) for cycle in cycles)
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
@@ -218,17 +228,16 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
         current_node = cycle[i]
         next_node = cycle[(i + 1) % len(cycle)]
 
-        for connection in cycle_digraph.list_connections():
-            if (
-                connection.local_node_id == current_node
-                and connection.send_back_node_id == next_node
-            ):
+        for src, sink, connection in cycle_digraph.list_connections():
+            if not isinstance(connection, SocketConnection):
+                continue
+
+            if src == current_node and sink == next_node:
                 if get_thunderbolt and not connection.is_thunderbolt():
                     continue
-                assert connection.send_back_multiaddr is not None
                 host = Host(
-                    ip=connection.send_back_multiaddr.ip_address,
-                    port=connection.send_back_multiaddr.port,
+                    ip=connection.sink_multiaddr.ip_address,
+                    port=connection.sink_multiaddr.port,
                 )
                 hosts.append(host)
                 break
@@ -237,7 +246,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
 
 
 def get_mlx_ibv_devices_matrix(
-    selected_cycle: list[NodeWithProfile],
+    selected_cycle: list[NodeId],
     cycle_digraph: Topology,
 ) -> list[list[str | None]]:
     """Build connectivity matrix mapping device i to device j via RDMA interface names.
@@ -256,17 +265,10 @@ def get_mlx_ibv_devices_matrix(
             if i == j:
                 continue
 
-            # Find the IP J uses to talk to I
-            for connection_ip, _ in _find_connection_ip(node_j.node_id, node_i.node_id, cycle_digraph):
-                # This is a local IP on I, which is attached to an interface: find that interface
-                if interface_name := _find_rdma_interface_name_for_ip(
-                    connection_ip, node_i
-                ):
-                    matrix[i][j] = interface_name
-                    logger.info(
-                        f"Interface name for {connection_ip} on {node_i.node_id}: {interface_name}"
-                    )
-                    break
+            for conn in cycle_digraph.get_all_connections_between(node_i, node_j):
+                if isinstance(conn, TBConnection):
+                    matrix[i][j] = conn.source_rdma_iface
+                break
             else:
                 logger.warning(
                     f"Failed to find interface name between {node_i.node_id} and {node_j.node_id}"
@@ -274,6 +276,7 @@ def get_mlx_ibv_devices_matrix(
                 raise ValueError(
                     "Current ibv backend requires all-to-all rdma connections"
                 )
+
 
     return matrix
 
@@ -283,31 +286,11 @@ def _find_connection_ip(
     node_j: NodeId,
     cycle_digraph: Topology,
 ) -> Generator[tuple[str, bool]]:
-    """Find all IP addresses that connect node i to node j, with thunderbolt flag."""
-    for connection in cycle_digraph.list_connections():
-        if (
-            connection.local_node_id == node_i
-            and connection.send_back_node_id == node_j
-        ):
-            yield connection.send_back_multiaddr.ip_address, connection.is_thunderbolt()
-
-
-def _find_rdma_interface_name_for_ip(
-    ip_address: str,
-    node_info: NodeWithProfile,
-) -> str | None:
-    logger.info(f"Searching {node_info.node_id} for ip {ip_address}:")
-    for interface in node_info.node_profile.network_interfaces:
-        if interface.name not in ["en2", "en3", "en4", "en5", "en6", "en7"]:
-            continue
-        logger.info(f" | {interface.name}: {interface.ip_address}")
-        if interface.ip_address != ip_address:
-            continue
-
-        logger.info("Found")
-        return f"rdma_{interface.name}"
-
-    return None
+    """Find all IP addresses that connect node i to node j."""
+    # TODO: Prioritise ETHERNET > ??WIFI > TB for coordinator
+    for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
+        if isinstance(connection, SocketConnection):
+            yield connection.sink_multiaddr.ip_address, connection.is_thunderbolt()
 
 
 def _find_interface_name_for_ip(

@@ -1,27 +1,31 @@
 import contextlib
+from collections.abc import Sequence
 from typing import Iterable
 
 import rustworkx as rx
 from pydantic import BaseModel, ConfigDict
 
 from exo.shared.types.common import NodeId
-from exo.shared.types.topology import Connection, TBConnection
+from exo.shared.types.topology import RDMAConnection, SocketConnection
 
 
 class TopologySnapshot(BaseModel):
     nodes: list[NodeId]
-    connections: list[tuple[NodeId, NodeId, Connection | TBConnection]]
+    connections: list[tuple[NodeId, NodeId, SocketConnection | RDMAConnection]]
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
 
-
 class Topology:
     def __init__(self) -> None:
-        self._graph: rx.PyDiGraph[NodeId, Connection | TBConnection] = rx.PyDiGraph()
+        self._graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = (
+            rx.PyDiGraph()
+        )
         self._node_id_to_rx_id_map: dict[NodeId, int] = dict()
         self._rx_id_to_node_id_map: dict[int, NodeId] = dict()
-        self._edge_id_to_rx_id_map: dict[Connection | TBConnection, int] = dict()
+        self._edge_id_to_rx_id_map: dict[SocketConnection | RDMAConnection, int] = (
+            dict()
+        )
 
     def to_snapshot(self) -> TopologySnapshot:
         return TopologySnapshot(
@@ -61,7 +65,9 @@ class Topology:
             for rx_id in self._graph.neighbors(self._node_id_to_rx_id_map[node_id])
         ]
 
-    def out_edges(self, node_id: NodeId) -> list[tuple[NodeId, Connection | TBConnection]]:
+    def out_edges(
+        self, node_id: NodeId
+    ) -> list[tuple[NodeId, SocketConnection | RDMAConnection]]:
         if node_id not in self._node_id_to_rx_id_map:
             return []
         return [
@@ -74,14 +80,16 @@ class Topology:
     def contains_node(self, node_id: NodeId) -> bool:
         return node_id in self._node_id_to_rx_id_map
 
-    def contains_connection(self, connection: Connection | TBConnection) -> bool:
+    def contains_connection(
+        self, connection: SocketConnection | RDMAConnection
+    ) -> bool:
         return connection in self._edge_id_to_rx_id_map
 
     def add_connection(
         self,
         source: NodeId,
         sink: NodeId,
-        connection: Connection | TBConnection,
+        connection: SocketConnection | RDMAConnection,
     ) -> None:
         if source not in self._node_id_to_rx_id_map:
             self.add_node(source)
@@ -97,21 +105,34 @@ class Topology:
         rx_id = self._graph.add_edge(src_id, sink_id, connection)
         self._edge_id_to_rx_id_map[connection] = rx_id
 
+    def get_all_connections_between(
+        self, source: NodeId, sink: NodeId
+    ) -> Iterable[SocketConnection | RDMAConnection]:
+        src_id = self._node_id_to_rx_id_map[source]
+        sink_id = self._node_id_to_rx_id_map[sink]
+        return self._graph.get_all_edge_data(src_id, sink_id)
+
     def list_nodes(self) -> Iterable[NodeId]:
         return (self._graph[i] for i in self._graph.node_indices())
 
-    def list_connections(self) -> Iterable[tuple[NodeId, NodeId, Connection | TBConnection]]:
-        return ((self._rx_id_to_node_id_map[src_id], self._rx_id_to_node_id_map[sink_id], connection) for src_id, sink_id, connection in self._graph.weighted_edge_list())
+    def list_connections(
+        self,
+    ) -> Iterable[tuple[NodeId, NodeId, SocketConnection | RDMAConnection]]:
+        return (
+            (
+                self._rx_id_to_node_id_map[src_id],
+                self._rx_id_to_node_id_map[sink_id],
+                connection,
+            )
+            for src_id, sink_id, connection in self._graph.weighted_edge_list()
+        )
 
     def remove_node(self, node_id: NodeId) -> None:
         if node_id not in self._node_id_to_rx_id_map:
             return
 
         for src, sink, connection in self.list_connections():
-            if (
-                src == node_id
-                or sink == node_id
-            ):
+            if src == node_id or sink == node_id:
                 self.remove_connection(connection)
 
         rx_idx = self._node_id_to_rx_id_map[node_id]
@@ -120,7 +141,16 @@ class Topology:
         del self._node_id_to_rx_id_map[node_id]
         del self._rx_id_to_node_id_map[rx_idx]
 
-    def remove_connection(self, connection: Connection | TBConnection) -> None:
+    def replace_all_out_tb_connections(
+        self, source: NodeId, new_connections: Sequence[tuple[NodeId, RDMAConnection]]
+    ) -> None:
+        for conn in self.out_edges(source):
+            if isinstance(conn, RDMAConnection):
+                self.remove_connection(conn)
+        for sink, conn in new_connections:
+            self.add_connection(source, sink, conn)
+
+    def remove_connection(self, connection: SocketConnection | RDMAConnection) -> None:
         if connection not in self._edge_id_to_rx_id_map:
             return
         rx_idx = self._edge_id_to_rx_id_map[connection]
@@ -143,11 +173,11 @@ class Topology:
             if conn.is_thunderbolt()
         ]
 
-        tb_graph: rx.PyDiGraph[NodeId, Connection] = rx.PyDiGraph()
+        tb_graph: rx.PyDiGraph[NodeId, SocketConnection] = rx.PyDiGraph()
         tb_graph.add_nodes_from(self._graph.nodes())
 
         for u, v, conn in tb_edges:
-            if isinstance(conn, Connection):
+            if isinstance(conn, SocketConnection):
                 tb_graph.add_edge(u, v, conn)
 
         cycle_idxs = rx.simple_cycles(tb_graph)
@@ -165,10 +195,7 @@ class Topology:
         for rx_idx in rx_idxs:
             topology.add_node(self._graph[rx_idx])
         for source, sink, connection in self.list_connections():
-            if (
-                source in node_idxs
-                and sink in node_idxs
-            ):
+            if source in node_idxs and sink in node_idxs:
                 topology.add_connection(source, sink, connection)
         return topology
 

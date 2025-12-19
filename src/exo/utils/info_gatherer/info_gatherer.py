@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from subprocess import CalledProcessError
 from typing import Self, cast

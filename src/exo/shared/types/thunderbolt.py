@@ -5,8 +5,8 @@ from exo.utils.pydantic_ext import CamelCaseModel
 
 
 class TBConnection(CamelCaseModel):
-    source: str
-    sink: str
+    source_uuid: str
+    sink_uuid: str
 
 
 class TBIdentifier(CamelCaseModel):
@@ -47,7 +47,7 @@ class TBConnectivityData(BaseModel, extra="ignore"):
             for item in self._items
             if item.domain_uuid_key is not None
         )
-        return TBConnection(source=self.domain_uuid_key, sink=sink_key)
+        return TBConnection(source_uuid=self.domain_uuid_key, sink_uuid=sink_key)
 
 
 class TBConnectivity(BaseModel):
