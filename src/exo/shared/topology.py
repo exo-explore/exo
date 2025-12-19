@@ -56,7 +56,7 @@ class Topology:
     def node_is_leaf(self, node_id: NodeId) -> bool:
         return (
             node_id in self._node_id_to_rx_id_map
-            and len(self._graph.neighbors(self._node_id_to_rx_id_map[node_id])) == 1
+            and len(self._graph.neighbors(self._node_id_to_rx_id_map[node_id])) <= 1
         )
 
     def neighbours(self, node_id: NodeId) -> list[NodeId]:
@@ -67,15 +67,15 @@ class Topology:
 
     def out_edges(
         self, node_id: NodeId
-    ) -> list[tuple[NodeId, SocketConnection | RDMAConnection]]:
+    ) -> Iterable[tuple[NodeId, SocketConnection | RDMAConnection]]:
         if node_id not in self._node_id_to_rx_id_map:
             return []
-        return [
+        return (
             (self._rx_id_to_node_id_map[nid], conn)
             for _, nid, conn in self._graph.out_edges(
                 self._node_id_to_rx_id_map[node_id]
             )
-        ]
+        )
 
     def contains_node(self, node_id: NodeId) -> bool:
         return node_id in self._node_id_to_rx_id_map
@@ -110,7 +110,10 @@ class Topology:
     ) -> Iterable[SocketConnection | RDMAConnection]:
         src_id = self._node_id_to_rx_id_map[source]
         sink_id = self._node_id_to_rx_id_map[sink]
-        return self._graph.get_all_edge_data(src_id, sink_id)
+        try:
+            return self._graph.get_all_edge_data(src_id, sink_id)
+        except rx.NoEdgeBetweenNodes:
+            return []
 
     def list_nodes(self) -> Iterable[NodeId]:
         return (self._graph[i] for i in self._graph.node_indices())
