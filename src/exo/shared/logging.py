@@ -24,6 +24,8 @@ class _InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
+        return
+
         logger.opt(depth=3, exception=record.exc_info).log(level, record.getMessage())
 
 
