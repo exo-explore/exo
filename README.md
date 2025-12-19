@@ -17,36 +17,84 @@ exo: Run your own AI cluster at home with everyday devices. Maintained by [exo l
 
 ---
 
+EXO connects all your devices into an AI cluster. It pools together the resources of all your devices in order to run large models. Not only does EXO enable running models larger than would fit on a single device, but with [day-0 support for RDMA over Thunderbolt](https://x.com/exolabs/status/2001817749744476256?s=20), makes models run faster as you add more devices.
+
 ## Features
 
-- **Automatic Device Discovery**: Devices running EXO automatically discover each other on your local network - no manual configuration.
-- **RDMA over Thunderbolt**: EXO ships with Day-0 support for RDMA over Thunderbolt 5, enabling 99% reduction in latency between devices.
-- **Auto Parallel**: EXO automatically splits up models to run distributed across devices.
+- **Automatic Device Discovery**: Devices running EXO automatically discover each other - no manual configuration.
+- **RDMA over Thunderbolt**: EXO ships with [day-0 support for RDMA over Thunderbolt 5](https://x.com/exolabs/status/2001817749744476256?s=20), enabling 99% reduction in latency between devices.
+- **Topology-Aware Auto Parallel**: EXO figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
 - **Tensor Parallelism**: EXO supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
 - **MLX Support**: EXO uses [ml-explore/mlx](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
+
+## Benchmarks
+
+<details>
+  <summary>Qwen3-235B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA</summary>
+  <img src="docs/benchmarks/jeffgeerling/mac-studio-cluster-ai-full-1-qwen3-235b.jpeg" alt="Benchmark - Qwen3-235B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA" width="80%" />
+  <p>
+    <strong>Source:</strong> <a href="https://www.jeffgeerling.com/blog/2025/15-tb-vram-on-mac-studio-rdma-over-thunderbolt-5">Jeff Geerling: 15 TB VRAM on Mac Studio – RDMA over Thunderbolt 5</a>
+  </p>
+</details>
+
+<details>
+  <summary>DeepSeek v3.1 671B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA</summary>
+  <img src="docs/benchmarks/jeffgeerling/mac-studio-cluster-ai-full-2-deepseek-3.1-671b.jpeg" alt="Benchmark - DeepSeek v3.1 671B (8-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA" width="80%" />
+  <p>
+    <strong>Source:</strong> <a href="https://www.jeffgeerling.com/blog/2025/15-tb-vram-on-mac-studio-rdma-over-thunderbolt-5">Jeff Geerling: 15 TB VRAM on Mac Studio – RDMA over Thunderbolt 5</a>
+  </p>
+</details>
+
+<details>
+  <summary>Kimi K2 Thinking (native 4-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA</summary>
+  <img src="docs/benchmarks/jeffgeerling/mac-studio-cluster-ai-full-3-kimi-k2-thinking.jpeg" alt="Benchmark - Kimi K2 Thinking (native 4-bit) on 4 × M3 Ultra Mac Studio with Tensor Parallel RDMA" width="80%" />
+  <p>
+    <strong>Source:</strong> <a href="https://www.jeffgeerling.com/blog/2025/15-tb-vram-on-mac-studio-rdma-over-thunderbolt-5">Jeff Geerling: 15 TB VRAM on Mac Studio – RDMA over Thunderbolt 5</a>
+  </p>
+</details>
 
 ---
 
 ## Quick Start
 
-You need at least one Mac device running macOS Tahoe 26.2 (released December 12th 2025).
+Devices running EXO automatically discover each other, without needing any manual configuration. Each device provides an API and a dashboard for interacting with your cluster (runs at `http://localhost:52415`).
 
-You can download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg). It will ask for permission to modify system settings and install a new Network profile. We hope to make this smoother in the future!
+There are two ways to run EXO:
 
-To run from source, clone the repo, build the dashboard with `cd dashboard && npm install && npm run build` and run `uv run exo`.
+### Run from Source (Mac & Linux)
 
-After starting with either of these methods go to `http://localhost:52415` in your browser, and you'll have EXO.
+Clone the repo, build the dashboard, and run EXO:
+
+```bash
+cd dashboard && npm install && npm run build
+uv run exo
+```
+
+**One-liner:**
+
+```bash
+git clone https://github.com/exo-explore/exo && cd exo/dashboard && npm i && npm run build && cd .. && uv run exo
+```
 
 ---
 
-## Requirements
+### macOS App
 
-- Mac devices with Apple Silicon (M-series chips)
-- macOS Tahoe 26.2 or later (released December 12th 2025)
-  - Older macOS versions may work without RDMA, but only 26.2+ is officially supported
-- For RDMA over Thunderbolt: a high quality Thunderbolt 5 cable
+EXO ships a macOS app that runs in the background on your Mac.
 
-We intend to add support for other hardware platforms [like the DGX Spark](https://x.com/exolabs/status/1978525767739883736) in the future, but they are not currently supported. If you'd like support for a new hardware platform, please search for an existing feature request and add a thumbs up so we know what hardware is important to the community.
+<img src="docs/macos-app-one-macbook.png" alt="EXO macOS App - running on a MacBook" width="80%" />
+
+The macOS app requires macOS Tahoe 26.2 or later.
+
+Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
+
+The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
+
+---
+
+## Hardware Accelerator Support
+
+On macOS, EXO uses the GPU. On Linux, EXO currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please search for an existing feature request and add a thumbs up so we know what hardware is important to the community.
 
 ---
 
