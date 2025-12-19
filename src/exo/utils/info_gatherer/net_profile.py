@@ -1,10 +1,12 @@
 import http.client
+from collections.abc import Mapping
 
 from anyio import create_task_group, to_thread
 from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
+from exo.shared.types.profiling import NodePerformanceProfile
 
 
 async def check_reachability(
@@ -57,20 +59,17 @@ async def check_reachability(
     out[remote_node_id].add(target_ip)
 
 
-async def check_reachable(
-    topology: Topology, self_node_id: NodeId
-) -> dict[NodeId, set[str]]:
-    """Check which nodes are reachable and return their IPs."""
+async def check_reachable(topology: Topology, profiles: Mapping[NodeId, NodePerformanceProfile], self_node_id: NodeId) -> dict[NodeId, set[str]]:
     reachable: dict[NodeId, set[str]] = {}
     async with create_task_group() as tg:
-        for node in topology.list_nodes():
-            if not node.node_profile:
+        for node_id in topology.list_nodes():
+            if not node_id not in profiles:
                 continue
-            for iface in node.node_profile.network_interfaces:
+            for iface in profiles[node_id].network_interfaces:
                 tg.start_soon(
                     check_reachability,
                     iface.ip_address,
-                    node.node_id,
+                    node_id,
                     self_node_id,
                     reachable,
                 )
