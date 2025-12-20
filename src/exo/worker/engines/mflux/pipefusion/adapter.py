@@ -5,7 +5,7 @@ from typing import Any, Protocol
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
 
-from exo.worker.engines.mflux.config.model_config import ImageModelConfig
+from exo.worker.engines.mflux.config.model_config import BlockType, ImageModelConfig
 from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
@@ -279,5 +279,80 @@ class ModelAdapter(Protocol):
 
         Returns:
             List of single transformer blocks
+        """
+        ...
+
+    def get_blocks(self, transformer: Any) -> list[tuple[Any, BlockType]]:
+        """Get all transformer blocks in execution order with their types.
+
+        This method provides a unified view of all blocks, regardless of their
+        specific type (joint, single, unified). New model adapters can override
+        this to return blocks in their native arrangement.
+
+        Args:
+            transformer: The transformer model
+
+        Returns:
+            List of (block, block_type) tuples in execution order
+        """
+        ...
+
+    def apply_block(
+        self,
+        block: Any,
+        block_type: BlockType,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array | None,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache | None,
+        mode: "BlockWrapperMode",
+        text_seq_len: int,
+        patch_start: int | None = None,
+        patch_end: int | None = None,
+    ) -> tuple[mx.array, mx.array | None]:
+        """Apply any transformer block type.
+
+        This unified method dispatches to the appropriate block-specific logic
+        based on block_type. New model adapters can implement this directly
+        without needing separate apply_joint_block/apply_single_block methods.
+
+        Args:
+            block: The transformer block
+            block_type: Type of block (JOINT, SINGLE, or UNIFIED)
+            hidden_states: Image hidden states (or concatenated for SINGLE/UNIFIED)
+            encoder_hidden_states: Text hidden states (None for SINGLE/UNIFIED)
+            text_embeddings: Conditioning embeddings
+            rotary_embeddings: Rotary position embeddings
+            kv_cache: KV cache (None if not using cache)
+            mode: CACHING or PATCHED mode
+            text_seq_len: Text sequence length
+            patch_start: Start index for patched mode
+            patch_end: End index for patched mode
+
+        Returns:
+            Tuple of (hidden_states, encoder_hidden_states or None)
+            - For JOINT blocks: (image_hidden, text_hidden)
+            - For SINGLE/UNIFIED blocks: (concatenated_hidden, None)
+        """
+        ...
+
+    def merge_streams(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+    ) -> mx.array:
+        """Merge image and text streams for transition to single/unified blocks.
+
+        This is called at the transition point from joint blocks (which process
+        image and text separately) to single/unified blocks (which process them
+        together). Override to customize the merge strategy.
+
+        Args:
+            hidden_states: Image hidden states
+            encoder_hidden_states: Text hidden states
+
+        Returns:
+            Merged hidden states (default: concatenate [text, image])
         """
         ...
