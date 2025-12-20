@@ -72,11 +72,15 @@ There are two ways to run EXO:
   ```bash
   brew install uv
   ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+  ```bash
+  brew install macmon
+  ```
 
 Clone the repo, build the dashboard, and run EXO:
 
 ```bash
-cd dashboard && npm install && npm run build
+cd dashboard && npm install && npm run build && cd..
 uv run exo
 ```
 
