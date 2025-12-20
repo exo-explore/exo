@@ -3,7 +3,7 @@ name = "exo"
 version = "0.3.0"
 description = "Exo"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.12.14",
@@ -30,8 +30,6 @@ dependencies = [
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
     "bidict>=0.23.1",
-    "mlx>=0.29.3",
-    "mlx-lm>=0.28.3",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
 ]
@@ -50,8 +48,17 @@ dev = [
     "ruff>=0.11.13",
 ]
 
-# mlx[cuda] requires a newer version of mlx. the ideal on linux is: default to mlx[cpu] unless[cuda] specified.
+# Backend-specific dependencies - install based on your platform
 [project.optional-dependencies]
+# MLX backend for Apple Silicon (macOS only)
+mlx = [
+    "mlx>=0.29.3",
+    "mlx-lm>=0.28.3",
+]
+# llama.cpp backend for CPU/cross-platform (Android, Linux, etc.)
+llamacpp = [
+    "llama-cpp-python>=0.3.0",
+]
 # cuda = [
 #     "mlx[cuda]==0.26.3",
 # ]
@@ -93,8 +100,8 @@ reportInvalidCast = "error"
 reportUnnecessaryCast = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
-pythonVersion = "3.13"
-pythonPlatform = "Darwin"
+pythonVersion = "3.12"
+pythonPlatform = "All"
 
 exclude = ["**/.venv", "**/venv", "**/__pycache__", "**/exo_scripts", "**/.direnv", "**/rust", "**/.github"]
 stubPath = ".mlx_typings"
@@ -107,6 +114,7 @@ root = "src"
 ###
 
 # supported platforms for this project
+# Note: Android/Termux reports as 'linux' with 'aarch64-linux-android' target
 [tool.uv]
 environments = [
     "sys_platform == 'darwin'",

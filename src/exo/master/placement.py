@@ -27,6 +27,7 @@ from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
     InstanceMeta,
+    LlamaCppInstance,
     MlxJacclInstance,
     MlxRingInstance,
 )
@@ -105,13 +106,12 @@ def place_instance(
     target_instances = dict(deepcopy(current_instances))
 
     if len(selected_cycle) == 1:
-        logger.warning(
-            "You have likely selected ibv for a single node instance; falling back to MlxRing"
-        )
+        if command.instance_meta == InstanceMeta.MlxJaccl:
+            logger.warning(
+                "You have likely selected ibv for a single node instance; falling back to MlxRing"
+            )
+            command.instance_meta = InstanceMeta.MlxRing
 
-        command.instance_meta = InstanceMeta.MlxRing
-
-    # TODO: Single node instances
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
             mlx_ibv_devices = get_mlx_ibv_devices_matrix(
@@ -132,6 +132,19 @@ def place_instance(
         case InstanceMeta.MlxRing:
             hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
             target_instances[instance_id] = MlxRingInstance(
+                instance_id=instance_id,
+                shard_assignments=shard_assignments,
+                hosts=[
+                    Host(
+                        ip=host.ip,
+                        port=random_ephemeral_port(),
+                    )
+                    for host in hosts
+                ],
+            )
+        case InstanceMeta.LlamaCpp:
+            hosts = get_hosts_from_subgraph(cycle_digraph)
+            target_instances[instance_id] = LlamaCppInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 hosts=[

@@ -14,6 +14,7 @@ class InstanceId(Id):
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    LlamaCpp = "LlamaCpp"
 
 
 class BaseInstance(TaggedModel):
@@ -33,8 +34,16 @@ class MlxJacclInstance(BaseInstance):
     ibv_coordinators: dict[NodeId, str]
 
 
-# TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+class LlamaCppInstance(BaseInstance):
+    """
+    Instance type for llama.cpp-based inference.
+    Used for cross-platform inference on Android, Linux, and other non-Apple platforms.
+    """
+
+    hosts: list[Host]
+
+
+Instance = MlxRingInstance | MlxJacclInstance | LlamaCppInstance
 
 
 class BoundInstance(CamelCaseModel):

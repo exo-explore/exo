@@ -449,3 +449,105 @@ MODEL_CARDS: dict[str, ModelCard] = {
     #     ),
     # ),
 }
+
+# GGUF Model Cards for llama.cpp backend (Android, Linux, cross-platform)
+GGUF_MODEL_CARDS: dict[str, ModelCard] = {
+    # Llama 3.2 GGUF models (good for mobile/Android)
+    "llama-3.2-1b-gguf": ModelCard(
+        short_id="llama-3.2-1b-gguf",
+        model_id=ModelId("bartowski/Llama-3.2-1B-Instruct-GGUF"),
+        name="Llama 3.2 1B (GGUF Q4_K_M)",
+        description="""Llama 3.2 1B in GGUF format for llama.cpp. Optimized for mobile and edge devices.""",
+        tags=["gguf", "mobile", "edge"],
+        metadata=ModelMetadata(
+            model_id=ModelId("bartowski/Llama-3.2-1B-Instruct-GGUF"),
+            pretty_name="Llama 3.2 1B (GGUF)",
+            storage_size=Memory.from_mb(750),
+            n_layers=16,
+        ),
+    ),
+    "llama-3.2-3b-gguf": ModelCard(
+        short_id="llama-3.2-3b-gguf",
+        model_id=ModelId("bartowski/Llama-3.2-3B-Instruct-GGUF"),
+        name="Llama 3.2 3B (GGUF Q4_K_M)",
+        description="""Llama 3.2 3B in GGUF format for llama.cpp. Good balance of size and capability.""",
+        tags=["gguf", "mobile"],
+        metadata=ModelMetadata(
+            model_id=ModelId("bartowski/Llama-3.2-3B-Instruct-GGUF"),
+            pretty_name="Llama 3.2 3B (GGUF)",
+            storage_size=Memory.from_mb(2000),
+            n_layers=28,
+        ),
+    ),
+    # Qwen2.5 GGUF models
+    "qwen2.5-0.5b-gguf": ModelCard(
+        short_id="qwen2.5-0.5b-gguf",
+        model_id=ModelId("Qwen/Qwen2.5-0.5B-Instruct-GGUF"),
+        name="Qwen 2.5 0.5B (GGUF Q4_K_M)",
+        description="""Qwen 2.5 0.5B - ultra-lightweight model for constrained devices.""",
+        tags=["gguf", "mobile", "edge", "tiny"],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen2.5-0.5B-Instruct-GGUF"),
+            pretty_name="Qwen 2.5 0.5B (GGUF)",
+            storage_size=Memory.from_mb(400),
+            n_layers=24,
+        ),
+    ),
+    "qwen2.5-1.5b-gguf": ModelCard(
+        short_id="qwen2.5-1.5b-gguf",
+        model_id=ModelId("Qwen/Qwen2.5-1.5B-Instruct-GGUF"),
+        name="Qwen 2.5 1.5B (GGUF Q4_K_M)",
+        description="""Qwen 2.5 1.5B - efficient model for mobile inference.""",
+        tags=["gguf", "mobile"],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen2.5-1.5B-Instruct-GGUF"),
+            pretty_name="Qwen 2.5 1.5B (GGUF)",
+            storage_size=Memory.from_mb(1000),
+            n_layers=28,
+        ),
+    ),
+    "qwen2.5-3b-gguf": ModelCard(
+        short_id="qwen2.5-3b-gguf",
+        model_id=ModelId("Qwen/Qwen2.5-3B-Instruct-GGUF"),
+        name="Qwen 2.5 3B (GGUF Q4_K_M)",
+        description="""Qwen 2.5 3B - capable model for mobile and edge devices.""",
+        tags=["gguf", "mobile"],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen2.5-3B-Instruct-GGUF"),
+            pretty_name="Qwen 2.5 3B (GGUF)",
+            storage_size=Memory.from_mb(2000),
+            n_layers=36,
+        ),
+    ),
+    # Phi-3 GGUF models (Microsoft's efficient models)
+    "phi-3-mini-gguf": ModelCard(
+        short_id="phi-3-mini-gguf",
+        model_id=ModelId("bartowski/Phi-3.5-mini-instruct-GGUF"),
+        name="Phi 3.5 Mini (GGUF Q4_K_M)",
+        description="""Microsoft Phi 3.5 Mini - efficient 3.8B model with strong reasoning.""",
+        tags=["gguf", "mobile", "reasoning"],
+        metadata=ModelMetadata(
+            model_id=ModelId("bartowski/Phi-3.5-mini-instruct-GGUF"),
+            pretty_name="Phi 3.5 Mini (GGUF)",
+            storage_size=Memory.from_mb(2300),
+            n_layers=32,
+        ),
+    ),
+    # TinyLlama for extremely constrained devices
+    "tinyllama-1.1b-gguf": ModelCard(
+        short_id="tinyllama-1.1b-gguf",
+        model_id=ModelId("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"),
+        name="TinyLlama 1.1B (GGUF Q4_K_M)",
+        description="""TinyLlama 1.1B - extremely efficient model for edge devices.""",
+        tags=["gguf", "mobile", "edge", "tiny"],
+        metadata=ModelMetadata(
+            model_id=ModelId("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"),
+            pretty_name="TinyLlama 1.1B (GGUF)",
+            storage_size=Memory.from_mb(700),
+            n_layers=22,
+        ),
+    ),
+}
+
+# Combined model cards (all available models)
+ALL_MODEL_CARDS: dict[str, ModelCard] = {**MODEL_CARDS, **GGUF_MODEL_CARDS}
