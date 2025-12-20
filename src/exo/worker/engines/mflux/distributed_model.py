@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
 from mflux.config.config import Config
-from mflux.config.model_config import ModelConfig
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
 from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
@@ -21,7 +20,7 @@ from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mflux.config import get_config_for_model
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
-from exo.worker.engines.mflux.pipefusion import get_adapter_for_model
+from exo.worker.engines.mflux.pipefusion import create_model, get_adapter_for_model
 from exo.worker.engines.mflux.pipefusion.adapter import ModelAdapter
 from exo.worker.engines.mflux.pipefusion.distributed_denoising import (
     DistributedDenoising,
@@ -69,17 +68,8 @@ class DistributedImageModel:
         config = get_config_for_model(model_id)
         adapter = get_adapter_for_model(config)
 
-        # Create the appropriate mflux model based on family
-        if config.model_family == "flux":
-            model = Flux1(
-                model_config=ModelConfig.from_name(
-                    model_name=model_id, base_model=None
-                ),
-                local_path=str(local_path),
-                quantize=quantize,
-            )
-        else:
-            raise ValueError(f"Unsupported model family: {config.model_family}")
+        # Create the model using the factory registry
+        model = create_model(config, model_id, local_path, quantize)
 
         if group is not None:
             # Apply pipeline parallelism by wrapping the transformer
