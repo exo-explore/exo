@@ -131,17 +131,75 @@ create_directories() {
     print_success "Created ~/.exo/logs"
 }
 
+# Detect ARM architecture and set optimal compiler flags
+detect_arm_architecture() {
+    print_header "Detecting ARM Architecture"
+    
+    # Check for ARM detection script
+    if [ -x "$SCRIPT_DIR/arm_detect.sh" ]; then
+        print_info "Running ARM detection..."
+        
+        # Source the ARM detection for environment variables
+        eval "$($SCRIPT_DIR/arm_detect.sh --env)"
+        
+        if [ -n "$EXO_ARM_MCPU" ]; then
+            print_success "Detected CPU: $EXO_ARM_MCPU"
+            print_success "Architecture: $EXO_ARM_MARCH"
+            print_success "Device Tier: $EXO_DEVICE_TIER"
+        else
+            print_warning "ARM detection returned no results, using defaults"
+        fi
+    else
+        print_warning "ARM detection script not found, using fallback"
+    fi
+    
+    # Fallback detection if script didn't work
+    if [ -z "$EXO_ARM_MCPU" ]; then
+        # Check for key CPU features
+        if grep -q "asimddp" /proc/cpuinfo 2>/dev/null; then
+            EXO_ARM_MARCH="armv8.2-a+dotprod"
+            EXO_ARM_MCPU="cortex-a76"
+        elif grep -q "asimd" /proc/cpuinfo 2>/dev/null; then
+            EXO_ARM_MARCH="armv8-a"
+            EXO_ARM_MCPU="cortex-a53"
+        else
+            EXO_ARM_MARCH="armv8-a"
+            EXO_ARM_MCPU="generic"
+        fi
+        
+        # Add more features if available
+        if grep -q "fphp\|asimdhp" /proc/cpuinfo 2>/dev/null; then
+            EXO_ARM_MARCH="${EXO_ARM_MARCH}+fp16"
+        fi
+        
+        EXO_ARM_CFLAGS="-O3 -mcpu=$EXO_ARM_MCPU -march=$EXO_ARM_MARCH -flto"
+        print_info "Fallback: $EXO_ARM_CFLAGS"
+    fi
+}
+
 # Set up build environment for llama.cpp
 setup_build_env() {
     print_header "Setting Up Build Environment"
+    
+    # Run ARM architecture detection
+    detect_arm_architecture
     
     # Set environment variables for Android/ARM builds
     export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=ON -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF"
     export FORCE_CMAKE=1
     
-    # Set compiler flags for Termux
-    export CFLAGS="-Wno-error"
-    export CXXFLAGS="-Wno-error"
+    # Use detected ARM-optimized flags, or fallback
+    if [ -n "$EXO_ARM_CFLAGS" ]; then
+        # Extract optimization flags, but be careful with -Werror
+        export CFLAGS="$EXO_ARM_CFLAGS -Wno-error"
+        export CXXFLAGS="$EXO_ARM_CFLAGS -Wno-error"
+        print_success "Using optimized CFLAGS: $CFLAGS"
+    else
+        # Fallback to safe flags
+        export CFLAGS="-O2 -Wno-error"
+        export CXXFLAGS="-O2 -Wno-error"
+        print_warning "Using fallback CFLAGS: $CFLAGS"
+    fi
     
     # Ensure we use the right compilers
     export CC=clang
@@ -149,6 +207,11 @@ setup_build_env() {
     
     print_success "Build environment configured"
     print_info "CMAKE_ARGS: $CMAKE_ARGS"
+    
+    # Show detected features summary
+    if [ -n "$EXO_DEVICE_TIER" ]; then
+        print_info "Device tier: $EXO_DEVICE_TIER (RAM: ${EXO_RAM_GB:-?}GB)"
+    fi
 }
 
 # Install Python dependencies
@@ -264,27 +327,52 @@ except ImportError as e:
     print('  Error:', str(e))
 " 2>/dev/null || print_warning "llama-cpp-python check failed"
     
-    # Check exo platform detection
+    # Check exo platform detection with ARM features
     echo ""
-    print_info "Checking exo..."
+    print_info "Checking exo platform..."
     python3 -c "
 try:
-    from exo.shared.platform import get_platform_info, get_recommended_backend, is_android
+    from exo.shared.platform import (
+        get_platform_info, get_recommended_backend, is_android,
+        get_arm_features, get_arm_info
+    )
     info = get_platform_info()
     print('  System:', info['system'])
     print('  Machine:', info['machine'])
     print('  Is Android:', is_android())
     print('  Backend:', get_recommended_backend())
+    
+    if is_android():
+        arm_info = get_arm_info()
+        print('')
+        print('  ARM Info:')
+        print('    RAM:', arm_info['ram_gb'], 'GB')
+        print('    Tier:', arm_info['tier'])
+        print('    Cores:', arm_info['core_count'])
+        print('    Threads:', arm_info['recommended_threads'])
+        
+        features = arm_info['features']
+        enabled = [k for k, v in features.items() if v]
+        if enabled:
+            print('    Features:', ', '.join(enabled))
+    
     print('  Status: OK')
 except Exception as e:
     print('  Status: PARTIAL')
-    print('  Note: Some exo modules may need Rust bindings')
+    print('  Note:', str(e))
 " 2>/dev/null || print_warning "exo check had issues"
     
     # Check available memory
     echo ""
     print_info "System resources:"
     free -h 2>/dev/null || print_warning "Could not check memory"
+    
+    # Show ARM detection summary if script exists
+    if [ -x "$SCRIPT_DIR/arm_detect.sh" ]; then
+        echo ""
+        print_info "ARM optimization summary:"
+        "$SCRIPT_DIR/arm_detect.sh" --flags 2>/dev/null || true
+    fi
 }
 
 # Print final instructions

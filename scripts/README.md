@@ -82,11 +82,78 @@ Download GGUF models for inference:
 # List available models
 ./scripts/download_model.sh list
 
+# Get personalized recommendation based on your device
+./scripts/download_model.sh recommend
+
 # Download a specific model
 ./scripts/download_model.sh tinyllama   # ~700MB
 ./scripts/download_model.sh qwen-0.5b   # ~400MB (smallest)
 ./scripts/download_model.sh llama-3b    # ~2GB (more capable)
 ```
+
+### `arm_detect.sh` - ARM CPU Detection & Optimization
+
+Detect ARM CPU cores, features, and get optimal compiler flags:
+
+```bash
+# Full detection report
+./scripts/arm_detect.sh
+
+# Get only compiler flags
+./scripts/arm_detect.sh --flags
+
+# Output as JSON (for scripting)
+./scripts/arm_detect.sh --json
+
+# Export as environment variables
+source ./scripts/arm_detect.sh --env
+```
+
+**What it detects:**
+- CPU cores (Cortex-X4, A720, A55, etc.)
+- Architecture features (NEON, dotprod, FP16, SVE2, I8MM)
+- Optimal `-mcpu` and `-march` compiler flags
+- Device tier based on RAM
+
+### `thermal_monitor.sh` - Temperature Management
+
+Monitor device temperature and throttle inference when too hot:
+
+```bash
+# Run in foreground (press Ctrl+C to stop)
+./scripts/thermal_monitor.sh
+
+# Run as background daemon
+./scripts/thermal_monitor.sh --daemon
+
+# Check current status
+./scripts/thermal_monitor.sh --status
+
+# Stop background daemon
+./scripts/thermal_monitor.sh --stop
+```
+
+**What it does:**
+- Monitors battery/thermal zone temperature
+- Pauses exo/llama processes when device exceeds 42°C
+- Resumes when cooled below 38°C
+- Sends Android notifications on state changes
+
+### `termux_boot_cluster.sh` - Auto-Start on Boot
+
+Start exo cluster node automatically when device boots:
+
+```bash
+# Install boot script
+mkdir -p ~/.termux/boot
+cp scripts/termux_boot_cluster.sh ~/.termux/boot/01-exo-cluster.sh
+chmod +x ~/.termux/boot/01-exo-cluster.sh
+```
+
+**Requirements:**
+- Install **Termux:Boot** from F-Droid
+- Open Termux:Boot once to register with Android
+- Disable battery optimization for Termux and Termux:Boot
 
 ## Model Recommendations
 
@@ -151,6 +218,50 @@ export CMAKE_BUILD_PARALLEL_LEVEL=1
 pip install llama-cpp-python --no-cache-dir
 ```
 
+## ARM Optimization
+
+exo automatically detects your ARM CPU and optimizes compilation. For best performance:
+
+### Automatic Optimization
+
+The setup script automatically:
+1. Detects your CPU cores (Cortex-X4, A720, A55, etc.)
+2. Identifies available extensions (dotprod, FP16, SVE2, I8MM)
+3. Compiles llama-cpp-python with optimal flags
+
+### Manual Optimization
+
+If you want to manually optimize:
+
+```bash
+# Detect your device's optimal flags
+./scripts/arm_detect.sh --flags
+
+# Example output: -O3 -mcpu=cortex-x4 -march=armv9.2-a+sve2+i8mm+bf16 -flto
+
+# Set and rebuild
+source ./scripts/arm_detect.sh --env
+pip uninstall llama-cpp-python
+pip install llama-cpp-python --no-cache-dir
+```
+
+### Key ARM Features for LLM Inference
+
+| Feature | Benefit | Check |
+|---------|---------|-------|
+| **dotprod** | 2-4x speedup for quantized models | `grep asimddp /proc/cpuinfo` |
+| **fp16** | 2x throughput for FP16 | `grep fphp /proc/cpuinfo` |
+| **i8mm** | 2-4x speedup for INT8 | `grep i8mm /proc/cpuinfo` |
+| **sve2** | Better vectorization | `grep sve2 /proc/cpuinfo` |
+
+### Performance Tips
+
+1. **Use Q4_K_M quantization** - best quality/speed balance for mobile
+2. **Set thread count to big core count** (usually 4 on modern phones)
+3. **Keep device plugged in** for sustained performance
+4. **Use thermal monitoring** to prevent throttling
+5. **Close other apps** before running inference
+
 ## Environment Variables
 
 You can customize behavior with these environment variables:
@@ -162,10 +273,16 @@ export LLAMA_N_CTX=2048         # Context size (default: 4096)
 export LLAMA_N_BATCH=512        # Batch size (default: 512)
 export LLAMA_N_GPU_LAYERS=0     # GPU layers (0 = CPU only)
 
-# Build settings
+# Build settings (auto-detected by arm_detect.sh)
 export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=ON"
 export CC=clang
 export CXX=clang++
+
+# ARM optimization flags (auto-detected)
+# source ./scripts/arm_detect.sh --env  # Sets these automatically
+export EXO_ARM_MCPU="cortex-x4"
+export EXO_ARM_MARCH="armv9.2-a+sve2+i8mm"
+export CFLAGS="-O3 -mcpu=$EXO_ARM_MCPU -march=$EXO_ARM_MARCH -flto"
 
 # exo settings
 export EXO_HOME=~/.exo
