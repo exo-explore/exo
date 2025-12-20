@@ -1,0 +1,209 @@
+# Android Cross-Compilation Workflow
+# Builds exo_pyo3_bindings wheels for Android/Termux
+#
+# The built wheels can be:
+# - Pushed to devices via ADB for testing
+# - Published as GitHub releases
+# - Published to PyPI for easy installation
+
+name: android-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish as GitHub release'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v*-android'
+      - 'android-*'
+
+jobs:
+  build-rust-bindings:
+    name: Build Rust Bindings for Android
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - aarch64-linux-android  # 64-bit ARM (most modern phones)
+          # - armv7-linux-androideabi  # 32-bit ARM (older devices)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: nightly
+          targets: ${{ matrix.target }}
+
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 24
+          ndk-version: '26.1.10909125'
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Configure cargo for Android
+        run: |
+          mkdir -p ~/.cargo
+          NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_NDK}"
+          TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          
+          cat >> ~/.cargo/config.toml << EOF
+          [target.aarch64-linux-android]
+          linker = "$TOOLCHAIN/aarch64-linux-android24-clang"
+          
+          [target.armv7-linux-androideabi]
+          linker = "$TOOLCHAIN/armv7a-linux-androideabi24-clang"
+          EOF
+
+          # Set environment variables
+          echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang" >> $GITHUB_ENV
+          echo "CXX_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang++" >> $GITHUB_ENV
+          echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android24-clang" >> $GITHUB_ENV
+
+      - name: Build wheel
+        working-directory: rust/exo_pyo3_bindings
+        run: |
+          maturin build --release --target ${{ matrix.target }}
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  build-llama-cpp-python:
+    name: Build llama-cpp-python for Android
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            python_abi: cp312
+
+    steps:
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 24
+          ndk-version: '26.1.10909125'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone llama-cpp-python
+        run: |
+          git clone --depth 1 https://github.com/abetlen/llama-cpp-python.git
+          cd llama-cpp-python
+          git submodule update --init --recursive
+
+      - name: Configure cross-compilation environment
+        run: |
+          NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_NDK}"
+          TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          
+          # Export environment for CMake cross-compilation
+          echo "CMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake" >> $GITHUB_ENV
+          echo "ANDROID_ABI=arm64-v8a" >> $GITHUB_ENV
+          echo "ANDROID_PLATFORM=android-24" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$NDK_HOME" >> $GITHUB_ENV
+
+      - name: Build llama-cpp-python wheel
+        working-directory: llama-cpp-python
+        run: |
+          # Build with Android-specific cmake args
+          export CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE -DANDROID_ABI=$ANDROID_ABI -DANDROID_PLATFORM=$ANDROID_PLATFORM -DGGML_NATIVE=OFF -DGGML_BLAS=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF"
+          pip wheel . --no-deps -w dist/
+
+      - name: Upload llama-cpp-python wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-cpp-python-${{ matrix.target }}
+          path: llama-cpp-python/dist/*.whl
+        continue-on-error: true  # llama-cpp-python cross-compile is experimental
+
+  package-android-release:
+    name: Package Android Release
+    runs-on: ubuntu-latest
+    needs: [build-rust-bindings]
+    if: github.event.inputs.publish_release == 'true' || startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release package
+        run: |
+          mkdir -p release/wheels
+          
+          # Copy wheels
+          find artifacts -name "*.whl" -exec cp {} release/wheels/ \;
+          
+          # Copy scripts
+          cp scripts/termux_setup.sh release/
+          cp scripts/termux_verify.sh release/ || true
+          cp scripts/download_model.sh release/ || true
+          
+          # Create install script
+          cat > release/install_android.sh << 'EOF'
+          #!/data/data/com.termux/files/usr/bin/bash
+          # exo Android Installer
+          # Downloads and installs pre-built wheels
+          
+          set -e
+          
+          echo "Installing exo for Android/Termux..."
+          
+          # Install wheels if present
+          if ls wheels/*.whl 2>/dev/null; then
+              for wheel in wheels/*.whl; do
+                  pip install "$wheel" || echo "Warning: Failed to install $wheel"
+              done
+          fi
+          
+          echo "Done! Run: python3 -m exo"
+          EOF
+          chmod +x release/install_android.sh
+          
+          # Create archive
+          cd release
+          tar -czvf ../exo-android-$(date +%Y%m%d).tar.gz .
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-package
+          path: exo-android-*.tar.gz
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            exo-android-*.tar.gz
+            artifacts/**/*.whl
+          draft: true
+          prerelease: true
+          generate_release_notes: true
+
