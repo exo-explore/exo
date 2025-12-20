@@ -24,63 +24,83 @@ from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 class FluxModelAdapter:
     """Adapter for Flux models (schnell, dev, kontext).
 
-    Handles Flux-specific operations:
+    Owns the model instance and handles Flux-specific operations:
     - JointAttention with separate text/image streams
     - SingleBlockAttention with concatenated streams
     - AttentionUtils for QKV processing and RoPE
     """
 
-    def __init__(self, config: ImageModelConfig):
+    def __init__(
+        self,
+        config: ImageModelConfig,
+        model_id: str,
+        local_path: Path,
+        quantize: int | None = None,
+    ):
+        """Create a FluxModelAdapter with its model.
+
+        Args:
+            config: The model configuration
+            model_id: The model identifier (e.g., "black-forest-labs/FLUX.1-schnell")
+            local_path: Path to the local model weights
+            quantize: Optional quantization bit width
+        """
         self._config = config
+        self._model = Flux1(
+            model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
+            local_path=str(local_path),
+            quantize=quantize,
+        )
+        # Store original transformer reference BEFORE it may be replaced by DistributedDenoising
+        self._transformer = self._model.transformer
 
     @property
     def config(self) -> ImageModelConfig:
         return self._config
 
-    def create_model(
-        self,
-        model_id: str,
-        local_path: Path,
-        quantize: int | None = None,
-    ) -> Flux1:
-        """Create a Flux1 model instance."""
-        return Flux1(
-            model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
-            local_path=str(local_path),
-            quantize=quantize,
-        )
+    @property
+    def model(self) -> Flux1:
+        """Return the underlying Flux1 model instance."""
+        return self._model
+
+    @property
+    def transformer(self) -> Transformer:
+        """Return the original transformer component (not the DistributedDenoising wrapper)."""
+        return self._transformer
+
+    @property
+    def hidden_dim(self) -> int:
+        """Return the hidden dimension of the transformer."""
+        return self._transformer.x_embedder.weight.shape[0]
 
     def compute_embeddings(
         self,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
-        transformer: Transformer,
     ) -> tuple[mx.array, mx.array]:
-        embedded_hidden = transformer.x_embedder(hidden_states)
-        embedded_encoder = transformer.context_embedder(prompt_embeds)
+        embedded_hidden = self._transformer.x_embedder(hidden_states)
+        embedded_encoder = self._transformer.context_embedder(prompt_embeds)
         return embedded_hidden, embedded_encoder
 
     def compute_text_embeddings(
         self,
         t: int,
         pooled_prompt_embeds: mx.array,
-        transformer: Transformer,
         runtime_config: RuntimeConfig,
     ) -> mx.array:
         return Transformer.compute_text_embeddings(
-            t, pooled_prompt_embeds, transformer.time_text_embed, runtime_config
+            t, pooled_prompt_embeds, self._transformer.time_text_embed, runtime_config
         )
 
     def compute_rotary_embeddings(
         self,
         prompt_embeds: mx.array,
-        transformer: Transformer,
         runtime_config: RuntimeConfig,
         **kwargs: Any,
     ) -> mx.array:
         kontext_image_ids = kwargs.get("kontext_image_ids")
         return Transformer.compute_rotary_embeddings(
-            prompt_embeds, transformer.pos_embed, runtime_config, kontext_image_ids
+            prompt_embeds, self._transformer.pos_embed, runtime_config, kontext_image_ids
         )
 
     def apply_joint_block(
@@ -160,34 +180,27 @@ class FluxModelAdapter:
         self,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-        transformer: Transformer,
     ) -> mx.array:
-        hidden_states = transformer.norm_out(hidden_states, text_embeddings)
-        return transformer.proj_out(hidden_states)
+        hidden_states = self._transformer.norm_out(hidden_states, text_embeddings)
+        return self._transformer.proj_out(hidden_states)
 
-    def get_joint_blocks(
-        self, transformer: Transformer
-    ) -> list[JointTransformerBlock]:
+    def get_joint_blocks(self) -> list[JointTransformerBlock]:
         """Get the list of joint transformer blocks from the Flux model."""
-        return list(transformer.transformer_blocks)
+        return list(self._transformer.transformer_blocks)
 
-    def get_single_blocks(
-        self, transformer: Transformer
-    ) -> list[SingleTransformerBlock]:
+    def get_single_blocks(self) -> list[SingleTransformerBlock]:
         """Get the list of single transformer blocks from the Flux model."""
-        return list(transformer.single_transformer_blocks)
+        return list(self._transformer.single_transformer_blocks)
 
-    def get_blocks(
-        self, transformer: Transformer
-    ) -> list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]]:
+    def get_blocks(self) -> list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]]:
         """Get all transformer blocks in execution order with their types.
 
         For Flux models, this returns joint blocks first, then single blocks.
         """
         blocks: list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]] = []
-        for block in self.get_joint_blocks(transformer):
+        for block in self.get_joint_blocks():
             blocks.append((block, BlockType.JOINT))
-        for block in self.get_single_blocks(transformer):
+        for block in self.get_single_blocks():
             blocks.append((block, BlockType.SINGLE))
         return blocks
 

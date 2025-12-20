@@ -1,5 +1,4 @@
 from enum import Enum
-from pathlib import Path
 from typing import Any, Protocol
 
 import mlx.core as mx
@@ -94,10 +93,13 @@ class BlockWrapperMode(Enum):
 class ModelAdapter(Protocol):
     """Protocol for model-specific operations in PipeFusion.
 
-    Adapters handle the differences between mflux model architectures:
+    Adapters own the model instance and handle all model-specific operations:
     - Flux: JointAttention + SingleBlockAttention
     - Fibo: FiboJointAttention with attention masks
     - Qwen: Unified blocks with different RoPE
+
+    The adapter creates the model at initialization time and provides access
+    to it through the `model` and `transformer` properties.
     """
 
     @property
@@ -105,36 +107,31 @@ class ModelAdapter(Protocol):
         """Return the model configuration."""
         ...
 
-    def create_model(
-        self,
-        model_id: str,
-        local_path: Path,
-        quantize: int | None = None,
-    ) -> Any:
-        """Create the underlying mflux model instance.
+    @property
+    def model(self) -> Any:
+        """Return the underlying mflux model instance (e.g., Flux1, Fibo, Qwen)."""
+        ...
 
-        Args:
-            model_id: The model identifier (e.g., "black-forest-labs/FLUX.1-schnell")
-            local_path: Path to the local model weights
-            quantize: Optional quantization bit width
+    @property
+    def transformer(self) -> Any:
+        """Return the transformer component of the model."""
+        ...
 
-        Returns:
-            The mflux model instance (e.g., Flux1, Fibo, Qwen)
-        """
+    @property
+    def hidden_dim(self) -> int:
+        """Return the hidden dimension of the transformer."""
         ...
 
     def compute_embeddings(
         self,
         hidden_states: mx.array,
         prompt_embeds: mx.array,
-        transformer: Any,
     ) -> tuple[mx.array, mx.array]:
         """Compute x_embedder and context_embedder outputs.
 
         Args:
             hidden_states: Input latent states
             prompt_embeds: Text embeddings from encoder
-            transformer: The transformer model
 
         Returns:
             Tuple of (embedded_hidden_states, embedded_encoder_states)
@@ -145,7 +142,6 @@ class ModelAdapter(Protocol):
         self,
         t: int,
         pooled_prompt_embeds: mx.array,
-        transformer: Any,
         runtime_config: RuntimeConfig,
     ) -> mx.array:
         """Compute time/text embeddings for conditioning.
@@ -153,7 +149,6 @@ class ModelAdapter(Protocol):
         Args:
             t: Current timestep
             pooled_prompt_embeds: Pooled text embeddings
-            transformer: The transformer model
             runtime_config: Runtime configuration
 
         Returns:
@@ -164,7 +159,6 @@ class ModelAdapter(Protocol):
     def compute_rotary_embeddings(
         self,
         prompt_embeds: mx.array,
-        transformer: Any,
         runtime_config: RuntimeConfig,
         **kwargs: Any,
     ) -> mx.array:
@@ -172,7 +166,6 @@ class ModelAdapter(Protocol):
 
         Args:
             prompt_embeds: Text embeddings
-            transformer: The transformer model
             runtime_config: Runtime configuration
 
         Returns:
@@ -246,51 +239,40 @@ class ModelAdapter(Protocol):
         self,
         hidden_states: mx.array,
         text_embeddings: mx.array,
-        transformer: Any,
     ) -> mx.array:
         """Apply final norm and projection.
 
         Args:
             hidden_states: Hidden states (image only, text already removed)
             text_embeddings: Conditioning embeddings
-            transformer: The transformer model
 
         Returns:
             Projected output
         """
         ...
 
-    def get_joint_blocks(self, transformer: Any) -> list[JointBlockInterface]:
+    def get_joint_blocks(self) -> list[JointBlockInterface]:
         """Get the list of joint transformer blocks from the model.
-
-        Args:
-            transformer: The transformer model
 
         Returns:
             List of joint transformer blocks
         """
         ...
 
-    def get_single_blocks(self, transformer: Any) -> list[SingleBlockInterface]:
+    def get_single_blocks(self) -> list[SingleBlockInterface]:
         """Get the list of single transformer blocks from the model.
-
-        Args:
-            transformer: The transformer model
 
         Returns:
             List of single transformer blocks
         """
         ...
 
-    def get_blocks(self, transformer: Any) -> list[tuple[Any, BlockType]]:
+    def get_blocks(self) -> list[tuple[Any, BlockType]]:
         """Get all transformer blocks in execution order with their types.
 
         This method provides a unified view of all blocks, regardless of their
         specific type (joint, single, unified). New model adapters can override
         this to return blocks in their native arrangement.
-
-        Args:
-            transformer: The transformer model
 
         Returns:
             List of (block, block_type) tuples in execution order

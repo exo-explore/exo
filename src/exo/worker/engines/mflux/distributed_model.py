@@ -20,7 +20,7 @@ from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mflux.config import get_config_for_model
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
-from exo.worker.engines.mflux.pipefusion import get_adapter_for_model
+from exo.worker.engines.mflux.pipefusion import create_adapter_for_model
 from exo.worker.engines.mflux.pipefusion.adapter import ModelAdapter
 from exo.worker.engines.mflux.pipefusion.distributed_denoising import (
     DistributedDenoising,
@@ -64,18 +64,17 @@ class DistributedImageModel:
             group: MLX distributed group for multi-node coordination (None for single-node)
             quantize: Optional quantization bit width
         """
-        # Get model config and adapter
+        # Get model config and create adapter (adapter owns the model)
         config = get_config_for_model(model_id)
-        adapter = get_adapter_for_model(config)
+        adapter = create_adapter_for_model(config, model_id, local_path, quantize)
 
-        # Create the model using the adapter
-        model = adapter.create_model(model_id, local_path, quantize)
+        # Get model from adapter
+        model = adapter.model
 
         if group is not None:
             # Apply pipeline parallelism by wrapping the transformer
             num_sync_steps = config.get_num_sync_steps("medium")
             model.transformer = DistributedDenoising(
-                transformer=model.transformer,
                 config=config,
                 adapter=adapter,
                 group=group,
