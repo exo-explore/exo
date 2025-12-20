@@ -165,6 +165,18 @@ class FluxModelAdapter:
         hidden_states = transformer.norm_out(hidden_states, text_embeddings)
         return transformer.proj_out(hidden_states)
 
+    def get_joint_blocks(
+        self, transformer: Transformer
+    ) -> list[JointTransformerBlock]:
+        """Get the list of joint transformer blocks from the Flux model."""
+        return list(transformer.transformer_blocks)
+
+    def get_single_blocks(
+        self, transformer: Transformer
+    ) -> list[SingleTransformerBlock]:
+        """Get the list of single transformer blocks from the Flux model."""
+        return list(transformer.single_transformer_blocks)
+
     # -------------------------------------------------------------------------
     # Joint block implementations
     # -------------------------------------------------------------------------

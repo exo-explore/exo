@@ -117,12 +117,12 @@ class DistributedDenoising:
         )
 
         # Slice blocks to only those assigned to this stage
-        assigned_joint_blocks = self.transformer_blocks[
-            self.joint_start : self.joint_end
-        ]
-        assigned_single_blocks = self.single_transformer_blocks[
-            self.single_start : self.single_end
-        ]
+        # Use adapter's block accessors to avoid direct transformer internal access
+        all_joint_blocks = self.adapter.get_joint_blocks(self.transformer)
+        all_single_blocks = self.adapter.get_single_blocks(self.transformer)
+
+        assigned_joint_blocks = all_joint_blocks[self.joint_start : self.joint_end]
+        assigned_single_blocks = all_single_blocks[self.single_start : self.single_end]
 
         # Wrap blocks at initialization (reused across all calls)
         self.joint_block_wrappers = [

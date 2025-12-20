@@ -259,3 +259,25 @@ class ModelAdapter(Protocol):
             Projected output
         """
         ...
+
+    def get_joint_blocks(self, transformer: Any) -> list[JointBlockInterface]:
+        """Get the list of joint transformer blocks from the model.
+
+        Args:
+            transformer: The transformer model
+
+        Returns:
+            List of joint transformer blocks
+        """
+        ...
+
+    def get_single_blocks(self, transformer: Any) -> list[SingleBlockInterface]:
+        """Get the list of single transformer blocks from the model.
+
+        Args:
+            transformer: The transformer model
+
+        Returns:
+            List of single transformer blocks
+        """
+        ...
