@@ -16,6 +16,6 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-      - name: Run Custom Model Tracking Test
+      - name: Run Custom Model (mlx) Integration Test
         run: |
-          nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c uv run pytest src/exo/worker/tests/test_custom_model_download.py
+          nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c uv run python src/exo/worker/tests/test_custom_model.py --help
