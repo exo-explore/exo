@@ -1,0 +1,51 @@
+# Termux/Android compatible dependencies for exo
+# These are the core dependencies that work on ARM Android
+
+# Core async/networking
+aiofiles>=24.1.0
+aiohttp>=3.10.0
+anyio>=4.4.0
+
+# Data validation and models
+pydantic>=2.8.0
+
+# Web framework (for API)
+fastapi>=0.111.0
+hypercorn>=0.17.0
+
+# Database
+aiosqlite>=0.20.0
+sqlmodel>=0.0.20
+sqlalchemy[asyncio]>=2.0.30
+greenlet>=3.0.0
+
+# Utilities
+filelock>=3.13.0
+psutil>=6.0.0
+loguru>=0.7.2
+rich>=13.7.0
+networkx>=3.2.0
+pathlib>=1.0.1
+bidict>=0.23.1
+
+# Crypto and encoding
+base58>=2.1.1
+cryptography>=42.0.0
+protobuf>=5.26.0
+
+# ML/Model handling
+huggingface-hub>=0.23.0
+
+# Type checking (runtime)
+typeguard>=4.2.0
+types-aiofiles>=24.1.0
+
+# Tokenizers (may need network)
+tiktoken>=0.7.0
+
+# llama.cpp Python bindings (build separately if needed)
+# llama-cpp-python>=0.2.90
+
+# NOTE: exo_pyo3_bindings must be built from source using maturin
+# NOTE: textual and rustworkx are optional for TUI
+

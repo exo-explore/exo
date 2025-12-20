@@ -1,9 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
 #
-# exo Termux Setup Script
-# ========================
+# exo Termux Setup Script v2
+# ==========================
 # This script sets up exo with llama.cpp backend on Android/Termux.
-# Run this after cloning the exo repository.
 #
 # Usage:
 #   chmod +x scripts/termux_setup.sh
@@ -12,20 +11,22 @@
 # IMPORTANT: Install Termux from F-Droid, NOT Play Store!
 #
 
-set -e  # Exit on any error
+# Don't exit immediately on error - we handle errors ourselves
+set +e
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 print_header() {
     echo ""
-    echo -e "${BLUE}============================================${NC}"
-    echo -e "${BLUE}  $1${NC}"
-    echo -e "${BLUE}============================================${NC}"
+    echo -e "${CYAN}============================================${NC}"
+    echo -e "${CYAN}  $1${NC}"
+    echo -e "${CYAN}============================================${NC}"
     echo ""
 }
 
@@ -61,49 +62,70 @@ check_termux() {
     
     print_success "Running in Termux"
     print_info "Termux version: ${TERMUX_VERSION:-unknown}"
-    print_info "Script directory: $SCRIPT_DIR"
     print_info "exo directory: $EXO_DIR"
 }
 
-# Update and upgrade packages
+# Update packages with retry
 update_packages() {
     print_header "Updating Termux Packages"
     
-    # Try to update, but don't fail if mirrors have issues
-    pkg update -y || print_warning "Some package updates may have failed"
-    pkg upgrade -y || print_warning "Some package upgrades may have failed"
+    print_info "Running termux-change-repo to ensure mirrors are set..."
+    print_info "If prompted, select a mirror close to your location"
     
-    print_success "Packages updated"
+    # This might prompt user for mirror selection
+    termux-change-repo 2>/dev/null || true
+    
+    local max_retries=3
+    local retry=0
+    
+    while [ $retry -lt $max_retries ]; do
+        if pkg update -y 2>/dev/null && pkg upgrade -y 2>/dev/null; then
+            print_success "Packages updated"
+            return 0
+        fi
+        retry=$((retry + 1))
+        print_warning "Update attempt $retry failed, retrying..."
+        sleep 2
+    done
+    
+    print_warning "Package updates may have failed - continuing anyway"
 }
 
 # Install system dependencies
 install_system_deps() {
     print_header "Installing System Dependencies"
     
-    # Core Python and build tools
-    print_info "Installing Python and build tools..."
-    pkg install -y python python-pip || {
-        print_error "Failed to install python/pip"
+    # Core packages - install all at once
+    print_info "Installing Python, Rust, and build tools..."
+    
+    pkg install -y \
+        python python-pip \
+        rust \
+        git clang cmake make binutils ninja \
+        libffi openssl libc++ \
+        curl wget \
+        2>/dev/null || {
+            print_warning "Some packages may not have installed, trying individually..."
+            pkg install -y python python-pip || true
+            pkg install -y rust || true
+            pkg install -y git clang cmake make || true
+            pkg install -y libffi openssl || true
+        }
+    
+    # Verify critical packages
+    if ! command -v python3 &>/dev/null; then
+        print_error "Python not installed!"
         exit 1
-    }
+    fi
     
-    # Build essentials
-    print_info "Installing build essentials..."
-    pkg install -y git clang cmake make binutils ninja || {
-        print_warning "Some build tools may not have installed"
-    }
+    if ! command -v rustc &>/dev/null; then
+        print_error "Rust not installed! Required for exo_pyo3_bindings"
+        print_info "Try: pkg install rust"
+        exit 1
+    fi
     
-    # Libraries needed for compilation
-    print_info "Installing development libraries..."
-    pkg install -y libffi openssl libc++ || {
-        print_warning "Some libraries may not have installed"
-    }
-    
-    # Networking and utilities
-    print_info "Installing utilities..."
-    pkg install -y curl wget || true
-    
-    print_success "System dependencies installed"
+    print_success "Python: $(python3 --version)"
+    print_success "Rust: $(rustc --version)"
 }
 
 # Set up storage access
@@ -131,86 +153,114 @@ create_directories() {
     print_success "Created ~/.exo/logs"
 }
 
-# Detect ARM architecture and set optimal compiler flags
-detect_arm_architecture() {
-    print_header "Detecting ARM Architecture"
-    
-    # Check for ARM detection script
-    if [ -x "$SCRIPT_DIR/arm_detect.sh" ]; then
-        print_info "Running ARM detection..."
-        
-        # Source the ARM detection for environment variables
-        eval "$($SCRIPT_DIR/arm_detect.sh --env)"
-        
-        if [ -n "$EXO_ARM_MCPU" ]; then
-            print_success "Detected CPU: $EXO_ARM_MCPU"
-            print_success "Architecture: $EXO_ARM_MARCH"
-            print_success "Device Tier: $EXO_DEVICE_TIER"
-        else
-            print_warning "ARM detection returned no results, using defaults"
-        fi
-    else
-        print_warning "ARM detection script not found, using fallback"
-    fi
-    
-    # Fallback detection if script didn't work
-    if [ -z "$EXO_ARM_MCPU" ]; then
-        # Check for key CPU features
-        if grep -q "asimddp" /proc/cpuinfo 2>/dev/null; then
-            EXO_ARM_MARCH="armv8.2-a+dotprod"
-            EXO_ARM_MCPU="cortex-a76"
-        elif grep -q "asimd" /proc/cpuinfo 2>/dev/null; then
-            EXO_ARM_MARCH="armv8-a"
-            EXO_ARM_MCPU="cortex-a53"
-        else
-            EXO_ARM_MARCH="armv8-a"
-            EXO_ARM_MCPU="generic"
-        fi
-        
-        # Add more features if available
-        if grep -q "fphp\|asimdhp" /proc/cpuinfo 2>/dev/null; then
-            EXO_ARM_MARCH="${EXO_ARM_MARCH}+fp16"
-        fi
-        
-        EXO_ARM_CFLAGS="-O3 -mcpu=$EXO_ARM_MCPU -march=$EXO_ARM_MARCH -flto"
-        print_info "Fallback: $EXO_ARM_CFLAGS"
-    fi
-}
-
 # Set up build environment for llama.cpp
 setup_build_env() {
     print_header "Setting Up Build Environment"
     
-    # Run ARM architecture detection
-    detect_arm_architecture
-    
     # Set environment variables for Android/ARM builds
     export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=ON -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF"
     export FORCE_CMAKE=1
-    
-    # Use detected ARM-optimized flags, or fallback
-    if [ -n "$EXO_ARM_CFLAGS" ]; then
-        # Extract optimization flags, but be careful with -Werror
-        export CFLAGS="$EXO_ARM_CFLAGS -Wno-error"
-        export CXXFLAGS="$EXO_ARM_CFLAGS -Wno-error"
-        print_success "Using optimized CFLAGS: $CFLAGS"
-    else
-        # Fallback to safe flags
-        export CFLAGS="-O2 -Wno-error"
-        export CXXFLAGS="-O2 -Wno-error"
-        print_warning "Using fallback CFLAGS: $CFLAGS"
-    fi
-    
-    # Ensure we use the right compilers
     export CC=clang
     export CXX=clang++
+    export CFLAGS="-O2 -Wno-error"
+    export CXXFLAGS="-O2 -Wno-error"
     
     print_success "Build environment configured"
     print_info "CMAKE_ARGS: $CMAKE_ARGS"
+}
+
+# Install maturin for building Rust Python bindings
+install_maturin() {
+    print_header "Installing Maturin (Rust Python Builder)"
     
-    # Show detected features summary
-    if [ -n "$EXO_DEVICE_TIER" ]; then
-        print_info "Device tier: $EXO_DEVICE_TIER (RAM: ${EXO_RAM_GB:-?}GB)"
+    print_info "Installing maturin..."
+    
+    if pip install maturin --quiet 2>/dev/null; then
+        print_success "maturin installed"
+    else
+        print_warning "pip install failed, trying with --user..."
+        pip install maturin --user --quiet 2>/dev/null || {
+            print_error "Could not install maturin"
+            print_info "Try manually: pip install maturin"
+            return 1
+        }
+    fi
+    
+    return 0
+}
+
+# Build exo_pyo3_bindings from source
+build_pyo3_bindings() {
+    print_header "Building exo_pyo3_bindings (Rust Networking)"
+    
+    local bindings_dir="$EXO_DIR/rust/exo_pyo3_bindings"
+    
+    if [ ! -d "$bindings_dir" ]; then
+        print_error "exo_pyo3_bindings directory not found at $bindings_dir"
+        return 1
+    fi
+    
+    cd "$bindings_dir"
+    
+    print_info "Building Rust bindings (this may take 5-15 minutes)..."
+    print_info "Directory: $bindings_dir"
+    
+    # Try to build and install using maturin
+    if maturin develop --release 2>&1 | tee /tmp/maturin_build.log; then
+        print_success "exo_pyo3_bindings built and installed!"
+        cd "$EXO_DIR"
+        return 0
+    else
+        print_error "maturin develop failed"
+        print_info "Trying alternative: maturin build..."
+        
+        if maturin build --release 2>&1; then
+            # Find and install the wheel
+            local wheel=$(find target/wheels -name "*.whl" | head -1)
+            if [ -n "$wheel" ]; then
+                pip install "$wheel" && {
+                    print_success "exo_pyo3_bindings installed from wheel"
+                    cd "$EXO_DIR"
+                    return 0
+                }
+            fi
+        fi
+        
+        print_error "Could not build exo_pyo3_bindings"
+        print_info "Check /tmp/maturin_build.log for details"
+        print_warning "exo will run with limited networking functionality"
+        cd "$EXO_DIR"
+        return 1
+    fi
+}
+
+# Install llama-cpp-python
+install_llama_cpp() {
+    print_header "Installing llama-cpp-python"
+    
+    print_info "This may take 10-20 minutes on first build..."
+    print_info "Building with CPU-only backend for ARM..."
+    
+    # Set optimal build flags
+    export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=ON -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF"
+    export FORCE_CMAKE=1
+    
+    if pip install llama-cpp-python --no-cache-dir 2>&1 | tee /tmp/llama_install.log | tail -20; then
+        print_success "llama-cpp-python installed!"
+        return 0
+    else
+        print_warning "First attempt failed, trying minimal build..."
+        
+        export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF"
+        
+        if pip install llama-cpp-python --no-cache-dir 2>&1; then
+            print_success "llama-cpp-python installed with minimal features"
+            return 0
+        fi
+        
+        print_error "Could not install llama-cpp-python"
+        print_info "Check /tmp/llama_install.log for details"
+        return 1
     fi
 }
 
@@ -218,90 +268,62 @@ setup_build_env() {
 install_python_deps() {
     print_header "Installing Python Dependencies"
     
-    # NOTE: Do NOT upgrade pip in Termux - it breaks the python-pip package!
-    # Just use pip directly
+    cd "$EXO_DIR"
     
-    print_info "Installing wheel and setuptools..."
-    pip install wheel setuptools --quiet || {
-        print_warning "wheel/setuptools install had issues, continuing..."
-    }
+    # Install wheel and setuptools first
+    print_info "Installing build tools..."
+    pip install wheel setuptools --quiet 2>/dev/null || true
     
-    print_info "Installing llama-cpp-python..."
-    print_info "This may take 10-20 minutes on first build..."
-    print_info "Please be patient!"
-    echo ""
-    
-    # Try to install llama-cpp-python with our build settings
-    if pip install llama-cpp-python --no-cache-dir --verbose 2>&1 | tee /tmp/llama_install.log; then
-        print_success "llama-cpp-python installed successfully!"
-    else
-        print_error "llama-cpp-python installation failed"
-        print_info "Trying alternative build method..."
+    # Check for requirements-termux.txt
+    if [ -f "requirements-termux.txt" ]; then
+        print_info "Installing dependencies from requirements-termux.txt..."
+        print_info "This may take a few minutes..."
         
-        # Try with even more minimal settings
-        export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF"
-        
-        if pip install llama-cpp-python --no-cache-dir; then
-            print_success "llama-cpp-python installed with minimal features"
+        if pip install -r requirements-termux.txt 2>&1 | tail -10; then
+            print_success "Core dependencies installed"
         else
-            print_error "Could not install llama-cpp-python"
-            print_info "Check /tmp/llama_install.log for details"
-            print_info "You may need to build from source manually"
+            print_warning "Some dependencies failed, trying individually..."
             
-            # Don't exit - let user decide what to do
-            print_warning "Continuing without llama-cpp-python..."
+            # Install critical deps one by one
+            for pkg in pydantic fastapi aiohttp loguru psutil huggingface-hub; do
+                print_info "  Installing $pkg..."
+                pip install "$pkg" --quiet 2>/dev/null || print_warning "  $pkg failed"
+            done
         fi
+    else
+        print_warning "requirements-termux.txt not found, installing manually..."
+        
+        # Core deps that should work on Termux
+        pip install \
+            pydantic fastapi aiohttp loguru psutil \
+            huggingface-hub aiofiles filelock \
+            anyio bidict rich networkx \
+            2>/dev/null || print_warning "Some deps failed"
     fi
 }
 
 # Install exo package
 install_exo() {
-    print_header "Installing exo"
+    print_header "Installing exo Package"
     
     cd "$EXO_DIR"
     
     print_info "Installing exo from: $EXO_DIR"
     
-    # Install core dependencies first (without the optional backends)
-    print_info "Installing exo core dependencies..."
-    
-    # Install exo in editable mode
+    # First try without deps (deps already installed)
     if pip install -e . --no-deps 2>&1; then
-        print_info "Installed exo package"
+        print_success "exo package installed"
+    else
+        print_warning "Editable install failed, trying regular install..."
+        pip install . --no-deps 2>/dev/null || {
+            print_error "Could not install exo package"
+            return 1
+        }
     fi
     
-    # Now install dependencies one by one to handle failures gracefully
-    print_info "Installing Python dependencies (this may take a while)..."
-    
-    # Core dependencies that should work on Termux
-    CORE_DEPS=(
-        "aiofiles"
-        "aiohttp"
-        "pydantic"
-        "fastapi"
-        "filelock"
-        "huggingface-hub"
-        "psutil"
-        "loguru"
-        "anyio"
-        "bidict"
-        "hypercorn"
-        "tiktoken"
-        "rich"
-        "networkx"
-    )
-    
-    for dep in "${CORE_DEPS[@]}"; do
-        print_info "  Installing $dep..."
-        pip install "$dep" --quiet || print_warning "  Failed to install $dep"
-    done
-    
-    # Try to install the full package now
-    print_info "Finalizing exo installation..."
-    pip install -e . || {
-        print_warning "Some exo dependencies may not be installed"
-        print_info "Core functionality should still work"
-    }
+    # Now try to install any remaining deps
+    print_info "Checking for missing dependencies..."
+    pip install -e . 2>&1 | grep -E "(Requirement|Successfully)" | tail -5 || true
     
     print_success "exo installation complete"
 }
@@ -310,68 +332,51 @@ install_exo() {
 verify_installation() {
     print_header "Verifying Installation"
     
-    # Check Python version
-    PYTHON_VERSION=$(python3 --version 2>&1)
-    print_info "Python: $PYTHON_VERSION"
+    local all_ok=true
+    
+    # Check Python
+    print_info "Python: $(python3 --version)"
     
     # Check llama-cpp-python
     echo ""
     print_info "Checking llama-cpp-python..."
-    python3 -c "
-try:
-    import llama_cpp
-    print('  Version:', llama_cpp.__version__)
-    print('  Status: OK')
-except ImportError as e:
-    print('  Status: NOT INSTALLED')
-    print('  Error:', str(e))
-" 2>/dev/null || print_warning "llama-cpp-python check failed"
+    if python3 -c "import llama_cpp; print('  Version:', llama_cpp.__version__)" 2>/dev/null; then
+        print_success "llama-cpp-python: OK"
+    else
+        print_warning "llama-cpp-python: NOT AVAILABLE"
+        all_ok=false
+    fi
     
-    # Check exo platform detection with ARM features
+    # Check exo_pyo3_bindings
     echo ""
-    print_info "Checking exo platform..."
-    python3 -c "
-try:
-    from exo.shared.platform import (
-        get_platform_info, get_recommended_backend, is_android,
-        get_arm_features, get_arm_info
-    )
-    info = get_platform_info()
-    print('  System:', info['system'])
-    print('  Machine:', info['machine'])
-    print('  Is Android:', is_android())
-    print('  Backend:', get_recommended_backend())
+    print_info "Checking exo_pyo3_bindings..."
+    if python3 -c "import exo_pyo3_bindings; print('  Imported successfully')" 2>/dev/null; then
+        print_success "exo_pyo3_bindings: OK"
+    else
+        print_warning "exo_pyo3_bindings: NOT AVAILABLE"
+        all_ok=false
+    fi
     
-    if is_android():
-        arm_info = get_arm_info()
-        print('')
-        print('  ARM Info:')
-        print('    RAM:', arm_info['ram_gb'], 'GB')
-        print('    Tier:', arm_info['tier'])
-        print('    Cores:', arm_info['core_count'])
-        print('    Threads:', arm_info['recommended_threads'])
-        
-        features = arm_info['features']
-        enabled = [k for k, v in features.items() if v]
-        if enabled:
-            print('    Features:', ', '.join(enabled))
+    # Check exo
+    echo ""
+    print_info "Checking exo core..."
+    if python3 -c "import exo; print('  Imported successfully')" 2>/dev/null; then
+        print_success "exo: OK"
+    else
+        print_warning "exo: NOT FULLY AVAILABLE"
+        all_ok=false
+    fi
     
-    print('  Status: OK')
-except Exception as e:
-    print('  Status: PARTIAL')
-    print('  Note:', str(e))
-" 2>/dev/null || print_warning "exo check had issues"
-    
-    # Check available memory
+    # Show memory
     echo ""
     print_info "System resources:"
-    free -h 2>/dev/null || print_warning "Could not check memory"
+    free -h 2>/dev/null | head -2 || true
     
-    # Show ARM detection summary if script exists
-    if [ -x "$SCRIPT_DIR/arm_detect.sh" ]; then
-        echo ""
-        print_info "ARM optimization summary:"
-        "$SCRIPT_DIR/arm_detect.sh" --flags 2>/dev/null || true
+    echo ""
+    if [ "$all_ok" = true ]; then
+        print_success "All components verified!"
+    else
+        print_warning "Some components need attention (see above)"
     fi
 }
 
@@ -379,33 +384,37 @@ except Exception as e:
 print_instructions() {
     print_header "Setup Complete!"
     
-    echo -e "${GREEN}exo setup is complete!${NC}"
-    echo ""
-    echo "What was installed:"
-    echo "  • Python packages for exo"
-    echo "  • llama-cpp-python (if build succeeded)"
-    echo "  • Build tools for future compilations"
+    echo -e "${GREEN}exo Termux setup finished!${NC}"
     echo ""
     echo "Next steps:"
     echo ""
     echo "1. Download a model:"
-    echo "   chmod +x scripts/download_model.sh"
-    echo "   ./scripts/download_model.sh list"
-    echo "   ./scripts/download_model.sh tinyllama"
+    echo "   ${CYAN}./scripts/download_model.sh list${NC}"
+    echo "   ${CYAN}./scripts/download_model.sh qwen-0.5b${NC}  # ~400MB, for 4GB RAM"
+    echo "   ${CYAN}./scripts/download_model.sh tinyllama${NC}  # ~700MB"
     echo ""
-    echo "2. Verify installation:"
-    echo "   ./scripts/termux_verify.sh"
+    echo "2. Test llama.cpp:"
+    echo "   ${CYAN}python3 -c \"from llama_cpp import Llama; print('OK')\"${NC}"
     echo ""
-    echo "3. Test llama.cpp:"
-    echo "   python3 -c \"from llama_cpp import Llama; print('OK')\""
+    echo "3. Test inference (after downloading a model):"
+    echo "   ${CYAN}python3 scripts/test_inference.py${NC}"
     echo ""
     echo "Model location: ~/.exo/models/"
-    echo "Logs location: ~/.exo/logs/"
     echo ""
     
+    # Show warnings if needed
     if ! python3 -c "import llama_cpp" 2>/dev/null; then
-        echo -e "${YELLOW}NOTE: llama-cpp-python may not have installed correctly.${NC}"
-        echo -e "${YELLOW}You may need to build it manually or check build logs.${NC}"
+        echo -e "${YELLOW}NOTE: llama-cpp-python not installed.${NC}"
+        echo "Try manually: pip install llama-cpp-python --no-cache-dir"
+        echo ""
+    fi
+    
+    if ! python3 -c "import exo_pyo3_bindings" 2>/dev/null; then
+        echo -e "${YELLOW}NOTE: exo_pyo3_bindings not installed.${NC}"
+        echo "Networking features will be limited."
+        echo "To build manually:"
+        echo "  cd rust/exo_pyo3_bindings"
+        echo "  maturin develop --release"
         echo ""
     fi
 }
@@ -413,10 +422,10 @@ print_instructions() {
 # Main execution
 main() {
     echo ""
-    echo -e "${GREEN}╔═══════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║     exo Termux Setup Script               ║${NC}"
-    echo -e "${GREEN}║     llama.cpp backend for Android         ║${NC}"
-    echo -e "${GREEN}╚═══════════════════════════════════════════╝${NC}"
+    echo -e "${GREEN}╔═══════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║     exo Termux Setup Script v2                ║${NC}"
+    echo -e "${GREEN}║     llama.cpp backend for Android             ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════╝${NC}"
     echo ""
     
     check_termux
@@ -425,7 +434,10 @@ main() {
     setup_storage
     create_directories
     setup_build_env
+    install_maturin
     install_python_deps
+    install_llama_cpp
+    build_pyo3_bindings
     install_exo
     verify_installation
     print_instructions

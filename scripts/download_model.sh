@@ -48,9 +48,13 @@ download_model() {
     python3 << EOF
 import os
 import sys
+import time
 from pathlib import Path
 
-try:
+MAX_RETRIES = 3
+RETRY_DELAY = 5
+
+def download_with_retry():
     from huggingface_hub import hf_hub_download
     
     repo_id = "$repo_id"
@@ -64,22 +68,52 @@ try:
     print("⏳ This may take a while depending on your connection...")
     print("")
     
-    path = hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
-        local_dir=str(model_dir),
-        local_dir_use_symlinks=False
-    )
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            path = hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                local_dir=str(model_dir),
+                local_dir_use_symlinks=False,
+                resume_download=True,  # Resume if interrupted
+            )
+            
+            print("")
+            print(f"✅ Download complete!")
+            print(f"📍 Location: {path}")
+            return True
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            
+            # Network errors - retry
+            if any(x in error_str for x in ["network", "unreachable", "connection", "timeout", "closed"]):
+                if attempt < MAX_RETRIES:
+                    print(f"⚠️  Network error (attempt {attempt}/{MAX_RETRIES}): {e}")
+                    print(f"   Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                    continue
+            
+            # Fatal error or last attempt
+            print(f"❌ Download failed: {e}")
+            return False
     
-    print("")
-    print(f"✅ Download complete!")
-    print(f"📍 Location: {path}")
+    return False
+
+try:
+    from huggingface_hub import hf_hub_download
+    
+    if not download_with_retry():
+        print("")
+        print("💡 Tips:")
+        print("   - Check your internet connection")
+        print("   - Try running the command again (downloads resume)")
+        print("   - If using mobile data, try WiFi instead")
+        sys.exit(1)
     
 except ImportError:
-    print("❌ huggingface_hub not installed. Run: pip install huggingface_hub")
-    sys.exit(1)
-except Exception as e:
-    print(f"❌ Download failed: {e}")
+    print("❌ huggingface_hub not installed.")
+    print("   Run: pip install huggingface_hub")
     sys.exit(1)
 EOF
 }
