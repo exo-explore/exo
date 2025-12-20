@@ -212,6 +212,7 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
 
 def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
     topology = copy.deepcopy(state.topology)
+    topology.add_node(event.node_id)
     info = event.info
     profile = state.node_profiles.get(event.node_id, NodePerformanceProfile())
     # TODO: should be broken up into individual events instead of this monster
@@ -273,7 +274,11 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
     last_seen = {**state.last_seen, event.node_id: datetime.fromisoformat(event.when)}
     new_profiles = {**state.node_profiles, event.node_id: profile}
     return state.model_copy(
-        update={"node_profiles": new_profiles, "last_seen": last_seen, "topology": topology}
+        update={
+            "node_profiles": new_profiles,
+            "last_seen": last_seen,
+            "topology": topology,
+        }
     )
 
 
@@ -285,8 +290,6 @@ def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> Sta
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
     topology = copy.deepcopy(state.topology)
-    if not topology.contains_connection(event.edge):
-        return state
-    topology.remove_connection(event.edge)
+    topology.remove_connection(event.sink, event.source, event.edge)
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})
