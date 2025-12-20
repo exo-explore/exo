@@ -21,28 +21,13 @@ from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mflux.config import get_config_for_model
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
+from exo.worker.engines.mflux.pipefusion import get_adapter_for_model
 from exo.worker.engines.mflux.pipefusion.adapter import ModelAdapter
 from exo.worker.engines.mflux.pipefusion.distributed_denoising import (
     DistributedDenoising,
 )
-from exo.worker.engines.mflux.pipefusion.flux_adapter import FluxModelAdapter
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
-
-
-def get_adapter_for_model(config: ImageModelConfig) -> ModelAdapter:
-    """Get the appropriate adapter for a model configuration.
-
-    Args:
-        config: The model configuration
-
-    Returns:
-        A ModelAdapter instance for the model family
-    """
-    if config.model_family == "flux":
-        return FluxModelAdapter(config)
-    else:
-        raise ValueError(f"No adapter found for model family: {config.model_family}")
 
 
 class DistributedImageModel:
