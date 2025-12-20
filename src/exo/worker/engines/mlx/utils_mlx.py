@@ -267,7 +267,7 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
         load_tokenizer(
             model_path,
             tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
-            eos_token_ids=eos_token_ids
+            eos_token_ids=eos_token_ids,
         ),
     )
     assert isinstance(tokenizer, TokenizerWrapper)
