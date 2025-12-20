@@ -5,16 +5,23 @@
 # Monitors device temperature and throttles inference workloads to prevent
 # overheating and maintain sustained performance.
 #
+# NOTE: Disabled by default for dedicated cluster devices.
+#       Enable with --enable flag or set EXO_THERMAL_MONITOR=1
+#
 # Based on research from docs/ARM_CORTEX_OPTIMIZATION_GUIDE.md
 #
 # Usage:
 #   chmod +x scripts/thermal_monitor.sh
-#   ./scripts/thermal_monitor.sh                    # Run in foreground
-#   ./scripts/thermal_monitor.sh --daemon           # Run in background
+#   ./scripts/thermal_monitor.sh --enable           # Enable and run in foreground
+#   ./scripts/thermal_monitor.sh --daemon --enable  # Enable and run in background
 #   ./scripts/thermal_monitor.sh --status           # Check current status
 #   ./scripts/thermal_monitor.sh --stop             # Stop background daemon
 #
-# Temperature Thresholds:
+# Environment:
+#   EXO_THERMAL_MONITOR=1    # Enable thermal monitoring
+#   EXO_THERMAL_MONITOR=0    # Disable thermal monitoring (default)
+#
+# Temperature Thresholds (when enabled):
 #   - PAUSE:  42°C - Pause compute workloads temporarily
 #   - RESUME: 38°C - Resume when cooled down
 #   - WARN:   45°C - Show warning notification
@@ -337,11 +344,64 @@ show_status() {
 }
 
 # ============================================================================
+# Enable/Disable Check
+# ============================================================================
+
+# Thermal monitoring is DISABLED by default for dedicated cluster devices
+# Enable with --enable flag or EXO_THERMAL_MONITOR=1 environment variable
+ENABLED=false
+DAEMON_MODE=false
+
+check_enabled() {
+    # Check environment variable
+    if [[ "${EXO_THERMAL_MONITOR:-0}" == "1" ]]; then
+        ENABLED=true
+    fi
+    
+    # Check command line flags
+    for arg in "$@"; do
+        case "$arg" in
+            "--enable"|"-e")
+                ENABLED=true
+                ;;
+        esac
+    done
+}
+
+require_enabled() {
+    if [[ "$ENABLED" != "true" ]]; then
+        echo -e "${YELLOW}Thermal monitoring is DISABLED by default.${NC}"
+        echo ""
+        echo "Dedicated cluster devices typically don't need thermal throttling."
+        echo ""
+        echo "To enable, use one of:"
+        echo "  $0 --enable              # Run in foreground"
+        echo "  $0 --daemon --enable     # Run in background"
+        echo "  EXO_THERMAL_MONITOR=1 $0 # Via environment"
+        echo ""
+        exit 0
+    fi
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
-case "${1:-}" in
+# Parse all args for --enable flag first
+check_enabled "$@"
+
+# Filter out --enable from arguments for case matching
+MAIN_ARG=""
+for arg in "$@"; do
+    case "$arg" in
+        "--enable"|"-e") ;;  # Skip
+        *) MAIN_ARG="$arg" ;;
+    esac
+done
+
+case "${MAIN_ARG:-}" in
     "--daemon"|"-d")
+        require_enabled
         start_daemon
         ;;
     "--stop")
@@ -360,12 +420,19 @@ case "${1:-}" in
         echo ""
         echo "Usage: $0 [option]"
         echo ""
+        echo -e "${YELLOW}NOTE: Disabled by default for dedicated cluster devices.${NC}"
+        echo ""
         echo "Options:"
-        echo "  (none)         Run monitor in foreground"
-        echo "  --daemon, -d   Run monitor in background"
+        echo "  --enable, -e   Enable thermal monitoring (required to run)"
+        echo "  --daemon, -d   Run monitor in background (requires --enable)"
         echo "  --stop         Stop background daemon"
-        echo "  --status, -s   Show current status"
+        echo "  --status, -s   Show current status (always works)"
         echo "  --help, -h     Show this help"
+        echo ""
+        echo "Examples:"
+        echo "  $0 --enable              # Run in foreground"
+        echo "  $0 --daemon --enable     # Run in background"
+        echo "  EXO_THERMAL_MONITOR=1 $0 # Enable via environment"
         echo ""
         echo "Configuration (edit script to change):"
         echo "  TEMP_PAUSE_THRESHOLD  = ${TEMP_PAUSE_THRESHOLD}°C"
@@ -376,6 +443,7 @@ case "${1:-}" in
         echo ""
         ;;
     *)
+        require_enabled
         echo ""
         echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
         echo -e "${CYAN}║       exo Thermal Monitor                    ║${NC}"

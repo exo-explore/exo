@@ -117,23 +117,28 @@ source ./scripts/arm_detect.sh --env
 
 ### `thermal_monitor.sh` - Temperature Management
 
-Monitor device temperature and throttle inference when too hot:
+Monitor device temperature and throttle inference when too hot.
+
+**NOTE:** Disabled by default for dedicated cluster devices. Most dedicated devices don't need thermal throttling.
 
 ```bash
-# Run in foreground (press Ctrl+C to stop)
-./scripts/thermal_monitor.sh
+# Run in foreground (requires --enable)
+./scripts/thermal_monitor.sh --enable
 
 # Run as background daemon
-./scripts/thermal_monitor.sh --daemon
+./scripts/thermal_monitor.sh --daemon --enable
 
-# Check current status
+# Enable via environment variable
+EXO_THERMAL_MONITOR=1 ./scripts/thermal_monitor.sh
+
+# Check current status (always works)
 ./scripts/thermal_monitor.sh --status
 
 # Stop background daemon
 ./scripts/thermal_monitor.sh --stop
 ```
 
-**What it does:**
+**What it does (when enabled):**
 - Monitors battery/thermal zone temperature
 - Pauses exo/llama processes when device exceeds 42°C
 - Resumes when cooled below 38°C
@@ -259,8 +264,8 @@ pip install llama-cpp-python --no-cache-dir
 1. **Use Q4_K_M quantization** - best quality/speed balance for mobile
 2. **Set thread count to big core count** (usually 4 on modern phones)
 3. **Keep device plugged in** for sustained performance
-4. **Use thermal monitoring** to prevent throttling
-5. **Close other apps** before running inference
+4. **Close other apps** before running inference
+5. **Enable thermal monitoring** for non-dedicated devices: `./scripts/thermal_monitor.sh --daemon --enable`
 
 ## Environment Variables
 
@@ -287,6 +292,9 @@ export CFLAGS="-O3 -mcpu=$EXO_ARM_MCPU -march=$EXO_ARM_MARCH -flto"
 # exo settings
 export EXO_HOME=~/.exo
 export EXO_MODELS_DIR=~/.exo/models
+
+# Thermal monitoring (disabled by default for dedicated devices)
+export EXO_THERMAL_MONITOR=0   # 0=disabled (default), 1=enabled
 ```
 
 ## Multi-Device Cluster

@@ -30,7 +30,7 @@ LOG_DIR="${HOME}/.exo/logs"
 LOG_FILE="${LOG_DIR}/boot.log"
 WAIT_FOR_NETWORK=30  # Seconds to wait for network
 ENABLE_SSH=true
-ENABLE_THERMAL_MONITOR=true
+ENABLE_THERMAL_MONITOR=false  # Disabled by default for dedicated devices
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -112,17 +112,19 @@ if [ "$ENABLE_SSH" = "true" ]; then
     fi
 fi
 
-# Step 4: Start thermal monitoring
+# Step 4: Start thermal monitoring (disabled by default for dedicated devices)
 if [ "$ENABLE_THERMAL_MONITOR" = "true" ]; then
     log "Starting thermal monitor..."
     THERMAL_SCRIPT="$EXO_DIR/scripts/thermal_monitor.sh"
     
     if [ -x "$THERMAL_SCRIPT" ]; then
-        "$THERMAL_SCRIPT" --daemon
+        "$THERMAL_SCRIPT" --daemon --enable
         log "Thermal monitor started"
     else
         log "WARNING: Thermal monitor script not found at $THERMAL_SCRIPT"
     fi
+else
+    log "Thermal monitor disabled (set ENABLE_THERMAL_MONITOR=true to enable)"
 fi
 
 # Step 5: Start exo cluster node
