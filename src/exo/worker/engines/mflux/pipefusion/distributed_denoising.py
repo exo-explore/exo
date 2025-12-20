@@ -276,9 +276,9 @@ class DistributedDenoising:
 
         # === PHASE 3: Joint→Single Transition ===
         if self.owns_concat_stage:
-            # Concatenate encoder and hidden states
-            concatenated = mx.concatenate(
-                [encoder_hidden_states, hidden_states], axis=1
+            # Merge encoder and hidden states using adapter hook
+            concatenated = self.adapter.merge_streams(
+                hidden_states, encoder_hidden_states
             )
 
             if self.has_single_blocks:
@@ -435,7 +435,7 @@ class DistributedDenoising:
                     )
 
             if self.owns_concat_stage:
-                patch_concat = mx.concatenate([encoder_hidden_states, patch], axis=1)
+                patch_concat = self.adapter.merge_streams(patch, encoder_hidden_states)
 
                 if self.has_single_blocks:
                     patch = patch_concat
