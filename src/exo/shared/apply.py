@@ -201,8 +201,12 @@ def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
     last_seen = {
         key: value for key, value in state.last_seen.items() if key != event.node_id
     }
+    downloads = {
+        key: value for key, value in state.downloads.items() if key != event.node_id
+    }
     return state.model_copy(
         update={
+            "downloads": downloads,
             "topology": topology,
             "node_profiles": node_profiles,
             "last_seen": last_seen,
