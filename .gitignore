@@ -29,3 +29,6 @@ dashboard/.svelte-kit/
 # exo
 exo_debug.log
 exo.log
+
+# VSCode
+.vscode
