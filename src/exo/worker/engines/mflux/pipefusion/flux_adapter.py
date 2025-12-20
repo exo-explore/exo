@@ -16,7 +16,7 @@ from mflux.models.flux.model.flux_transformer.single_transformer_block import (
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
-from exo.worker.engines.mflux.config.model_config import ImageModelConfig
+from exo.worker.engines.mflux.config.model_config import BlockType, ImageModelConfig
 from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode
 from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
@@ -176,6 +176,84 @@ class FluxModelAdapter:
     ) -> list[SingleTransformerBlock]:
         """Get the list of single transformer blocks from the Flux model."""
         return list(transformer.single_transformer_blocks)
+
+    def get_blocks(
+        self, transformer: Transformer
+    ) -> list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]]:
+        """Get all transformer blocks in execution order with their types.
+
+        For Flux models, this returns joint blocks first, then single blocks.
+        """
+        blocks: list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]] = []
+        for block in self.get_joint_blocks(transformer):
+            blocks.append((block, BlockType.JOINT))
+        for block in self.get_single_blocks(transformer):
+            blocks.append((block, BlockType.SINGLE))
+        return blocks
+
+    def apply_block(
+        self,
+        block: JointTransformerBlock | SingleTransformerBlock,
+        block_type: BlockType,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array | None,
+        text_embeddings: mx.array,
+        rotary_embeddings: mx.array,
+        kv_cache: ImagePatchKVCache | None,
+        mode: BlockWrapperMode,
+        text_seq_len: int,
+        patch_start: int | None = None,
+        patch_end: int | None = None,
+    ) -> tuple[mx.array, mx.array | None]:
+        """Apply any transformer block type.
+
+        Delegates to the appropriate block-specific method based on block_type.
+        """
+        if block_type == BlockType.JOINT:
+            assert isinstance(block, JointTransformerBlock)
+            assert encoder_hidden_states is not None
+            enc_out, hidden_out = self.apply_joint_block(
+                block=block,
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                kv_cache=kv_cache,
+                mode=mode,
+                text_seq_len=text_seq_len,
+                patch_start=patch_start,
+                patch_end=patch_end,
+            )
+            return hidden_out, enc_out
+        elif block_type == BlockType.SINGLE:
+            assert isinstance(block, SingleTransformerBlock)
+            hidden_out = self.apply_single_block(
+                block=block,
+                hidden_states=hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                kv_cache=kv_cache,
+                mode=mode,
+                text_seq_len=text_seq_len,
+                patch_start=patch_start,
+                patch_end=patch_end,
+            )
+            return hidden_out, None
+        else:
+            raise NotImplementedError(
+                f"Block type {block_type} not supported by FluxModelAdapter"
+            )
+
+    def merge_streams(
+        self,
+        hidden_states: mx.array,
+        encoder_hidden_states: mx.array,
+    ) -> mx.array:
+        """Merge image and text streams for transition to single blocks.
+
+        For Flux models, this concatenates [text, image] along the sequence dimension.
+        """
+        return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
 
     # -------------------------------------------------------------------------
     # Joint block implementations
