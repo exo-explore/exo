@@ -116,11 +116,22 @@ class DistributedDenoising:
             self.has_single_blocks or self.end_layer == self.total_joint
         )
 
-        self.transformer_blocks = self.transformer_blocks[
+        # Slice blocks to only those assigned to this stage
+        assigned_joint_blocks = self.transformer_blocks[
             self.joint_start : self.joint_end
         ]
-        self.single_transformer_blocks = self.single_transformer_blocks[
+        assigned_single_blocks = self.single_transformer_blocks[
             self.single_start : self.single_end
+        ]
+
+        # Wrap blocks at initialization (reused across all calls)
+        self.joint_block_wrappers = [
+            JointBlockWrapper(block=block, adapter=self.adapter)
+            for block in assigned_joint_blocks
+        ]
+        self.single_block_wrappers = [
+            SingleBlockWrapper(block=block, adapter=self.adapter)
+            for block in assigned_single_blocks
         ]
 
     @property
@@ -155,7 +166,7 @@ class DistributedDenoising:
                 head_dim=self.config.head_dim,
                 dtype=dtype,
             )
-            for _ in range(len(self.transformer_blocks))
+            for _ in range(len(self.joint_block_wrappers))
         ]
         self.single_kv_caches = [
             ImagePatchKVCache(
@@ -165,7 +176,7 @@ class DistributedDenoising:
                 head_dim=self.config.head_dim,
                 dtype=dtype,
             )
-            for _ in range(len(self.single_transformer_blocks))
+            for _ in range(len(self.single_block_wrappers))
         ]
 
     def _create_patches(
@@ -251,20 +262,16 @@ class DistributedDenoising:
                 )
                 mx.eval(hidden_states, encoder_hidden_states)
 
-            # Run assigned joint blocks with caching wrappers
-            for block_idx, block in enumerate(self.transformer_blocks):
-                wrapper = JointBlockWrapper(
-                    block=block,
-                    adapter=self.adapter,
-                    kv_cache=self.joint_kv_caches[block_idx],
-                    mode=BlockWrapperMode.CACHING,
-                )
+            # Run assigned joint blocks with caching mode
+            for block_idx, wrapper in enumerate(self.joint_block_wrappers):
                 encoder_hidden_states, hidden_states = wrapper(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
                     text_seq_len=text_seq_len,
+                    kv_cache=self.joint_kv_caches[block_idx],
+                    mode=BlockWrapperMode.CACHING,
                 )
 
         # === PHASE 3: Joint→Single Transition ===
@@ -305,19 +312,15 @@ class DistributedDenoising:
                 )
                 mx.eval(hidden_states)
 
-            # Run assigned single blocks with caching wrappers
-            for block_idx, block in enumerate(self.single_transformer_blocks):
-                wrapper = SingleBlockWrapper(
-                    block=block,
-                    adapter=self.adapter,
-                    kv_cache=self.single_kv_caches[block_idx],
-                    mode=BlockWrapperMode.CACHING,
-                )
+            # Run assigned single blocks with caching mode
+            for block_idx, wrapper in enumerate(self.single_block_wrappers):
                 hidden_states = wrapper(
                     hidden_states=hidden_states,
                     text_embeddings=text_embeddings,
                     rotary_embeddings=image_rotary_embeddings,
                     text_seq_len=text_seq_len,
+                    kv_cache=self.single_kv_caches[block_idx],
+                    mode=BlockWrapperMode.CACHING,
                 )
 
             # Send to next stage if not last
@@ -417,20 +420,16 @@ class DistributedDenoising:
                         patch, prompt_embeds, self.transformer
                     )
 
-                # Run assigned joint blocks with KV cache
-                for block_idx, block in enumerate(self.transformer_blocks):
-                    wrapper = JointBlockWrapper(
-                        block=block,
-                        adapter=self.adapter,
-                        kv_cache=self.joint_kv_caches[block_idx],
-                        mode=BlockWrapperMode.PATCHED,
-                    )
+                # Run assigned joint blocks with patched mode
+                for block_idx, wrapper in enumerate(self.joint_block_wrappers):
                     encoder_hidden_states, patch = wrapper(
                         hidden_states=patch,
                         encoder_hidden_states=encoder_hidden_states,
                         text_embeddings=text_embeddings,
                         rotary_embeddings=image_rotary_embeddings,
                         text_seq_len=text_seq_len,
+                        kv_cache=self.joint_kv_caches[block_idx],
+                        mode=BlockWrapperMode.PATCHED,
                         patch_start=start_token,
                         patch_end=end_token,
                     )
@@ -474,19 +473,15 @@ class DistributedDenoising:
                     mx.eval(patch)
                     patch_latents[patch_idx] = patch
 
-                # Run assigned single blocks with KV cache
-                for block_idx, block in enumerate(self.single_transformer_blocks):
-                    wrapper = SingleBlockWrapper(
-                        block=block,
-                        adapter=self.adapter,
-                        kv_cache=self.single_kv_caches[block_idx],
-                        mode=BlockWrapperMode.PATCHED,
-                    )
+                # Run assigned single blocks with patched mode
+                for block_idx, wrapper in enumerate(self.single_block_wrappers):
                     patch = wrapper(
                         hidden_states=patch,
                         text_embeddings=text_embeddings,
                         rotary_embeddings=image_rotary_embeddings,
                         text_seq_len=text_seq_len,
+                        kv_cache=self.single_kv_caches[block_idx],
+                        mode=BlockWrapperMode.PATCHED,
                         patch_start=start_token,
                         patch_end=end_token,
                     )
