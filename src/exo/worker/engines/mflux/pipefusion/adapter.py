@@ -1,4 +1,5 @@
 from enum import Enum
+from pathlib import Path
 from typing import Any, Protocol
 
 import mlx.core as mx
@@ -27,6 +28,24 @@ class ModelAdapter(Protocol):
     @property
     def config(self) -> ImageModelConfig:
         """Return the model configuration."""
+        ...
+
+    def create_model(
+        self,
+        model_id: str,
+        local_path: Path,
+        quantize: int | None = None,
+    ) -> Any:
+        """Create the underlying mflux model instance.
+
+        Args:
+            model_id: The model identifier (e.g., "black-forest-labs/FLUX.1-schnell")
+            local_path: Path to the local model weights
+            quantize: Optional quantization bit width
+
+        Returns:
+            The mflux model instance (e.g., Flux1, Fibo, Qwen)
+        """
         ...
 
     def compute_embeddings(
