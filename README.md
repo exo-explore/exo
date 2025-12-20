@@ -63,6 +63,16 @@ There are two ways to run EXO:
 
 ### Run from Source (Mac & Linux)
 
+**Prerequisites:**
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+  Or with brew:
+  ```bash
+  brew install uv
+  ```
+
 Clone the repo, build the dashboard, and run EXO:
 
 ```bash
