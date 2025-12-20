@@ -9,12 +9,8 @@ To run EXO from source:
 **Prerequisites:**
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
   ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  brew install uv
   ```
-    Or with brew:
-    ```bash
-    brew install uv
-    ```
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
   ```bash
   brew install macmon
