@@ -247,7 +247,13 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                             for tb_ident in state.node_profiles[nid].tb_interfaces
                         }
                         as_rdma_conns = [
-                            (conn_map[tb_conn.sink_uuid][0], RDMAConnection(source_rdma_iface=conn_map[tb_conn.source_uuid][1], sink_rdma_iface=conn_map[tb_conn.sink_uuid][1]))
+                            (
+                                conn_map[tb_conn.sink_uuid][0],
+                                RDMAConnection(
+                                    source_rdma_iface=conn_map[tb_conn.source_uuid][1],
+                                    sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
+                                ),
+                            )
                             for tb_conn in info
                             if tb_conn.source_uuid in conn_map
                             if tb_conn.sink_uuid in conn_map

@@ -301,11 +301,9 @@ def test_get_mlx_jaccl_coordinators():
     topology.add_connection(node_c_id, node_a_id, conn_c_a)
     topology.add_connection(node_a_id, node_c_id, conn_a_c)
 
-    cycle = [node_a_id, node_b_id, node_c_id]
-
     # act
     coordinators = get_mlx_jaccl_coordinators(
-        cycle, coordinator_port=5000, cycle_digraph=topology
+        node_a_id, coordinator_port=5000, cycle_digraph=topology
     )
 
     # assert

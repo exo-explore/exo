@@ -245,8 +245,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
     return hosts
 
 
-def get_mlx_ibv_devices_matrix(
-    selected_cycle: list[NodeId],
+def get_mlx_jaccl_devices_matrix(
     cycle_digraph: Topology,
 ) -> list[list[str | None]]:
     """Build connectivity matrix mapping device i to device j via RDMA interface names.
@@ -255,6 +254,7 @@ def get_mlx_ibv_devices_matrix(
     to device j, or None if no connection exists or no interface name is found.
     Diagonal elements are always None.
     """
+    selected_cycle = list(cycle_digraph.list_nodes())
     num_nodes = len(selected_cycle)
     matrix: list[list[str | None]] = [
         [None for _ in range(num_nodes)] for _ in range(num_nodes)
@@ -271,7 +271,7 @@ def get_mlx_ibv_devices_matrix(
                 break
             else:
                 logger.warning(
-                    f"Failed to find interface name between {node_i.node_id} and {node_j.node_id}"
+                    f"Failed to find interface name between {node_i} and {node_j}"
                 )
                 raise ValueError(
                     "Current ibv backend requires all-to-all rdma connections"
@@ -394,31 +394,30 @@ def get_mlx_ring_hosts_by_node(
 
 
 def get_mlx_jaccl_coordinators(
-    selected_cycle: list[NodeWithProfile],
+    coordinator: NodeId,
     coordinator_port: int,
     cycle_digraph: Topology,
 ) -> dict[NodeId, str]:
-    """Get the coordinator addresses for MLX Jaccl (rank 0 device).
+    """Get the coordinator addresses for MLX JACCL (rank 0 device).
 
     Select an IP address that each node can reach for the rank 0 node. Returns
     address in format "X.X.X.X:PORT" per node.
     """
-    rank_0_node = selected_cycle[0]
-    logger.info(f"Selecting coordinator from rank 0 node: {rank_0_node}")
+    selected_cycle = list(cycle_digraph.list_nodes())
+    logger.info(f"Selecting coordinator: {coordinator}")
 
-    def get_ip_for_node(n: NodeWithProfile) -> str:
-        if n == rank_0_node:
+    def get_ip_for_node(n: NodeId) -> str:
+        if n == coordinator:
             return "0.0.0.0"
 
-        ip = _find_ip_prioritised(n, rank_0_node, cycle_digraph)
-        if ip:
+        for ip, _ in _find_connection_ip(n, coordinator, cycle_digraph):
             return ip
 
         logger.warning(
-            f"Failed to find directly connected ip between {n} and {rank_0_node}"
+            f"Failed to find directly connected ip between {n} and {coordinator}"
         )
-        raise ValueError("Current ibv backend requires all-to-all rdma connections")
+        raise ValueError("Current jaccl backend requires all-to-all rdma connections")
 
     return {
-        n.node_id: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle
+        n: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle
     }

@@ -8,9 +8,9 @@ from loguru import logger
 from exo.master.placement_utils import (
     NodeWithProfile,
     filter_cycles_by_memory,
-    get_mlx_ibv_devices_matrix,
     get_mlx_jaccl_coordinators,
     get_mlx_ring_hosts_by_node,
+    get_mlx_jaccl_devices_matrix,
     get_shard_assignments,
     get_smallest_cycles,
 )
@@ -61,9 +61,7 @@ def place_instance(
     logger.info("finding cycles:")
     cycles = topology.get_cycles() + [[node] for node in all_nodes]
     logger.info(cycles)
-    candidate_cycles = list(
-        filter(lambda it: len(it) >= command.min_nodes, cycles)
-    )
+    candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
     cycles_with_sufficient_memory = filter_cycles_by_memory(
         candidate_cycles, node_profiles, command.model_meta.storage_size
     )
@@ -132,7 +130,7 @@ def place_instance(
 
     if len(selected_cycle) == 1:
         logger.warning(
-            "You have likely selected ibv for a single node instance; falling back to MlxRing"
+            "You have likely selected jaccl for a single node instance; falling back to MlxRing"
         )
 
         command.instance_meta = InstanceMeta.MlxRing
@@ -140,19 +138,18 @@ def place_instance(
     # TODO: Single node instances
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
-            mlx_ibv_devices = get_mlx_ibv_devices_matrix(
-                [node.node_id for node in selected_cycle],
+            mlx_jaccl_devices = get_mlx_jaccl_devices_matrix(
                 cycle_digraph,
             )
             mlx_jaccl_coordinators = get_mlx_jaccl_coordinators(
-                selected_cycle,
+                coordinator=selected_cycle[0].node_id,
                 coordinator_port=random_ephemeral_port(),
                 cycle_digraph=cycle_digraph,
             )
             target_instances[instance_id] = MlxJacclInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
-                ibv_devices=mlx_ibv_devices,
+                jaccl_devices=mlx_jaccl_devices,
                 jaccl_coordinators=mlx_jaccl_coordinators,
             )
         case InstanceMeta.MlxRing:
