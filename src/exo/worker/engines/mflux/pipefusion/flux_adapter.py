@@ -10,6 +10,9 @@ from mflux.models.flux.model.flux_transformer.common.attention_utils import (
 from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
     JointTransformerBlock,
 )
+from mflux.models.flux.model.flux_transformer.single_transformer_block import (
+    SingleTransformerBlock,
+)
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
@@ -120,7 +123,7 @@ class FluxModelAdapter:
 
     def apply_single_block(
         self,
-        block: Any,
+        block: SingleTransformerBlock,
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
@@ -411,7 +414,7 @@ class FluxModelAdapter:
 
     def _apply_single_block_caching(
         self,
-        block: Any,
+        block: SingleTransformerBlock,
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
@@ -482,7 +485,7 @@ class FluxModelAdapter:
 
     def _apply_single_block_patched(
         self,
-        block: Any,
+        block: SingleTransformerBlock,
         patch_hidden: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
