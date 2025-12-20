@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 import shutil
+import ssl
 import time
 import traceback
 from datetime import timedelta
@@ -12,6 +13,7 @@ from urllib.parse import urljoin
 import aiofiles
 import aiofiles.os as aios
 import aiohttp
+import certifi
 from loguru import logger
 from pydantic import (
     BaseModel,
@@ -262,8 +264,12 @@ def create_http_session(
         sock_read_timeout = 1800
         sock_connect_timeout = 60
 
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+
     return aiohttp.ClientSession(
         auto_decompress=auto_decompress,
+        connector=connector,
         timeout=aiohttp.ClientTimeout(
             total=total_timeout,
             connect=connect_timeout,
