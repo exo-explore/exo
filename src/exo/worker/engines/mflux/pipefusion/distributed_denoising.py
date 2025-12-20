@@ -3,7 +3,6 @@ from typing import Any, Optional
 
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
-from mflux.models.flux.model.flux_transformer.transformer import Transformer
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
@@ -52,7 +51,6 @@ def calculate_token_indices(
 class DistributedDenoising:
     def __init__(
         self,
-        transformer: Transformer,
         config: ImageModelConfig,
         adapter: ModelAdapter,
         group: mx.distributed.Group,
@@ -60,7 +58,6 @@ class DistributedDenoising:
         num_sync_steps: int = 1,
         num_patches: Optional[int] = None,
     ):
-        self.transformer = transformer
         self.config = config
         self.adapter = adapter
         self.group = group
@@ -117,9 +114,9 @@ class DistributedDenoising:
         )
 
         # Slice blocks to only those assigned to this stage
-        # Use adapter's block accessors to avoid direct transformer internal access
-        all_joint_blocks = self.adapter.get_joint_blocks(self.transformer)
-        all_single_blocks = self.adapter.get_single_blocks(self.transformer)
+        # Use adapter's block accessors
+        all_joint_blocks = self.adapter.get_joint_blocks()
+        all_single_blocks = self.adapter.get_single_blocks()
 
         assigned_joint_blocks = all_joint_blocks[self.joint_start : self.joint_end]
         assigned_single_blocks = all_single_blocks[self.single_start : self.single_end]
@@ -217,16 +214,15 @@ class DistributedDenoising:
         # Non-first stages: will receive embedded values
         if self.is_first_stage:
             hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
-                hidden_states, prompt_embeds, self.transformer
+                hidden_states, prompt_embeds
             )
 
         # All stages need these for their blocks
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, self.transformer, config
+            t, pooled_prompt_embeds, config
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
-            self.transformer,
             config,
             kontext_image_ids=kontext_image_ids,
         )
@@ -235,7 +231,7 @@ class DistributedDenoising:
         batch_size = prev_latents.shape[0]
         num_img_tokens = prev_latents.shape[1]
         text_seq_len = prompt_embeds.shape[1]
-        hidden_dim = self.transformer.x_embedder.weight.shape[0]
+        hidden_dim = self.adapter.hidden_dim
 
         if t == 0:
             self._initialize_kv_caches(
@@ -335,7 +331,7 @@ class DistributedDenoising:
 
         if self.is_last_stage:
             hidden_states = self.adapter.final_projection(
-                hidden_states, text_embeddings, self.transformer
+                hidden_states, text_embeddings
             )
 
             hidden_states = config.scheduler.step(
@@ -377,18 +373,17 @@ class DistributedDenoising:
         # hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, self.transformer, config
+            t, pooled_prompt_embeds, config
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
-            self.transformer,
             config,
             kontext_image_ids=kontext_image_ids,
         )
 
         batch_size = patch_latents[0].shape[0]
         text_seq_len = prompt_embeds.shape[1]
-        hidden_dim = self.transformer.x_embedder.weight.shape[0]
+        hidden_dim = self.adapter.hidden_dim
 
         for patch_idx, patch in enumerate(patch_latents):
             patch_prev = patch
@@ -417,7 +412,7 @@ class DistributedDenoising:
 
                 if self.is_first_stage:
                     patch, encoder_hidden_states = self.adapter.compute_embeddings(
-                        patch, prompt_embeds, self.transformer
+                        patch, prompt_embeds
                     )
 
                 # Run assigned joint blocks with patched mode
@@ -495,7 +490,7 @@ class DistributedDenoising:
                 patch_img_only = patch[:, text_seq_len:, :]
 
                 patch_img_only = self.adapter.final_projection(
-                    patch_img_only, text_embeddings, self.transformer
+                    patch_img_only, text_embeddings
                 )
 
                 patch = config.scheduler.step(
@@ -564,4 +559,6 @@ class DistributedDenoising:
 
     # Delegate attribute access to the underlying transformer for compatibility
     def __getattr__(self, name: str) -> Any:
-        return getattr(self.transformer, name)
+        # Use object.__getattribute__ to avoid recursion when accessing self.adapter
+        adapter = object.__getattribute__(self, "adapter")
+        return getattr(adapter.transformer, name)
