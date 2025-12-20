@@ -12,13 +12,13 @@ from exo.master.tests.conftest import (
 )
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
-from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
-from exo.shared.types.topology import SocketConnection
 from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import NetworkInterfaceInfo
+from exo.shared.types.topology import SocketConnection
 from exo.shared.types.worker.instances import (
     Instance,
     InstanceId,
@@ -318,6 +318,9 @@ def test_tensor_rdma_backend_connectivity_matrix(
         name="en0",
         ip_address="192.168.1.100",
     )
+    ethernet_conn = SocketConnection(
+        sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")
+    )
 
     profiles[node_a].network_interfaces = [ethernet_interface]
     profiles[node_b].network_interfaces = [ethernet_interface]
@@ -333,12 +336,12 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_connection(node_c, node_b, create_rdma_connection(4))
     topology.add_connection(node_a, node_c, create_rdma_connection(5))
 
-    topology.add_connection(node_a, node_b, SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")))
-    topology.add_connection(node_b, node_c, SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")))
-    topology.add_connection(node_c, node_a, SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")))
-    topology.add_connection(node_a, node_c, SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")))
-    topology.add_connection(node_b, node_a, SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")))
-    topology.add_connection(node_c, node_b, SocketConnection(sink_multiaddr=Multiaddr(address=f"/ip4/192.168.1.{100}/tcp/{8000}")))
+    topology.add_connection(node_a, node_b, ethernet_conn)
+    topology.add_connection(node_b, node_c, ethernet_conn)
+    topology.add_connection(node_c, node_a, ethernet_conn)
+    topology.add_connection(node_a, node_c, ethernet_conn)
+    topology.add_connection(node_b, node_a, ethernet_conn)
+    topology.add_connection(node_c, node_b, ethernet_conn)
 
     cic = PlaceInstance(
         sharding=Sharding.Tensor,
