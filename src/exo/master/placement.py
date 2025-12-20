@@ -59,15 +59,15 @@ def place_instance(
     all_nodes = list(topology.list_nodes())
 
     logger.info("finding cycles:")
-    cycles = topology.get_cycles()
-    singleton_cycles = [[node] for node in all_nodes]
+    cycles = topology.get_cycles() + [[node] for node in all_nodes]
+    logger.info(cycles)
     candidate_cycles = list(
-        filter(lambda it: len(it) >= command.min_nodes, cycles + singleton_cycles)
+        filter(lambda it: len(it) >= command.min_nodes, cycles)
     )
     cycles_with_sufficient_memory = filter_cycles_by_memory(
         candidate_cycles, node_profiles, command.model_meta.storage_size
     )
-    if not cycles_with_sufficient_memory:
+    if len(cycles_with_sufficient_memory) == 0:
         raise ValueError("No cycles found with sufficient memory")
 
     if command.sharding == Sharding.Tensor:
