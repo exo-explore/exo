@@ -1,8 +1,11 @@
-from typing import Any
-
 import mlx.core as mx
 
-from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode, ModelAdapter
+from exo.worker.engines.mflux.pipefusion.adapter import (
+    BlockWrapperMode,
+    JointBlockInterface,
+    ModelAdapter,
+    SingleBlockInterface,
+)
 from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
@@ -19,7 +22,7 @@ class JointBlockWrapper:
 
     def __init__(
         self,
-        block: Any,
+        block: JointBlockInterface,
         adapter: ModelAdapter,
     ):
         """Initialize the joint block wrapper.
@@ -86,7 +89,7 @@ class SingleBlockWrapper:
 
     def __init__(
         self,
-        block: Any,
+        block: SingleBlockInterface,
         adapter: ModelAdapter,
     ):
         """Initialize the single block wrapper.
