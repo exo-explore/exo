@@ -22,10 +22,6 @@ class Topology:
             rx.PyDiGraph()
         )
         self._node_id_to_rx_id_map: dict[NodeId, int] = dict()
-        self._rx_id_to_node_id_map: dict[int, NodeId] = dict()
-        self._edge_id_to_rx_id_map: dict[SocketConnection | RDMAConnection, int] = (
-            dict()
-        )
 
     def to_snapshot(self) -> TopologySnapshot:
         return TopologySnapshot(
@@ -51,7 +47,7 @@ class Topology:
             return
         rx_id = self._graph.add_node(node)
         self._node_id_to_rx_id_map[node] = rx_id
-        self._rx_id_to_node_id_map[rx_id] = node
+        self._graph[rx_id] = node
 
     def node_is_leaf(self, node_id: NodeId) -> bool:
         return (
@@ -61,7 +57,7 @@ class Topology:
 
     def neighbours(self, node_id: NodeId) -> list[NodeId]:
         return [
-            self._rx_id_to_node_id_map[rx_id]
+            self._graph[rx_id]
             for rx_id in self._graph.neighbors(self._node_id_to_rx_id_map[node_id])
         ]
 
@@ -71,7 +67,7 @@ class Topology:
         if node_id not in self._node_id_to_rx_id_map:
             return []
         return (
-            (self._rx_id_to_node_id_map[nid], conn)
+            (self._graph[nid], conn)
             for _, nid, conn in self._graph.out_edges(
                 self._node_id_to_rx_id_map[node_id]
             )
@@ -79,11 +75,6 @@ class Topology:
 
     def contains_node(self, node_id: NodeId) -> bool:
         return node_id in self._node_id_to_rx_id_map
-
-    def contains_connection(
-        self, connection: SocketConnection | RDMAConnection
-    ) -> bool:
-        return connection in self._edge_id_to_rx_id_map
 
     def add_connection(
         self,
@@ -96,14 +87,10 @@ class Topology:
         if sink not in self._node_id_to_rx_id_map:
             self.add_node(sink)
 
-        if connection in self._edge_id_to_rx_id_map:
-            return
-
         src_id = self._node_id_to_rx_id_map[source]
         sink_id = self._node_id_to_rx_id_map[sink]
 
-        rx_id = self._graph.add_edge(src_id, sink_id, connection)
-        self._edge_id_to_rx_id_map[connection] = rx_id
+        self._graph.add_edge(src_id, sink_id, connection)
 
     def get_all_connections_between(
         self, source: NodeId, sink: NodeId
@@ -123,8 +110,8 @@ class Topology:
     ) -> Iterable[tuple[NodeId, NodeId, SocketConnection | RDMAConnection]]:
         return (
             (
-                self._rx_id_to_node_id_map[src_id],
-                self._rx_id_to_node_id_map[sink_id],
+                self._graph[src_id],
+                self._graph[sink_id],
                 connection,
             )
             for src_id, sink_id, connection in self._graph.weighted_edge_list()
@@ -134,31 +121,24 @@ class Topology:
         if node_id not in self._node_id_to_rx_id_map:
             return
 
-        for src, sink, connection in self.list_connections():
-            if src == node_id or sink == node_id:
-                self.remove_connection(connection)
-
         rx_idx = self._node_id_to_rx_id_map[node_id]
         self._graph.remove_node(rx_idx)
 
         del self._node_id_to_rx_id_map[node_id]
-        del self._rx_id_to_node_id_map[rx_idx]
 
     def replace_all_out_tb_connections(
         self, source: NodeId, new_connections: Sequence[tuple[NodeId, RDMAConnection]]
     ) -> None:
-        for conn in self.out_edges(source):
-            if isinstance(conn, RDMAConnection):
-                self.remove_connection(conn)
+        for conn_idx in self._graph.out_edge_indices(self._node_id_to_rx_id_map[source]):
+            if isinstance(self._graph.get_edge_data_by_index(conn_idx), RDMAConnection):
+                self._graph.remove_edge_from_index(conn_idx)
         for sink, conn in new_connections:
             self.add_connection(source, sink, conn)
 
-    def remove_connection(self, connection: SocketConnection | RDMAConnection) -> None:
-        if connection not in self._edge_id_to_rx_id_map:
-            return
-        rx_idx = self._edge_id_to_rx_id_map[connection]
-        self._graph.remove_edge_from_index(rx_idx)
-        del self._edge_id_to_rx_id_map[connection]
+    def remove_connection(self, source: NodeId, sink: NodeId, edge: SocketConnection | RDMAConnection) -> None:
+        for conn_idx in self._graph.edge_indices_from_endpoints(self._node_id_to_rx_id_map[source], self._node_id_to_rx_id_map[sink]):
+            if self._graph.get_edge_data_by_index(conn_idx) == edge:
+                self._graph.remove_edge_from_index(conn_idx)
 
     def get_cycles(self) -> list[list[NodeId]]:
         cycle_idxs = rx.simple_cycles(self._graph)
