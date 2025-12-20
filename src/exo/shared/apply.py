@@ -240,31 +240,17 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                     case TBIdentifier():
                         profile.tb_interfaces = cast(Sequence[TBIdentifier], info)
                     case TBConnection():
-                        new_out_tb_conns = [
-                            (nid, tb_conn)
+                        info = cast(Sequence[TBConnection], info)
+                        conn_map = {
+                            tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
                             for nid in state.node_profiles
-                            if any(tb for tb in state.node_profiles[nid].tb_interfaces)
-                            for tb_conn in cast(Sequence[TBConnection], info)
-                        ]
+                            for tb_ident in state.node_profiles[nid].tb_interfaces
+                        }
                         as_rdma_conns = [
-                            (
-                                nid,
-                                RDMAConnection(
-                                    source_rdma_iface=source_iface,
-                                    sink_rdma_iface=sink_iface,
-                                ),
-                            )
-                            for nid, tb_conn in new_out_tb_conns
-                            if any(
-                                sink_iface := iface.rdma_interface
-                                for iface in state.node_profiles[nid].tb_interfaces
-                                if iface.domain_uuid == tb_conn.sink_uuid
-                            )
-                            if any(
-                                source_iface := iface.rdma_interface
-                                for iface in profile.tb_interfaces
-                                if iface.domain_uuid == tb_conn.source_uuid
-                            )
+                            (conn_map[tb_conn.sink_uuid][0], RDMAConnection(source_rdma_iface=conn_map[tb_conn.source_uuid][1], sink_rdma_iface=conn_map[tb_conn.sink_uuid][1]))
+                            for tb_conn in info
+                            if tb_conn.source_uuid in conn_map
+                            if tb_conn.sink_uuid in conn_map
                         ]
                         topology.replace_all_out_tb_connections(
                             event.node_id, as_rdma_conns
