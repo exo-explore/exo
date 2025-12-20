@@ -129,14 +129,20 @@ class Topology:
     def replace_all_out_tb_connections(
         self, source: NodeId, new_connections: Sequence[tuple[NodeId, RDMAConnection]]
     ) -> None:
-        for conn_idx in self._graph.out_edge_indices(self._node_id_to_rx_id_map[source]):
+        for conn_idx in self._graph.out_edge_indices(
+            self._node_id_to_rx_id_map[source]
+        ):
             if isinstance(self._graph.get_edge_data_by_index(conn_idx), RDMAConnection):
                 self._graph.remove_edge_from_index(conn_idx)
         for sink, conn in new_connections:
             self.add_connection(source, sink, conn)
 
-    def remove_connection(self, source: NodeId, sink: NodeId, edge: SocketConnection | RDMAConnection) -> None:
-        for conn_idx in self._graph.edge_indices_from_endpoints(self._node_id_to_rx_id_map[source], self._node_id_to_rx_id_map[sink]):
+    def remove_connection(
+        self, source: NodeId, sink: NodeId, edge: SocketConnection | RDMAConnection
+    ) -> None:
+        for conn_idx in self._graph.edge_indices_from_endpoints(
+            self._node_id_to_rx_id_map[source], self._node_id_to_rx_id_map[sink]
+        ):
             if self._graph.get_edge_data_by_index(conn_idx) == edge:
                 self._graph.remove_edge_from_index(conn_idx)
 
