@@ -11,6 +11,9 @@ from exo.shared.types.worker.shards import (
 from exo.worker.download.download_utils import RepoDownloadProgress, download_shard
 from exo.worker.download.shard_downloader import ShardDownloader
 
+# Determine how we want to track these custom models
+KNOWN_CUSTOM_MODELS: set[str] = set()
+
 
 def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
     return SingletonShardDownloader(
@@ -130,6 +133,12 @@ class ResumableShardDownloader(ShardDownloader):
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
+        # If this isn't a known built-in model, track it as a custom model
+        if shard.model_meta.model_id not in [
+            c.model_id for c in MODEL_CARDS.values()
+        ]:
+            KNOWN_CUSTOM_MODELS.add(shard.model_meta.model_id)
+
         allow_patterns = ["config.json"] if config_only else None
 
         target_dir, _ = await download_shard(
@@ -157,6 +166,13 @@ class ResumableShardDownloader(ShardDownloader):
             asyncio.create_task(_status_for_model(model_card.model_id))
             for model_card in MODEL_CARDS.values()
         ]
+        # For custom models, we need to build the shard first
+        tasks.extend(
+            [
+                asyncio.create_task(_status_for_model(model_id))
+                for model_id in KNOWN_CUSTOM_MODELS
+            ]
+        )
 
         for task in asyncio.as_completed(tasks):
             try:
