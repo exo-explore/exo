@@ -331,6 +331,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			const response = await fetch('/instance', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
 				body: JSON.stringify({ instance: instanceData })
 			});
 			
