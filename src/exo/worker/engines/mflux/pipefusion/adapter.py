@@ -9,6 +9,81 @@ from exo.worker.engines.mflux.config.model_config import ImageModelConfig
 from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
+class AttentionInterface(Protocol):
+    """Protocol defining the interface for attention modules used in transformer blocks."""
+
+    num_heads: int
+    head_dimension: int
+    to_q: Any
+    to_k: Any
+    to_v: Any
+    norm_q: Any
+    norm_k: Any
+    to_out: list[Any]
+
+
+class JointAttentionInterface(AttentionInterface, Protocol):
+    """Protocol for attention modules in joint transformer blocks.
+
+    Extends AttentionInterface with additional projections for the context stream.
+    """
+
+    add_q_proj: Any
+    add_k_proj: Any
+    add_v_proj: Any
+    norm_added_q: Any
+    norm_added_k: Any
+    to_add_out: Any
+
+
+class JointBlockInterface(Protocol):
+    """Protocol defining the interface for joint transformer blocks.
+
+    Joint blocks process both image and text streams separately,
+    then combine them in attention.
+    """
+
+    attn: JointAttentionInterface
+    norm2: Any
+    norm2_context: Any
+    ff: Any
+    ff_context: Any
+
+    def norm1(
+        self, hidden_states: mx.array, text_embeddings: mx.array
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
+        """Normalize image hidden states."""
+        ...
+
+    def norm1_context(
+        self, hidden_states: mx.array, text_embeddings: mx.array
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
+        """Normalize encoder hidden states."""
+        ...
+
+
+class SingleBlockInterface(Protocol):
+    """Protocol defining the interface for single transformer blocks.
+
+    Single blocks process concatenated [text + image] hidden states
+    in a unified stream.
+    """
+
+    attn: AttentionInterface
+
+    def norm(
+        self, hidden_states: mx.array, text_embeddings: mx.array
+    ) -> tuple[mx.array, mx.array]:
+        """Normalize hidden states."""
+        ...
+
+    def _apply_feed_forward_and_projection(
+        self, norm_hidden_states: mx.array, attn_output: mx.array, gate: mx.array
+    ) -> mx.array:
+        """Apply feed forward network and projection."""
+        ...
+
+
 class BlockWrapperMode(Enum):
     """Mode for block wrapper operation."""
 
@@ -107,7 +182,7 @@ class ModelAdapter(Protocol):
 
     def apply_joint_block(
         self,
-        block: Any,
+        block: JointBlockInterface,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
@@ -139,7 +214,7 @@ class ModelAdapter(Protocol):
 
     def apply_single_block(
         self,
-        block: Any,
+        block: SingleBlockInterface,
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
