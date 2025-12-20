@@ -290,7 +290,9 @@ def test_placement_selects_leaf_nodes(
     instance = list(placements.values())[0]
 
     assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
-    assert assigned_nodes == set((node_id_a, node_id_b)) or assigned_nodes == set((node_id_c, node_id_d))
+    assert assigned_nodes == set((node_id_a, node_id_b)) or assigned_nodes == set(
+        (node_id_c, node_id_d)
+    )
 
 
 def test_tensor_rdma_backend_connectivity_matrix(
@@ -345,10 +347,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
 
     assert isinstance(instance, MlxJacclInstance)
 
-    assert instance.ibv_devices is not None
+    assert instance.jaccl_devices is not None
     assert instance.jaccl_coordinators is not None
 
-    matrix = instance.ibv_devices
+    matrix = instance.jaccl_devices
     assert len(matrix) == 3
 
     for i in range(3):
