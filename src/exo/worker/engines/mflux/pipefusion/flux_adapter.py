@@ -1,6 +1,8 @@
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
+from mflux.config.model_config import ModelConfig
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.flux.model.flux_transformer.common.attention_utils import (
     AttentionUtils,
@@ -9,6 +11,7 @@ from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
     JointTransformerBlock,
 )
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
+from mflux.models.flux.variants.txt2img.flux import Flux1
 
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
 from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode
@@ -30,6 +33,19 @@ class FluxModelAdapter:
     @property
     def config(self) -> ImageModelConfig:
         return self._config
+
+    def create_model(
+        self,
+        model_id: str,
+        local_path: Path,
+        quantize: int | None = None,
+    ) -> Flux1:
+        """Create a Flux1 model instance."""
+        return Flux1(
+            model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
+            local_path=str(local_path),
+            quantize=quantize,
+        )
 
     def compute_embeddings(
         self,

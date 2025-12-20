@@ -20,7 +20,7 @@ from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.mflux.config import get_config_for_model
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
-from exo.worker.engines.mflux.pipefusion import create_model, get_adapter_for_model
+from exo.worker.engines.mflux.pipefusion import get_adapter_for_model
 from exo.worker.engines.mflux.pipefusion.adapter import ModelAdapter
 from exo.worker.engines.mflux.pipefusion.distributed_denoising import (
     DistributedDenoising,
@@ -68,8 +68,8 @@ class DistributedImageModel:
         config = get_config_for_model(model_id)
         adapter = get_adapter_for_model(config)
 
-        # Create the model using the factory registry
-        model = create_model(config, model_id, local_path, quantize)
+        # Create the model using the adapter
+        model = adapter.create_model(model_id, local_path, quantize)
 
         if group is not None:
             # Apply pipeline parallelism by wrapping the transformer
