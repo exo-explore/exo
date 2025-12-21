@@ -18,7 +18,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import ALL_MODEL_CARDS, MODEL_CARDS
+from exo.shared.models.model_cards import ALL_MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     ChatCompletionMessage,
