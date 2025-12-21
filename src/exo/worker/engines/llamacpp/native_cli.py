@@ -79,6 +79,9 @@ class NativeLlamaCpp:
         """Generate text using llama-cli."""
         
         # Use llama-cli with prompt and immediate exit after generation
+        # Flags for non-interactive batch mode:
+        # --no-display-prompt: Don't echo the prompt back
+        # --log-disable: Disable verbose model loading logs
         cmd = [
             str(self.cli_path),
             "-m", self.model_path,
@@ -88,8 +91,8 @@ class NativeLlamaCpp:
             "-t", str(self.n_threads),
             "--temp", str(temperature),
             "--no-mmap",
-            "--simple-io",  # Simple I/O mode
-            "-e",  # Process escape sequences
+            "--no-display-prompt",
+            "--log-disable",
         ]
         
         env = os.environ.copy()
@@ -97,49 +100,45 @@ class NativeLlamaCpp:
             env["LD_LIBRARY_PATH"] = self.lib_path
         
         logger.info(f"Running: {' '.join(cmd[:8])}...")
+        logger.info(f"Full command: {' '.join(cmd)}")
         
         try:
-            # Run the command and capture output synchronously
+            # Run the command with stdin closed to ensure it doesn't wait for input
+            # Using input="" sends empty stdin and closes it
             result = subprocess.run(
                 cmd,
+                input="",  # Close stdin immediately
                 capture_output=True,
                 text=True,
                 env=env,
-                timeout=120,
+                timeout=180,  # Increase timeout for slow Android
             )
             
             full_output = result.stdout
             stderr_output = result.stderr
             
-            logger.info(f"llama exit code: {result.returncode}, stdout len: {len(full_output)}")
+            logger.info(f"llama exit code: {result.returncode}")
+            logger.info(f"stdout len: {len(full_output)}, stderr len: {len(stderr_output)}")
             
             if result.returncode != 0:
-                logger.warning(f"llama stderr: {stderr_output[:300]}")
+                logger.warning(f"llama stderr: {stderr_output[:500]}")
             
-            # Parse the output to extract the response
-            # llama-cli with -p outputs: prompt + generation
-            response = full_output
+            # With --no-display-prompt, output should be just the generated text
+            response = full_output.strip()
             
-            # Remove the prompt echo if present at start
-            if response.startswith(prompt):
-                response = response[len(prompt):]
-            
-            # Clean up 
-            lines = response.split("\n")
-            response_lines = [l.strip() for l in lines if l.strip()]
-            response = " ".join(response_lines)
-            
-            # Remove special tokens
-            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]:
+            # Clean up any special tokens that might appear
+            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>", "<|assistant|>"]:
                 response = response.replace(token, "")
             
             response = response.strip()
+            
+            logger.info(f"Raw output preview: '{full_output[:200]}'")
             
             if response:
                 logger.info(f"Extracted response: '{response[:100]}'")
                 yield response
             else:
-                logger.warning(f"No response. stdout: {full_output[:200]}, stderr: {stderr_output[:200]}")
+                logger.warning(f"Empty response. stderr: {stderr_output[:300]}")
                 
         except subprocess.TimeoutExpired:
             logger.error("llama-cli timed out after 120s")
@@ -207,13 +206,18 @@ def native_generate(
             n_threads=n_threads,
         )
         
+        logger.info("Starting llama-cli subprocess...")
         token_idx = 0
+        response_count = 0
+        
         for text in cli.generate(
             prompt=prompt,
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
         ):
+            response_count += 1
+            logger.info(f"Got response chunk {response_count}: '{text[:50]}...'")
             yield GenerationResponse(
                 text=text,
                 token=token_idx,
@@ -221,12 +225,15 @@ def native_generate(
             )
             token_idx += 1
         
+        logger.info(f"Generation complete, yielded {response_count} chunks")
+        
         # Final response with finish reason
         yield GenerationResponse(
             text="",
             token=token_idx,
             finish_reason="stop",
         )
+        logger.info("Sent final stop signal")
         
     except Exception as e:
         logger.error(f"Native generation error: {e}")
