@@ -131,26 +131,23 @@ class NativeLlamaCpp:
         logger.info(f"Full command: {' '.join(cmd)}")
         
         try:
-            # Use Popen to have explicit control over stdin
-            # This ensures stdin is closed immediately after process starts
+            # Use DEVNULL for stdin - the subprocess won't wait for input
             process = subprocess.Popen(
                 cmd,
-                stdin=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,  # No input, won't wait
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
             )
             
-            # Close stdin immediately to signal no more input
-            process.stdin.close()
-            
             # Read output with timeout
             try:
                 stdout, stderr = process.communicate(timeout=180)
             except subprocess.TimeoutExpired:
                 process.kill()
-                logger.error("llama-cli timed out after 180s")
+                process.communicate()  # Clean up
+                logger.error("llama timed out after 180s")
                 return
             
             logger.info(f"llama exit code: {process.returncode}")
