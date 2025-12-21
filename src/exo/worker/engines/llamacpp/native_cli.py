@@ -20,31 +20,21 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 
 
 def find_llama_cli() -> Path | None:
-    """Find the llama-cli or llama-simple binary."""
-    # Prefer llama-simple as it's non-interactive
-    # Common locations on Termux/Android
+    """Find the best llama binary for chat."""
+    # Priority: llama-simple-chat > llama-cli > llama-simple
+    # llama-simple-chat handles chat format properly
     search_paths = [
-        # Prefer llama-simple (simpler, non-interactive)
-        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple",
+        # Best: llama-simple-chat (handles chat templates)
+        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple-chat",
+        # Fallback: llama-cli (full featured)
         Path.home() / "llama.cpp" / "build" / "bin" / "llama-cli",
-        Path.home() / "llama.cpp" / "llama-simple",
-        Path.home() / "llama.cpp" / "llama-cli",
-        Path("/data/data/com.termux/files/usr/bin/llama-simple"),
-        Path("/data/data/com.termux/files/usr/bin/llama-cli"),
+        # Last resort: llama-simple (raw completion only)
+        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple",
     ]
     
     for path in search_paths:
         if path.exists() and os.access(path, os.X_OK):
             return path
-    
-    # Try PATH
-    for binary in ["llama-simple", "llama-cli"]:
-        try:
-            result = subprocess.run(["which", binary], capture_output=True, text=True)
-            if result.returncode == 0:
-                return Path(result.stdout.strip())
-        except Exception:
-            pass
     
     return None
 
@@ -93,12 +83,22 @@ class NativeLlamaCpp:
         temperature: float = 0.7,
         top_p: float = 0.9,
     ) -> Generator[str, None, None]:
-        """Generate text using llama-cli/llama-simple, yielding tokens as they're produced."""
+        """Generate text using llama binary, yielding tokens as they're produced."""
         
-        is_simple = "llama-simple" in str(self.cli_path)
+        cli_name = self.cli_path.name
         
-        if is_simple:
-            # llama-simple has simpler args
+        if "llama-simple-chat" in cli_name:
+            # llama-simple-chat: best for chat, uses -u for user message
+            cmd = [
+                str(self.cli_path),
+                "-m", self.model_path,
+                "-u", prompt,  # -u for user message
+                "-n", str(max_tokens),
+                "-c", str(self.n_ctx),
+                "--no-mmap",
+            ]
+        elif "llama-simple" in cli_name:
+            # llama-simple: raw completion
             cmd = [
                 str(self.cli_path),
                 "-m", self.model_path,
@@ -108,7 +108,7 @@ class NativeLlamaCpp:
                 "--no-mmap",
             ]
         else:
-            # llama-cli needs more flags to avoid interactive mode
+            # llama-cli: full featured
             cmd = [
                 str(self.cli_path),
                 "-m", self.model_path,
@@ -117,10 +117,9 @@ class NativeLlamaCpp:
                 "-c", str(self.n_ctx),
                 "-t", str(self.n_threads),
                 "--temp", str(temperature),
-                "--top-p", str(top_p),
                 "--no-mmap",
-                "--log-disable",  # Reduce noise
-                "-e",  # Process escapes
+                "--no-display-prompt",
+                "-e",
             ]
         
         env = os.environ.copy()
@@ -201,9 +200,9 @@ def native_generate(
     Generate text using native llama-cli.
     Matches the interface of llamacpp_generate for compatibility.
     """
-    # Format messages
-    messages: list[dict[str, str]] = []
-    for msg in task.messages:
+    # Extract the last user message for simple prompt
+    user_message = ""
+    for msg in reversed(task.messages):
         content = msg.content
         if content is None:
             continue
@@ -213,14 +212,37 @@ def native_generate(
             content = content[0].text
         elif hasattr(content, "text"):
             content = content.text
-        messages.append({"role": msg.role, "content": str(content)})
+        
+        if msg.role == "user":
+            user_message = str(content)
+            break
     
-    prompt = format_chat_prompt(messages)
+    # For llama-simple-chat, just use the user message
+    # For others, use full chat template
+    cli_path = find_llama_cli()
+    if cli_path and "llama-simple-chat" in cli_path.name:
+        prompt = user_message
+    else:
+        # Format full chat for other binaries
+        messages: list[dict[str, str]] = []
+        for msg in task.messages:
+            content = msg.content
+            if content is None:
+                continue
+            if isinstance(content, list):
+                if len(content) == 0:
+                    continue
+                content = content[0].text
+            elif hasattr(content, "text"):
+                content = content.text
+            messages.append({"role": msg.role, "content": str(content)})
+        prompt = format_chat_prompt(messages)
+    
     max_tokens = task.max_tokens or 256
     temperature = task.temperature if task.temperature is not None else 0.7
     top_p = task.top_p if task.top_p is not None else 0.9
     
-    logger.info(f"Native generation with max_tokens={max_tokens}")
+    logger.info(f"Native generation with max_tokens={max_tokens}, prompt={prompt[:50]}...")
     
     try:
         cli = NativeLlamaCpp(
