@@ -291,13 +291,19 @@ def _run_llamacpp_runner(
                     if is_native:
                         from exo.worker.engines.llamacpp.native_cli import native_generate
                         gguf_path = get_gguf_path_for_instance(bound_instance)
+                        logger.info(f"Starting native_generate with path={gguf_path}")
                         generator = native_generate(str(gguf_path), task_params)
                     else:
                         from exo.worker.engines.llamacpp.generate import llamacpp_generate
                         generator = llamacpp_generate(model=model, task=task_params)
 
+                    logger.info("Starting generator iteration...")
+                    response_count = 0
                     for response in generator:
+                        response_count += 1
+                        logger.info(f"Runner got response #{response_count}: text='{response.text[:50] if response.text else ''}', finish={response.finish_reason}")
                         if isinstance(response, GenerationResponse) and shard_metadata.device_rank == 0:
+                            logger.info(f"Sending ChunkGenerated event for command {command_id}")
                             event_sender.send(
                                 ChunkGenerated(
                                     command_id=command_id,
@@ -311,6 +317,7 @@ def _run_llamacpp_runner(
                                 )
                             )
 
+                    logger.info(f"Generator loop complete, processed {response_count} responses")
                     current_status = RunnerReady()
                     logger.info("runner ready")
                     event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerReady()))
