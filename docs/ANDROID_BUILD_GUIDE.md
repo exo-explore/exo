@@ -2,16 +2,16 @@
 
 > **Building and deploying exo to Android devices via Termux**
 
-This guide covers cross-compiling exo for Android and deploying it via ADB for testing.
+This guide covers building exo natively on Android and cross-compiling for Android deployment.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Quick Start: ADB Push for Testing](#quick-start-adb-push-for-testing)
-3. [Cross-Compilation Setup](#cross-compilation-setup)
-4. [Building Pre-compiled Wheels](#building-pre-compiled-wheels)
+2. [Native Termux Build (Recommended)](#native-termux-build-recommended)
+3. [Cross-Compilation from PC](#cross-compilation-from-pc)
+4. [ADB Push for Development](#adb-push-for-development)
 5. [CI/CD for Android Releases](#cicd-for-android-releases)
 6. [Troubleshooting](#troubleshooting)
 
@@ -21,78 +21,164 @@ This guide covers cross-compiling exo for Android and deploying it via ADB for t
 
 ### What Needs to be Built
 
-| Component | Language | Cross-Compile | Notes |
-|-----------|----------|---------------|-------|
-| `exo` Python package | Python | N/A | Portable, just push source |
-| `exo_pyo3_bindings` | Rust | ⚠️ Medium | PyO3 + libp2p networking |
-| `llama-cpp-python` | C++ | ⚠️ Hard | External dependency |
+| Component | Language | Build Location | Notes |
+|-----------|----------|----------------|-------|
+| `exo` Python package | Python | Any | Portable, just install |
+| `exo_pyo3_bindings` | Rust | Termux (recommended) | Requires Rust nightly |
+| `llama-cpp-python` | C++ | Termux (recommended) | Uses pre-built llama.cpp |
+| `llama.cpp` | C++ | Termux | Shared libraries for inference |
+| Dashboard | TypeScript | Any (npm) | SvelteKit web app |
 
-### Deployment Options
+### Build Options
 
 | Method | Complexity | Best For |
 |--------|------------|----------|
-| **ADB Push Source** | Easy | Development, testing |
-| **Cross-compiled Wheels** | Medium | Pre-release testing |
-| **GitHub Release** | Automated | Distribution |
-| **Build on Device** | Slow | Guaranteed compatibility |
+| **Native Termux Build** | Medium | Full functionality, recommended |
+| **ADB Push Source** | Easy | Quick testing |
+| **Cross-compiled Wheels** | Hard | Pre-built distribution |
+| **GitHub Release** | Automated | End-user distribution |
 
 ---
 
-## Quick Start: ADB Push for Testing
+## Native Termux Build (Recommended)
 
-The fastest way to test on Android is pushing the Python source directly.
+Building directly on Android ensures full compatibility with the device.
 
 ### Prerequisites
 
-1. **Android Device** with USB Debugging enabled
-2. **Termux** installed from [F-Droid](https://f-droid.org/packages/com.termux/)
-3. **ADB** (Android Debug Bridge) installed on Windows
+- Android device with ARM64 processor
+- [Termux](https://f-droid.org/packages/com.termux/) from F-Droid
+- At least 5GB free storage
+- Stable internet connection
 
-### Step 1: Push Source to Device
-
-```powershell
-# From the exo directory
-.\scripts\adb_push.ps1
-```
-
-Or manually:
-
-```powershell
-# Push source files
-adb push src/exo /sdcard/exo/src/exo
-adb push scripts /sdcard/exo/scripts
-adb push pyproject.toml /sdcard/exo/
-```
-
-### Step 2: Install in Termux
-
-In Termux on your Android device:
+### Step 1: Install Base Packages
 
 ```bash
-# Copy from shared storage to Termux home
-cp -r /sdcard/exo ~/exo
+# Update packages
+pkg update && pkg upgrade -y
+
+# Install essential tools
+pkg install git python python-pip cmake ninja nodejs
+
+# Install TUR repository (has Rust nightly)
+pkg install tur-repo
+
+# Install Rust nightly (required for pyo3 async features)
+pkg install rustc-nightly rust-nightly-std-aarch64-linux-android
+
+# Activate nightly Rust
+source $PREFIX/etc/profile.d/rust-nightly.sh
+
+# Make it permanent
+echo 'source $PREFIX/etc/profile.d/rust-nightly.sh' >> ~/.bashrc
+```
+
+### Step 2: Build llama.cpp
+
+Build llama.cpp with shared libraries:
+
+```bash
+cd ~
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+
+# Configure with shared libraries
+cmake -B build -DBUILD_SHARED_LIBS=ON
+
+# Build (uses multiple cores)
+cmake --build build --config Release -j4
+
+# Verify
+ls -la build/bin/*.so
+./build/bin/llama-cli --help
+```
+
+### Step 3: Configure Environment
+
+```bash
+# Set library paths for llama-cpp-python
+echo 'export LD_LIBRARY_PATH=$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> ~/.bashrc
+source ~/.bashrc
+
+# Install llama-cpp-python (uses pre-built library)
+pip install llama-cpp-python
+
+# Verify
+python -c "from llama_cpp import Llama; print('OK')"
+```
+
+### Step 4: Clone exo Repository
+
+```bash
+cd ~
+git clone https://github.com/exo-explore/exo.git
+cd exo
+```
+
+### Step 5: Build Rust Bindings
+
+```bash
+# Install maturin
+pip install maturin
+
+# Navigate to bindings directory
+cd ~/exo/rust/exo_pyo3_bindings
+
+# Edit pyproject.toml to allow Python 3.12
+# Change: requires-python = ">=3.13" 
+# To:     requires-python = ">=3.12"
+nano pyproject.toml
+
+# Build the wheel (takes ~10 minutes)
+maturin build --release
+
+# Install the wheel
+pip install ~/exo/target/wheels/exo_pyo3_bindings-*.whl
+```
+
+### Step 6: Install exo
+
+```bash
 cd ~/exo
-
-# Run the full setup (includes llama-cpp-python build)
-chmod +x scripts/termux_setup.sh
-./scripts/termux_setup.sh
+pip install -e .
 ```
 
-### Step 3: Test
+### Step 7: Build Dashboard
 
 ```bash
-# Test the import
-python3 -c "from exo.shared.platform import is_android; print(f'Android: {is_android()}')"
+cd ~/exo/dashboard
+npm install
+npm run build
+```
+
+### Step 8: Verify and Run
+
+```bash
+# Verify components
+python -c "from llama_cpp import Llama; print('llama-cpp-python OK')"
+python -c "import exo_pyo3_bindings; print('exo_pyo3_bindings OK')"
 
 # Run exo
-python3 -m exo
+cd ~/exo
+python -m exo
 ```
+
+### Build Times Reference
+
+| Component | Approximate Time |
+|-----------|------------------|
+| llama.cpp | 5-10 minutes |
+| exo_pyo3_bindings | 10-15 minutes |
+| Dashboard | 2-5 minutes |
+| Python dependencies | 5-10 minutes |
+| **Total** | **25-40 minutes** |
 
 ---
 
-## Cross-Compilation Setup
+## Cross-Compilation from PC
 
-Cross-compiling allows building on your PC and pushing pre-built binaries.
+Cross-compiling allows building on your PC and pushing pre-built binaries to Android.
 
 ### Requirements
 
@@ -100,7 +186,7 @@ Cross-compiling allows building on your PC and pushing pre-built binaries.
 2. **Android NDK** (r26 or later)
 3. **maturin** for building Python wheels
 
-### Step 1: Install Prerequisites
+### Step 1: Install Prerequisites (Windows)
 
 ```powershell
 # Add Rust Android target
@@ -138,22 +224,7 @@ CC_aarch64_linux_android = "..."  # Same path with -clang.cmd
 CXX_aarch64_linux_android = "..." # Same path with -clang++.cmd
 ```
 
-Or use the setup script:
-```powershell
-.\scripts\cross_compile_android.ps1 -Setup
-```
-
----
-
-## Building Pre-compiled Wheels
-
-### Build Rust Bindings
-
-```powershell
-.\scripts\cross_compile_android.ps1 -Build
-```
-
-Or manually:
+### Step 4: Build Rust Bindings
 
 ```powershell
 cd rust\exo_pyo3_bindings
@@ -162,7 +233,7 @@ maturin build --release --target aarch64-linux-android
 
 The wheel will be in `target/wheels/`.
 
-### Push and Install Wheel
+### Step 5: Push and Install
 
 ```powershell
 # Push to device
@@ -172,25 +243,56 @@ adb push target\wheels\exo_pyo3_bindings-*.whl /sdcard/
 pip install /sdcard/exo_pyo3_bindings-*.whl
 ```
 
-### Building llama-cpp-python
+> **Note**: Cross-compiling llama-cpp-python is complex. Building on-device is recommended.
 
-Cross-compiling llama-cpp-python is more complex. Options:
+---
 
-**Option 1: Build on Device (Recommended)**
-```bash
-# In Termux - takes 10-20 minutes
-pip install llama-cpp-python
+## ADB Push for Development
+
+For quick development iteration, push source files directly.
+
+### Prerequisites
+
+1. **Android Device** with USB Debugging enabled
+2. **Termux** installed from F-Droid
+3. **ADB** installed on your PC
+
+### Push Source Files
+
+```powershell
+# From the exo directory
+adb push src/exo /sdcard/exo/src/exo
+adb push scripts /sdcard/exo/scripts
+adb push pyproject.toml /sdcard/exo/
+adb push dashboard/dist /sdcard/exo/dashboard/dist
 ```
 
-**Option 2: Pre-built Wheel from CI**
-Check GitHub releases for pre-built wheels.
+### Install in Termux
 
-**Option 3: Cross-compile with Docker**
 ```bash
-# Use a Linux container with Android NDK
-docker run --rm -v $(pwd):/work -w /work \
-  ghcr.io/pyo3/maturin:latest \
-  maturin build --target aarch64-linux-android
+# Copy from shared storage to Termux home
+cp -r /sdcard/exo ~/exo
+cd ~/exo
+
+# If dependencies already installed:
+pip install -e .
+
+# Run
+python -m exo
+```
+
+### Sync Script
+
+Create a sync script for repeated pushes:
+
+```powershell
+# sync_android.ps1
+$device = "your-device-serial"  # From 'adb devices'
+
+adb -s $device push src/exo /sdcard/exo/src/exo
+adb -s $device shell "run-as com.termux cp -r /sdcard/exo/src/exo /data/data/com.termux/files/home/exo/src/"
+
+Write-Host "Synced to device"
 ```
 
 ---
@@ -230,6 +332,98 @@ tar -xzf exo-android-*.tar.gz
 
 ## Troubleshooting
 
+### Rust Nightly Issues
+
+**"cannot find type `Option` in this scope"**
+
+This error means Rust stable is being used instead of nightly:
+
+```bash
+# Check current rustc
+rustc --version
+
+# Should show "nightly", not "stable"
+# If wrong, source the nightly profile:
+source $PREFIX/etc/profile.d/rust-nightly.sh
+
+# Verify
+rustc --version
+# Expected: rustc 1.94.0-nightly (...)
+
+# If conflicts exist, remove stable:
+pkg remove rust rust-std-aarch64-linux-android
+
+# Clean and rebuild
+rm -rf ~/.cargo/registry
+rm -rf ~/exo/target
+cd ~/exo/rust/exo_pyo3_bindings
+maturin build --release
+```
+
+### llama.cpp Build Issues
+
+**"CMake not found"**
+```bash
+pkg install cmake
+```
+
+**Build fails with memory errors**
+```bash
+# Use fewer parallel jobs
+cmake --build build --config Release -j2
+```
+
+### llama-cpp-python Issues
+
+**Import fails**
+```bash
+# Check library paths
+echo $LD_LIBRARY_PATH
+echo $LLAMA_CPP_LIB
+
+# Libraries should exist
+ls -la ~/llama.cpp/build/bin/*.so
+
+# Reinstall
+pip uninstall llama-cpp-python
+pip install llama-cpp-python
+```
+
+### maturin Build Issues
+
+**"requires Python >= 3.13"**
+
+Edit `rust/exo_pyo3_bindings/pyproject.toml`:
+```toml
+# Change from:
+requires-python = ">=3.13"
+# To:
+requires-python = ">=3.12"
+```
+
+**Build takes too long**
+
+Building on Android is slow. Expect 10-15 minutes for the Rust bindings. Consider:
+- Closing other apps to free memory
+- Keeping device plugged in (prevents CPU throttling)
+- Using `--release` flag (slower build but faster runtime)
+
+### Dashboard Issues
+
+**404 errors on dashboard**
+```bash
+# Rebuild dashboard
+cd ~/exo/dashboard
+rm -rf node_modules dist
+npm install
+npm run build
+```
+
+**npm not found**
+```bash
+pkg install nodejs
+```
+
 ### ADB Connection Issues
 
 ```powershell
@@ -242,35 +436,6 @@ adb devices
 # For wireless debugging
 adb tcpip 5555
 adb connect <device-ip>:5555
-```
-
-### Cross-Compilation Errors
-
-**"linker not found"**
-- Verify `ANDROID_NDK_HOME` is set
-- Check path in `.cargo/config.toml`
-
-**"libstdc++ not found"**
-- Use NDK's libc++ instead
-- Add to CMAKE_ARGS: `-DCMAKE_CXX_FLAGS="-stdlib=libc++"`
-
-### Termux Issues
-
-**"pip install fails"**
-```bash
-# Don't upgrade pip in Termux!
-# Use the system pip directly
-pip install package_name
-```
-
-**"llama-cpp-python build fails"**
-```bash
-# Check build dependencies
-pkg install cmake clang make
-
-# Try with minimal features
-export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=OFF"
-pip install llama-cpp-python --no-cache-dir
 ```
 
 ### Permission Denied
@@ -303,15 +468,23 @@ termux-setup-storage
 | 28 | Android 9.0+ | Better crypto support |
 | 33 | Android 13+ | Latest features |
 
+### Build Artifacts Location
+
+| Artifact | Location |
+|----------|----------|
+| llama.cpp libraries | `~/llama.cpp/build/bin/*.so` |
+| Rust bindings wheel | `~/exo/target/wheels/*.whl` |
+| Dashboard build | `~/exo/dashboard/dist/` |
+
 ---
 
 ## See Also
 
-- [Termux Setup Guide](./TERMUX_DISTRIBUTED_AI_GUIDE.md)
-- [ARM Optimization Guide](./ARM_CORTEX_OPTIMIZATION_GUIDE.md)
-- [Model Download Guide](./MODEL_DOWNLOAD_INTEGRATION_GUIDE.md)
+- [Android Installation Guide](./ANDROID_INSTALLATION_GUIDE.md) - End-user installation
+- [ARM Optimization Guide](./ARM_CORTEX_OPTIMIZATION_GUIDE.md) - CPU optimization
+- [Model Download Guide](./MODEL_DOWNLOAD_INTEGRATION_GUIDE.md) - Model management
 
 ---
 
 *This guide is part of the exo project documentation.*
-
+*Last updated: December 2024*

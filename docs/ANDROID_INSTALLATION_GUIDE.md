@@ -1,6 +1,6 @@
 # exo on Android - Complete Installation Guide
 
-> **Successfully tested on Android devices using Termux + proot-distro Ubuntu**
+> **Successfully tested on Android devices using Termux**
 
 This guide documents the complete process to run exo (Distributed AI Inference Cluster) on Android devices.
 
@@ -10,16 +10,12 @@ This guide documents the complete process to run exo (Distributed AI Inference C
 
 1. [Overview](#overview)
 2. [Prerequisites](#prerequisites)
-3. [Step 1: Install Termux](#step-1-install-termux)
-4. [Step 2: Install proot-distro Ubuntu](#step-2-install-proot-distro-ubuntu)
-5. [Step 3: Install Dependencies in Ubuntu](#step-3-install-dependencies-in-ubuntu)
-6. [Step 4: Install Rust Nightly](#step-4-install-rust-nightly)
-7. [Step 5: Install uv (Python Package Manager)](#step-5-install-uv-python-package-manager)
-8. [Step 6: Clone and Install exo](#step-6-clone-and-install-exo)
-9. [Step 7: Run exo](#step-7-run-exo)
-10. [Troubleshooting](#troubleshooting)
-11. [Code Changes Made](#code-changes-made)
-12. [Architecture Notes](#architecture-notes)
+3. [Installation Method 1: Native Termux (Recommended)](#installation-method-1-native-termux-recommended)
+4. [Installation Method 2: proot-distro Ubuntu](#installation-method-2-proot-distro-ubuntu)
+5. [Downloading Models](#downloading-models)
+6. [Running exo](#running-exo)
+7. [Troubleshooting](#troubleshooting)
+8. [Architecture Notes](#architecture-notes)
 
 ---
 
@@ -35,78 +31,188 @@ This guide documents the complete process to run exo (Distributed AI Inference C
 | Worker/Master Election | ✅ Working |
 | Single-Node Inference | ✅ Working |
 | CPU-based Inference | ✅ Working |
+| llama.cpp Backend | ✅ Working |
+| Multi-Node Networking | ✅ Working (with Rust nightly) |
 
-### What Requires Workarounds ⚠️
+### Installation Methods
 
-| Feature | Issue | Solution |
-|---------|-------|----------|
-| libp2p Networking | Permission denied in proot | Use `EXO_LOCAL_MODE=1` |
-| mDNS Discovery | UDP multicast blocked | Use `EXO_DISABLE_MDNS=1` |
-| npm in proot | Cache filesystem issues | Build dashboard on host, push via git |
-
-### Architecture
-
-```
-Android Device
-└── Termux (Terminal Emulator)
-    └── proot-distro (Ubuntu 24.04)
-        ├── Python 3.13
-        ├── Rust Nightly
-        ├── uv (Package Manager)
-        └── exo
-            ├── LocalRouter (bypasses libp2p)
-            ├── Worker
-            ├── Master
-            └── Dashboard (Web UI)
-```
+| Method | Best For | Pros | Cons |
+|--------|----------|------|------|
+| **Native Termux** | Most users | Simpler, faster, full networking | Requires Rust nightly from TUR |
+| **proot-distro Ubuntu** | Full glibc compatibility | Standard Linux environment | ~5-10% overhead, CMake issues |
 
 ---
 
 ## Prerequisites
 
 - **Android Device**: ARM64 (aarch64) processor
-- **RAM**: Minimum 4GB recommended
-- **Storage**: At least 5GB free space
+- **RAM**: Minimum 4GB recommended (see [model recommendations](#downloading-models))
+- **Storage**: At least 5GB free space (more for models)
 - **Network**: WiFi connection for installation
+- **Termux**: From [F-Droid](https://f-droid.org/packages/com.termux/) (NOT Google Play - that version is outdated)
 
 ---
 
-## Step 1: Install Termux
+## Installation Method 1: Native Termux (Recommended)
 
-1. **Download Termux** from [F-Droid](https://f-droid.org/packages/com.termux/) (NOT Google Play - that version is outdated)
+This is the recommended approach using native Termux with full networking support.
 
-2. **Open Termux** and grant storage permission:
+### Step 1: Install Termux and Setup Storage
+
+1. Download Termux from [F-Droid](https://f-droid.org/packages/com.termux/)
+2. Open Termux and grant storage permission:
    ```bash
    termux-setup-storage
    ```
 
-3. **Update packages**:
-   ```bash
-   pkg update && pkg upgrade -y
-   ```
+### Step 2: Install Base Packages
+
+```bash
+pkg update && pkg upgrade -y
+pkg install git python python-pip cmake ninja nodejs
+```
+
+### Step 3: Install Rust Nightly
+
+exo's networking bindings require Rust nightly for `pyo3` async features.
+
+```bash
+# Install TUR repository (has nightly Rust)
+pkg install tur-repo
+
+# Install Rust nightly
+pkg install rustc-nightly rust-nightly-std-aarch64-linux-android
+
+# Activate nightly Rust
+source $PREFIX/etc/profile.d/rust-nightly.sh
+
+# Verify nightly is active
+rustc --version
+# Should show: rustc 1.94.0-nightly or similar
+```
+
+**Important**: You must run `source $PREFIX/etc/profile.d/rust-nightly.sh` in every new terminal session, or add it to your `~/.bashrc`:
+
+```bash
+echo 'source $PREFIX/etc/profile.d/rust-nightly.sh' >> ~/.bashrc
+```
+
+### Step 4: Build llama.cpp
+
+Build llama.cpp with shared libraries for llama-cpp-python:
+
+```bash
+cd ~
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+
+# Build with shared libraries
+cmake -B build -DBUILD_SHARED_LIBS=ON
+cmake --build build --config Release -j4
+
+# Verify build
+./build/bin/llama-cli --help
+```
+
+### Step 5: Configure llama-cpp-python
+
+Set environment variables to use the pre-built llama.cpp:
+
+```bash
+# Add to ~/.bashrc for persistence
+echo 'export LD_LIBRARY_PATH=$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> ~/.bashrc
+source ~/.bashrc
+
+# Install llama-cpp-python (uses pre-built library)
+pip install llama-cpp-python
+
+# Verify
+python -c "from llama_cpp import Llama; print('llama-cpp-python OK')"
+```
+
+### Step 6: Clone and Build exo
+
+```bash
+cd ~
+git clone https://github.com/exo-explore/exo.git
+cd exo
+```
+
+### Step 7: Build the Rust Networking Bindings
+
+```bash
+# Install maturin
+pip install maturin
+
+# Build the pyo3 bindings
+cd ~/exo/rust/exo_pyo3_bindings
+
+# Edit pyproject.toml to allow Python 3.12 (if needed)
+# Change: requires-python = ">=3.13" to requires-python = ">=3.12"
+nano pyproject.toml
+
+# Build the wheel
+maturin build --release
+
+# Install the wheel
+pip install ~/exo/target/wheels/exo_pyo3_bindings-*.whl
+```
+
+### Step 8: Install exo
+
+```bash
+cd ~/exo
+pip install -e .
+```
+
+### Step 9: Build the Dashboard
+
+```bash
+cd ~/exo/dashboard
+npm install
+npm run build
+```
+
+### Step 10: Verify Installation
+
+```bash
+# Test imports
+python -c "from llama_cpp import Llama; print('llama-cpp-python OK')"
+python -c "import exo_pyo3_bindings; print('exo_pyo3_bindings OK')"
+python -c "from exo.shared.platform import is_android; print(f'Android: {is_android()}')"
+```
+
+### Step 11: Run exo
+
+```bash
+cd ~/exo
+python -m exo
+```
+
+The dashboard will be available at `http://<your-android-ip>:52415`
 
 ---
 
-## Step 2: Install proot-distro Ubuntu
+## Installation Method 2: proot-distro Ubuntu
 
-proot-distro is essential because native Termux lacks glibc and has many compatibility issues.
+Alternative method using proot for full glibc compatibility.
+
+> **Note**: This method has more complexity due to CMake detection issues in proot.
+
+### Step 1: Install Termux and proot-distro
 
 ```bash
-# Install proot-distro
+# In Termux
+pkg update && pkg upgrade -y
 pkg install proot-distro -y
-
-# Install Ubuntu
 proot-distro install ubuntu
-
-# Login to Ubuntu
 proot-distro login ubuntu
 ```
 
 **From now on, all commands are run INSIDE the Ubuntu environment.**
 
----
-
-## Step 3: Install Dependencies in Ubuntu
+### Step 2: Install Dependencies in Ubuntu
 
 ```bash
 # Update Ubuntu packages
@@ -121,294 +227,126 @@ apt install -y \
     git \
     curl \
     build-essential \
+    cmake \
     pkg-config \
     libssl-dev \
     libffi-dev
 
 # Verify Python version
 python3.13 --version
-# Should output: Python 3.13.x
 ```
 
----
-
-## Step 4: Install Rust Nightly
-
-exo's networking bindings require Rust nightly for `pyo3` async features.
+### Step 3: Install Rust Nightly
 
 ```bash
-# Install Rust via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Select option 1 (default installation)
 
-# When prompted, select option 1 (default installation)
-
-# Source the environment
 source ~/.cargo/env
-
-# Switch to nightly toolchain
 rustup default nightly
 
-# Verify installation
+# Verify
 rustc --version
-# Should output: rustc 1.9x.0-nightly
 ```
 
----
-
-## Step 5: Install uv (Python Package Manager)
+### Step 4: Install uv (Python Package Manager)
 
 ```bash
-# Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Add to PATH
 source $HOME/.local/bin/env
-
-# Verify installation
 uv --version
 ```
 
----
-
-## Step 6: Clone and Install exo
+### Step 5: Clone and Install exo
 
 ```bash
-# Clone the repository (use your fork with Android support)
-git clone https://github.com/lukewrightmain/exo.git
+git clone https://github.com/exo-explore/exo.git
 cd exo
-
-# Install with uv (this builds the Rust bindings)
 uv sync
-
-# This may take 5-10 minutes on first run as it:
-# - Creates a virtual environment
-# - Compiles the Rust exo_pyo3_bindings
-# - Installs all Python dependencies
 ```
 
-### If Rust bindings need rebuilding:
+This may take 10-15 minutes as it compiles the Rust bindings.
 
-```bash
-# Install maturin
-pip install maturin
-
-# Navigate to bindings directory
-cd rust/exo_pyo3_bindings
-
-# Build and install
-maturin develop --release
-
-# Return to main directory
-cd ../..
-```
-
----
-
-## Step 7: Run exo
-
-### Run in Local Mode (Recommended for Android)
+### Step 6: Run exo
 
 ```bash
 EXO_LOCAL_MODE=1 uv run exo
 ```
 
-This runs exo with:
-- **LocalRouter**: Bypasses libp2p networking (which has permission issues in proot)
-- **Single-node operation**: The node elects itself as master
-- **Full dashboard**: Web UI accessible at `http://localhost:52415`
-
-### Access the Dashboard
-
-1. Find your device's IP address:
-   ```bash
-   hostname -I
-   ```
-
-2. Open a browser on any device on the same network:
-   ```
-   http://<android-ip>:52415
-   ```
-
-### Run Without Dashboard (Minimal Mode)
-
-```bash
-EXO_LOCAL_MODE=1 uv run exo --no-api
-```
+> **Note**: Use `EXO_LOCAL_MODE=1` in proot to bypass libp2p permission issues.
 
 ---
 
-## Troubleshooting
+## Downloading Models
 
-### Issue: "Permission denied (os error 13)" on startup
+### Using the Download Script
 
-**Cause**: libp2p networking trying to bind sockets in proot
-
-**Solution**: Use `EXO_LOCAL_MODE=1`:
 ```bash
+# List all available models
+./scripts/download_model.sh list
+
+# Get personalized recommendation based on RAM
+./scripts/download_model.sh recommend
+
+# Download a specific model
+./scripts/download_model.sh <model_name>
+```
+
+### Model Recommendations by RAM
+
+| RAM | Recommended Models | Size |
+|-----|-------------------|------|
+| **≤4GB** | `qwen-0.5b`, `tinyllama`, `llama-1b` | 400-750MB |
+| **5-6GB** | `qwen-1.5b`, `llama-3b`, `qwen-3b`, `phi-3` | 1-2.3GB |
+| **7-8GB** | `llama-3b`, `phi-3`, `gemma-2b` | 1.5-2.3GB |
+| **8GB+** | `llama-8b`, `qwen-7b`, `mistral-7b` | 4-4.5GB |
+
+### Specialized Models
+
+| Model | Size | Use Case |
+|-------|------|----------|
+| `qwen-coder-1.5b` | ~1GB | Code generation |
+| `qwen-coder-3b` | ~2GB | Better code |
+| `qwen-coder-7b` | ~4GB | Best code (8GB+ RAM) |
+| `deepseek-r1-1.5b` | ~1GB | Reasoning/Chain-of-Thought |
+| `deepseek-r1-7b` | ~4GB | Advanced reasoning |
+
+### Model Location
+
+Models are downloaded to `~/.exo/models/`
+
+---
+
+## Running exo
+
+### Basic Usage
+
+```bash
+# Native Termux (full networking)
+python -m exo
+
+# Native Termux (local mode, no networking)
+EXO_LOCAL_MODE=1 python -m exo
+
+# proot-distro Ubuntu (local mode recommended)
 EXO_LOCAL_MODE=1 uv run exo
 ```
 
-### Issue: "failed to build behaviour" error
+### Accessing the Dashboard
 
-**Cause**: mDNS discovery requires UDP multicast, blocked in proot
+The dashboard is accessible at `http://localhost:52415` by default.
 
-**Solution**: Already handled by `EXO_LOCAL_MODE=1`, or manually:
+To access from another device on the same network:
 ```bash
-EXO_DISABLE_MDNS=1 uv run exo
+# Get your device's IP
+hostname -I
+# or
+ip addr show wlan0
+
+# Then open http://<android-ip>:52415 in a browser
 ```
 
-### Issue: Dashboard not found
-
-**Cause**: Dashboard needs to be built with npm/Node.js
-
-**Solution**: Build on a host machine and push via git:
-```bash
-# On Windows/Mac/Linux host:
-cd exo/dashboard
-npm install
-npm run build
-
-# Commit and push the build folder
-git add -f dashboard/build
-git commit -m "Add pre-built dashboard"
-git push
-
-# On Android, pull the changes:
-git pull
-```
-
-### Issue: npm fails in proot with ENOENT errors
-
-**Cause**: proot filesystem limitations with npm cache
-
-**Solution**: Build dashboard on host machine (see above)
-
-### Issue: "No interpreter found for Python 3.13"
-
-**Solution**: Ensure Python 3.13 is installed:
-```bash
-apt install python3.13 python3.13-venv
-```
-
-### Issue: Rust compilation fails
-
-**Solution**: Ensure nightly toolchain is active:
-```bash
-rustup default nightly
-rustc --version  # Should show "nightly"
-```
-
-### Issue: Network unreachable during installation
-
-**Solution**: Check DNS and try again:
-```bash
-# Test connectivity
-ping -c 3 github.com
-
-# If DNS fails, try:
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
-```
-
----
-
-## Code Changes Made
-
-The following modifications were made to enable Android/proot support:
-
-### 1. LocalRouter (`src/exo/routing/local_router.py`)
-
-A new router implementation that works without libp2p networking:
-
-```python
-# Key features:
-- Bypasses NetworkingHandle (Rust libp2p bindings)
-- Routes messages locally only
-- Enables single-node operation
-- Activated via EXO_LOCAL_MODE=1 environment variable
-```
-
-### 2. Main Entry Point (`src/exo/main.py`)
-
-Modified to support LocalRouter:
-
-```python
-# Added imports
-from exo.routing.local_router import LocalRouter
-
-# Added environment variable check
-EXO_LOCAL_MODE = os.environ.get("EXO_LOCAL_MODE", "").lower() in ("1", "true", "yes")
-
-# Router selection
-if EXO_LOCAL_MODE:
-    router = LocalRouter.create()
-else:
-    router = Router.create(keypair)
-```
-
-### 3. mDNS Toggle (`rust/networking/src/discovery.rs`)
-
-Made mDNS discovery optional to handle proot permission issues:
-
-```rust
-// Added Toggle wrapper for mDNS
-use libp2p::swarm::behaviour::toggle::Toggle;
-
-// Environment variable to disable mDNS
-pub const EXO_DISABLE_MDNS_ENV_VAR: &str = "EXO_DISABLE_MDNS";
-
-// Graceful fallback when mDNS fails
-let mdns = if mdns_disabled {
-    Toggle::from(None)
-} else {
-    match mdns_behaviour(keypair) {
-        Ok(behaviour) => Toggle::from(Some(behaviour)),
-        Err(_) => Toggle::from(None)  // Graceful fallback
-    }
-};
-```
-
----
-
-## Architecture Notes
-
-### Why proot-distro?
-
-Native Termux has limitations:
-- Uses Bionic libc (Android's C library) instead of glibc
-- Missing `sem_clockwait` and other POSIX functions
-- Python 3.13 not available in repos
-- Rust nightly not available
-- `uv` doesn't recognize Android as a platform
-
-proot-distro provides:
-- Full Ubuntu userspace
-- Standard glibc
-- Access to Ubuntu package repos
-- Standard toolchain (gcc, g++, etc.)
-
-### Why LocalRouter?
-
-libp2p in proot has issues:
-- TCP socket binding sometimes fails
-- UDP multicast for mDNS is blocked
-- proot's syscall emulation doesn't fully support all network operations
-
-LocalRouter provides:
-- Pure Python implementation
-- No native dependencies
-- Same interface as the networked Router
-- Enables single-node operation
-
-### Performance Considerations
-
-- **CPU Only**: No GPU acceleration in proot
-- **Memory**: Monitor with `free -h`, swap if needed
-- **Inference Speed**: Depends on device CPU (Snapdragon 8xx recommended)
-- **proot Overhead**: ~5-10% performance penalty
-
----
-
-## Environment Variables Reference
+### Environment Variables
 
 | Variable | Values | Description |
 |----------|--------|-------------|
@@ -418,30 +356,172 @@ LocalRouter provides:
 
 ---
 
+## Troubleshooting
+
+### Native Termux Issues
+
+#### Rust nightly not found
+```bash
+# Reinstall and source
+pkg install rustc-nightly rust-nightly-std-aarch64-linux-android
+source $PREFIX/etc/profile.d/rust-nightly.sh
+```
+
+#### "cannot find type `Option` in this scope" during Rust build
+This means Rust stable is being used instead of nightly:
+```bash
+# Remove stable Rust
+pkg remove rust rust-std-aarch64-linux-android
+
+# Ensure nightly is sourced
+source $PREFIX/etc/profile.d/rust-nightly.sh
+
+# Clean and rebuild
+rm -rf ~/.cargo/registry
+cd ~/exo/rust/exo_pyo3_bindings
+rm -rf target
+maturin build --release
+```
+
+#### llama-cpp-python import fails
+```bash
+# Check library path
+echo $LD_LIBRARY_PATH
+echo $LLAMA_CPP_LIB
+
+# Should point to your llama.cpp build
+ls -la ~/llama.cpp/build/bin/*.so
+
+# Re-add to bashrc if missing
+echo 'export LD_LIBRARY_PATH=$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Dashboard shows 404 errors
+```bash
+# Rebuild the dashboard
+cd ~/exo/dashboard
+npm install
+npm run build
+```
+
+### proot-distro Issues
+
+#### "Permission denied (os error 13)" on startup
+**Cause**: libp2p networking trying to bind sockets in proot
+
+**Solution**: Use `EXO_LOCAL_MODE=1`:
+```bash
+EXO_LOCAL_MODE=1 uv run exo
+```
+
+#### CMake "api-level.h not found" error
+**Cause**: proot uses Termux's CMake which looks for Android headers
+
+**Solution**: Install CMake inside proot:
+```bash
+apt install cmake
+```
+
+### General Issues
+
+#### Low memory during inference
+1. Close other apps
+2. Use a smaller model (`qwen-0.5b` or `tinyllama`)
+3. Run `./scripts/download_model.sh recommend` for suggestions
+
+#### Network unreachable during installation
+```bash
+ping -c 3 github.com
+
+# If DNS fails:
+echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf
+```
+
+---
+
+## Architecture Notes
+
+### Why Native Termux is Recommended
+
+**Native Termux**:
+- Uses Termux's native Python and package ecosystem
+- Rust nightly available via TUR repository
+- llama-cpp-python works well with ARM NEON optimizations
+- Full libp2p networking works (multi-node support)
+- No syscall emulation overhead
+
+**proot-distro Ubuntu**:
+- Provides standard glibc (Termux uses Bionic libc)
+- Python 3.13 available in repos
+- CMake detection issues (thinks it's Android)
+- libp2p has permission issues in proot
+- ~5-10% performance penalty
+
+### Performance Considerations
+
+- **CPU Only**: No GPU acceleration in Termux
+- **Memory**: Monitor with `free -h`, use appropriate model size
+- **Inference Speed**: Depends on device CPU (Snapdragon 8xx recommended)
+- **ARM NEON**: llama.cpp uses NEON for optimized ARM inference
+
+### Multi-Node Networking
+
+Native Termux supports full libp2p networking:
+- Peer discovery via mDNS
+- Distributed inference across multiple devices
+- All devices must be on the same network
+
+---
+
 ## Quick Start Summary
 
+### Native Termux (Recommended)
+
 ```bash
-# In Termux
-pkg install proot-distro
-proot-distro install ubuntu
-proot-distro login ubuntu
+# 1. Install packages
+pkg update && pkg upgrade -y
+pkg install git python python-pip cmake ninja nodejs tur-repo
+pkg install rustc-nightly rust-nightly-std-aarch64-linux-android
+source $PREFIX/etc/profile.d/rust-nightly.sh
 
-# In Ubuntu (proot)
-apt update && apt install -y python3.13 python3.13-venv git curl build-essential
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-rustup default nightly
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
+# 2. Build llama.cpp
+cd ~
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+cmake -B build -DBUILD_SHARED_LIBS=ON
+cmake --build build --config Release -j4
 
-git clone https://github.com/lukewrightmain/exo.git
-cd exo
-uv sync
+# 3. Configure environment
+echo 'source $PREFIX/etc/profile.d/rust-nightly.sh' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> ~/.bashrc
+source ~/.bashrc
 
-# Run exo
-EXO_LOCAL_MODE=1 uv run exo
+# 4. Install llama-cpp-python
+pip install llama-cpp-python maturin
 
-# Access dashboard at http://<device-ip>:52415
+# 5. Clone and build exo
+cd ~
+git clone https://github.com/exo-explore/exo.git
+cd exo/rust/exo_pyo3_bindings
+# Edit pyproject.toml: change requires-python to ">=3.12"
+maturin build --release
+pip install ~/exo/target/wheels/exo_pyo3_bindings-*.whl
+
+# 6. Install exo
+cd ~/exo
+pip install -e .
+
+# 7. Build dashboard
+cd dashboard
+npm install
+npm run build
+
+# 8. Run
+cd ~/exo
+python -m exo
 ```
 
 ---
@@ -452,8 +532,6 @@ When exo is running correctly, you'll see:
 
 ```
 [ INFO ] Starting EXO
-[ INFO ] Running in LOCAL MODE - distributed networking disabled
-[ WARNING ] Running in LOCAL MODE - no distributed networking
 [ INFO ] Starting node 12D3KooW...
 [ INFO ] Starting Worker
 [ INFO ] Starting Election
@@ -466,16 +544,5 @@ When exo is running correctly, you'll see:
 
 ---
 
-## Credits
-
-This guide was developed through extensive testing and debugging to get exo running on Android devices. Key contributions:
-
-- **LocalRouter implementation**: Bypasses libp2p for proot compatibility
-- **mDNS Toggle**: Graceful handling of network permission issues
-- **proot-distro approach**: Full Linux environment on Android
-
----
-
 *Last updated: December 2024*
-*Tested on: Android 13+ with Snapdragon processors*
-
+*Tested on: Android 13+ with Snapdragon processors, Native Termux with Rust Nightly*
