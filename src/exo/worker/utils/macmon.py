@@ -1,6 +1,7 @@
 import platform
 import shutil
 from subprocess import CalledProcessError
+from typing import cast
 
 from anyio import run_process
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -80,7 +81,6 @@ async def get_metrics_async() -> Metrics:
     """
     path = _get_binary_path()
 
-    result = None
     try:
         # TODO: Keep Macmon running in the background?
         result = await run_process([path, "pipe", "-s", "1"])
@@ -90,8 +90,14 @@ async def get_metrics_async() -> Metrics:
     except ValidationError as e:
         raise MacMonError(f"Error parsing JSON output: {e}") from e
     except CalledProcessError as e:
-        if result:
-            raise MacMonError(
-                f"MacMon failed with return code {result.returncode}"
-            ) from e
-        raise e
+        stderr_msg = "no stderr"
+        stderr_output = cast(bytes | str | None, e.stderr)
+        if stderr_output is not None:
+            stderr_msg = (
+                stderr_output.decode()
+                if isinstance(stderr_output, bytes)
+                else str(stderr_output)
+            )
+        raise MacMonError(
+            f"MacMon failed with return code {e.returncode}: {stderr_msg}"
+        ) from e
