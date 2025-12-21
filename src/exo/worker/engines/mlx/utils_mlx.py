@@ -252,15 +252,22 @@ def shard_and_load(
 
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
+    # TODO: Let's move away from this custom logic to mlx_lm.load()
+    if "kimi-k2" in shard_metadata.model_meta.model_id.lower():
+        eos_token_ids = [163586]
+
+    elif "glm" in shard_metadata.model_meta.model_id.lower():
+        eos_token_ids = [151336, 151329, 151338]
+
+    else:
+        eos_token_ids = None
+
     tokenizer = cast(
         TokenizerWrapper,
         load_tokenizer(
             model_path,
             tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
-            # TODO: HACK for Kimi K2 wrong eos token id
-            eos_token_ids=[163586]
-            if "kimi-k2" in shard_metadata.model_meta.model_id.lower()
-            else None,
+            eos_token_ids=eos_token_ids,
         ),
     )
     assert isinstance(tokenizer, TokenizerWrapper)
