@@ -224,13 +224,14 @@ def _run_llamacpp_runner(
     setup_start_time: float,
 ) -> None:
     """Run the llama.cpp-based inference loop."""
-    from exo.worker.engines.llamacpp.generate import (
-        llamacpp_generate,
-        warmup_inference as llamacpp_warmup,
+    from exo.worker.engines.llamacpp.utils import (
+        initialize_llamacpp,
+        use_native_cli,
+        get_gguf_path_for_instance,
     )
-    from exo.worker.engines.llamacpp.utils import initialize_llamacpp
 
-    model: Llama | None = None
+    model: Any = None
+    is_native = use_native_cli()
 
     current_status: RunnerStatus = RunnerWaitingForModel()
     logger.info("runner waiting for model")
@@ -260,7 +261,15 @@ def _run_llamacpp_runner(
                     event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status))
 
                     logger.info(f"warming up inference for instance: {bound_instance.instance}")
-                    toks = llamacpp_warmup(model=model)
+                    
+                    if is_native:
+                        from exo.worker.engines.llamacpp.native_cli import native_warmup
+                        gguf_path = get_gguf_path_for_instance(bound_instance)
+                        toks = native_warmup(str(gguf_path))
+                    else:
+                        from exo.worker.engines.llamacpp.generate import warmup_inference
+                        toks = warmup_inference(model=model)
+                    
                     logger.info(f"warmed up by generating {toks} tokens")
                     logger.info(f"runner initialized in {time.time() - setup_start_time} seconds")
                     current_status = RunnerReady()
@@ -279,7 +288,15 @@ def _run_llamacpp_runner(
                     assert task_params.messages[0].content is not None
                     _check_for_debug_prompts_llamacpp(task_params.messages[0].content)
 
-                    for response in llamacpp_generate(model=model, task=task_params):
+                    if is_native:
+                        from exo.worker.engines.llamacpp.native_cli import native_generate
+                        gguf_path = get_gguf_path_for_instance(bound_instance)
+                        generator = native_generate(str(gguf_path), task_params)
+                    else:
+                        from exo.worker.engines.llamacpp.generate import llamacpp_generate
+                        generator = llamacpp_generate(model=model, task=task_params)
+
+                    for response in generator:
                         if isinstance(response, GenerationResponse) and shard_metadata.device_rank == 0:
                             event_sender.send(
                                 ChunkGenerated(
