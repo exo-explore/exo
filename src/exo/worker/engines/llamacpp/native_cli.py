@@ -98,63 +98,53 @@ class NativeLlamaCpp:
         
         logger.info(f"Running: {' '.join(cmd[:8])}...")
         
-        # Use echo to pipe input and close stdin to make llama-cli exit
-        process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,  # Close stdin immediately
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,  # Capture stderr for debugging
-            text=True,
-            env=env,
-            bufsize=1,
-        )
-        
         try:
-            # Read all output
-            full_output, stderr_output = process.communicate(timeout=120)
+            # Run the command and capture output synchronously
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=120,
+            )
             
-            if process.returncode != 0:
-                logger.warning(f"llama exited with code {process.returncode}")
-                if stderr_output:
-                    logger.warning(f"stderr: {stderr_output[:200]}")
+            full_output = result.stdout
+            stderr_output = result.stderr
             
-            logger.info(f"Raw stdout length: {len(full_output)}")
+            logger.info(f"llama exit code: {result.returncode}, stdout len: {len(full_output)}")
             
-            # With --simple-io, output should be cleaner
-            # The prompt is echoed, then generation follows
+            if result.returncode != 0:
+                logger.warning(f"llama stderr: {stderr_output[:300]}")
+            
+            # Parse the output to extract the response
+            # llama-cli with -p outputs: prompt + generation
             response = full_output
             
-            # Remove the prompt echo if present
+            # Remove the prompt echo if present at start
             if response.startswith(prompt):
                 response = response[len(prompt):]
             
-            # Also try to find after newline
+            # Clean up 
             lines = response.split("\n")
-            # Take everything that isn't empty
-            response_lines = [l for l in lines if l.strip()]
-            response = " ".join(response_lines).strip()
+            response_lines = [l.strip() for l in lines if l.strip()]
+            response = " ".join(response_lines)
             
-            # Clean up any special tokens and stats
-            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>", "[ Prompt:", "[ Generation:"]:
-                if token in response:
-                    response = response.split(token)[0]
+            # Remove special tokens
+            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]:
+                response = response.replace(token, "")
             
             response = response.strip()
             
             if response:
-                logger.info(f"Extracted response: '{response[:100]}'...")
+                logger.info(f"Extracted response: '{response[:100]}'")
                 yield response
             else:
-                logger.warning(f"No response extracted. Full output: {full_output[:300]}")
-                # Yield the raw output as fallback
-                if full_output.strip():
-                    yield full_output.strip()
+                logger.warning(f"No response. stdout: {full_output[:200]}, stderr: {stderr_output[:200]}")
                 
         except subprocess.TimeoutExpired:
-            process.kill()
-            logger.error("llama-cli timed out")
+            logger.error("llama-cli timed out after 120s")
         except Exception as e:
-            logger.error(f"Error reading llama output: {e}")
+            logger.error(f"Error running llama: {e}")
 
 
 def format_chat_prompt(messages: list[dict[str, str]]) -> str:
