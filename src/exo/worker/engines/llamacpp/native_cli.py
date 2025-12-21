@@ -139,27 +139,39 @@ class NativeLlamaCpp:
         )
         
         try:
-            # Read output character by character for streaming
-            buffer = ""
-            while True:
-                char = process.stdout.read(1)
-                if not char:
-                    break
-                buffer += char
-                # Yield when we have a word or punctuation
-                if char in " \n\t.,!?;:":
-                    if buffer.strip():
-                        yield buffer
-                    buffer = ""
-            
-            # Yield any remaining buffer
-            if buffer.strip():
-                yield buffer
-                
-        finally:
+            # Read all output first, then filter
+            full_output = process.stdout.read()
             process.wait()
+            
             if process.returncode != 0:
                 logger.warning(f"llama exited with code {process.returncode}")
+            
+            # llama-simple echoes the prompt, then adds the generation
+            # The actual response comes after the prompt
+            # Look for common patterns to find where generation starts
+            response = full_output
+            
+            # Try to find where actual generation starts (after the prompt)
+            # llama-simple format: <prompt>\n\n<generation>
+            if "\n\n" in response:
+                parts = response.split("\n\n", 1)
+                if len(parts) > 1:
+                    response = parts[1]
+            
+            # Clean up any remaining artifacts
+            response = response.strip()
+            
+            # Remove any trailing special tokens
+            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]:
+                if response.endswith(token):
+                    response = response[:-len(token)].strip()
+            
+            if response:
+                # Yield the cleaned response
+                yield response
+                
+        except Exception as e:
+            logger.error(f"Error reading llama output: {e}")
 
 
 def format_chat_prompt(messages: list[dict[str, str]]) -> str:
