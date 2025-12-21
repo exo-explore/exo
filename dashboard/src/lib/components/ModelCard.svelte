@@ -15,7 +15,7 @@ interface Props {
 		} | null;
 		nodes?: Record<string, NodeInfo>;
 		sharding?: 'Pipeline' | 'Tensor';
-		runtime?: 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
+		runtime?: 'MlxRing' | 'MlxIbv' | 'MlxJaccl' | 'LlamaCpp';
 		onLaunch?: () => void;
 		tags?: string[];
 		apiPreview?: PlacementPreview | null;
@@ -422,7 +422,7 @@ function toggleNodeDetails(nodeId: string): void {
 				{sharding}
 			</span>
 		<span class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40">
-			{runtime === 'MlxRing' ? 'MLX Ring' : runtime === 'MlxIbv' || runtime === 'MlxJaccl' ? 'MLX RDMA' : runtime}
+			{runtime === 'MlxRing' ? 'MLX Ring' : runtime === 'MlxIbv' || runtime === 'MlxJaccl' ? 'MLX RDMA' : runtime === 'LlamaCpp' ? 'llama.cpp' : runtime}
 		</span>
 		</div>
 		

@@ -43,7 +43,7 @@ const debugEnabled = $derived(debugMode());
 	// Instance launch state
 	let models = $state<Array<{id: string, name?: string, storage_size_megabytes?: number}>>([]);
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
-	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
+	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl' | 'LlamaCpp';
 	
 	let selectedInstanceType = $state<InstanceMeta>('MlxRing');
 	let selectedMinNodes = $state<number>(1);
@@ -174,10 +174,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		return { ttft: 300, tps: 50 };
 	}
 	
-	const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-		selectedInstanceType === 'MlxRing'
-			? runtime === 'MlxRing'
-			: runtime === 'MlxIbv' || runtime === 'MlxJaccl';
+	const matchesSelectedRuntime = (runtime: InstanceMeta): boolean => {
+		if (selectedInstanceType === 'MlxRing') return runtime === 'MlxRing';
+		if (selectedInstanceType === 'LlamaCpp') return runtime === 'LlamaCpp';
+		return runtime === 'MlxIbv' || runtime === 'MlxJaccl';
+	};
 
 	// Helper to check if a model can be launched (has valid placement with >= minNodes)
 	function canModelFit(modelId: string): boolean {
@@ -732,6 +733,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		let instanceType = 'Unknown';
 		if (instanceTag === 'MlxRingInstance') instanceType = 'MLX Ring';
 		else if (instanceTag === 'MlxIbvInstance' || instanceTag === 'MlxJacclInstance') instanceType = 'MLX RDMA';
+		else if (instanceTag === 'LlamaCppInstance') instanceType = 'llama.cpp';
 		
 		const inst = instance as { 
 			shardAssignments?: { 
@@ -1480,18 +1482,29 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										</span>
 										MLX Ring
 									</button>
-									<button 
-										onclick={() => selectedInstanceType = 'MlxIbv'}
-										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-									>
-										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
-											{#if selectedInstanceType === 'MlxIbv'}
-												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-											{/if}
-										</span>
-										MLX RDMA
-									</button>
-								</div>
+								<button 
+									onclick={() => selectedInstanceType = 'MlxIbv'}
+									class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+								>
+									<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										{#if selectedInstanceType === 'MlxIbv'}
+											<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+										{/if}
+									</span>
+									MLX RDMA
+								</button>
+								<button 
+									onclick={() => selectedInstanceType = 'LlamaCpp'}
+									class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'LlamaCpp' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+								>
+									<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'LlamaCpp' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+										{#if selectedInstanceType === 'LlamaCpp'}
+											<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+										{/if}
+									</span>
+									llama.cpp
+								</button>
+							</div>
 							</div>
 							
 							<!-- Minimum Nodes (discrete slider with drag support) -->

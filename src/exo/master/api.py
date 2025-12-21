@@ -18,7 +18,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import MODEL_CARDS
+from exo.shared.models.model_cards import ALL_MODEL_CARDS, MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     ChatCompletionMessage,
@@ -233,13 +233,13 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.short_id == model_id]
+        cards = [card for card in ALL_MODEL_CARDS.values() if card.short_id == model_id]
         if not cards:
             raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
-            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
+            for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl, InstanceMeta.LlamaCpp):
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
@@ -433,7 +433,7 @@ class API:
         return total_available
 
     async def get_models(self) -> ModelList:
-        """Returns list of available models."""
+        """Returns list of available models (MLX + GGUF)."""
         return ModelList(
             data=[
                 ModelListModel(
@@ -443,7 +443,7 @@ class API:
                     description=card.description,
                     tags=card.tags,
                 )
-                for card in MODEL_CARDS.values()
+                for card in ALL_MODEL_CARDS.values()
             ]
         )
 
