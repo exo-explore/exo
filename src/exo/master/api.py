@@ -77,11 +77,15 @@ def chunk_to_response(
 
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
-        return model_card.metadata
-    else:
-        return await get_model_meta(model_id)
+    # Check by short_id key first (e.g., "qwen2.5-0.5b-gguf")
+    if model_id in ALL_MODEL_CARDS:
+        return ALL_MODEL_CARDS[model_id].metadata
+    # Check by full HuggingFace model_id (e.g., "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
+    for card in ALL_MODEL_CARDS.values():
+        if str(card.model_id) == model_id:
+            return card.metadata
+    # Fallback to fetching from HuggingFace (only works for safetensors, not GGUF)
+    return await get_model_meta(model_id)
 
 
 class API:
