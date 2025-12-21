@@ -1510,6 +1510,16 @@ def get_global_weights():
 
 ## 24. Troubleshooting
 
+### Known Harmless Warnings
+
+#### psutil swap memory warning
+```
+RuntimeWarning: 'sin' and 'sout' swap memory stats couldn't be determined
+```
+Termux doesn't have permission to read `/proc/vmstat` for swap memory statistics. This is expected on Android and does not affect functionality—psutil simply sets these values to 0.
+
+---
+
 ### Permission Denied
 
 ```bash

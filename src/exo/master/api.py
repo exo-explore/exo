@@ -442,7 +442,7 @@ class API:
                     name=card.name,
                     description=card.description,
                     tags=card.tags,
-                    storage_size_megabytes=card.metadata.storage_size.in_megabytes,
+                    storage_size_megabytes=card.metadata.storage_size.in_mb,
                 )
                 for card in ALL_MODEL_CARDS.values()
             ]
