@@ -45,7 +45,8 @@ const debugEnabled = $derived(debugMode());
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
 	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl' | 'LlamaCpp';
 	
-	let selectedInstanceType = $state<InstanceMeta>('MlxRing');
+	// Default to LlamaCpp for Android-only builds (MLX disabled)
+	let selectedInstanceType = $state<InstanceMeta>('LlamaCpp');
 	let selectedMinNodes = $state<number>(1);
 	let minNodesInitialized = $state(false);
 	let launchingModelId = $state<string | null>(null);
@@ -1470,10 +1471,12 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							</div>
 							
 							<!-- Instance Type -->
+							<!-- MLX buttons hidden for Android-only builds. To re-enable, uncomment the MLX buttons below -->
 							<div>
 								<div class="text-xs text-white/70 font-mono mb-2">Instance Type:</div>
 								<div class="flex gap-2">
-									<button 
+									<!-- MLX Ring button (disabled for Android) -->
+									<!-- <button 
 										onclick={() => selectedInstanceType = 'MlxRing'}
 										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxRing' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
@@ -1483,30 +1486,32 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 											{/if}
 										</span>
 										MLX Ring
+									</button> -->
+									<!-- MLX RDMA button (disabled for Android) -->
+									<!-- <button 
+										onclick={() => selectedInstanceType = 'MlxIbv'}
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+									>
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+											{#if selectedInstanceType === 'MlxIbv'}
+												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+											{/if}
+										</span>
+										MLX RDMA
+									</button> -->
+									<!-- llama.cpp is the only option for Android -->
+									<button 
+										onclick={() => selectedInstanceType = 'LlamaCpp'}
+										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'LlamaCpp' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+									>
+										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'LlamaCpp' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
+											{#if selectedInstanceType === 'LlamaCpp'}
+												<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
+											{/if}
+										</span>
+										llama.cpp
 									</button>
-								<button 
-									onclick={() => selectedInstanceType = 'MlxIbv'}
-									class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-								>
-									<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
-										{#if selectedInstanceType === 'MlxIbv'}
-											<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-										{/if}
-									</span>
-									MLX RDMA
-								</button>
-								<button 
-									onclick={() => selectedInstanceType = 'LlamaCpp'}
-									class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'LlamaCpp' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-								>
-									<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'LlamaCpp' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
-										{#if selectedInstanceType === 'LlamaCpp'}
-											<span class="w-2 h-2 rounded-full bg-exo-yellow"></span>
-										{/if}
-									</span>
-									llama.cpp
-								</button>
-							</div>
+								</div>
 							</div>
 							
 							<!-- Minimum Nodes (discrete slider with drag support) -->

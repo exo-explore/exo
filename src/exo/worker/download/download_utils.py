@@ -451,6 +451,12 @@ def calculate_repo_progress(
     )
 
 
+def is_gguf_model(model_id: str) -> bool:
+    """Check if the model is a GGUF format model based on naming conventions."""
+    model_id_lower = model_id.lower()
+    return "gguf" in model_id_lower or model_id_lower.endswith("-gguf")
+
+
 async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]:
     target_dir = (await ensure_models_dir()) / str(repo_id).replace("/", "--")
     await aios.makedirs(target_dir, exist_ok=True)
@@ -462,9 +468,37 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]
     return index_data.weight_map
 
 
+async def resolve_allow_patterns_for_gguf(repo_id: str, revision: str = "main") -> list[str]:
+    """Resolve allow patterns for GGUF models by finding .gguf files in the repo."""
+    file_list = await fetch_file_list_with_cache(repo_id, revision, recursive=True)
+    gguf_files = [f.path for f in file_list if f.path.endswith(".gguf")]
+    if not gguf_files:
+        logger.warning(f"No .gguf files found in {repo_id}, allowing all")
+        return ["*"]
+    # Prefer Q4_K_M or similar common quantization, else take the first .gguf
+    preferred = None
+    for pattern in ["q4_k_m", "q4_k", "q5_k_m", "q5_k", "q8_0"]:
+        for f in gguf_files:
+            if pattern in f.lower():
+                preferred = f
+                break
+        if preferred:
+            break
+    if not preferred:
+        preferred = gguf_files[0]
+    logger.info(f"Selected GGUF file for {repo_id}: {preferred}")
+    # Include common config files plus the selected GGUF
+    return ["*.json", "*.txt", "tokenizer.model", preferred]
+
+
 async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
+    model_id = str(shard.model_meta.model_id)
+    # GGUF models don't have model.safetensors.index.json - handle them differently
+    if is_gguf_model(model_id):
+        logger.info(f"Detected GGUF model: {model_id}")
+        return await resolve_allow_patterns_for_gguf(model_id)
     try:
-        weight_map = await get_weight_map(str(shard.model_meta.model_id))
+        weight_map = await get_weight_map(model_id)
         return get_allow_patterns(weight_map, shard)
     except Exception:
         logger.error(f"Error getting weight map for {shard.model_meta.model_id=}")

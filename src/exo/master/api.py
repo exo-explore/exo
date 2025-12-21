@@ -18,7 +18,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import ALL_MODEL_CARDS, MODEL_CARDS
+from exo.shared.models.model_cards import ALL_MODEL_CARDS, GGUF_MODEL_CARDS, MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     ChatCompletionMessage,
@@ -77,11 +77,16 @@ def chunk_to_response(
 
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
+    # Check GGUF models first (primary for Android)
+    if model_id in GGUF_MODEL_CARDS:
+        return GGUF_MODEL_CARDS[model_id].metadata
+    # Then check MLX models (if enabled)
     if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
-        return model_card.metadata
-    else:
-        return await get_model_meta(model_id)
+        return MODEL_CARDS[model_id].metadata
+    # Finally check ALL_MODEL_CARDS (covers both)
+    if model_id in ALL_MODEL_CARDS:
+        return ALL_MODEL_CARDS[model_id].metadata
+    return await get_model_meta(model_id)
 
 
 class API:
