@@ -20,9 +20,25 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 
 
 def find_llama_cli() -> Path | None:
-    """Find the llama-cli binary (the one we tested and works)."""
+    """Find the llama-cli or llama-simple binary."""
+    # Prefer llama-simple as it's non-interactive by design
     search_paths = [
+        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple",
         Path.home() / "llama.cpp" / "build" / "bin" / "llama-cli",
+    ]
+    
+    for path in search_paths:
+        if path.exists() and os.access(path, os.X_OK):
+            return path
+    
+    return None
+
+
+def find_main_binary() -> Path | None:
+    """Find the main binary (older llama.cpp builds use 'main')."""
+    search_paths = [
+        Path.home() / "llama.cpp" / "build" / "bin" / "main",
+        Path.home() / "llama.cpp" / "main",
     ]
     
     for path in search_paths:
@@ -42,7 +58,7 @@ def get_lib_path() -> str:
 
 
 class NativeLlamaCpp:
-    """Wrapper around native llama-cli binary."""
+    """Wrapper around native llama-cli or llama-simple binary."""
     
     def __init__(
         self,
@@ -55,14 +71,16 @@ class NativeLlamaCpp:
         self.n_threads = n_threads
         
         self.cli_path = find_llama_cli()
+        self.is_simple = self.cli_path and "llama-simple" in str(self.cli_path)
+        
         if self.cli_path is None:
             raise FileNotFoundError(
-                "llama-cli not found. Please build llama.cpp first:\n"
+                "llama-cli/llama-simple not found. Please build llama.cpp first:\n"
                 "cd ~/llama.cpp && cmake -B build && cmake --build build"
             )
         
         self.lib_path = get_lib_path()
-        logger.info(f"Using native llama-cli: {self.cli_path}")
+        logger.info(f"Using native binary: {self.cli_path} (is_simple={self.is_simple})")
         logger.info(f"LD_LIBRARY_PATH: {self.lib_path}")
         
         # Verify model exists
@@ -76,24 +94,34 @@ class NativeLlamaCpp:
         temperature: float = 0.7,
         top_p: float = 0.9,
     ) -> Generator[str, None, None]:
-        """Generate text using llama-cli."""
+        """Generate text using llama-simple or llama-cli."""
         
-        # Use llama-cli with prompt and immediate exit after generation
-        # Flags for non-interactive batch mode:
-        # --no-display-prompt: Don't echo the prompt back
-        # --log-disable: Disable verbose model loading logs
-        cmd = [
-            str(self.cli_path),
-            "-m", self.model_path,
-            "-p", prompt,
-            "-n", str(max_tokens),
-            "-c", str(self.n_ctx),
-            "-t", str(self.n_threads),
-            "--temp", str(temperature),
-            "--no-mmap",
-            "--no-display-prompt",
-            "--log-disable",
-        ]
+        # Build command based on which binary we're using
+        if self.is_simple:
+            # llama-simple uses different flags and is non-interactive
+            cmd = [
+                str(self.cli_path),
+                "-m", self.model_path,
+                "-p", prompt,
+                "-n", str(max_tokens),
+                "-c", str(self.n_ctx),
+                "-t", str(self.n_threads),
+                "--no-mmap",
+            ]
+        else:
+            # llama-cli needs flags to prevent interactive mode
+            cmd = [
+                str(self.cli_path),
+                "-m", self.model_path,
+                "-p", prompt,
+                "-n", str(max_tokens),
+                "-c", str(self.n_ctx),
+                "-t", str(self.n_threads),
+                "--temp", str(temperature),
+                "--no-mmap",
+                "--no-display-prompt",
+                "--log-disable",
+            ]
         
         env = os.environ.copy()
         if self.lib_path:
@@ -103,45 +131,55 @@ class NativeLlamaCpp:
         logger.info(f"Full command: {' '.join(cmd)}")
         
         try:
-            # Run the command with stdin closed to ensure it doesn't wait for input
-            # Using input="" sends empty stdin and closes it
-            result = subprocess.run(
+            # Use Popen to have explicit control over stdin
+            # This ensures stdin is closed immediately after process starts
+            process = subprocess.Popen(
                 cmd,
-                input="",  # Close stdin immediately
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=env,
-                timeout=180,  # Increase timeout for slow Android
             )
             
-            full_output = result.stdout
-            stderr_output = result.stderr
+            # Close stdin immediately to signal no more input
+            process.stdin.close()
             
-            logger.info(f"llama exit code: {result.returncode}")
-            logger.info(f"stdout len: {len(full_output)}, stderr len: {len(stderr_output)}")
+            # Read output with timeout
+            try:
+                stdout, stderr = process.communicate(timeout=180)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                logger.error("llama-cli timed out after 180s")
+                return
             
-            if result.returncode != 0:
-                logger.warning(f"llama stderr: {stderr_output[:500]}")
+            logger.info(f"llama exit code: {process.returncode}")
+            logger.info(f"stdout len: {len(stdout)}, stderr len: {len(stderr)}")
             
-            # With --no-display-prompt, output should be just the generated text
-            response = full_output.strip()
+            if process.returncode != 0:
+                logger.warning(f"llama stderr: {stderr[:500]}")
             
-            # Clean up any special tokens that might appear
+            # Parse output - remove prompt echo and special tokens
+            response = stdout.strip()
+            
+            # If prompt was echoed, remove it
+            if response.startswith(prompt):
+                response = response[len(prompt):]
+            
+            # Clean up special tokens
             for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>", "<|assistant|>"]:
                 response = response.replace(token, "")
             
             response = response.strip()
             
-            logger.info(f"Raw output preview: '{full_output[:200]}'")
+            logger.info(f"Raw output preview: '{stdout[:200]}'")
             
             if response:
                 logger.info(f"Extracted response: '{response[:100]}'")
                 yield response
             else:
-                logger.warning(f"Empty response. stderr: {stderr_output[:300]}")
+                logger.warning(f"Empty response. stderr: {stderr[:300]}")
                 
-        except subprocess.TimeoutExpired:
-            logger.error("llama-cli timed out after 120s")
         except Exception as e:
             logger.error(f"Error running llama: {e}")
 
