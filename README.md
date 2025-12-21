@@ -191,6 +191,106 @@ For further details, see API types and endpoints in `src/exo/master/api.py`.
 
 ---
 
+### Using the API
+
+If you prefer to interact with exo via the API, here is an example creating an instance of a small model (`mlx-community/Llama-3.2-1B-Instruct-4bit`), sending a chat completions request and deleting the instance.
+
+---
+
+**1. Preview instance placements**
+
+The `/instance/previews` endpoint will preview all valid placements for your model.
+
+```bash
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b"
+```
+
+Sample response:
+
+```json
+{
+  "previews": [
+    {
+      "model_id": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+      "sharding": "Pipeline",
+      "instance_meta": "MlxRing",
+      "instance": {...},
+      "memory_delta_by_node": {"local": 729808896},
+      "error": null
+    }
+    // ...possibly more placements...
+  ]
+}
+```
+
+This will return all valid placements for this model. Pick a placement that you like.
+To pick the first one, pipe into `jq`:
+
+```bash
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b" | jq -c '.previews[] | select(.error == null) | .instance' | head -n1
+```
+
+---
+
+**2. Create a model instance**
+
+Send a POST to `/instance` with your desired placement in the `instance` field (the full payload must match types as in `CreateInstanceParams`), which you can copy from step 1:
+
+```bash
+curl -X POST http://localhost:52415/instance \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "instance": {...}
+  }'
+```
+
+
+Sample response:
+
+```json
+{
+  "message": "Command received.",
+  "command_id": "e9d1a8ab-...."
+}
+```
+
+---
+
+**3. Send a chat completion**
+
+Now, make a POST to `/v1/chat/completions` (the same format as OpenAI's API):
+
+```bash
+curl -N -X POST http://localhost:52415/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "messages": [
+      {"role": "user", "content": "What is Llama 3.2 1B?"}
+    ],
+    "stream": true
+  }'
+```
+
+---
+
+**4. Delete the instance**
+
+When you're done, delete the instance by its ID (find it via `/state` or `/instance` endpoints):
+
+```bash
+curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
+```
+
+**Other useful API endpoints*:**
+
+- List all models: `curl http://localhost:52415/models`
+- Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
+
+For further details, see API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
+
+---
+
 ## Hardware Accelerator Support
 
 On macOS, exo uses the GPU. On Linux, exo currently runs on CPU. We are working on extending hardware accelerator support. If you'd like support for a new hardware platform, please [search for an existing feature request](https://github.com/exo-explore/exo/issues) and add a thumbs up so we know what hardware is important to the community.
