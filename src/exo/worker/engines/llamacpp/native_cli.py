@@ -20,16 +20,9 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 
 
 def find_llama_cli() -> Path | None:
-    """Find the best llama binary for chat."""
-    # Priority: llama-simple-chat > llama-cli > llama-simple
-    # llama-simple-chat handles chat format properly
+    """Find the llama-cli binary (the one we tested and works)."""
     search_paths = [
-        # Best: llama-simple-chat (handles chat templates)
-        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple-chat",
-        # Fallback: llama-cli (full featured)
         Path.home() / "llama.cpp" / "build" / "bin" / "llama-cli",
-        # Last resort: llama-simple (raw completion only)
-        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple",
     ]
     
     for path in search_paths:
@@ -83,44 +76,21 @@ class NativeLlamaCpp:
         temperature: float = 0.7,
         top_p: float = 0.9,
     ) -> Generator[str, None, None]:
-        """Generate text using llama binary, yielding tokens as they're produced."""
+        """Generate text using llama-cli."""
         
-        cli_name = self.cli_path.name
-        
-        if "llama-simple-chat" in cli_name:
-            # llama-simple-chat: best for chat, uses -u for user message
-            cmd = [
-                str(self.cli_path),
-                "-m", self.model_path,
-                "-u", prompt,  # -u for user message
-                "-n", str(max_tokens),
-                "-c", str(self.n_ctx),
-                "--no-mmap",
-            ]
-        elif "llama-simple" in cli_name:
-            # llama-simple: raw completion
-            cmd = [
-                str(self.cli_path),
-                "-m", self.model_path,
-                "-p", prompt,
-                "-n", str(max_tokens),
-                "-c", str(self.n_ctx),
-                "--no-mmap",
-            ]
-        else:
-            # llama-cli: full featured
-            cmd = [
-                str(self.cli_path),
-                "-m", self.model_path,
-                "-p", prompt,
-                "-n", str(max_tokens),
-                "-c", str(self.n_ctx),
-                "-t", str(self.n_threads),
-                "--temp", str(temperature),
-                "--no-mmap",
-                "--no-display-prompt",
-                "-e",
-            ]
+        # Use llama-cli with flags we tested and confirmed work
+        cmd = [
+            str(self.cli_path),
+            "-m", self.model_path,
+            "-p", prompt,
+            "-n", str(max_tokens),
+            "-c", str(self.n_ctx),
+            "-t", str(self.n_threads),
+            "--temp", str(temperature),
+            "--no-mmap",
+            "--no-display-prompt",  # Don't echo the prompt
+            "--log-disable",  # Reduce noise
+        ]
         
         env = os.environ.copy()
         if self.lib_path:
@@ -200,7 +170,7 @@ def native_generate(
     Generate text using native llama-cli.
     Matches the interface of llamacpp_generate for compatibility.
     """
-    # Extract the last user message for simple prompt
+    # Extract the last user message - llama-cli works best with simple prompts
     user_message = ""
     for msg in reversed(task.messages):
         content = msg.content
@@ -217,32 +187,14 @@ def native_generate(
             user_message = str(content)
             break
     
-    # For llama-simple-chat, just use the user message
-    # For others, use full chat template
-    cli_path = find_llama_cli()
-    if cli_path and "llama-simple-chat" in cli_path.name:
-        prompt = user_message
-    else:
-        # Format full chat for other binaries
-        messages: list[dict[str, str]] = []
-        for msg in task.messages:
-            content = msg.content
-            if content is None:
-                continue
-            if isinstance(content, list):
-                if len(content) == 0:
-                    continue
-                content = content[0].text
-            elif hasattr(content, "text"):
-                content = content.text
-            messages.append({"role": msg.role, "content": str(content)})
-        prompt = format_chat_prompt(messages)
+    # Use just the user message - llama-cli will use the model's chat template
+    prompt = user_message
     
     max_tokens = task.max_tokens or 256
     temperature = task.temperature if task.temperature is not None else 0.7
     top_p = task.top_p if task.top_p is not None else 0.9
     
-    logger.info(f"Native generation with max_tokens={max_tokens}, prompt={prompt[:50]}...")
+    logger.info(f"Native generation with prompt='{prompt}', max_tokens={max_tokens}")
     
     try:
         cli = NativeLlamaCpp(
