@@ -79,17 +79,24 @@ def initialize_llamacpp(
         f"ctx={n_ctx}, batch={n_batch}"
     )
 
-    # Load the model
+    # Load the model - verbose=True to see loading progress
+    logger.info(f">>> STARTING Llama() constructor for {gguf_path}")
+    logger.info(f">>> File size: {gguf_path.stat().st_size / (1024*1024):.2f} MB")
+    
+    import time
+    load_start = time.time()
+    
     model = Llama(
         model_path=str(gguf_path),
         n_ctx=n_ctx,
         n_threads=n_threads,
         n_gpu_layers=n_gpu_layers,
         n_batch=n_batch,
-        verbose=False,
+        verbose=True,  # Enable to see llama.cpp loading progress
     )
-
-    logger.info("llama.cpp model loaded successfully")
+    
+    load_time = time.time() - load_start
+    logger.info(f">>> FINISHED Llama() constructor in {load_time:.2f} seconds")
 
     return model
 
