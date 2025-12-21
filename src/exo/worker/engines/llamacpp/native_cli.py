@@ -78,7 +78,7 @@ class NativeLlamaCpp:
     ) -> Generator[str, None, None]:
         """Generate text using llama-cli."""
         
-        # Use llama-cli with flags we tested and confirmed work
+        # Use llama-cli in single-turn mode (not interactive)
         cmd = [
             str(self.cli_path),
             "-m", self.model_path,
@@ -88,8 +88,7 @@ class NativeLlamaCpp:
             "-t", str(self.n_threads),
             "--temp", str(temperature),
             "--no-mmap",
-            "--no-display-prompt",  # Don't echo the prompt
-            "--log-disable",  # Reduce noise
+            "-cnv",  # Conversation mode off - single turn, then exit
         ]
         
         env = os.environ.copy()
@@ -108,36 +107,52 @@ class NativeLlamaCpp:
         )
         
         try:
-            # Read all output first, then filter
+            # Read all output
             full_output = process.stdout.read()
             process.wait()
             
             if process.returncode != 0:
                 logger.warning(f"llama exited with code {process.returncode}")
             
-            # llama-simple echoes the prompt, then adds the generation
-            # The actual response comes after the prompt
-            # Look for common patterns to find where generation starts
-            response = full_output
+            logger.debug(f"Raw output: {full_output[:500]}")
             
-            # Try to find where actual generation starts (after the prompt)
-            # llama-simple format: <prompt>\n\n<generation>
-            if "\n\n" in response:
-                parts = response.split("\n\n", 1)
-                if len(parts) > 1:
-                    response = parts[1]
+            # Parse llama-cli output format:
+            # The response appears after "> {prompt}" line and before "[ Prompt:" stats
+            response = ""
+            lines = full_output.split("\n")
             
-            # Clean up any remaining artifacts
+            in_response = False
+            response_lines = []
+            
+            for line in lines:
+                # Skip banner, model info, etc.
+                if line.startswith(">"):
+                    # This is the prompt line, response follows
+                    in_response = True
+                    continue
+                
+                if in_response:
+                    # Stop at stats line
+                    if line.strip().startswith("[") and "Prompt:" in line:
+                        break
+                    # Stop at next prompt marker
+                    if line.startswith(">"):
+                        break
+                    response_lines.append(line)
+            
+            response = "\n".join(response_lines).strip()
+            
+            # Clean up any special tokens
+            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]:
+                response = response.replace(token, "")
+            
             response = response.strip()
             
-            # Remove any trailing special tokens
-            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]:
-                if response.endswith(token):
-                    response = response[:-len(token)].strip()
-            
             if response:
-                # Yield the cleaned response
+                logger.info(f"Extracted response: {response[:100]}...")
                 yield response
+            else:
+                logger.warning("No response extracted from llama output")
                 
         except Exception as e:
             logger.error(f"Error reading llama output: {e}")
