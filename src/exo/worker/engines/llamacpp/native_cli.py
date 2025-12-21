@@ -78,7 +78,7 @@ class NativeLlamaCpp:
     ) -> Generator[str, None, None]:
         """Generate text using llama-cli."""
         
-        # Use llama-cli in single-turn mode (not interactive)
+        # Use llama-cli with prompt and immediate exit after generation
         cmd = [
             str(self.cli_path),
             "-m", self.model_path,
@@ -88,7 +88,8 @@ class NativeLlamaCpp:
             "-t", str(self.n_threads),
             "--temp", str(temperature),
             "--no-mmap",
-            "-cnv",  # Conversation mode off - single turn, then exit
+            "--simple-io",  # Simple I/O mode
+            "-e",  # Process escape sequences
         ]
         
         env = os.environ.copy()
@@ -97,10 +98,12 @@ class NativeLlamaCpp:
         
         logger.info(f"Running: {' '.join(cmd[:8])}...")
         
+        # Use echo to pipe input and close stdin to make llama-cli exit
         process = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,  # Close stdin immediately
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,  # Suppress llama.cpp verbose output
+            stderr=subprocess.PIPE,  # Capture stderr for debugging
             text=True,
             env=env,
             bufsize=1,
@@ -108,52 +111,48 @@ class NativeLlamaCpp:
         
         try:
             # Read all output
-            full_output = process.stdout.read()
-            process.wait()
+            full_output, stderr_output = process.communicate(timeout=120)
             
             if process.returncode != 0:
                 logger.warning(f"llama exited with code {process.returncode}")
+                if stderr_output:
+                    logger.warning(f"stderr: {stderr_output[:200]}")
             
-            logger.debug(f"Raw output: {full_output[:500]}")
+            logger.info(f"Raw stdout length: {len(full_output)}")
             
-            # Parse llama-cli output format:
-            # The response appears after "> {prompt}" line and before "[ Prompt:" stats
-            response = ""
-            lines = full_output.split("\n")
+            # With --simple-io, output should be cleaner
+            # The prompt is echoed, then generation follows
+            response = full_output
             
-            in_response = False
-            response_lines = []
+            # Remove the prompt echo if present
+            if response.startswith(prompt):
+                response = response[len(prompt):]
             
-            for line in lines:
-                # Skip banner, model info, etc.
-                if line.startswith(">"):
-                    # This is the prompt line, response follows
-                    in_response = True
-                    continue
-                
-                if in_response:
-                    # Stop at stats line
-                    if line.strip().startswith("[") and "Prompt:" in line:
-                        break
-                    # Stop at next prompt marker
-                    if line.startswith(">"):
-                        break
-                    response_lines.append(line)
+            # Also try to find after newline
+            lines = response.split("\n")
+            # Take everything that isn't empty
+            response_lines = [l for l in lines if l.strip()]
+            response = " ".join(response_lines).strip()
             
-            response = "\n".join(response_lines).strip()
-            
-            # Clean up any special tokens
-            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]:
-                response = response.replace(token, "")
+            # Clean up any special tokens and stats
+            for token in ["<|im_end|>", "<|endoftext|>", "<|im_start|>", "[ Prompt:", "[ Generation:"]:
+                if token in response:
+                    response = response.split(token)[0]
             
             response = response.strip()
             
             if response:
-                logger.info(f"Extracted response: {response[:100]}...")
+                logger.info(f"Extracted response: '{response[:100]}'...")
                 yield response
             else:
-                logger.warning("No response extracted from llama output")
+                logger.warning(f"No response extracted. Full output: {full_output[:300]}")
+                # Yield the raw output as fallback
+                if full_output.strip():
+                    yield full_output.strip()
                 
+        except subprocess.TimeoutExpired:
+            process.kill()
+            logger.error("llama-cli timed out")
         except Exception as e:
             logger.error(f"Error reading llama output: {e}")
 
