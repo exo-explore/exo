@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.12.14",
+    "requests>=2.32.0",
     "types-aiofiles>=24.1.0.20250708",
     "typeguard>=4.4.4",
     "pydantic>=2.11.7",

@@ -34,6 +34,24 @@ def use_native_cli() -> bool:
     return is_android()
 
 
+def use_server_mode() -> bool:
+    """
+    Check if we should use llama-server HTTP API instead of subprocess.
+    
+    Server mode is more reliable on Android because:
+    - No TTY/stdin issues
+    - Model stays loaded between requests
+    - Proper streaming support
+    """
+    # Explicit override via environment variable
+    if os.environ.get("EXO_LLAMA_SERVER", "").lower() in ("1", "true", "yes"):
+        return True
+    if os.environ.get("EXO_LLAMA_SERVER", "").lower() in ("0", "false", "no"):
+        return False
+    # Default: use server mode on Android for reliability
+    return is_android()
+
+
 def find_gguf_file(model_path: Path) -> Path | None:
     """
     Find a GGUF file in the model directory.

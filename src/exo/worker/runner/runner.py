@@ -227,11 +227,16 @@ def _run_llamacpp_runner(
     from exo.worker.engines.llamacpp.utils import (
         initialize_llamacpp,
         use_native_cli,
+        use_server_mode,
         get_gguf_path_for_instance,
     )
 
     model: Any = None
     is_native = use_native_cli()
+    is_server = use_server_mode()
+    
+    if is_server:
+        logger.info("Using llama-server HTTP mode (most reliable on Android)")
 
     current_status: RunnerStatus = RunnerWaitingForModel()
     logger.info("runner waiting for model")
@@ -262,9 +267,14 @@ def _run_llamacpp_runner(
 
                     logger.info(f"warming up inference for instance: {bound_instance.instance}")
                     
-                    if is_native:
+                    gguf_path = get_gguf_path_for_instance(bound_instance)
+                    
+                    if is_server:
+                        from exo.worker.engines.llamacpp.llama_server import server_warmup
+                        logger.info("Using llama-server for warmup (starts server and loads model)")
+                        toks = server_warmup(str(gguf_path))
+                    elif is_native:
                         from exo.worker.engines.llamacpp.native_cli import native_warmup
-                        gguf_path = get_gguf_path_for_instance(bound_instance)
                         toks = native_warmup(str(gguf_path))
                     else:
                         from exo.worker.engines.llamacpp.generate import warmup_inference
@@ -288,9 +298,14 @@ def _run_llamacpp_runner(
                     assert task_params.messages[0].content is not None
                     _check_for_debug_prompts_llamacpp(task_params.messages[0].content)
 
-                    if is_native:
+                    gguf_path = get_gguf_path_for_instance(bound_instance)
+                    
+                    if is_server:
+                        from exo.worker.engines.llamacpp.llama_server import server_generate
+                        logger.info(f"Starting server_generate with path={gguf_path}")
+                        generator = server_generate(str(gguf_path), task_params)
+                    elif is_native:
                         from exo.worker.engines.llamacpp.native_cli import native_generate
-                        gguf_path = get_gguf_path_for_instance(bound_instance)
                         logger.info(f"Starting native_generate with path={gguf_path}")
                         generator = native_generate(str(gguf_path), task_params)
                     else:
