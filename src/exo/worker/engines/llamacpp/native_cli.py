@@ -98,15 +98,13 @@ class NativeLlamaCpp:
         
         # Build command based on which binary we're using
         if self.is_simple:
-            # llama-simple uses different flags and is non-interactive
+            # llama-simple is minimal - only supports basic flags
+            # Do NOT use: -t, --no-mmap, --temp, etc.
             cmd = [
                 str(self.cli_path),
                 "-m", self.model_path,
                 "-p", prompt,
                 "-n", str(max_tokens),
-                "-c", str(self.n_ctx),
-                "-t", str(self.n_threads),
-                "--no-mmap",
             ]
         else:
             # llama-cli needs flags to prevent interactive mode
