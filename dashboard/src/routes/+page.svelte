@@ -216,9 +216,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	});
 	
 	// Check if a model has enough memory to run
-	function hasEnoughMemory(model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
-		const modelSizeGB = getModelSizeGB(model);
-		return modelSizeGB <= availableMemoryGB();
+	// TEMPORARILY DISABLED: Always return true to allow model selection
+	// The placement system will properly validate if the model can actually run
+	function hasEnoughMemory(_model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
+		// Always allow model selection - let the placement system decide if it fits
+		return true;
 	}
 	
 	// Sorted models for dropdown - biggest first, unrunnable at the end
