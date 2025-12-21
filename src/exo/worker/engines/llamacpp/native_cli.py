@@ -20,11 +20,16 @@ from exo.shared.types.worker.runner_response import GenerationResponse
 
 
 def find_llama_cli() -> Path | None:
-    """Find the llama-cli binary."""
+    """Find the llama-cli or llama-simple binary."""
+    # Prefer llama-simple as it's non-interactive
     # Common locations on Termux/Android
     search_paths = [
+        # Prefer llama-simple (simpler, non-interactive)
+        Path.home() / "llama.cpp" / "build" / "bin" / "llama-simple",
         Path.home() / "llama.cpp" / "build" / "bin" / "llama-cli",
+        Path.home() / "llama.cpp" / "llama-simple",
         Path.home() / "llama.cpp" / "llama-cli",
+        Path("/data/data/com.termux/files/usr/bin/llama-simple"),
         Path("/data/data/com.termux/files/usr/bin/llama-cli"),
     ]
     
@@ -33,12 +38,13 @@ def find_llama_cli() -> Path | None:
             return path
     
     # Try PATH
-    try:
-        result = subprocess.run(["which", "llama-cli"], capture_output=True, text=True)
-        if result.returncode == 0:
-            return Path(result.stdout.strip())
-    except Exception:
-        pass
+    for binary in ["llama-simple", "llama-cli"]:
+        try:
+            result = subprocess.run(["which", binary], capture_output=True, text=True)
+            if result.returncode == 0:
+                return Path(result.stdout.strip())
+        except Exception:
+            pass
     
     return None
 
@@ -87,32 +93,46 @@ class NativeLlamaCpp:
         temperature: float = 0.7,
         top_p: float = 0.9,
     ) -> Generator[str, None, None]:
-        """Generate text using llama-cli, yielding tokens as they're produced."""
+        """Generate text using llama-cli/llama-simple, yielding tokens as they're produced."""
         
-        cmd = [
-            str(self.cli_path),
-            "-m", self.model_path,
-            "-p", prompt,
-            "-n", str(max_tokens),
-            "-c", str(self.n_ctx),
-            "-t", str(self.n_threads),
-            "--temp", str(temperature),
-            "--top-p", str(top_p),
-            "--no-mmap",
-            "--simple-io",  # Simpler output format
-            "--no-display-prompt",  # Don't echo the prompt
-        ]
+        is_simple = "llama-simple" in str(self.cli_path)
+        
+        if is_simple:
+            # llama-simple has simpler args
+            cmd = [
+                str(self.cli_path),
+                "-m", self.model_path,
+                "-p", prompt,
+                "-n", str(max_tokens),
+                "-c", str(self.n_ctx),
+                "--no-mmap",
+            ]
+        else:
+            # llama-cli needs more flags to avoid interactive mode
+            cmd = [
+                str(self.cli_path),
+                "-m", self.model_path,
+                "-p", prompt,
+                "-n", str(max_tokens),
+                "-c", str(self.n_ctx),
+                "-t", str(self.n_threads),
+                "--temp", str(temperature),
+                "--top-p", str(top_p),
+                "--no-mmap",
+                "--log-disable",  # Reduce noise
+                "-e",  # Process escapes
+            ]
         
         env = os.environ.copy()
         if self.lib_path:
             env["LD_LIBRARY_PATH"] = self.lib_path
         
-        logger.info(f"Running: {' '.join(cmd[:6])}...")
+        logger.info(f"Running: {' '.join(cmd[:8])}...")
         
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # Suppress llama.cpp verbose output
             text=True,
             env=env,
             bufsize=1,
@@ -139,8 +159,7 @@ class NativeLlamaCpp:
         finally:
             process.wait()
             if process.returncode != 0:
-                stderr = process.stderr.read()
-                logger.warning(f"llama-cli exited with code {process.returncode}: {stderr}")
+                logger.warning(f"llama exited with code {process.returncode}")
 
 
 def format_chat_prompt(messages: list[dict[str, str]]) -> str:
@@ -225,22 +244,25 @@ def native_generate(
 
 
 def native_warmup(model_path: str, n_ctx: int = 512, n_threads: int = 4) -> int:
-    """Warm up by generating a few tokens."""
-    logger.info("Warming up native llama-cli")
+    """
+    Warm up by verifying the binary exists and is executable.
+    
+    Note: We don't actually generate tokens during warmup for native CLI mode
+    because each call to llama-cli loads the model fresh (no persistent state).
+    The first real generation will be the warmup.
+    """
+    logger.info("Warming up native llama-cli (verification only)")
     
     try:
-        cli = NativeLlamaCpp(
-            model_path=model_path,
-            n_ctx=n_ctx,
-            n_threads=n_threads,
-        )
+        cli_path = find_llama_cli()
+        if cli_path is None:
+            raise FileNotFoundError("llama-cli/llama-simple not found")
         
-        tokens = 0
-        for _ in cli.generate("Hello", max_tokens=5):
-            tokens += 1
+        if not Path(model_path).exists():
+            raise FileNotFoundError(f"Model not found: {model_path}")
         
-        logger.info(f"Native warmup complete, generated {tokens} tokens")
-        return tokens
+        logger.info(f"Native warmup complete: {cli_path} ready, model exists")
+        return 1  # Indicate success
         
     except Exception as e:
         logger.warning(f"Native warmup failed: {e}")
