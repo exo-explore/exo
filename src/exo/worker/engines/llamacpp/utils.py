@@ -86,13 +86,19 @@ def initialize_llamacpp(
     import time
     load_start = time.time()
     
+    # Disable mmap on Android/Termux - can cause hangs
+    import sys
+    use_mmap = "termux" not in sys.prefix.lower() and "android" not in sys.prefix.lower()
+    logger.info(f">>> use_mmap={use_mmap} (prefix={sys.prefix})")
+    
     model = Llama(
         model_path=str(gguf_path),
         n_ctx=n_ctx,
         n_threads=n_threads,
         n_gpu_layers=n_gpu_layers,
         n_batch=n_batch,
-        verbose=True,  # Enable to see llama.cpp loading progress
+        use_mmap=use_mmap,  # Disable mmap on Android
+        verbose=True,
     )
     
     load_time = time.time() - load_start

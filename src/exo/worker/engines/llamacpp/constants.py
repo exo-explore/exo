@@ -5,8 +5,8 @@ Constants for the llama.cpp engine.
 # Maximum tokens to generate if not specified
 MAX_TOKENS = 4096
 
-# Default context size for models
-DEFAULT_CONTEXT_SIZE = 4096
+# Default context size for models (reduced for Android memory constraints)
+DEFAULT_CONTEXT_SIZE = 2048
 
 # Number of threads to use (0 = auto-detect)
 DEFAULT_N_THREADS = 0
