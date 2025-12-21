@@ -25,26 +25,46 @@ use util::wakerdeque::WakerDeque;
 const RETRY_CONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
 mod managed {
+    use libp2p::swarm::behaviour::toggle::Toggle;
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{identity, mdns, ping};
     use std::io;
     use std::time::Duration;
+    use std::env;
 
     const MDNS_RECORD_TTL: Duration = Duration::from_secs(2_500);
     const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(1_500);
     const PING_TIMEOUT: Duration = Duration::from_millis(2_500);
     const PING_INTERVAL: Duration = Duration::from_millis(2_500);
 
+    /// Environment variable to disable mDNS discovery (useful for proot/container environments)
+    pub const EXO_DISABLE_MDNS_ENV_VAR: &str = "EXO_DISABLE_MDNS";
+
     #[derive(NetworkBehaviour)]
     pub struct Behaviour {
-        mdns: mdns::tokio::Behaviour,
+        mdns: Toggle<mdns::tokio::Behaviour>,
         ping: ping::Behaviour,
     }
 
     impl Behaviour {
         pub fn new(keypair: &identity::Keypair) -> io::Result<Self> {
+            let mdns_disabled = env::var(EXO_DISABLE_MDNS_ENV_VAR).is_ok();
+            
+            let mdns = if mdns_disabled {
+                log::warn!("mDNS discovery disabled via {}", EXO_DISABLE_MDNS_ENV_VAR);
+                Toggle::from(None)
+            } else {
+                match mdns_behaviour(keypair) {
+                    Ok(behaviour) => Toggle::from(Some(behaviour)),
+                    Err(e) => {
+                        log::warn!("mDNS initialization failed: {}. Continuing without mDNS discovery. Set {} to suppress this warning.", e, EXO_DISABLE_MDNS_ENV_VAR);
+                        Toggle::from(None)
+                    }
+                }
+            };
+
             Ok(Self {
-                mdns: mdns_behaviour(keypair)?,
+                mdns,
                 ping: ping_behaviour(),
             })
         }
