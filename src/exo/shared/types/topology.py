@@ -3,10 +3,10 @@ from enum import Enum
 from loguru import logger
 
 from exo.shared.types.multiaddr import Multiaddr
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
-class RDMAConnection(CamelCaseModel):
+class RDMAConnection(FrozenModel):
     source_rdma_iface: str
     sink_rdma_iface: str
 
@@ -22,7 +22,7 @@ class LinkType(str, Enum):
     WiFi = "WiFi"
 
 
-class SocketConnection(CamelCaseModel):
+class SocketConnection(FrozenModel):
     sink_multiaddr: Multiaddr
 
     def is_thunderbolt(self) -> bool:
