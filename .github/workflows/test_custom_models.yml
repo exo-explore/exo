@@ -18,4 +18,4 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Run Custom Model (mlx) Integration Test
         run: |
-          nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c uv run python src/exo/worker/tests/test_custom_model.py --help
+          nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c uv run python src/exo/worker/tests/test_custom_model.py --model mlx-community/gpt-oss-20b-MXFP4-Q8
