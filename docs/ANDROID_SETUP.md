@@ -44,7 +44,7 @@ For experienced users who want the fastest path to running exo:
 ```bash
 # 1. Install packages
 pkg update && pkg upgrade -y
-pkg install git python python-pip cmake ninja nodejs tur-repo
+pkg install git python python-pip python-numpy cmake ninja nodejs tur-repo
 pkg install rustc-nightly rust-nightly-std-aarch64-linux-android
 source $PREFIX/etc/profile.d/rust-nightly.sh
 
@@ -99,8 +99,10 @@ termux-setup-storage
 
 ```bash
 pkg update && pkg upgrade -y
-pkg install git python python-pip cmake ninja nodejs
+pkg install git python python-pip python-numpy cmake ninja nodejs
 ```
+
+> **Important:** Install `python-numpy` from pkg (pre-built) instead of pip. Building numpy from source fails on Termux due to pointer-size detection issues with Android's Bionic libc.
 
 ### Step 3: Install Rust Nightly
 
@@ -168,7 +170,9 @@ cd exo
 ### Step 7: Build Rust Networking Bindings
 
 ```bash
+# Install maturin (via pip, NOT pkg)
 pip install maturin
+
 cd ~/exo/rust/exo_pyo3_bindings
 
 # Edit pyproject.toml to allow Python 3.12 (if needed)
@@ -386,6 +390,35 @@ cd ~/exo/dashboard
 rm -rf node_modules dist
 npm install
 npm run build
+```
+
+### Numpy Build Failure
+
+**"Did not find correct pointer sized integer"**
+
+Don't build numpy from source on Termux. Use the pre-built package:
+
+```bash
+# Remove any failed numpy install attempts
+pip uninstall numpy
+
+# Install pre-built numpy from Termux repos
+pkg install python-numpy
+
+# Verify
+python -c "import numpy; print(numpy.__version__)"
+```
+
+### maturin Not Found
+
+Maturin is a Python package, not a Termux package:
+
+```bash
+# Wrong:
+pkg install maturin  # This won't work
+
+# Correct:
+pip install maturin
 ```
 
 ### maturin Build Issues
