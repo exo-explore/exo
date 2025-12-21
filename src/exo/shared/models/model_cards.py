@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+from typing import Any, cast
+from loguru import logger
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -433,19 +437,85 @@ MODEL_CARDS: dict[str, ModelCard] = {
     #         supports_tensor=True,
     #     ),
     # ),
-    # "gpt-oss-20b-4bit": ModelCard(
-    #     short_id="gpt-oss-20b-4bit",
-    #     model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-    #     name="GPT-OSS 20B (MXFP4-Q4, MLX)",
-    #     description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this MLX variant uses MXFP4 4-bit quantization.""",
-    #     tags=[],
-    #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-    #         pretty_name="GPT-OSS 20B (MXFP4-Q4, MLX)",
-    #         storage_size=Memory.from_kb(11_744_051),
-    #         n_layers=24,
-    #         hidden_size=2880,
-    #         supports_tensor=True,
-    #     ),
-    # ),
+    # 
+    #
 }
+
+# Persistent storage for custom models - use EXO_HOME for consistency
+def _get_custom_models_path() -> Path:
+    """Get the path to custom models JSON, using EXO_HOME if set."""
+    import os
+    exo_home = os.environ.get("EXO_HOME")
+    if exo_home:
+        base_path = Path(exo_home)
+    else:
+        base_path = Path.home() / ".exo"
+    return base_path / "custom_models.json"
+
+PERSISTENT_FILE_PATH = _get_custom_models_path()
+custom_models_loaded = False
+
+def load_custom_models_once() -> None:
+    """Loads custom models from persistent storage (called once on first access)."""
+    global custom_models_loaded
+    if custom_models_loaded:
+        return
+    custom_models_loaded = True
+
+    logger.debug(f"Attempting to load custom models from: {PERSISTENT_FILE_PATH}")
+    
+    if not PERSISTENT_FILE_PATH.exists():
+        logger.debug(f"Custom models file does not exist yet: {PERSISTENT_FILE_PATH}")
+        return
+    
+    try:
+        with open(PERSISTENT_FILE_PATH, "r") as f:
+            data = cast(dict[str, dict[str, Any]], json.load(f))
+            logger.debug(f"Loaded {len(data)} entries from custom_models.json")
+            
+            loaded_count = 0
+            for key, card_data in data.items():
+                try:
+                    card = ModelCard.model_validate(card_data)
+                    if key not in MODEL_CARDS:
+                        MODEL_CARDS[key] = card
+                        loaded_count += 1
+                        logger.debug(f"Loaded custom model: {key} ({card.model_id})")
+                    else:
+                        logger.debug(f"Skipping {key} - already in MODEL_CARDS")
+                except Exception as e:
+                    logger.warning(f"Failed to load model card for {key}: {e}")
+            
+            logger.info(f"✓ Loaded {loaded_count} custom models from {PERSISTENT_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"Error loading custom models from {PERSISTENT_FILE_PATH}: {e}")
+
+def save_custom_models() -> None:
+    """Saves custom models from MODEL_CARDS to persistent storage."""
+    logger.debug(f"Attempting to save custom models to: {PERSISTENT_FILE_PATH}")
+    
+    try:
+        PERSISTENT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Ensured directory exists: {PERSISTENT_FILE_PATH.parent}")
+        
+        custom_models = {
+            key: card.model_dump(mode="json") 
+            for key, card in MODEL_CARDS.items() 
+            if "custom" in card.tags
+        }
+        
+        logger.debug(f"Found {len(custom_models)} custom models to save")
+        for key in custom_models.keys():
+            logger.debug(f"  - {key}")
+        
+        with open(PERSISTENT_FILE_PATH, "w") as f:
+            json.dump(custom_models, f, indent=4)
+        
+        logger.info(f"✓ Saved {len(custom_models)} custom models to {PERSISTENT_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"Failed to save custom models to {PERSISTENT_FILE_PATH}: {e}")
+
+def get_model_cards() -> dict[str, ModelCard]:
+    """Returns MODEL_CARDS, loading custom models on first access."""
+    load_custom_models_once()
+    return MODEL_CARDS
