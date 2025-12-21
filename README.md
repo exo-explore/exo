@@ -90,18 +90,20 @@ Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-
 
 The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
 
+---
+
 ### Using the API
 
-If you prefer to interact with exo via the API, here is a complete example using `curl` and a real, small model (`mlx-community/Llama-3.2-1B-Instruct-4bit`). All API endpoints and request shapes match `src/exo/master/api.py` and `src/exo/shared/types/api.py`.
+If you prefer to interact with exo via the API, here is an example creating an instance of a small model (`mlx-community/Llama-3.2-1B-Instruct-4bit`), sending a chat completions request and deleting the instance.
 
 ---
 
 **1. Preview instance placements**
 
-Obtain valid deployment placements for your model. This helps you choose a valid configuration:
+The `/instance/previews` endpoint will preview all valid placements for your model.
 
 ```bash
-curl "http://localhost:52415/instance/previews?model_id=mlx-community/Llama-3.2-1B-Instruct-4bit"
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b"
 ```
 
 Sample response:
@@ -114,7 +116,7 @@ Sample response:
       "sharding": "Pipeline",
       "instance_meta": "MlxRing",
       "instance": {...},
-      "memory_delta_by_node": {"local": 734003200},
+      "memory_delta_by_node": {"local": 729808896},
       "error": null
     }
     // ...possibly more placements...
@@ -123,25 +125,26 @@ Sample response:
 ```
 
 This will return all valid placements for this model. Pick a placement that you like.
+To pick the first one, pipe into `jq`:
+
+```bash
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b" | jq -c '.previews[] | select(.error == null) | .instance' | head -n1
+```
 
 ---
 
 **2. Create a model instance**
 
-Send a POST to `/instance` with your placement in the `instance` field (the full payload must match types as in `CreateInstanceParams`):
+Send a POST to `/instance` with your desired placement in the `instance` field (the full payload must match types as in `CreateInstanceParams`), which you can copy from step 1:
 
 ```bash
 curl -X POST http://localhost:52415/instance \
   -H 'Content-Type: application/json' \
   -d '{
-    "instance": {
-      "model_id": "mlx-community/Llama-3.2-1B-Instruct-4bit",
-      "instance_meta": "MlxRing",
-      "sharding": "Pipeline",
-      "min_nodes": 1
-    }
+    "instance": {...}
   }'
 ```
+
 
 Sample response:
 
@@ -154,7 +157,7 @@ Sample response:
 
 ---
 
-**3. Issue a chat completion**
+**3. Send a chat completion**
 
 Now, make a POST to `/v1/chat/completions` (the same format as OpenAI's API):
 
@@ -165,11 +168,10 @@ curl -N -X POST http://localhost:52415/v1/chat/completions \
     "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
     "messages": [
       {"role": "user", "content": "What is Llama 3.2 1B?"}
-    ]
+    ],
+    "stream": true
   }'
 ```
-
-You will receive a streamed or non-streamed JSON reply.
 
 ---
 
@@ -181,13 +183,12 @@ When you're done, delete the instance by its ID (find it via `/state` or `/insta
 curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
 ```
 
-**Tip:**
+**Other useful API endpoints*:**
 
 - List all models: `curl http://localhost:52415/models`
 - Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
 
-For further details, see API types and endpoints in `src/exo/master/api.py`.
-
+For further details, see API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
 
 ---
 
