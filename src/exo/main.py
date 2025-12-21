@@ -1,8 +1,9 @@
 import argparse
 import multiprocessing as mp
+import os
 import signal
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Self, Union
 
 import anyio
 from anyio.abc import TaskGroup
@@ -13,6 +14,7 @@ import exo.routing.topics as topics
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
 from exo.routing.router import Router, get_node_id_keypair
+from exo.routing.local_router import LocalRouter
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -22,11 +24,14 @@ from exo.utils.pydantic_ext import CamelCaseModel
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
 
+# Environment variable to enable local-only mode (no libp2p networking)
+EXO_LOCAL_MODE = os.environ.get("EXO_LOCAL_MODE", "").lower() in ("1", "true", "yes")
+
 
 # I marked this as a dataclass as I want trivial constructors.
 @dataclass
 class Node:
-    router: Router
+    router: Union[Router, LocalRouter]
     worker: Worker
     election: Election  # Every node participates in election, as we do want a node to become master even if it isn't a master candidate if no master candidates are present.
     election_result_receiver: Receiver[ElectionResult]
@@ -41,7 +46,14 @@ class Node:
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_peer_id().to_base58())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(keypair)
+
+        # Use LocalRouter if EXO_LOCAL_MODE is set (for platforms with libp2p issues)
+        if EXO_LOCAL_MODE:
+            logger.info("Running in LOCAL MODE - distributed networking disabled")
+            router: Union[Router, LocalRouter] = LocalRouter.create()
+        else:
+            router = Router.create(keypair)
+
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)
