@@ -1,8 +1,10 @@
-# ARM Cortex CPU Specifications & Optimization Guide
+# ARM Optimization Guide
 
-> **Comprehensive Reference for Termux Performance Tuning on Android Devices**
+> **CPU Specifications & Compiler Flags for Android/Termux**
 
-This guide provides detailed specifications for ARM Cortex processors found in Android devices, along with compiler optimization flags and performance tuning strategies specifically designed for non-rooted Termux environments.
+Detailed specifications for ARM Cortex processors, compiler optimization flags, and performance tuning strategies for Termux.
+
+**Related:** [ARM Research](./ARM_RESEARCH.md) for framework evaluation and technology recommendations.
 
 ---
 

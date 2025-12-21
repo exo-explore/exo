@@ -1,8 +1,10 @@
-# ARM Optimization Research for Distributed Phone Clustering
+# ARM Research: Distributed Phone Clustering
 
-> **Research Summary for EXO Distributed LLM Inference**
-> 
-> This document evaluates existing ARM optimizations, frameworks, and libraries for clustering phones together for distributed AI inference. Each item is tagged with **USE** (recommended for immediate integration) or **CONSIDER** (worth evaluating but not immediately necessary).
+> **Research Summary for exo Distributed LLM Inference**
+
+This document evaluates ARM optimizations, frameworks, and libraries for phone clustering. Each item is tagged with **USE** (recommended) or **CONSIDER** (worth evaluating but not immediately necessary).
+
+**Related:** [ARM Optimization Guide](./ARM_OPTIMIZATION.md) for practical CPU specs and compiler flags.
 
 ---
 
