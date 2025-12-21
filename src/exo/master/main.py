@@ -211,10 +211,10 @@ class Master:
                         )
                         break
 
-            # time out dead nodes (120s timeout for slow devices like Android)
+            # time out dead nodes (1200s = 20 min timeout for slow devices like Android)
             for node_id, time in self.state.last_seen.items():
                 now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=120):
+                if now - time > timedelta(seconds=1200):
                     logger.info(f"Manually removing node {node_id} due to inactivity")
                     await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
