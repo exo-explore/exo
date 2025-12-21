@@ -1,5 +1,6 @@
 import contextlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Iterable
 
 import rustworkx as rx
@@ -16,12 +17,11 @@ class TopologySnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+@dataclass
 class Topology:
-    def __init__(self) -> None:
-        self._graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = (
-            rx.PyDiGraph()
-        )
-        self._node_id_to_rx_id_map: dict[NodeId, int] = dict()
+    # the _graph can be used as a int -> NodeId map.
+    _graph = rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection]()
+    _vertex_indices = dict[NodeId, int]()
 
     def to_snapshot(self) -> TopologySnapshot:
         return TopologySnapshot(
@@ -43,38 +43,38 @@ class Topology:
         return topology
 
     def add_node(self, node: NodeId) -> None:
-        if node in self._node_id_to_rx_id_map:
+        if node in self._vertex_indices:
             return
         rx_id = self._graph.add_node(node)
-        self._node_id_to_rx_id_map[node] = rx_id
+        self._vertex_indices[node] = rx_id
         self._graph[rx_id] = node
 
     def node_is_leaf(self, node_id: NodeId) -> bool:
         return (
-            node_id in self._node_id_to_rx_id_map
-            and len(self._graph.neighbors(self._node_id_to_rx_id_map[node_id])) <= 1
+            node_id in self._vertex_indices
+            and len(self._graph.neighbors(self._vertex_indices[node_id])) <= 1
         )
 
     def neighbours(self, node_id: NodeId) -> list[NodeId]:
         return [
             self._graph[rx_id]
-            for rx_id in self._graph.neighbors(self._node_id_to_rx_id_map[node_id])
+            for rx_id in self._graph.neighbors(self._vertex_indices[node_id])
         ]
 
     def out_edges(
         self, node_id: NodeId
     ) -> Iterable[tuple[NodeId, SocketConnection | RDMAConnection]]:
-        if node_id not in self._node_id_to_rx_id_map:
+        if node_id not in self._vertex_indices:
             return []
         return (
             (self._graph[nid], conn)
             for _, nid, conn in self._graph.out_edges(
-                self._node_id_to_rx_id_map[node_id]
+                self._vertex_indices[node_id]
             )
         )
 
     def contains_node(self, node_id: NodeId) -> bool:
-        return node_id in self._node_id_to_rx_id_map
+        return node_id in self._vertex_indices
 
     def add_connection(
         self,
@@ -82,21 +82,29 @@ class Topology:
         sink: NodeId,
         connection: SocketConnection | RDMAConnection,
     ) -> None:
-        if source not in self._node_id_to_rx_id_map:
+        if connection in self.get_all_connections_between(source, sink):
+            return
+
+        if source not in self._vertex_indices:
             self.add_node(source)
-        if sink not in self._node_id_to_rx_id_map:
+        if sink not in self._vertex_indices:
             self.add_node(sink)
 
-        src_id = self._node_id_to_rx_id_map[source]
-        sink_id = self._node_id_to_rx_id_map[sink]
+        src_id = self._vertex_indices[source]
+        sink_id = self._vertex_indices[sink]
 
-        self._graph.add_edge(src_id, sink_id, connection)
+        _ = self._graph.add_edge(src_id, sink_id, connection)
 
     def get_all_connections_between(
         self, source: NodeId, sink: NodeId
     ) -> Iterable[SocketConnection | RDMAConnection]:
-        src_id = self._node_id_to_rx_id_map[source]
-        sink_id = self._node_id_to_rx_id_map[sink]
+        if source not in self._vertex_indices:
+            return []
+        if sink not in self._vertex_indices:
+            return []
+
+        src_id = self._vertex_indices[source]
+        sink_id = self._vertex_indices[sink]
         try:
             return self._graph.get_all_edge_data(src_id, sink_id)
         except rx.NoEdgeBetweenNodes:
@@ -118,19 +126,19 @@ class Topology:
         )
 
     def remove_node(self, node_id: NodeId) -> None:
-        if node_id not in self._node_id_to_rx_id_map:
+        if node_id not in self._vertex_indices:
             return
 
-        rx_idx = self._node_id_to_rx_id_map[node_id]
+        rx_idx = self._vertex_indices[node_id]
         self._graph.remove_node(rx_idx)
 
-        del self._node_id_to_rx_id_map[node_id]
+        del self._vertex_indices[node_id]
 
     def replace_all_out_tb_connections(
         self, source: NodeId, new_connections: Sequence[tuple[NodeId, RDMAConnection]]
     ) -> None:
         for conn_idx in self._graph.out_edge_indices(
-            self._node_id_to_rx_id_map[source]
+            self._vertex_indices[source]
         ):
             if isinstance(self._graph.get_edge_data_by_index(conn_idx), RDMAConnection):
                 self._graph.remove_edge_from_index(conn_idx)
@@ -140,8 +148,10 @@ class Topology:
     def remove_connection(
         self, source: NodeId, sink: NodeId, edge: SocketConnection | RDMAConnection
     ) -> None:
+        if source not in self._vertex_indices or sink not in self._vertex_indices:
+            return
         for conn_idx in self._graph.edge_indices_from_endpoints(
-            self._node_id_to_rx_id_map[source], self._node_id_to_rx_id_map[sink]
+            self._vertex_indices[source], self._vertex_indices[sink]
         ):
             if self._graph.get_edge_data_by_index(conn_idx) == edge:
                 self._graph.remove_edge_from_index(conn_idx)
@@ -179,7 +189,7 @@ class Topology:
 
     def get_subgraph_from_nodes(self, nodes: list[NodeId]) -> "Topology":
         node_idxs = [node for node in nodes]
-        rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
+        rx_idxs = [self._vertex_indices[idx] for idx in node_idxs]
         topology = Topology()
         for rx_idx in rx_idxs:
             topology.add_node(self._graph[rx_idx])
@@ -190,7 +200,7 @@ class Topology:
 
     def is_thunderbolt_cycle(self, cycle: list[NodeId]) -> bool:
         node_idxs = [node for node in cycle]
-        rx_idxs = [self._node_id_to_rx_id_map[idx] for idx in node_idxs]
+        rx_idxs = [self._vertex_indices[idx] for idx in node_idxs]
         for rid in rx_idxs:
             for neighbor_rid in self._graph.neighbors(rid):
                 if neighbor_rid not in rx_idxs:
