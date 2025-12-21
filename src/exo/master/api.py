@@ -77,15 +77,14 @@ def chunk_to_response(
 
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
-    # Check GGUF models first (primary for Android)
-    if model_id in GGUF_MODEL_CARDS:
-        return GGUF_MODEL_CARDS[model_id].metadata
-    # Then check MLX models (if enabled)
-    if model_id in MODEL_CARDS:
-        return MODEL_CARDS[model_id].metadata
-    # Finally check ALL_MODEL_CARDS (covers both)
+    # Check by short_id key first
     if model_id in ALL_MODEL_CARDS:
         return ALL_MODEL_CARDS[model_id].metadata
+    # Check by full HuggingFace model_id (for GGUF and other models)
+    for card in ALL_MODEL_CARDS.values():
+        if str(card.model_id) == model_id:
+            return card.metadata
+    # Fallback to fetching from HuggingFace (only works for safetensors models, not GGUF)
     return await get_model_meta(model_id)
 
 
