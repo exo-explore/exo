@@ -418,6 +418,19 @@ def calculate_repo_progress(
     all_downloaded_bytes = sum(
         (p.downloaded.in_bytes for p in file_progress.values()), 0
     )
+    # Defensive check: ensure downloaded never exceeds total to prevent >100% progress
+    if all_total_bytes > 0 and all_downloaded_bytes > all_total_bytes:
+        overflow_files = [
+            (p.file_path, p.downloaded.in_bytes, p.total.in_bytes)
+            for p in file_progress.values()
+            if p.downloaded.in_bytes > p.total.in_bytes
+        ]
+        if overflow_files:
+            logger.warning(
+                f"Download progress overflow detected: {all_downloaded_bytes}/{all_total_bytes} bytes. "
+                f"Files with overflow: {overflow_files}"
+            )
+        all_downloaded_bytes = all_total_bytes
     all_downloaded_bytes_this_session = sum(
         (p.downloaded_this_session.in_bytes for p in file_progress.values()), 0
     )
@@ -628,16 +641,24 @@ async def download_shard(
 
     for file in filtered_file_list:
         downloaded_bytes = await get_downloaded_size(target_dir / file.path)
+        # Fix: When file.size is None, use downloaded_bytes as total to avoid progress overflow
+        # This ensures downloaded <= total when size info is unavailable from HuggingFace API
+        effective_total = file.size if file.size is not None else downloaded_bytes
+        # Fix: Handle None comparison for status - if size unknown but file exists, assume complete
+        if file.size is not None:
+            status = "complete" if downloaded_bytes == file.size else "not_started"
+        else:
+            status = "complete" if downloaded_bytes > 0 else "not_started"
         file_progress[file.path] = RepoFileDownloadProgress(
             repo_id=str(shard.model_meta.model_id),
             repo_revision=revision,
             file_path=file.path,
             downloaded=Memory.from_bytes(downloaded_bytes),
             downloaded_this_session=Memory.from_bytes(0),
-            total=Memory.from_bytes(file.size or 0),
+            total=Memory.from_bytes(effective_total),
             speed=0,
             eta=timedelta(0),
-            status="complete" if downloaded_bytes == file.size else "not_started",
+            status=status,
             start_time=time.time(),
         )
 
