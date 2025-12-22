@@ -21,7 +21,7 @@ from exo.worker.engines.llamacpp.constants import (
 from exo.worker.runner.bootstrap import logger
 
 
-DISTRIBUTED_SERVER_STARTUP_TIMEOUT: Final[int] = 300
+DISTRIBUTED_SERVER_STARTUP_TIMEOUT: Final[int] = 600  # 10 minutes for slow tensor transfer
 
 
 def is_android() -> bool:
@@ -388,8 +388,9 @@ class DistributedLlamaServer:
             "-m", self.model_path,
             "--port", str(self.port),
             "--host", "127.0.0.1",
-            "-c", str(DEFAULT_CONTEXT_SIZE),
+            "-c", "1024",  # Reduced context for memory-constrained distributed inference
             "-t", str(os.cpu_count() or 4),
+            "--batch-size", "128",  # Smaller batch for stability
             "--verbose",
         ]
 
@@ -399,12 +400,20 @@ class DistributedLlamaServer:
         if self.tensor_split:
             command.extend(["--tensor-split", self.tensor_split])
 
-        if is_android():
-            command.append("--no-mmap")
+        # Always disable mmap for distributed inference (critical for Android/Termux)
+        command.append("--no-mmap")
+        
+        # Disable flash attention to prevent hangs on heterogeneous setups
+        command.append("--no-flash-attn")
 
         env = os.environ.copy()
         if self.lib_path:
             env["LD_LIBRARY_PATH"] = self.lib_path
+        
+        # Enable detailed debug logging for RPC and llama.cpp
+        env["GGML_RPC_DEBUG"] = "1"
+        env["LLAMA_LOG_VERBOSITY"] = "0"
+        env["LLAMA_LOG_TIMESTAMPS"] = "1"
 
         logger.info(f"Starting distributed llama-server: {' '.join(command[:10])}...")
         logger.info(f"RPC addresses: {self.rpc_addresses}")
@@ -465,9 +474,16 @@ class DistributedLlamaServer:
             )
             status = response.status_code
             if status == 200:
+                logger.info("Health check: Server is ready (200 OK)")
                 return True
             if status == 503:
-                logger.debug("Server responded 503 - still loading model")
+                # Log the actual response body to understand what's happening
+                try:
+                    body = response.json()
+                    error_msg = body.get("error", {}).get("message", "Unknown")
+                    logger.warning(f"Health check 503: {error_msg} (full: {body})")
+                except Exception:
+                    logger.warning(f"Health check 503: {response.text[:200]}")
                 return False
             logger.debug(f"Server health check returned {status}")
             return False
