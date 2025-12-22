@@ -235,7 +235,8 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             profile.chip_id = info.chip
         # TODO: makes me slightly sad
         case Sequence():
-            assert info != [], "Missing functionality here!"
+            if info == []:
+                return state
             match info[0]:
                 case NetworkInterfaceInfo():
                     profile.network_interfaces = cast(
