@@ -35,7 +35,7 @@ struct BugReportService {
     }
 
     func sendReport(
-        baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
+        baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
         now: Date = Date(),
         isManual: Bool = false
     ) async throws -> BugReportOutcome {

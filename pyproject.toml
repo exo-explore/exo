@@ -44,6 +44,7 @@ exo = "exo.main:main"
 # dependencies only required for development
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.17.0",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
     "pytest-env",

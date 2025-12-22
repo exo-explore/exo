@@ -212,7 +212,7 @@ struct ContentView: View {
 
     private var dashboardButton: some View {
         Button {
-            guard let url = URL(string: "http://localhost:8000/") else { return }
+            guard let url = URL(string: "http://localhost:52415/") else { return }
             NSWorkspace.shared.open(url)
         } label: {
             HStack {
