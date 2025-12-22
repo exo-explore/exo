@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+import threading
 from pathlib import Path
 from typing import Any, Final
 
@@ -420,6 +421,7 @@ class DistributedLlamaServer:
                     stderr=subprocess.PIPE,
                     env=env,
                 )
+                self._start_log_threads()
 
                 start_time = time.time()
                 while time.time() - start_time < DISTRIBUTED_SERVER_STARTUP_TIMEOUT:
@@ -485,6 +487,22 @@ class DistributedLlamaServer:
                 return True
         except OSError:
             return False
+
+    def _start_log_threads(self) -> None:
+        """Stream stdout/stderr from llama-server for diagnostics."""
+        if self.process is None:
+            return
+
+        def _reader(stream: Any, label: str) -> None:
+            if stream is None:
+                return
+            for line in iter(stream.readline, b""):
+                text = line.decode(errors="replace").strip()
+                if text:
+                    logger.info(f"[llama-server:{label}] {text}")
+
+        threading.Thread(target=_reader, args=(self.process.stdout, "stdout"), daemon=True).start()
+        threading.Thread(target=_reader, args=(self.process.stderr, "stderr"), daemon=True).start()
 
     def stop(self) -> None:
         """Stop the llama-server."""
