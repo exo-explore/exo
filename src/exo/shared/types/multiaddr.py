@@ -5,9 +5,7 @@ from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 
 class Multiaddr(BaseModel):
-    model_config = ConfigDict(
-        frozen=True
-    )
+    model_config = ConfigDict(frozen=True)
     address: str
 
     PATTERNS: ClassVar[list[str]] = [

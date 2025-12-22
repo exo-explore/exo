@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from subprocess import CalledProcessError
 from typing import Self, cast
-from collections.abc import Sequence
 
 import anyio
 from anyio import create_task_group, open_process
@@ -199,7 +198,9 @@ class InfoGatherer:
                 if not p.stdout:
                     logger.critical("MacMon closed stdout")
                     return
-                async for text in TextReceiveStream(BufferedByteReceiveStream(p.stdout)):
+                async for text in TextReceiveStream(
+                    BufferedByteReceiveStream(p.stdout)
+                ):
                     await self.info_sender.send(MacmonMetrics.from_raw_json(text))
         except CalledProcessError as e:
             stderr_msg = "no stderr"

@@ -68,9 +68,7 @@ class Topology:
             return []
         return (
             (self._graph[nid], conn)
-            for _, nid, conn in self._graph.out_edges(
-                self._vertex_indices[node_id]
-            )
+            for _, nid, conn in self._graph.out_edges(self._vertex_indices[node_id])
         )
 
     def contains_node(self, node_id: NodeId) -> bool:
@@ -137,9 +135,7 @@ class Topology:
     def replace_all_out_tb_connections(
         self, source: NodeId, new_connections: Sequence[tuple[NodeId, RDMAConnection]]
     ) -> None:
-        for conn_idx in self._graph.out_edge_indices(
-            self._vertex_indices[source]
-        ):
+        for conn_idx in self._graph.out_edge_indices(self._vertex_indices[source]):
             if isinstance(self._graph.get_edge_data_by_index(conn_idx), RDMAConnection):
                 self._graph.remove_edge_from_index(conn_idx)
         for sink, conn in new_connections:
