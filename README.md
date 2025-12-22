@@ -72,6 +72,11 @@ There are two ways to run exo:
   ```bash
   brew install macmon
   ```
+- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  rustup toolchain install nightly
+  ```
 
 Clone the repo, build the dashboard, and run exo:
 
