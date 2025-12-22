@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import mlx.core as mx
-from mflux.callbacks.callbacks import Callbacks
 from mflux.config.config import Config
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
@@ -10,10 +9,8 @@ from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreat
 from mflux.models.flux.model.flux_text_encoder.prompt_encoder import PromptEncoder
 from mflux.models.flux.variants.txt2img.flux import Flux1
 from mflux.utils.array_util import ArrayUtil
-from mflux.utils.exceptions import StopImageGenerationException
 from mflux.utils.image_util import ImageUtil
 from PIL import Image
-from tqdm import tqdm
 
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -22,29 +19,27 @@ from exo.worker.engines.mflux.config import get_config_for_model
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
 from exo.worker.engines.mflux.pipefusion import create_adapter_for_model
 from exo.worker.engines.mflux.pipefusion.adapter import ModelAdapter
-from exo.worker.engines.mflux.pipefusion.distributed_denoising import (
-    DistributedDenoising,
-)
+from exo.worker.engines.mflux.pipefusion.diffusion_runner import DiffusionRunner
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
 
 
 class DistributedImageModel:
-    """
-    Model-agnostic wrapper for distributed image generation.
-
-    This wrapper enables the generation runtime to access distributed context
-    (group, rank, world_size, shard boundaries) and works with any mflux model
-    (Flux, Fibo, Qwen, etc.) through configuration and adapters.
-    """
-
-    __slots__ = ("_model", "_config", "_adapter", "_group", "_shard_metadata")
+    __slots__ = (
+        "_model",
+        "_config",
+        "_adapter",
+        "_group",
+        "_shard_metadata",
+        "_runner",
+    )
 
     _model: Flux1  # Will be generalized to support other model types
     _config: ImageModelConfig
     _adapter: ModelAdapter
     _group: Optional[mx.distributed.Group]
     _shard_metadata: PipelineShardMetadata
+    _runner: DiffusionRunner
 
     def __init__(
         self,
@@ -54,16 +49,6 @@ class DistributedImageModel:
         group: Optional[mx.distributed.Group] = None,
         quantize: int | None = None,
     ):
-        """
-        Initialize DistributedImageModel directly from configuration.
-
-        Args:
-            model_id: The model identifier (e.g., "black-forest-labs/FLUX.1-schnell")
-            local_path: Path to the local model weights
-            shard_metadata: Pipeline shard metadata with layer assignments
-            group: MLX distributed group for multi-node coordination (None for single-node)
-            quantize: Optional quantization bit width
-        """
         # Get model config and create adapter (adapter owns the model)
         config = get_config_for_model(model_id)
         adapter = create_adapter_for_model(config, model_id, local_path, quantize)
@@ -71,17 +56,18 @@ class DistributedImageModel:
         # Get model from adapter
         model = adapter.model
 
+        # Create diffusion runner (handles both single-node and distributed modes)
+        num_sync_steps = config.get_num_sync_steps("medium") if group else 0
+        runner = DiffusionRunner(
+            config=config,
+            adapter=adapter,
+            group=group,
+            shard_metadata=shard_metadata,
+            num_sync_steps=num_sync_steps,
+        )
+
         if group is not None:
-            # Apply pipeline parallelism by wrapping the transformer
-            num_sync_steps = config.get_num_sync_steps("medium")
-            model.transformer = DistributedDenoising(
-                config=config,
-                adapter=adapter,
-                group=group,
-                shard_metadata=shard_metadata,
-                num_sync_steps=num_sync_steps,
-            )
-            logger.info("Applied pipefusion transformations")
+            logger.info("Initialized distributed diffusion runner")
 
             mx.eval(model.parameters())
 
@@ -99,23 +85,12 @@ class DistributedImageModel:
         object.__setattr__(self, "_adapter", adapter)
         object.__setattr__(self, "_group", group)
         object.__setattr__(self, "_shard_metadata", shard_metadata)
+        object.__setattr__(self, "_runner", runner)
 
     @classmethod
     def from_bound_instance(
         cls, bound_instance: BoundInstance
     ) -> "DistributedImageModel":
-        """
-        Create DistributedImageModel from a BoundInstance.
-
-        This factory method extracts model configuration from the bound instance
-        and handles distributed initialization if needed.
-
-        Args:
-            bound_instance: The bound instance containing model and shard info
-
-        Returns:
-            Initialized DistributedImageModel ready for inference
-        """
         model_id = bound_instance.bound_shard.model_meta.model_id
         model_path = build_model_path(model_id)
 
@@ -142,53 +117,47 @@ class DistributedImageModel:
 
     @property
     def model(self) -> Flux1:
-        """The underlying mflux model."""
         return self._model
 
     @property
     def config(self) -> ImageModelConfig:
-        """The model configuration."""
         return self._config
 
     @property
     def adapter(self) -> ModelAdapter:
-        """The model adapter for model-specific operations."""
         return self._adapter
 
     @property
     def group(self) -> Optional[mx.distributed.Group]:
-        """The MLX distributed group for this model (None for single-node)."""
         return self._group
 
     @property
     def shard_metadata(self) -> PipelineShardMetadata:
-        """Shard metadata containing layer assignments and device info."""
         return self._shard_metadata
 
     @property
     def rank(self) -> int:
-        """This device's rank in the distributed group."""
         return self._shard_metadata.device_rank
 
     @property
     def world_size(self) -> int:
-        """Total number of devices in the distributed group."""
         return self._shard_metadata.world_size
 
     @property
     def is_first_stage(self) -> bool:
-        """True if this device is the first stage in the pipeline."""
         return self._shard_metadata.device_rank == 0
 
     @property
     def is_last_stage(self) -> bool:
-        """True if this device is the last stage in the pipeline."""
         return self._shard_metadata.device_rank == self._shard_metadata.world_size - 1
 
     @property
     def is_distributed(self) -> bool:
-        """True if running in distributed mode (world_size > 1)."""
         return self._shard_metadata.world_size > 1
+
+    @property
+    def runner(self) -> DiffusionRunner:
+        return self._runner
 
     # Delegate attribute access to the underlying model.
     # Guarded with TYPE_CHECKING to prevent type checker complaints
@@ -199,7 +168,14 @@ class DistributedImageModel:
             return getattr(self._model, name)
 
         def __setattr__(self, name: str, value: Any) -> None:
-            if name in ("_model", "_config", "_adapter", "_group", "_shard_metadata"):
+            if name in (
+                "_model",
+                "_config",
+                "_adapter",
+                "_group",
+                "_shard_metadata",
+                "_runner",
+            ):
                 object.__setattr__(self, name, value)
             else:
                 setattr(self._model, name, value)
@@ -212,22 +188,6 @@ class DistributedImageModel:
         quality: Literal["low", "medium", "high"] = "medium",
         seed: int = 2,
     ) -> Optional[Image.Image]:
-        """
-        Generate an image using the model.
-
-        For distributed inference, only the first stage (rank 0) returns the image.
-        Other stages return None after participating in the pipeline.
-
-        Args:
-            prompt: Text description of the image to generate
-            height: Image height in pixels
-            width: Image width in pixels
-            quality: Generation quality ("low", "medium", "high")
-            seed: Random seed for reproducibility
-
-        Returns:
-            Generated PIL Image (rank 0) or None (other ranks)
-        """
         # Determine number of inference steps based on quality
         steps = self._config.get_steps_for_quality(quality)
 
@@ -240,21 +200,12 @@ class DistributedImageModel:
             return image.image
 
     def _generate_image(self, settings: Config, prompt: str, seed: int) -> Any:
-        """
-        Internal image generation with the diffusion loop.
-
-        This method implements the core diffusion process with distributed
-        communication handled at the transformer level.
-        """
         model = self._model
 
-        # 0. Create runtime config
+        # Create runtime config
         runtime_config = RuntimeConfig(settings, model.model_config)
-        time_steps = tqdm(
-            range(runtime_config.init_time_step, runtime_config.num_inference_steps)
-        )
 
-        # 1. Create initial latents (all nodes create the same latents with same seed)
+        # Create initial latents (all nodes create the same latents with same seed)
         latents = LatentCreator.create_for_txt2img_or_img2img(
             seed=seed,
             height=runtime_config.height,
@@ -268,7 +219,7 @@ class DistributedImageModel:
             ),
         )
 
-        # 2. Encode the prompt (all nodes encode to get consistent embeddings)
+        # Encode the prompt (all nodes encode to get consistent embeddings)
         prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
             prompt=prompt,
             prompt_cache=model.prompt_cache,
@@ -278,59 +229,17 @@ class DistributedImageModel:
             clip_text_encoder=model.clip_text_encoder,
         )
 
-        # (Optional) Call subscribers for beginning of loop
-        Callbacks.before_loop(
+        # Run the diffusion loop (runner handles callbacks internally)
+        latents = self._runner.run(
+            latents=latents,
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            runtime_config=runtime_config,
             seed=seed,
             prompt=prompt,
-            latents=latents,
-            config=runtime_config,
         )
 
-        # 3. Main diffusion loop
-        for t in time_steps:
-            try:
-                latents = self._diffusion_step(
-                    t=t,
-                    runtime_config=runtime_config,
-                    latents=latents,
-                    prompt_embeds=prompt_embeds,
-                    pooled_prompt_embeds=pooled_prompt_embeds,
-                )
-
-                # (Optional) Call subscribers in-loop
-                Callbacks.in_loop(
-                    t=t,
-                    seed=seed,
-                    prompt=prompt,
-                    latents=latents,
-                    config=runtime_config,
-                    time_steps=time_steps,
-                )
-
-                mx.eval(latents)
-
-            except KeyboardInterrupt:  # noqa: PERF203
-                Callbacks.interruption(
-                    t=t,
-                    seed=seed,
-                    prompt=prompt,
-                    latents=latents,
-                    config=runtime_config,
-                    time_steps=time_steps,
-                )
-                raise StopImageGenerationException(
-                    f"Stopping image generation at step {t + 1}/{len(time_steps)}"
-                ) from None
-
-        # (Optional) Call subscribers after loop
-        Callbacks.after_loop(
-            seed=seed,
-            prompt=prompt,
-            latents=latents,
-            config=runtime_config,
-        )
-
-        # 4. Decode latents to image (all nodes decode for now)
+        # Decode latents to image (all nodes decode for now)
         latents = ArrayUtil.unpack_latents(
             latents=latents, height=runtime_config.height, width=runtime_config.width
         )
@@ -345,35 +254,5 @@ class DistributedImageModel:
             lora_scales=model.lora_scales,
             image_path=runtime_config.image_path,
             image_strength=runtime_config.image_strength,
-            generation_time=time_steps.format_dict["elapsed"],
+            generation_time=0,  # TODO: Track time in runner if needed
         )
-
-    def _diffusion_step(
-        self,
-        t: int,
-        runtime_config: RuntimeConfig,
-        latents: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
-    ) -> mx.array:
-        if self._group is None:
-            latents = runtime_config.scheduler.scale_model_input(latents, t)
-
-        noise = self._model.transformer(
-            t=t,
-            config=runtime_config,
-            hidden_states=latents,
-            prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-        )
-
-        if self._group is None:
-            latents = runtime_config.scheduler.step(
-                model_output=noise,
-                timestep=t,
-                sample=latents,
-            )
-        else:
-            latents = noise
-
-        return latents
