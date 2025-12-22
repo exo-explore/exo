@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "test-app"
 
 jobs:
   build-macos-app:
@@ -32,15 +34,21 @@ jobs:
 
       - name: Derive release version from tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [[ "$VERSION" == *-alpha* ]]; then
+          if [[ "$GITHUB_REF_NAME" == "test-app" ]]; then
+            VERSION="0.0.0-alpha.0"
             echo "IS_ALPHA=true" >> $GITHUB_ENV
           else
-            echo "IS_ALPHA=false" >> $GITHUB_ENV
+            VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$VERSION" == *-alpha* ]]; then
+              echo "IS_ALPHA=true" >> $GITHUB_ENV
+            else
+              echo "IS_ALPHA=false" >> $GITHUB_ENV
+            fi
           fi
           echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Ensure tag commit is on main
+        if: github.ref_type == 'tag'
         run: |
           git fetch origin main
           # Alpha tags can be on any branch, production tags must be on main
@@ -267,7 +275,7 @@ jobs:
           path: output/EXO-${{ env.RELEASE_VERSION }}.dmg
 
       - name: Upload to S3
-        if: env.SPARKLE_S3_BUCKET != ''
+        if: env.SPARKLE_S3_BUCKET != '' && github.ref_type == 'tag'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
