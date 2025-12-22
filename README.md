@@ -65,12 +65,10 @@ There are two ways to run exo:
 
 **Prerequisites:**
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
-  ```bash
-  brew install uv
-  ```
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+- [node](https://github.com/nodejs/node) (for building the dashboard)
   ```bash
-  brew install macmon
+  brew install uv macmon node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
   ```bash
