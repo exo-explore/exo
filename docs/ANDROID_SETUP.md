@@ -48,11 +48,14 @@ pkg install git python python-pip python-numpy cmake ninja nodejs tur-repo
 pkg install rustc-nightly rust-nightly-std-aarch64-linux-android
 source $PREFIX/etc/profile.d/rust-nightly.sh
 
-# 2. Build llama.cpp
+# 2. Build llama.cpp (includes llama-server for EXO)
 cd ~
 git clone https://github.com/ggml-org/llama.cpp.git && cd llama.cpp
 cmake -B build -DBUILD_SHARED_LIBS=ON
 cmake --build build --config Release -j4
+
+# Verify llama-server exists (REQUIRED)
+ls ~/llama.cpp/build/bin/llama-server
 
 # 3. Configure environment
 echo 'source $PREFIX/etc/profile.d/rust-nightly.sh' >> ~/.bashrc
@@ -60,8 +63,8 @@ echo 'export LD_LIBRARY_PATH=$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH' >> ~/.b
 echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> ~/.bashrc
 source ~/.bashrc
 
-# 4. Install llama-cpp-python
-pip install llama-cpp-python maturin
+# 4. Install Python packages
+pip install llama-cpp-python maturin requests
 
 # 5. Clone and build exo
 cd ~
@@ -126,22 +129,27 @@ rustc --version
 echo 'source $PREFIX/etc/profile.d/rust-nightly.sh' >> ~/.bashrc
 ```
 
-### Step 4: Build llama.cpp
+### Step 4: Build llama.cpp and llama-server
 
-Build llama.cpp with shared libraries for llama-cpp-python:
+Build llama.cpp with shared libraries. **Important:** EXO uses `llama-server` on Android for reliable inference via HTTP API.
 
 ```bash
 cd ~
 git clone https://github.com/ggml-org/llama.cpp.git
 cd llama.cpp
 
-# Build with shared libraries
+# Build with shared libraries (includes llama-server)
 cmake -B build -DBUILD_SHARED_LIBS=ON
 cmake --build build --config Release -j4
 
-# Verify build
+# Verify llama-cli works
 ./build/bin/llama-cli --help
+
+# Verify llama-server exists (REQUIRED for EXO on Android)
+ls -la ./build/bin/llama-server
 ```
+
+> **Why llama-server?** Direct subprocess calls have TTY/stdin issues on Android. EXO automatically starts llama-server in the background and communicates via HTTP. This is transparent to users - just select a model and chat!
 
 ### Step 5: Configure Environment
 
@@ -152,11 +160,12 @@ echo 'export LD_LIBRARY_PATH=$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH' >> ~/.b
 echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> ~/.bashrc
 source ~/.bashrc
 
-# Install llama-cpp-python
-pip install llama-cpp-python
+# Install Python packages for llama.cpp integration
+pip install llama-cpp-python requests
 
 # Verify
 python -c "from llama_cpp import Llama; print('llama-cpp-python OK')"
+python -c "import requests; print('requests OK')"
 ```
 
 ### Step 6: Clone and Build exo
@@ -204,10 +213,17 @@ npm run build
 ### Step 10: Verify Installation
 
 ```bash
+# Check Python packages
 python -c "from llama_cpp import Llama; print('llama-cpp-python OK')"
 python -c "import exo_pyo3_bindings; print('exo_pyo3_bindings OK')"
+python -c "import requests; print('requests OK')"
 python -c "from exo.shared.platform import is_android; print(f'Android: {is_android()}')"
+
+# Check llama-server exists (REQUIRED for EXO on Android)
+ls ~/llama.cpp/build/bin/llama-server && echo "llama-server OK"
 ```
+
+If all checks pass, you're ready to run EXO!
 
 ---
 
@@ -282,6 +298,8 @@ ip addr show wlan0
 | `EXO_LOCAL_MODE` | `1`, `true`, `yes` | Use LocalRouter, bypass libp2p |
 | `EXO_DISABLE_MDNS` | `1` | Disable mDNS discovery |
 | `DASHBOARD_DIR` | Path | Custom dashboard location |
+| `EXO_LLAMA_SERVER` | `1`, `true`, `yes` | Force llama-server mode (default on Android) |
+| `EXO_LLAMA_SERVER` | `0`, `false`, `no` | Disable llama-server, use subprocess |
 
 ### Success Indicators
 
@@ -298,6 +316,78 @@ When exo is running correctly, you'll see:
 [ INFO ] Running on http://0.0.0.0:52415
 [ INFO ] Dashboard & API Ready
 ```
+
+---
+
+## How EXO Works on Android
+
+### Architecture
+
+On Android, EXO uses **llama-server** for reliable inference:
+
+```
+┌─────────────────────────────────────┐
+│         EXO Dashboard (Browser)     │
+│         http://<ip>:52415           │
+└─────────────────┬───────────────────┘
+                  │ HTTP/SSE
+                  ▼
+┌─────────────────────────────────────┐
+│         EXO Master/API              │
+│    (coordinates, routes requests)   │
+└─────────────────┬───────────────────┘
+                  │ Events
+                  ▼
+┌─────────────────────────────────────┐
+│         EXO Worker (Android)        │
+│    LlamaServerManager               │
+│         │                           │
+│         ▼                           │
+│    llama-server (localhost:8080)    │
+│         │                           │
+│         ▼                           │
+│    GGUF Model (in memory)           │
+└─────────────────────────────────────┘
+```
+
+### What Happens When You Chat
+
+1. **Select a model** → EXO downloads GGUF file to `~/.exo/models/`
+2. **Instance starts** → EXO automatically starts `llama-server` with the model
+3. **Send a message** → Worker calls `http://localhost:8080/v1/chat/completions`
+4. **Streaming response** → Tokens stream back to dashboard in real-time
+
+### Why llama-server?
+
+Direct subprocess calls (like `llama-cli`) have issues on Android:
+- No proper TTY
+- stdin/stdout buffering problems
+- Interactive mode conflicts
+
+`llama-server` solves all of this:
+- ✅ HTTP API - no TTY issues
+- ✅ Model stays loaded - faster subsequent requests
+- ✅ OpenAI-compatible - proper streaming support
+- ✅ Automatic management - EXO starts/stops it for you
+
+### Server Logs
+
+When the server starts, you'll see:
+
+```
+Using llama-server HTTP mode (most reliable on Android)
+Starting llama-server: llama-server -m model.gguf --port 8080...
+llama-server started successfully on port 8080
+```
+
+### Switching Models
+
+When you select a different model in the dashboard:
+1. EXO stops the current llama-server
+2. Downloads the new model (if needed)
+3. Starts llama-server with the new model
+
+This happens automatically - just select a model and wait for "READY"!
 
 ---
 
@@ -449,6 +539,48 @@ ping -c 3 github.com
 echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf
 ```
 
+### llama-server Not Found
+
+If you see "llama-server not found", build it:
+
+```bash
+cd ~/llama.cpp
+cmake -B build -DBUILD_SHARED_LIBS=ON
+cmake --build build --config Release -j4
+
+# Verify
+ls ~/llama.cpp/build/bin/llama-server
+```
+
+### llama-server Port Already in Use
+
+If you get port conflicts:
+
+```bash
+# Kill any existing llama-server processes
+pkill -9 -f llama-server
+
+# Or kill by port
+pkill -9 -f 'port 8080'
+```
+
+### Model Loading Timeout
+
+If the model takes too long to load:
+- Use a smaller model (`qwen2.5-0.5b-gguf`)
+- Close other apps to free RAM
+- Wait longer - first load can take 60+ seconds on slower devices
+
+### Server Not Responding
+
+```bash
+# Check if server is running
+curl http://localhost:8080/health
+
+# Check server logs
+ps aux | grep llama-server
+```
+
 ### ADB Connection Issues
 
 ```powershell
@@ -487,6 +619,8 @@ adb connect <device-ip>:5555
 | Artifact | Location |
 |----------|----------|
 | llama.cpp libraries | `~/llama.cpp/build/bin/*.so` |
+| llama-server binary | `~/llama.cpp/build/bin/llama-server` |
+| llama-cli binary | `~/llama.cpp/build/bin/llama-cli` |
 | Rust bindings wheel | `~/exo/target/wheels/*.whl` |
 | Dashboard build | `~/exo/dashboard/dist/` |
 | Models | `~/.exo/models/` |
