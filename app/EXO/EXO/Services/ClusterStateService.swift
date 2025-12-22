@@ -15,7 +15,7 @@ final class ClusterStateService: ObservableObject {
     private let endpoint: URL
 
     init(
-        baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
+        baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
