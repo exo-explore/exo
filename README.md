@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="/docs/exo-logo-black-bg.jpg">
-  <img alt="exo logo" src="/docs/exo-logo-transparent.png" width="50%" height="50%">
+  <source media="(prefers-color-scheme: light)" srcset="/docs/imgs/exo-logo-black-bg.jpg">
+  <img alt="exo logo" src="/docs/imgs/exo-logo-transparent.png" width="50%" height="50%">
 </picture>
 
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
@@ -99,7 +99,7 @@ This starts the exo dashboard and API at http://localhost:52415/
 
 exo ships a macOS app that runs in the background on your Mac.
 
-<img src="docs/macos-app-one-macbook.png" alt="exo macOS App - running on a MacBook" width="35%" />
+<img src="docs/imgs/macos-app-one-macbook.png" alt="exo macOS App - running on a MacBook" width="35%" />
 
 The macOS app requires macOS Tahoe 26.2 or later.
 
