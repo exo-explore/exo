@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 from mflux.config.model_config import ModelConfig
@@ -10,26 +10,19 @@ from mflux.models.flux.model.flux_transformer.common.attention_utils import (
 from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
     JointTransformerBlock,
 )
-from mflux.models.flux.model.flux_transformer.single_transformer_block import (
-    SingleTransformerBlock,
-)
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
 from exo.worker.engines.mflux.config.model_config import BlockType, ImageModelConfig
-from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode
+from exo.worker.engines.mflux.pipefusion.adapter import (
+    BlockWrapperMode,
+    JointBlockInterface,
+    SingleBlockInterface,
+)
 from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
 class FluxModelAdapter:
-    """Adapter for Flux models (schnell, dev, kontext).
-
-    Owns the model instance and handles Flux-specific operations:
-    - JointAttention with separate text/image streams
-    - SingleBlockAttention with concatenated streams
-    - AttentionUtils for QKV processing and RoPE
-    """
-
     def __init__(
         self,
         config: ImageModelConfig,
@@ -37,14 +30,6 @@ class FluxModelAdapter:
         local_path: Path,
         quantize: int | None = None,
     ):
-        """Create a FluxModelAdapter with its model.
-
-        Args:
-            config: The model configuration
-            model_id: The model identifier (e.g., "black-forest-labs/FLUX.1-schnell")
-            local_path: Path to the local model weights
-            quantize: Optional quantization bit width
-        """
         self._config = config
         self._model = Flux1(
             model_config=ModelConfig.from_name(model_name=model_id, base_model=None),
@@ -60,17 +45,14 @@ class FluxModelAdapter:
 
     @property
     def model(self) -> Flux1:
-        """Return the underlying Flux1 model instance."""
         return self._model
 
     @property
     def transformer(self) -> Transformer:
-        """Return the original transformer component (not the DistributedDenoising wrapper)."""
         return self._transformer
 
     @property
     def hidden_dim(self) -> int:
-        """Return the hidden dimension of the transformer."""
         return self._transformer.x_embedder.weight.shape[0]
 
     def compute_embeddings(
@@ -100,12 +82,15 @@ class FluxModelAdapter:
     ) -> mx.array:
         kontext_image_ids = kwargs.get("kontext_image_ids")
         return Transformer.compute_rotary_embeddings(
-            prompt_embeds, self._transformer.pos_embed, runtime_config, kontext_image_ids
+            prompt_embeds,
+            self._transformer.pos_embed,
+            runtime_config,
+            kontext_image_ids,
         )
 
     def apply_joint_block(
         self,
-        block: JointTransformerBlock,
+        block: JointBlockInterface,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
@@ -143,7 +128,7 @@ class FluxModelAdapter:
 
     def apply_single_block(
         self,
-        block: SingleTransformerBlock,
+        block: SingleBlockInterface,
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
@@ -184,20 +169,21 @@ class FluxModelAdapter:
         hidden_states = self._transformer.norm_out(hidden_states, text_embeddings)
         return self._transformer.proj_out(hidden_states)
 
-    def get_joint_blocks(self) -> list[JointTransformerBlock]:
-        """Get the list of joint transformer blocks from the Flux model."""
-        return list(self._transformer.transformer_blocks)
+    def get_joint_blocks(self) -> list[JointBlockInterface]:
+        return cast(
+            list[JointBlockInterface], list(self._transformer.transformer_blocks)
+        )
 
-    def get_single_blocks(self) -> list[SingleTransformerBlock]:
-        """Get the list of single transformer blocks from the Flux model."""
-        return list(self._transformer.single_transformer_blocks)
+    def get_single_blocks(self) -> list[SingleBlockInterface]:
+        return cast(
+            list[SingleBlockInterface],
+            list(self._transformer.single_transformer_blocks),
+        )
 
-    def get_blocks(self) -> list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]]:
-        """Get all transformer blocks in execution order with their types.
-
-        For Flux models, this returns joint blocks first, then single blocks.
-        """
-        blocks: list[tuple[JointTransformerBlock | SingleTransformerBlock, BlockType]] = []
+    def get_blocks(
+        self,
+    ) -> list[tuple[JointBlockInterface | SingleBlockInterface, BlockType]]:
+        blocks: list[tuple[JointBlockInterface | SingleBlockInterface, BlockType]] = []
         for block in self.get_joint_blocks():
             blocks.append((block, BlockType.JOINT))
         for block in self.get_single_blocks():
@@ -206,7 +192,7 @@ class FluxModelAdapter:
 
     def apply_block(
         self,
-        block: JointTransformerBlock | SingleTransformerBlock,
+        block: JointBlockInterface | SingleBlockInterface,
         block_type: BlockType,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array | None,
@@ -218,15 +204,10 @@ class FluxModelAdapter:
         patch_start: int | None = None,
         patch_end: int | None = None,
     ) -> tuple[mx.array, mx.array | None]:
-        """Apply any transformer block type.
-
-        Delegates to the appropriate block-specific method based on block_type.
-        """
         if block_type == BlockType.JOINT:
-            assert isinstance(block, JointTransformerBlock)
             assert encoder_hidden_states is not None
             enc_out, hidden_out = self.apply_joint_block(
-                block=block,
+                block=cast(JointBlockInterface, block),
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 text_embeddings=text_embeddings,
@@ -239,9 +220,8 @@ class FluxModelAdapter:
             )
             return hidden_out, enc_out
         elif block_type == BlockType.SINGLE:
-            assert isinstance(block, SingleTransformerBlock)
             hidden_out = self.apply_single_block(
-                block=block,
+                block=cast(SingleBlockInterface, block),
                 hidden_states=hidden_states,
                 text_embeddings=text_embeddings,
                 rotary_embeddings=rotary_embeddings,
@@ -262,10 +242,6 @@ class FluxModelAdapter:
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
     ) -> mx.array:
-        """Merge image and text streams for transition to single blocks.
-
-        For Flux models, this concatenates [text, image] along the sequence dimension.
-        """
         return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
 
     # -------------------------------------------------------------------------
@@ -274,7 +250,7 @@ class FluxModelAdapter:
 
     def _apply_joint_block_caching(
         self,
-        block: JointTransformerBlock,
+        block: JointBlockInterface,
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
@@ -282,7 +258,6 @@ class FluxModelAdapter:
         kv_cache: ImagePatchKVCache | None,
         text_seq_len: int,
     ) -> tuple[mx.array, mx.array]:
-        """Apply joint block in caching mode - full sequence, populate cache."""
         num_img_tokens = hidden_states.shape[1]
         batch_size = hidden_states.shape[0]
         attn = block.attn
@@ -387,7 +362,7 @@ class FluxModelAdapter:
 
     def _apply_joint_block_patched(
         self,
-        block: JointTransformerBlock,
+        block: JointBlockInterface,
         patch_hidden: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
@@ -397,7 +372,6 @@ class FluxModelAdapter:
         patch_start: int,
         patch_end: int,
     ) -> tuple[mx.array, mx.array]:
-        """Apply joint block in patched mode - patch only, use cached KV."""
         batch_size = patch_hidden.shape[0]
         attn = block.attn
         num_heads = attn.num_heads
@@ -517,14 +491,13 @@ class FluxModelAdapter:
 
     def _apply_single_block_caching(
         self,
-        block: SingleTransformerBlock,
+        block: SingleBlockInterface,
         hidden_states: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
         kv_cache: ImagePatchKVCache | None,
         text_seq_len: int,
     ) -> mx.array:
-        """Apply single block in caching mode - full sequence, populate cache."""
         total_seq_len = hidden_states.shape[1]
         num_img_tokens = total_seq_len - text_seq_len
         batch_size = hidden_states.shape[0]
@@ -588,7 +561,7 @@ class FluxModelAdapter:
 
     def _apply_single_block_patched(
         self,
-        block: SingleTransformerBlock,
+        block: SingleBlockInterface,
         patch_hidden: mx.array,
         text_embeddings: mx.array,
         rotary_embeddings: mx.array,
@@ -597,7 +570,6 @@ class FluxModelAdapter:
         patch_start: int,
         patch_end: int,
     ) -> mx.array:
-        """Apply single block in patched mode - patch only, use cached KV."""
         batch_size = patch_hidden.shape[0]
         attn = block.attn
         num_heads = attn.num_heads

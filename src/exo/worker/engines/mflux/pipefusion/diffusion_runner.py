@@ -1,8 +1,11 @@
 from math import ceil
-from typing import Any, Optional
+from typing import Optional
 
 import mlx.core as mx
+from mflux.callbacks.callbacks import Callbacks
 from mflux.config.runtime_config import RuntimeConfig
+from mflux.utils.exceptions import StopImageGenerationException
+from tqdm import tqdm
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.mflux.config.model_config import ImageModelConfig
@@ -48,28 +51,58 @@ def calculate_token_indices(
     return token_ranges  # List of (start, end) token indices
 
 
-class DistributedDenoising:
+class DiffusionRunner:
+    """Orchestrates the diffusion loop for image generation.
+
+    This class owns the entire diffusion process, handling both single-node
+    and distributed (PipeFusion) modes.
+
+    In distributed mode, it implements PipeFusion with:
+    - Sync pipeline for initial timesteps (full image, all devices in lockstep)
+    - Async pipeline for later timesteps (patches processed independently)
+    """
+
     def __init__(
         self,
         config: ImageModelConfig,
         adapter: ModelAdapter,
-        group: mx.distributed.Group,
+        group: Optional[mx.distributed.Group],
         shard_metadata: PipelineShardMetadata,
         num_sync_steps: int = 1,
         num_patches: Optional[int] = None,
     ):
+        """Initialize the diffusion runner.
+
+        Args:
+            config: Model configuration (architecture, block counts, etc.)
+            adapter: Model adapter for model-specific operations
+            group: MLX distributed group (None for single-node mode)
+            shard_metadata: Pipeline shard metadata with layer assignments
+            num_sync_steps: Number of synchronous timesteps before async mode
+            num_patches: Number of patches for async mode (defaults to world_size)
+        """
         self.config = config
         self.adapter = adapter
         self.group = group
-        self.rank = shard_metadata.device_rank
-        self.world_size = shard_metadata.world_size
-        self.next_rank = (self.rank + 1) % self.world_size
-        self.prev_rank = (self.rank - 1 + self.world_size) % self.world_size
-        self.start_layer = shard_metadata.start_layer
-        self.end_layer = shard_metadata.end_layer
+
+        # Handle single-node vs distributed mode
+        if group is None:
+            self.rank = 0
+            self.world_size = 1
+            self.next_rank = 0
+            self.prev_rank = 0
+            self.start_layer = 0
+            self.end_layer = config.total_blocks
+        else:
+            self.rank = shard_metadata.device_rank
+            self.world_size = shard_metadata.world_size
+            self.next_rank = (self.rank + 1) % self.world_size
+            self.prev_rank = (self.rank - 1 + self.world_size) % self.world_size
+            self.start_layer = shard_metadata.start_layer
+            self.end_layer = shard_metadata.end_layer
 
         self.num_sync_steps = num_sync_steps
-        self.num_patches = num_patches if num_patches else group.size()
+        self.num_patches = num_patches if num_patches else max(1, self.world_size)
 
         # Persistent KV caches (initialized on first async timestep, reused across timesteps)
         self.joint_kv_caches: list[ImagePatchKVCache] | None = None
@@ -114,7 +147,6 @@ class DistributedDenoising:
         )
 
         # Slice blocks to only those assigned to this stage
-        # Use adapter's block accessors
         all_joint_blocks = self.adapter.get_joint_blocks()
         all_single_blocks = self.adapter.get_single_blocks()
 
@@ -139,6 +171,174 @@ class DistributedDenoising:
     def is_last_stage(self) -> bool:
         return self.rank == self.world_size - 1
 
+    @property
+    def is_distributed(self) -> bool:
+        return self.group is not None
+
+    def run(
+        self,
+        latents: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        runtime_config: RuntimeConfig,
+        seed: int,
+        prompt: str,
+    ) -> mx.array:
+        """Execute the full diffusion loop.
+
+        Args:
+            latents: Initial noise latents
+            prompt_embeds: T5 text embeddings
+            pooled_prompt_embeds: CLIP pooled embeddings
+            runtime_config: RuntimeConfig with scheduler, steps, dimensions
+            seed: Random seed (for callbacks)
+            prompt: Text prompt (for callbacks)
+
+        Returns:
+            Final denoised latents ready for VAE decoding
+        """
+        time_steps = tqdm(
+            range(runtime_config.init_time_step, runtime_config.num_inference_steps)
+        )
+
+        # Call subscribers for beginning of loop
+        Callbacks.before_loop(
+            seed=seed,
+            prompt=prompt,
+            latents=latents,
+            config=runtime_config,
+        )
+
+        for t in time_steps:
+            try:
+                latents = self._diffusion_step(
+                    t=t,
+                    config=runtime_config,
+                    latents=latents,
+                    prompt_embeds=prompt_embeds,
+                    pooled_prompt_embeds=pooled_prompt_embeds,
+                )
+
+                # Call subscribers in-loop
+                Callbacks.in_loop(
+                    t=t,
+                    seed=seed,
+                    prompt=prompt,
+                    latents=latents,
+                    config=runtime_config,
+                    time_steps=time_steps,
+                )
+
+                mx.eval(latents)
+
+            except KeyboardInterrupt:  # noqa: PERF203
+                Callbacks.interruption(
+                    t=t,
+                    seed=seed,
+                    prompt=prompt,
+                    latents=latents,
+                    config=runtime_config,
+                    time_steps=time_steps,
+                )
+                raise StopImageGenerationException(
+                    f"Stopping image generation at step {t + 1}/{len(time_steps)}"
+                ) from None
+
+        # Call subscribers after loop
+        Callbacks.after_loop(
+            seed=seed,
+            prompt=prompt,
+            latents=latents,
+            config=runtime_config,
+        )
+
+        return latents
+
+    def _diffusion_step(
+        self,
+        t: int,
+        config: RuntimeConfig,
+        latents: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+    ) -> mx.array:
+        """Execute a single diffusion step.
+
+        Routes to single-node, sync pipeline, or async pipeline based on
+        configuration and current timestep.
+        """
+        if self.group is None:
+            return self._single_node_step(
+                t, config, latents, prompt_embeds, pooled_prompt_embeds
+            )
+        elif t < self.num_sync_steps:
+            return self._sync_pipeline(
+                t, config, latents, prompt_embeds, pooled_prompt_embeds
+            )
+        else:
+            return self._async_pipeline_step(
+                t, config, latents, prompt_embeds, pooled_prompt_embeds
+            )
+
+    def _single_node_step(
+        self,
+        t: int,
+        config: RuntimeConfig,
+        latents: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+    ) -> mx.array:
+        """Execute a single diffusion step on a single node (no distribution)."""
+        latents = config.scheduler.scale_model_input(latents, t)
+
+        # Compute embeddings
+        hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
+            latents, prompt_embeds
+        )
+        text_embeddings = self.adapter.compute_text_embeddings(
+            t, pooled_prompt_embeds, config
+        )
+        rotary_embeddings = self.adapter.compute_rotary_embeddings(
+            prompt_embeds, config
+        )
+
+        text_seq_len = prompt_embeds.shape[1]
+
+        # Run through all joint blocks
+        for wrapper in self.joint_block_wrappers:
+            encoder_hidden_states, hidden_states = wrapper(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                text_seq_len=text_seq_len,
+                kv_cache=None,
+                mode=BlockWrapperMode.CACHING,
+            )
+
+        # Merge streams for single blocks
+        hidden_states = self.adapter.merge_streams(hidden_states, encoder_hidden_states)
+
+        # Run through all single blocks
+        for wrapper in self.single_block_wrappers:
+            hidden_states = wrapper(
+                hidden_states=hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                text_seq_len=text_seq_len,
+                kv_cache=None,
+                mode=BlockWrapperMode.CACHING,
+            )
+
+        # Extract image portion (remove text embeddings prefix)
+        hidden_states = hidden_states[:, text_seq_len:, ...]
+
+        # Final projection
+        noise = self.adapter.final_projection(hidden_states, text_embeddings)
+
+        # Scheduler step
+        return config.scheduler.step(model_output=noise, timestep=t, sample=latents)
+
     def _initialize_kv_caches(
         self,
         batch_size: int,
@@ -149,11 +349,6 @@ class DistributedDenoising:
 
         Note: Caches only store IMAGE K/V, not text K/V. Text K/V is always
         computed fresh and doesn't need caching (it's the same for all patches).
-
-        Args:
-            batch_size: Batch size
-            num_img_tokens: Number of image tokens
-            dtype: Data type for cache tensors
         """
         self.joint_kv_caches = [
             ImagePatchKVCache(
@@ -181,7 +376,7 @@ class DistributedDenoising:
         latents: mx.array,
         config: RuntimeConfig,
     ) -> tuple[list[mx.array], list[tuple[int, int]]]:
-        # Calculate patch metadata using model config
+        """Split latents into patches for async pipeline."""
         latent_height = config.height // self.config.vae_scale_factor
         latent_width = config.width // self.config.vae_scale_factor
         patch_size = self.config.patch_size
@@ -210,8 +405,6 @@ class DistributedDenoising:
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
         # === PHASE 1: Embeddings ===
-        # First stage: compute embeddings
-        # Non-first stages: will receive embedded values
         if self.is_first_stage:
             hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
                 hidden_states, prompt_embeds
@@ -356,6 +549,41 @@ class DistributedDenoising:
 
         return hidden_states
 
+    def _async_pipeline_step(
+        self,
+        t: int,
+        config: RuntimeConfig,
+        latents: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        kontext_image_ids: mx.array | None = None,
+    ) -> mx.array:
+        patch_latents, token_indices = self._create_patches(latents, config)
+
+        patch_latents = self._async_pipeline(
+            t,
+            config,
+            patch_latents,
+            token_indices,
+            prompt_embeds,
+            pooled_prompt_embeds,
+            kontext_image_ids,
+        )
+
+        # Receive final patches from last rank
+        if (
+            t == config.num_inference_steps - 1
+            and self.is_first_stage
+            and not self.is_last_stage
+        ):
+            for patch_idx in range(len(patch_latents)):
+                patch_latents[patch_idx] = mx.distributed.recv_like(
+                    patch_latents[patch_idx], src=self.prev_rank, group=self.group
+                )
+                mx.eval(patch_latents[patch_idx])
+
+        return mx.concatenate(patch_latents, axis=1)
+
     def _async_pipeline(
         self,
         t: int,
@@ -366,11 +594,9 @@ class DistributedDenoising:
         pooled_prompt_embeds: mx.array,
         kontext_image_ids: mx.array | None = None,
     ) -> list[mx.array]:
+        """Execute async pipeline for all patches."""
         assert self.joint_kv_caches is not None
         assert self.single_kv_caches is not None
-
-        # TODO(ciaran): needed in general?
-        # hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
         text_embeddings = self.adapter.compute_text_embeddings(
             t, pooled_prompt_embeds, config
@@ -392,8 +618,6 @@ class DistributedDenoising:
 
             if self.has_joint_blocks:
                 if not self.is_first_stage or t != self.num_sync_steps:
-                    # rank 0 already has first iteration inputs
-                    # TODO(ciaran): correct shapes
                     patch = mx.distributed.recv_like(
                         patch, src=self.prev_rank, group=self.group
                     )
@@ -507,58 +731,3 @@ class DistributedDenoising:
                 patch_latents[patch_idx] = patch
 
         return patch_latents
-
-    def __call__(
-        self,
-        t: int,
-        config: RuntimeConfig,
-        hidden_states: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
-        controlnet_block_samples: list[mx.array] | None = None,
-        controlnet_single_block_samples: list[mx.array] | None = None,
-        kontext_image_ids: mx.array | None = None,
-    ) -> mx.array:
-        if t < self.num_sync_steps:
-            latents = self._sync_pipeline(
-                t,
-                config,
-                hidden_states,
-                prompt_embeds,
-                pooled_prompt_embeds,
-                kontext_image_ids,
-            )
-        else:
-            patch_latents, token_indices = self._create_patches(hidden_states, config)
-
-            patch_latents = self._async_pipeline(
-                t,
-                config,
-                patch_latents,
-                token_indices,
-                prompt_embeds,
-                pooled_prompt_embeds,
-                kontext_image_ids,
-            )
-
-            # Receive final patches from last rank
-            if (
-                t == config.num_inference_steps - 1
-                and self.is_first_stage
-                and not self.is_last_stage
-            ):
-                for patch_idx in range(len(patch_latents)):
-                    patch_latents[patch_idx] = mx.distributed.recv_like(
-                        patch_latents[patch_idx], src=self.prev_rank, group=self.group
-                    )
-                    mx.eval(patch_latents[patch_idx])
-
-            latents = mx.concatenate(patch_latents, axis=1)
-
-        return latents
-
-    # Delegate attribute access to the underlying transformer for compatibility
-    def __getattr__(self, name: str) -> Any:
-        # Use object.__getattribute__ to avoid recursion when accessing self.adapter
-        adapter = object.__getattribute__(self, "adapter")
-        return getattr(adapter.transformer, name)
