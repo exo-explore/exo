@@ -179,6 +179,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
         current_node = cycle[i]
         next_node = cycle[(i + 1) % len(cycle)]
 
+        best_host: Host | None = None
         for connection in cycle_digraph.list_connections():
             if (
                 connection.local_node_id == current_node.node_id
@@ -187,12 +188,18 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
                 if get_thunderbolt and not connection.is_thunderbolt():
                     continue
                 assert connection.send_back_multiaddr is not None
+                ip = connection.send_back_multiaddr.ip_address
+                # Skip loopback addresses - prefer real network IPs
+                if ip == "127.0.0.1" or ip == "::1":
+                    continue
                 host = Host(
-                    ip=connection.send_back_multiaddr.ip_address,
+                    ip=ip,
                     port=connection.send_back_multiaddr.port,
                 )
-                hosts.append(host)
+                best_host = host
                 break
+        if best_host is not None:
+            hosts.append(best_host)
 
     return hosts
 

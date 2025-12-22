@@ -146,9 +146,15 @@ build_llama_cpp() {
     
     LLAMA_DIR="$HOME/llama.cpp"
     
-    if [[ -f "$LLAMA_DIR/build/bin/llama-server" ]]; then
-        log_success "llama.cpp already built (llama-server exists)"
+    if [[ -f "$LLAMA_DIR/build/bin/llama-server" ]] && [[ -f "$LLAMA_DIR/build/bin/llama-cli" ]] && [[ -f "$LLAMA_DIR/build/bin/rpc-server" ]]; then
+        log_success "llama.cpp already built (llama-server, llama-cli, and rpc-server exist)"
         return 0
+    fi
+    
+    # Clean up any failed previous builds
+    if [[ -d "$LLAMA_DIR/build" ]] && [[ ! -f "$LLAMA_DIR/build/bin/llama-cli" ]]; then
+        log_warning "Found incomplete build, cleaning up..."
+        rm -rf "$LLAMA_DIR/build"
     fi
     
     log_info "Cloning llama.cpp..."
@@ -161,8 +167,23 @@ build_llama_cpp() {
     fi
     
     log_info "Building llama.cpp (this may take 5-10 minutes)..."
-    cmake -B build -DBUILD_SHARED_LIBS=ON
-    cmake --build build --config Release -j4
+    log_warning "Tip: Close other apps to free memory during build"
+    
+    # Enable RPC for distributed inference across multiple devices
+    if ! cmake -B build -DBUILD_SHARED_LIBS=ON -DGGML_RPC=ON; then
+        log_error "cmake configuration failed!"
+        exit 1
+    fi
+    
+    if ! cmake --build build --config Release -j4; then
+        log_error "cmake build failed! Try with fewer jobs: cmake --build build -j2"
+        rm -rf build
+        exit 1
+    fi
+    
+    # Build rpc-server for worker nodes
+    log_info "Building rpc-server for distributed inference..."
+    cmake --build build --target rpc-server -j4 || log_warning "rpc-server build failed (optional for distributed mode)"
     
     # Verify builds
     if [[ ! -f "$LLAMA_DIR/build/bin/llama-server" ]]; then
@@ -178,6 +199,9 @@ build_llama_cpp() {
     log_success "llama.cpp built successfully"
     log_success "  - llama-server: $LLAMA_DIR/build/bin/llama-server"
     log_success "  - llama-cli: $LLAMA_DIR/build/bin/llama-cli"
+    if [[ -f "$LLAMA_DIR/build/bin/rpc-server" ]]; then
+        log_success "  - rpc-server: $LLAMA_DIR/build/bin/rpc-server"
+    fi
 }
 
 # Step 4: Configure environment
@@ -321,6 +345,13 @@ verify_installation() {
     else
         log_error "llama-cli: NOT FOUND"
         ERRORS=$((ERRORS + 1))
+    fi
+    
+    # Check rpc-server (optional, for distributed inference)
+    if [[ -f "$HOME/llama.cpp/build/bin/rpc-server" ]]; then
+        log_success "rpc-server: OK (distributed inference ready)"
+    else
+        log_warning "rpc-server: NOT FOUND (distributed inference won't work)"
     fi
     
     # Check llama-cpp-python

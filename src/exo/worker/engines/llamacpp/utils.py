@@ -193,6 +193,7 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
 
     Format: "ip1:port1,ip2:port2,..."
     Only includes worker nodes (device_rank > 0).
+    Hosts are ordered by device_rank in the instance.
     """
     instance = bound_instance.instance
     if not isinstance(instance, LlamaCppInstance):
@@ -213,10 +214,14 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
         if rpc_port == 0:
             continue
 
-        for host in instance.hosts:
+        # Use device_rank as index into hosts list (hosts are ordered by rank)
+        host_index = shard.device_rank
+        if host_index < len(instance.hosts):
+            host = instance.hosts[host_index]
             if host.ip and host.ip != "0.0.0.0":
                 rpc_addresses.append(f"{host.ip}:{rpc_port}")
-                break
+        else:
+            logger.warning(f"No host found for device_rank {shard.device_rank}")
 
     return ",".join(rpc_addresses)
 
