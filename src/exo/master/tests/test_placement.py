@@ -351,11 +351,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_c_a.sink_addr.ip,
+                ip_address=conn_c_a.sink_addr,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_b_a.sink_addr.ip,
+                ip_address=conn_b_a.sink_addr,
             ),
             ethernet_interface,
         ],
@@ -369,11 +369,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_c_b.sink_addr.ip,
+                ip_address=conn_c_b.sink_addr,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_a_b.sink_addr.ip,
+                ip_address=conn_a_b.sink_addr,
             ),
             ethernet_interface,
         ],
@@ -387,11 +387,11 @@ def test_tensor_rdma_backend_connectivity_matrix(
         network_interfaces=[
             NetworkInterfaceInfo(
                 name="en3",
-                ip_address=conn_a_c.sink_addr.ip,
+                ip_address=conn_a_c.sink_addr,
             ),
             NetworkInterfaceInfo(
                 name="en4",
-                ip_address=conn_b_c.sink_addr.ip,
+                ip_address=conn_b_c.sink_addr,
             ),
             ethernet_interface,
         ],
