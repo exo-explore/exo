@@ -171,6 +171,7 @@ class API:
             sharding=payload.sharding,
             instance_meta=payload.instance_meta,
             min_nodes=payload.min_nodes,
+            allow_low_memory=payload.allow_low_memory,
         )
         await self._send(command)
 
@@ -196,22 +197,43 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
+        allow_low_memory: bool = False,
     ) -> Instance:
         model_meta = await resolve_model_meta(model_id)
 
         try:
+            # Try with requested allow_low_memory first
             placements = get_instance_placements(
                 PlaceInstance(
                     model_meta=model_meta,
                     sharding=sharding,
                     instance_meta=instance_meta,
                     min_nodes=min_nodes,
+                    allow_low_memory=allow_low_memory,
                 ),
                 topology=self.state.topology,
                 current_instances=self.state.instances,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # If it failed and allow_low_memory was False, try with True
+            if not allow_low_memory:
+                try:
+                    placements = get_instance_placements(
+                        PlaceInstance(
+                            model_meta=model_meta,
+                            sharding=sharding,
+                            instance_meta=instance_meta,
+                            min_nodes=min_nodes,
+                            allow_low_memory=True,
+                        ),
+                        topology=self.state.topology,
+                        current_instances=self.state.instances,
+                    )
+                except ValueError:
+                    # If still fails, raise the original exception
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+            else:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         current_ids = set(self.state.instances.keys())
         new_ids = [
@@ -254,30 +276,48 @@ class API:
         for card in cards:
             model_meta = card.metadata
             for sharding, instance_meta, min_nodes in instance_combinations:
+                is_low_memory = False
                 try:
+                    # Try first with strict memory requirements
                     placements = get_instance_placements(
                         PlaceInstance(
                             model_meta=model_meta,
                             sharding=sharding,
                             instance_meta=instance_meta,
                             min_nodes=min_nodes,
+                            allow_low_memory=False,
                         ),
                         topology=self.state.topology,
                         current_instances=self.state.instances,
                     )
-                except ValueError as exc:
-                    if (card.model_id, sharding, instance_meta, 0) not in seen:
-                        previews.append(
-                            PlacementPreview(
-                                model_id=card.model_id,
+                except ValueError:
+                    # If that fails, try with loose memory requirements
+                    try:
+                        placements = get_instance_placements(
+                            PlaceInstance(
+                                model_meta=model_meta,
                                 sharding=sharding,
                                 instance_meta=instance_meta,
-                                instance=None,
-                                error=str(exc),
-                            )
+                                min_nodes=min_nodes,
+                                allow_low_memory=True,
+                            ),
+                            topology=self.state.topology,
+                            current_instances=self.state.instances,
                         )
-                    seen.add((card.model_id, sharding, instance_meta, 0))
-                    continue
+                        is_low_memory = True
+                    except ValueError as exc:
+                        if (card.model_id, sharding, instance_meta, 0) not in seen:
+                            previews.append(
+                                PlacementPreview(
+                                    model_id=card.model_id,
+                                    sharding=sharding,
+                                    instance_meta=instance_meta,
+                                    instance=None,
+                                    error=str(exc),
+                                )
+                            )
+                        seen.add((card.model_id, sharding, instance_meta, 0))
+                        continue
 
                 current_ids = set(self.state.instances.keys())
                 new_instances = [
@@ -327,6 +367,7 @@ class API:
                             instance=instance,
                             memory_delta_by_node=memory_delta_by_node or None,
                             error=None,
+                            is_low_memory=is_low_memory,
                         )
                     )
                 seen.add((card.model_id, sharding, instance_meta, len(node_ids)))
@@ -442,6 +483,7 @@ class API:
                     name=card.name,
                     description=card.description,
                     tags=card.tags,
+                    storage_size_megabytes=int(card.metadata.storage_size.in_mb),
                 )
                 for card in MODEL_CARDS.values()
             ]

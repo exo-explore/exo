@@ -29,16 +29,24 @@ def narrow_all_nodes(nodes: list[NodeInfo]) -> TypeGuard[list[NodeWithProfile]]:
 
 
 def filter_cycles_by_memory(
-    cycles: list[list[NodeInfo]], required_memory: Memory
+    cycles: list[list[NodeInfo]],
+    required_memory: Memory,
+    use_total_memory: bool = False,
 ) -> list[list[NodeInfo]]:
     filtered_cycles: list[list[NodeInfo]] = []
     for cycle in cycles:
         if not narrow_all_nodes(cycle):
             continue
 
-        total_mem = sum(
-            (node.node_profile.memory.ram_available for node in cycle), start=Memory()
-        )
+        if use_total_memory:
+            total_mem = sum(
+                (node.node_profile.memory.ram_total for node in cycle), start=Memory()
+            )
+        else:
+            total_mem = sum(
+                (node.node_profile.memory.ram_available for node in cycle),
+                start=Memory(),
+            )
         if total_mem >= required_memory:
             filtered_cycles.append(cast(list[NodeInfo], cycle))
     return filtered_cycles
@@ -52,9 +60,17 @@ def get_smallest_cycles(cycles: list[list[NodeInfo]]) -> list[list[NodeInfo]]:
 def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeWithProfile],
+    use_total_memory: bool = False,
 ):
     cycle_memory = sum(
-        (node.node_profile.memory.ram_available for node in selected_cycle),
+        (
+            (
+                node.node_profile.memory.ram_total
+                if use_total_memory
+                else node.node_profile.memory.ram_available
+            )
+            for node in selected_cycle
+        ),
         start=Memory(),
     )
     total_layers = model_meta.n_layers
@@ -67,12 +83,13 @@ def get_shard_assignments_for_pipeline_parallel(
         if i == len(selected_cycle) - 1:
             node_layers = total_layers - layers_assigned
         else:
+            node_mem = (
+                node.node_profile.memory.ram_total
+                if use_total_memory
+                else node.node_profile.memory.ram_available
+            )
             node_layers = round(
-                total_layers
-                * (
-                    node.node_profile.memory.ram_available.in_bytes
-                    / cycle_memory.in_bytes
-                )
+                total_layers * (node_mem.in_bytes / max(1, cycle_memory.in_bytes))
             )
             node_layers = max(1, node_layers)
 
@@ -137,6 +154,7 @@ def get_shard_assignments(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeInfo],
     sharding: Sharding,
+    use_total_memory: bool = False,
 ) -> ShardAssignments:
     if not narrow_all_nodes(selected_cycle):
         raise ValueError("All nodes must have profiles to create shard assignments")
@@ -145,6 +163,7 @@ def get_shard_assignments(
             return get_shard_assignments_for_pipeline_parallel(
                 model_meta=model_meta,
                 selected_cycle=selected_cycle,
+                use_total_memory=use_total_memory,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(

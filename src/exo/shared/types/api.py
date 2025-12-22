@@ -140,6 +140,7 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+    allow_low_memory: bool = False
 
     @field_validator("sharding", "instance_meta", mode="plain")
     @classmethod
@@ -161,6 +162,7 @@ class PlacementPreview(BaseModel):
     # Keys are NodeId strings, values are additional bytes that would be used on that node
     memory_delta_by_node: dict[str, int] | None = None
     error: str | None = None
+    is_low_memory: bool = False
 
 
 class PlacementPreviewResponse(BaseModel):
