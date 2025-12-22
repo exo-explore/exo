@@ -20,7 +20,7 @@ from exo.worker.engines.llamacpp.constants import (
 from exo.worker.runner.bootstrap import logger
 
 
-DISTRIBUTED_SERVER_STARTUP_TIMEOUT: Final[int] = 180
+DISTRIBUTED_SERVER_STARTUP_TIMEOUT: Final[int] = 240
 
 
 def is_android() -> bool:
@@ -449,8 +449,14 @@ class DistributedLlamaServer:
         return False
 
     def _is_healthy(self) -> bool:
-        """Check if the server is responding and ready to serve requests."""
+        """Check if the server is responding and ready to serve requests.
+
+        Prefer the HTTP /health endpoint; if unavailable, fall back to a TCP connect check.
+        """
         import requests
+        import socket
+
+        # HTTP check
         try:
             response = requests.get(
                 f"http://127.0.0.1:{self.port}/health",
@@ -461,19 +467,23 @@ class DistributedLlamaServer:
                 logger.debug("Server responded 503 - still loading model")
                 return False
             if 200 <= status < 500:
-                # Treat any non-5xx (other than 503) as ready; some builds may not expose /health
                 logger.debug(f"Server health check OK with status {status}")
                 return True
             logger.debug(f"Server health check returned {status}")
-            return False
         except requests.exceptions.ConnectionError:
             # Server not yet accepting connections
-            return False
+            pass
         except requests.exceptions.Timeout:
             logger.debug("Server health check timed out")
-            return False
         except Exception as error:
             logger.debug(f"Server health check error: {error}")
+
+        # Fallback TCP check
+        try:
+            with socket.create_connection(("127.0.0.1", self.port), timeout=2):
+                logger.debug("Server TCP port is open; assuming ready")
+                return True
+        except OSError:
             return False
 
     def stop(self) -> None:
