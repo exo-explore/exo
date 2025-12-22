@@ -151,10 +151,12 @@ build_llama_cpp() {
         return 0
     fi
     
-    # Clean up any failed previous builds
-    if [[ -d "$LLAMA_DIR/build" ]] && [[ ! -f "$LLAMA_DIR/build/bin/llama-cli" ]]; then
-        log_warning "Found incomplete build, cleaning up..."
-        rm -rf "$LLAMA_DIR/build"
+    # Clean up incomplete or outdated builds (missing rpc-server means no RPC support)
+    if [[ -d "$LLAMA_DIR/build" ]]; then
+        if [[ ! -f "$LLAMA_DIR/build/bin/llama-cli" ]] || [[ ! -f "$LLAMA_DIR/build/bin/rpc-server" ]]; then
+            log_warning "Found incomplete or outdated build (missing rpc-server), rebuilding..."
+            rm -rf "$LLAMA_DIR/build"
+        fi
     fi
     
     log_info "Cloning llama.cpp..."
