@@ -192,9 +192,9 @@ def _ready_to_warmup(
             for global_runner_id in shard_assignments.runner_to_shard
         )
 
-        # Rank = n-1
+        # Rank = n-1 (accepts RunnerReady to handle race where earlier ranks finished warmup)
         connecting_rank_ready = device_rank == world_size - 1 and all(
-            isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
+            isinstance(all_runners.get(global_runner_id, None), (RunnerWarmingUp, RunnerReady))
             for global_runner_id in shard_assignments.runner_to_shard
             if global_runner_id != runner_id
         )
