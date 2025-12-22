@@ -64,6 +64,10 @@ There are two ways to run exo:
 ### Run from Source (Mac & Linux)
 
 **Prerequisites:**
+- [brew](https://github.com/Homebrew/brew) (for simple package management on MacOS)
+  ```bash
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
