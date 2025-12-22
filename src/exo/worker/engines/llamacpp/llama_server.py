@@ -427,13 +427,28 @@ def distributed_generate(
     }
 
     try:
-        response = requests.post(
-            f"{base_url}/v1/chat/completions",
-            json=payload,
-            stream=True,
-            timeout=300,
-        )
-        response.raise_for_status()
+        # Retry transient 503 / connection issues while the model finishes loading
+        max_attempts = 15
+        for attempt in range(max_attempts):
+            try:
+                response = requests.post(
+                    f"{base_url}/v1/chat/completions",
+                    json=payload,
+                    stream=True,
+                    timeout=300,
+                )
+                if response.status_code == 503:
+                    logger.info("Distributed server not ready yet (503). Retrying...")
+                    time.sleep(2)
+                    continue
+                response.raise_for_status()
+                break
+            except requests.RequestException as req_error:
+                if attempt < max_attempts - 1:
+                    logger.info(f"Distributed generation retry {attempt + 1}/{max_attempts} after error: {req_error}")
+                    time.sleep(2)
+                    continue
+                raise
 
         token_idx = 0
         full_response = ""

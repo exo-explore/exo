@@ -20,7 +20,7 @@ from exo.worker.engines.llamacpp.constants import (
 from exo.worker.runner.bootstrap import logger
 
 
-DISTRIBUTED_SERVER_STARTUP_TIMEOUT: Final[int] = 120
+DISTRIBUTED_SERVER_STARTUP_TIMEOUT: Final[int] = 180
 
 
 def is_android() -> bool:
@@ -452,29 +452,28 @@ class DistributedLlamaServer:
         """Check if the server is responding and ready to serve requests."""
         import requests
         try:
-            # First check if the port is open
             response = requests.get(
                 f"http://127.0.0.1:{self.port}/health",
-                timeout=5
+                timeout=5,
             )
-            if response.status_code == 200:
-                # Server is ready
-                return True
-            elif response.status_code == 503:
-                # Server is still loading the model
+            status = response.status_code
+            if status == 503:
                 logger.debug("Server responded 503 - still loading model")
                 return False
-            else:
-                logger.debug(f"Server health check returned {response.status_code}")
-                return False
+            if 200 <= status < 500:
+                # Treat any non-5xx (other than 503) as ready; some builds may not expose /health
+                logger.debug(f"Server health check OK with status {status}")
+                return True
+            logger.debug(f"Server health check returned {status}")
+            return False
         except requests.exceptions.ConnectionError:
             # Server not yet accepting connections
             return False
         except requests.exceptions.Timeout:
             logger.debug("Server health check timed out")
             return False
-        except Exception as e:
-            logger.debug(f"Server health check error: {e}")
+        except Exception as error:
+            logger.debug(f"Server health check error: {error}")
             return False
 
     def stop(self) -> None:
