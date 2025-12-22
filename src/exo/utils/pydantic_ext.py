@@ -22,15 +22,16 @@ class CamelCaseModel(BaseModel):
         strict=True,
     )
 
-class FrozenModel(BaseModel):
 
+class FrozenModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
         validate_by_name=True,
         extra="forbid",
         strict=True,
-        frozen=True
+        frozen=True,
     )
+
 
 class TaggedModel(CamelCaseModel):
     @model_serializer(mode="wrap")
