@@ -63,6 +63,16 @@ There are two ways to run exo:
 
 ### Run from Source (Mac & Linux)
 
+**Prerequisites:**
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+  ```bash
+  brew install uv
+  ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+  ```bash
+  brew install macmon
+  ```
+
 Clone the repo, build the dashboard, and run exo:
 
 ```bash

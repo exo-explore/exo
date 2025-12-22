@@ -5,10 +5,21 @@ Thank you for your interest in contributing to EXO!
 ## Getting Started
 
 To run EXO from source:
+
+**Prerequisites:**
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+  ```bash
+  brew install uv
+  ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+  ```bash
+  brew install macmon
+  ```
+
 ```bash
 git clone https://github.com/exo-explore/exo.git
 cd exo/dashboard
-npm install && npm run build
+npm install && npm run build && cd ..
 uv run exo
 ```
 
