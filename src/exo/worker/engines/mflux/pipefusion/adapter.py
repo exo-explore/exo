@@ -9,8 +9,6 @@ from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
 
 
 class AttentionInterface(Protocol):
-    """Protocol defining the interface for attention modules used in transformer blocks."""
-
     num_heads: int
     head_dimension: int
     to_q: Any
@@ -22,11 +20,6 @@ class AttentionInterface(Protocol):
 
 
 class JointAttentionInterface(AttentionInterface, Protocol):
-    """Protocol for attention modules in joint transformer blocks.
-
-    Extends AttentionInterface with additional projections for the context stream.
-    """
-
     add_q_proj: Any
     add_k_proj: Any
     add_v_proj: Any
@@ -36,45 +29,20 @@ class JointAttentionInterface(AttentionInterface, Protocol):
 
 
 class JointBlockInterface(Protocol):
-    """Protocol defining the interface for joint transformer blocks.
-
-    Joint blocks process both image and text streams separately,
-    then combine them in attention.
-    """
-
     attn: JointAttentionInterface
+    norm1: Any  # Callable module: (hidden_states, text_embeddings) -> tuple[5 arrays]
+    norm1_context: (
+        Any  # Callable module: (hidden_states, text_embeddings) -> tuple[5 arrays]
+    )
     norm2: Any
     norm2_context: Any
     ff: Any
     ff_context: Any
 
-    def norm1(
-        self, hidden_states: mx.array, text_embeddings: mx.array
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
-        """Normalize image hidden states."""
-        ...
-
-    def norm1_context(
-        self, hidden_states: mx.array, text_embeddings: mx.array
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
-        """Normalize encoder hidden states."""
-        ...
-
 
 class SingleBlockInterface(Protocol):
-    """Protocol defining the interface for single transformer blocks.
-
-    Single blocks process concatenated [text + image] hidden states
-    in a unified stream.
-    """
-
     attn: AttentionInterface
-
-    def norm(
-        self, hidden_states: mx.array, text_embeddings: mx.array
-    ) -> tuple[mx.array, mx.array]:
-        """Normalize hidden states."""
-        ...
+    norm: Any  # Callable module: (hidden_states, text_embeddings) -> tuple[2 arrays]
 
     def _apply_feed_forward_and_projection(
         self, norm_hidden_states: mx.array, attn_output: mx.array, gate: mx.array
@@ -84,24 +52,11 @@ class SingleBlockInterface(Protocol):
 
 
 class BlockWrapperMode(Enum):
-    """Mode for block wrapper operation."""
-
     CACHING = "caching"  # Sync mode: compute full attention, populate cache
     PATCHED = "patched"  # Async mode: compute patch attention, use cached KV
 
 
 class ModelAdapter(Protocol):
-    """Protocol for model-specific operations in PipeFusion.
-
-    Adapters own the model instance and handle all model-specific operations:
-    - Flux: JointAttention + SingleBlockAttention
-    - Fibo: FiboJointAttention with attention masks
-    - Qwen: Unified blocks with different RoPE
-
-    The adapter creates the model at initialization time and provides access
-    to it through the `model` and `transformer` properties.
-    """
-
     @property
     def config(self) -> ImageModelConfig:
         """Return the model configuration."""
@@ -252,19 +207,11 @@ class ModelAdapter(Protocol):
         ...
 
     def get_joint_blocks(self) -> list[JointBlockInterface]:
-        """Get the list of joint transformer blocks from the model.
-
-        Returns:
-            List of joint transformer blocks
-        """
+        """Get the list of joint transformer blocks from the model."""
         ...
 
     def get_single_blocks(self) -> list[SingleBlockInterface]:
-        """Get the list of single transformer blocks from the model.
-
-        Returns:
-            List of single transformer blocks
-        """
+        """Get the list of single transformer blocks from the model."""
         ...
 
     def get_blocks(self) -> list[tuple[Any, BlockType]]:
