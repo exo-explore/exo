@@ -4,6 +4,7 @@ from typing import TypeGuard, cast
 from loguru import logger
 from pydantic import BaseModel
 
+from exo.routing.connection_message import IpAddress
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
@@ -17,7 +18,6 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.routing.connection_message import IpAddress
 
 
 class NodeWithProfile(BaseModel):

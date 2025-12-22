@@ -1,6 +1,6 @@
 from exo.routing.connection_message import ConnectionMessage
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, TopologyEdgeCreated, TopologyEdgeDeleted
+from exo.shared.types.events import Event, TopologyEdgeCreated
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection
 

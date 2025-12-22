@@ -7,14 +7,13 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
+from exo.master.tests.conftest import create_connection, create_node
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
 from exo.shared.types.worker.shards import Sharding
-
-from exo.master.tests.conftest import create_connection, create_node
 
 
 @pytest.fixture

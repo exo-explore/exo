@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use iroh::SecretKey;
 use iroh_gossip::api::{Event, Message};
-use networking::ExoNet;
 use n0_future::StreamExt as _;
+use networking::ExoNet;
 use tokio::time::sleep;
 use tokio::{io, io::AsyncBufReadExt as _};
 use tracing_subscriber::EnvFilter;
@@ -16,7 +16,8 @@ use tracing_subscriber::filter::LevelFilter;
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()))
-        .try_init().expect("logger");
+        .try_init()
+        .expect("logger");
 
     // Configure swarm
     let net = Arc::new(
@@ -43,8 +44,10 @@ async fn main() {
 
     let jh2 = tokio::spawn(async move {
         loop {
-            if let Ok(Some(line)) = stdin.next_line().await && let Err(e) = send.broadcast(line.into()).await {
-                    println!("Publish error: {e:?}");
+            if let Ok(Some(line)) = stdin.next_line().await
+                && let Err(e) = send.broadcast(line.into()).await
+            {
+                println!("Publish error: {e:?}");
             }
         }
     });

@@ -1,6 +1,8 @@
-import pytest
 from ipaddress import ip_address
 
+import pytest
+
+from exo.routing.connection_message import SocketAddress
 from exo.shared.topology import Topology
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
@@ -8,7 +10,6 @@ from exo.shared.types.profiling import (
     SystemPerformanceProfile,
 )
 from exo.shared.types.topology import Connection, ConnectionProfile, NodeId, NodeInfo
-from exo.routing.connection_message import SocketAddress
 
 
 @pytest.fixture

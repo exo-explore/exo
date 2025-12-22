@@ -1,8 +1,9 @@
 from ipaddress import ip_address
+
+from exo.routing.connection_message import SocketAddress
 from exo.shared.types.common import NodeId
 from exo.shared.types.state import State
 from exo.shared.types.topology import Connection
-from exo.routing.connection_message import SocketAddress
 
 
 def test_state_serialization_roundtrip() -> None:

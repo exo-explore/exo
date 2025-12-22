@@ -25,7 +25,6 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
-from exo.shared.types.topology import Connection
 from exo.shared.types.tasks import (
     CreateRunner,
     DownloadModel,
@@ -33,6 +32,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
+from exo.shared.types.topology import Connection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
@@ -256,12 +256,12 @@ class Worker:
 
     async def _connection_message_event_writer(self):
         with self.connection_message_receiver as connection_messages:
-            async for msg in connection_messages:
+            async for _msg in connection_messages:
                 break
                 # TODO: use mdns for partial discovery
-                for event in check_connections(self.node_id, msg, self.state):
-                    logger.info(f"Worker discovered connection {event}")
-                    await self.event_sender.send(event)
+                # for event in check_connections(self.node_id, msg, self.state):
+                #    logger.info(f"Worker discovered connection {event}")
+                #    await self.event_sender.send(event)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.

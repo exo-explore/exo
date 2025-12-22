@@ -1,7 +1,7 @@
 #![allow(clippy::cargo, clippy::unwrap_used)]
 use iroh::{SecretKey, endpoint_info::EndpointIdExt as _};
-use networking::ExoNet;
 use n0_future::StreamExt as _;
+use networking::ExoNet;
 
 // Launch a mock version of iroh for testing purposes
 #[tokio::main]

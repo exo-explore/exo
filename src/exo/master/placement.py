@@ -13,6 +13,7 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
+from exo.routing.connection_message import IpAddress
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CreateInstance,
@@ -30,7 +31,6 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.routing.connection_message import IpAddress
 
 
 def random_ephemeral_port() -> int:

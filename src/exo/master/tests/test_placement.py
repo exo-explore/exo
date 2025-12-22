@@ -7,6 +7,7 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
+from exo.master.tests.conftest import create_connection, create_node
 from exo.shared.topology import Topology
 from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
@@ -23,8 +24,6 @@ from exo.shared.types.worker.instances import (
 )
 from exo.shared.types.worker.runners import ShardAssignments
 from exo.shared.types.worker.shards import Sharding
-
-from exo.master.tests.conftest import create_node, create_connection
 
 
 @pytest.fixture

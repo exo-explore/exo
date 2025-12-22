@@ -11,7 +11,6 @@ from exo.shared.types.api import ChatCompletionMessage, ChatCompletionTaskParams
 from exo.shared.types.commands import (
     ChatCompletion,
     CommandId,
-    CreateInstance,
     ForwarderCommand,
     PlaceInstance,
 )

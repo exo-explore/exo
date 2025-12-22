@@ -3,9 +3,9 @@ from ipaddress import ip_address
 
 from anyio import create_task_group, to_thread
 
+from exo.routing.connection_message import IpAddress
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
-from exo.routing.connection_message import IpAddress
 
 
 # TODO: ref. api port

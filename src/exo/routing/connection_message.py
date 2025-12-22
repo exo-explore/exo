@@ -1,7 +1,7 @@
 from ipaddress import IPv4Address, IPv6Address, ip_address
 
-from pydantic import ConfigDict
 from exo_pyo3_bindings import RustConnectionMessage
+from pydantic import ConfigDict
 
 from exo.shared.types.common import NodeId
 from exo.utils.pydantic_ext import CamelCaseModel
