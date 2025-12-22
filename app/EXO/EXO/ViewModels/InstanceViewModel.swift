@@ -161,7 +161,7 @@ extension ClusterState {
             etaSeconds: maxEtaMs > 0 ? Double(maxEtaMs) / 1000.0 : nil,
             completedFiles: totalCompletedFiles,
             totalFiles: totalFileCount
-        )
+        )   
     }
 }
 
