@@ -15,7 +15,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
 )
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress
-from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
+from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId, LlamaCppInstance
 from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerId,
@@ -220,6 +220,12 @@ def _pending_tasks(
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:
                 continue
+
+            # For distributed llama.cpp, only the master runner (device_rank=0) handles generation
+            instance = runner.bound_instance.instance
+            if isinstance(instance, LlamaCppInstance) and instance.is_distributed:
+                if runner.bound_instance.bound_shard.device_rank != 0:
+                    continue
 
             if isinstance(runner.status, RunnerReady) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
