@@ -74,16 +74,30 @@ async def start_polling_node_metrics(
     while True:
         try:
             metrics = await get_metrics_async()
-            if metrics is None:
-                return
 
             network_interfaces = get_network_interfaces()
-            # these awaits could be joined but realistically they should be cached
             model_id, chip_id = await get_model_and_chip()
             friendly_name = await get_friendly_name()
-
-            # do the memory profile last to get a fresh reading to not conflict with the other memory profiling loop
             memory_profile = get_memory_profile()
+
+            if metrics is not None:
+                system_profile = SystemPerformanceProfile(
+                    gpu_usage=metrics.gpu_usage[1],
+                    temp=metrics.temp.gpu_temp_avg,
+                    sys_power=metrics.sys_power,
+                    pcpu_usage=metrics.pcpu_usage[1],
+                    ecpu_usage=metrics.ecpu_usage[1],
+                    ane_power=metrics.ane_power,
+                )
+            else:
+                system_profile = SystemPerformanceProfile(
+                    gpu_usage=0.0,
+                    temp=0.0,
+                    sys_power=0.0,
+                    pcpu_usage=0.0,
+                    ecpu_usage=0.0,
+                    ane_power=0.0,
+                )
 
             await callback(
                 NodePerformanceProfile(
@@ -92,14 +106,7 @@ async def start_polling_node_metrics(
                     friendly_name=friendly_name,
                     network_interfaces=network_interfaces,
                     memory=memory_profile,
-                    system=SystemPerformanceProfile(
-                        gpu_usage=metrics.gpu_usage[1],
-                        temp=metrics.temp.gpu_temp_avg,
-                        sys_power=metrics.sys_power,
-                        pcpu_usage=metrics.pcpu_usage[1],
-                        ecpu_usage=metrics.ecpu_usage[1],
-                        ane_power=metrics.ane_power,
-                    ),
+                    system=system_profile,
                 )
             )
 
