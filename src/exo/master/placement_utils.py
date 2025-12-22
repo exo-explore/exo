@@ -19,7 +19,7 @@ from exo.shared.types.worker.shards import (
 )
 
 
-RPC_BASE_PORT: int = 50052
+RPC_BASE_PORT: int = 60000
 
 
 class NodeWithProfile(BaseModel):

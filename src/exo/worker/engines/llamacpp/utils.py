@@ -390,6 +390,7 @@ class DistributedLlamaServer:
             "--host", "127.0.0.1",
             "-c", str(DEFAULT_CONTEXT_SIZE),
             "-t", str(os.cpu_count() or 4),
+            "--verbose",
         ]
 
         if self.rpc_addresses:
