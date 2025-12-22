@@ -466,7 +466,6 @@ def _run_llamacpp_master(
     The master runs llama-server with --rpc flag to connect to worker
     RPC servers and distribute tensor operations across all nodes.
     """
-    from exo.worker.engines.llamacpp.llama_server import server_generate
     from exo.worker.engines.llamacpp.utils import (
         DistributedLlamaServer,
         build_rpc_address_list,
@@ -533,8 +532,9 @@ def _run_llamacpp_master(
                         assert task_params.messages[0].content is not None
                         _check_for_debug_prompts_llamacpp(task_params.messages[0].content)
 
-                        gguf_path = get_gguf_path_for_instance(bound_instance)
-                        generator = server_generate(str(gguf_path), task_params)
+                        # Use the existing distributed server for generation
+                        from exo.worker.engines.llamacpp.llama_server import distributed_generate
+                        generator = distributed_generate(distributed_server.port, task_params)
 
                         response_count = 0
                         for response in generator:

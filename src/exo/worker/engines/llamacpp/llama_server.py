@@ -383,3 +383,112 @@ def server_warmup(model_path: str) -> int:
         logger.error("llama-server warmup failed")
         return 0
 
+
+def distributed_generate(
+    port: int,
+    task: ChatCompletionTaskParams,
+) -> Generator[GenerationResponse, None, None]:
+    """
+    Generate text using an existing distributed llama-server.
+
+    This function sends requests to a llama-server that's already running
+    with RPC connections to worker nodes. It does NOT start a new server.
+    """
+    base_url = f"http://127.0.0.1:{port}"
+
+    # Convert EXO messages to OpenAI format
+    messages = []
+    for msg in task.messages:
+        content = msg.content
+        if content is None:
+            continue
+        if isinstance(content, list):
+            if len(content) == 0:
+                continue
+            content = content[0].text if hasattr(content[0], "text") else str(content[0])
+        elif hasattr(content, "text"):
+            content = content.text
+
+        messages.append({
+            "role": msg.role,
+            "content": str(content),
+        })
+
+    max_tokens = task.max_tokens or 256
+    temperature = task.temperature if task.temperature is not None else 0.7
+
+    logger.info(f"Distributed generation on port {port}: {len(messages)} messages, max_tokens={max_tokens}")
+
+    payload = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+
+    try:
+        response = requests.post(
+            f"{base_url}/v1/chat/completions",
+            json=payload,
+            stream=True,
+            timeout=300,
+        )
+        response.raise_for_status()
+
+        token_idx = 0
+        full_response = ""
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+
+            line_str = line.decode("utf-8")
+            if not line_str.startswith("data: "):
+                continue
+
+            data_str = line_str[6:]  # Remove "data: " prefix
+            if data_str == "[DONE]":
+                break
+
+            try:
+                import json
+                data = json.loads(data_str)
+                choices = data.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    text = delta.get("content", "")
+                    finish_reason = choices[0].get("finish_reason")
+
+                    if text:
+                        full_response += text
+                        yield GenerationResponse(
+                            text=text,
+                            token=token_idx,
+                            finish_reason=None,
+                        )
+                        token_idx += 1
+
+                    if finish_reason:
+                        yield GenerationResponse(
+                            text="",
+                            token=token_idx,
+                            finish_reason=finish_reason,
+                        )
+                        break
+            except (json.JSONDecodeError, KeyError, IndexError) as e:
+                logger.warning(f"Failed to parse SSE data: {e}")
+                continue
+
+        logger.info(f"Distributed generation complete: {len(full_response)} chars, {token_idx} chunks")
+
+        if token_idx == 0:
+            # No tokens were generated, yield at least one response
+            yield GenerationResponse(
+                text="",
+                token=0,
+                finish_reason="stop",
+            )
+
+    except requests.RequestException as e:
+        logger.error(f"Distributed generation error: {e}")
+        raise RuntimeError(f"Failed to generate from distributed server: {e}") from e

@@ -214,6 +214,7 @@ class RpcServerManager:
 
     def _log_network_info(self, port: int) -> None:
         """Log network interface information for debugging connectivity."""
+        external_ips: list[str] = []
         try:
             import socket
             hostname = socket.gethostname()
@@ -239,9 +240,21 @@ class RpcServerManager:
                     ips = re.findall(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
                     external_ips = [ip for ip in ips if not ip.startswith('127.')]
                     if external_ips:
-                        logger.info(f"External IPs: {', '.join(external_ips)}")
+                        logger.info(f"External IPs for RPC: {', '.join(f'{ip}:{port}' for ip in external_ips)}")
             except Exception:
                 pass
+
+            # Test if we can bind and accept on the external interface
+            if external_ips:
+                for ip in external_ips:
+                    try:
+                        test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        test_sock.settimeout(1)
+                        test_sock.connect((ip, port))
+                        test_sock.close()
+                        logger.info(f"Self-test OK: can connect to {ip}:{port}")
+                    except Exception as e:
+                        logger.warning(f"Self-test FAILED: cannot connect to {ip}:{port} - {e}")
         except Exception as e:
             logger.debug(f"Failed to get network info: {e}")
 

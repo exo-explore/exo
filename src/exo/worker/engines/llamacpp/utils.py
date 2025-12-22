@@ -285,10 +285,11 @@ def is_rpc_port_responding(host: str, port: int, timeout: float = 2.0) -> bool:
             sock.connect((host, port))
             return True
     except socket.timeout:
-        logger.debug(f"Connection to {host}:{port} timed out")
         return False
     except OSError as e:
-        logger.debug(f"Connection to {host}:{port} failed: {e}")
+        # Log connection errors with error code for debugging
+        errno = getattr(e, 'errno', None)
+        logger.warning(f"Cannot connect to {host}:{port} - errno={errno}: {e}")
         return False
 
 
