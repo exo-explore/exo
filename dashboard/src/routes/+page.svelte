@@ -478,6 +478,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				isDownloading = true;
 				
 				const progress = parseDownloadProgress(downloadPayload);
+				// Without the Helper Function, this would only be the sum of all download progress.
 				if (progress) {
 					totalBytes += progress.totalBytes;
 					downloadedBytes += progress.downloadedBytes;
@@ -497,16 +498,19 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		}
 
 		// Calculate mean speed across nodes to avoid inflated speed values
+		// I avoid calculating other mena values because I for files etc. it makes less sense
 		const meanSpeed = perNode.length > 0 ? meanValue(perNode.map(p => p.progress.speed)) : totalSpeed;
+		const meanBytes = perNode.length > 0 ? meanValue(perNode.map(p => p.progress.downloadedBytes)) : totalBytes;
+
 
 		return {
 			isDownloading: true,
 			progress: {
 				totalBytes,
-				downloadedBytes,
+				downloadedBytes: meanBytes,
 				speed: meanSpeed,
-				etaMs: meanSpeed > 0 ? ((totalBytes - downloadedBytes) / meanSpeed) * 1000 : 0,
-				percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+				etaMs: meanSpeed > 0 ? ((totalBytes - meanBytes) / meanSpeed) * 1000 : 0,
+				percentage: totalBytes > 0 ? (meanBytes / totalBytes) * 100 : 0,
 				completedFiles,
 				totalFiles,
 				files: allFiles
@@ -847,7 +851,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			.filter(h => h.ip && h.ip !== '0.0.0.0' && h.port && h.port > 0)
 			.map(h => {
 				const ip = h.ip;
-				const score = ip.startsWith('10.') || ip.startsWith('172.') || ip.startsWith('192.168') ? 3
+				const score = ip.startsWith('100.') || ip.startsWith('10.') || ip.startsWith('172.') || ip.startsWith('192.168') ? 3
 					: ip.startsWith('169.254') ? 2
 					: 1;
 				return { host: h, score };
