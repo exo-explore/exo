@@ -267,6 +267,7 @@ jobs:
           AWS_REGION: ${{ env.AWS_REGION }}
           SPARKLE_S3_BUCKET: ${{ env.SPARKLE_S3_BUCKET }}
           SPARKLE_S3_PREFIX: ${{ env.SPARKLE_S3_PREFIX }}
+          IS_ALPHA: ${{ env.IS_ALPHA }}
         run: |
           set -euo pipefail
           cd output
@@ -276,7 +277,9 @@ jobs:
           fi
           DMG_NAME="EXO-${RELEASE_VERSION}.dmg"
           aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}${DMG_NAME}"
-          aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
+          if [[ "$IS_ALPHA" != "true" ]]; then
+            aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
+          fi
           aws s3 cp appcast.xml "s3://${SPARKLE_S3_BUCKET}/${PREFIX}appcast.xml" --content-type application/xml --cache-control no-cache
 
       - name: Cleanup keychain
