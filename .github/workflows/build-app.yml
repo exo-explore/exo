@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-macos-app:
-    runs-on: [self-hosted, XCode262_Beta]
+    runs-on: "macos-26"
     env:
       SPARKLE_VERSION: 2.8.1
       SPARKLE_DOWNLOAD_PREFIX: ${{ secrets.SPARKLE_DOWNLOAD_PREFIX }}
@@ -21,6 +21,10 @@ jobs:
       EXO_LIBP2P_NAMESPACE: ${{ github.ref_name }}
 
     steps:
+      # ============================================================
+      # Checkout and tag validation
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -29,7 +33,6 @@ jobs:
       - name: Derive release version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Detect alpha tags
           if [[ "$VERSION" == *-alpha* ]]; then
             echo "IS_ALPHA=true" >> $GITHUB_ENV
           else
@@ -40,7 +43,7 @@ jobs:
       - name: Ensure tag commit is on main
         run: |
           git fetch origin main
-          # Allow alpha tags on any branch, but require production tags to be on main
+          # Alpha tags can be on any branch, production tags must be on main
           if [[ "$IS_ALPHA" == "true" ]]; then
             echo "Alpha tag detected, skipping main branch check"
           elif ! git merge-base --is-ancestor origin/main HEAD; then
@@ -48,27 +51,20 @@ jobs:
             exit 1
           fi
 
-      - name: Add Homebrew to PATH      
-        run: |      
-          if [ -f /opt/homebrew/bin/brew ]; then      
-            echo "/opt/homebrew/bin" >> $GITHUB_PATH      
-          elif [ -f /usr/local/bin/brew ]; then      
-            echo "/usr/local/bin" >> $GITHUB_PATH      
-          fi
+      # ============================================================
+      # Install dependencies
+      # ============================================================
 
-      - name: Check Metal toolchain is installed
+      - name: Select Xcode 26.2
         run: |
+          sudo xcode-select -s /Applications/Xcode_26.2.app
           if ! xcrun -f metal >/dev/null 2>&1; then
-            echo "Metal toolchain is not installed. Run 'xcodebuild -downloadComponent MetalToolchain' on the runner host."
+            echo "Metal toolchain is not installed."
             exit 1
           fi
-          echo "Metal toolchain is installed."
 
-      - name: Install Just
-        run: brew install just
-
-      - name: Install AWS CLI
-        run: brew install awscli
+      - name: Install Homebrew packages
+        run: brew install just awscli macmon
 
       - name: Install UV
         uses: astral-sh/setup-uv@v6
@@ -76,17 +72,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Setup Python (UV)
+      - name: Setup Python
         run: |
           uv python install
           uv sync --locked
-
-      - name: Install macmon
-        run: brew install macmon
-
-      - name: Build PyInstaller bundle
-        run: |
-          uv run pyinstaller packaging/pyinstaller/exo.spec
 
       - name: Prepare code-signing keychain
         env:
@@ -95,42 +84,46 @@ jobs:
           PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
         run: |
           KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
-          
-          # Remove stale keychain from previous failed runs
-          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
-          
+
           # Create fresh keychain
           security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
-          
+
           # Disable auto-lock (no timeout, no lock-on-sleep)
           security set-keychain-settings "$KEYCHAIN_PATH"
-          
+
           # Add to search list while preserving existing keychains
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          
+
           # Set as default and unlock
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
-          
+
           # Import certificate with full access for codesign
           echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/cert.p12
           security import /tmp/cert.p12 -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
           rm /tmp/cert.p12
-          
+
           # Allow codesign to access the key without prompting
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
-          
+
           # Verify keychain is unlocked and identity is available
           echo "Verifying signing identity..."
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-          
+
           # Setup provisioning profile
           mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
           echo "$PROVISIONING_PROFILE" | base64 --decode > "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/EXO.provisionprofile"
-          
+
           # Export keychain path for other steps
           echo "BUILD_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+
+      # ============================================================
+      # Build the bundle
+      # ============================================================
+
+      - name: Build PyInstaller bundle
+        run: uv run pyinstaller packaging/pyinstaller/exo.spec
 
       - name: Build Swift app
         env:
@@ -162,7 +155,7 @@ jobs:
           mkdir -p output/EXO.app/Contents/Resources
           cp -R dist/exo output/EXO.app/Contents/Resources/exo
 
-      - name: Codesign PyInstaller runtime payload
+      - name: Codesign PyInstaller runtime
         env:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
@@ -246,7 +239,6 @@ jobs:
           echo "$SPARKLE_ED25519_PRIVATE" > sparkle_ed25519.key
           chmod 600 sparkle_ed25519.key
 
-          # Add --channel alpha flag for alpha builds
           CHANNEL_FLAG=""
           if [[ "$IS_ALPHA" == "true" ]]; then
             CHANNEL_FLAG="--channel alpha"
@@ -259,7 +251,11 @@ jobs:
             $CHANNEL_FLAG \
             .
 
-      - name: Upload Sparkle assets to S3
+      # ============================================================
+      # Upload artifacts
+      # ============================================================
+
+      - name: Upload to S3
         if: env.SPARKLE_S3_BUCKET != ''
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -281,13 +277,6 @@ jobs:
             aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
           fi
           aws s3 cp appcast.xml "s3://${SPARKLE_S3_BUCKET}/${PREFIX}appcast.xml" --content-type application/xml --cache-control no-cache
-
-      - name: Cleanup keychain
-        if: always()
-        run: |
-          KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
-          security default-keychain -s login.keychain || true
-          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
