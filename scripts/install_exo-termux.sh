@@ -19,6 +19,14 @@
 
 set -e  # Exit on error
 
+# Capture script location at startup (before any cd commands)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || SCRIPT_DIR=""
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
+    REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+    REPO_DIR="$HOME/exo-termux"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -217,24 +225,20 @@ install_python_packages() {
 setup_exo_repo() {
     log_step "Step 6/8: Setting Up EXO Repository"
     
-    EXO_DIR="$HOME/exo-termux"
-    
-    # Check if we're running from inside the repo
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
-        EXO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-        log_info "Running from inside repo: $EXO_DIR"
-    elif [[ -d "$EXO_DIR" ]]; then
+    # Check if we're running from inside the repo (already detected at startup)
+    if [[ -f "$REPO_DIR/pyproject.toml" ]]; then
+        log_info "Running from inside repo: $REPO_DIR"
+    elif [[ -d "$REPO_DIR" ]]; then
         log_info "Updating existing EXO installation..."
-        cd "$EXO_DIR"
+        cd "$REPO_DIR"
         git pull
     else
         log_info "Cloning EXO repository..."
-        git clone https://github.com/lukewrightmain/exo.git "$EXO_DIR"
+        git clone https://github.com/lukewrightmain/exo.git "$REPO_DIR"
     fi
     
-    cd "$EXO_DIR"
-    log_success "EXO repository ready at: $EXO_DIR"
+    cd "$REPO_DIR"
+    log_success "EXO repository ready at: $REPO_DIR"
 }
 
 # Step 7: Build Rust bindings
@@ -246,16 +250,10 @@ build_rust_bindings() {
         source "$PREFIX/etc/profile.d/rust-nightly.sh"
     fi
     
-    EXO_DIR="$HOME/exo-termux"
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
-        EXO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-    fi
-    
-    cd "$EXO_DIR/rust/exo_pyo3_bindings"
+    cd "$REPO_DIR/rust/exo_pyo3_bindings"
     
     # Check if already built
-    WHEEL_FILE=$(ls "$EXO_DIR/target/wheels/exo_pyo3_bindings"*.whl 2>/dev/null | head -1)
+    WHEEL_FILE=$(ls "$REPO_DIR/target/wheels/exo_pyo3_bindings"*.whl 2>/dev/null | head -1)
     if [[ -n "$WHEEL_FILE" ]]; then
         log_info "Existing wheel found, checking if installed..."
         if python -c "import exo_pyo3_bindings" 2>/dev/null; then
@@ -274,7 +272,7 @@ build_rust_bindings() {
     maturin build --release
     
     # Find and install the wheel
-    WHEEL_FILE=$(ls "$EXO_DIR/target/wheels/exo_pyo3_bindings"*.whl 2>/dev/null | head -1)
+    WHEEL_FILE=$(ls "$REPO_DIR/target/wheels/exo_pyo3_bindings"*.whl 2>/dev/null | head -1)
     if [[ -z "$WHEEL_FILE" ]]; then
         log_error "Wheel file not found after build!"
         exit 1
@@ -290,19 +288,13 @@ build_rust_bindings() {
 install_exo() {
     log_step "Step 8/8: Installing EXO and Building Dashboard"
     
-    EXO_DIR="$HOME/exo-termux"
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
-        EXO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-    fi
-    
-    cd "$EXO_DIR"
+    cd "$REPO_DIR"
     
     log_info "Installing EXO..."
     pip install -e .
     
     log_info "Building dashboard..."
-    cd "$EXO_DIR/dashboard"
+    cd "$REPO_DIR/dashboard"
     npm install
     npm run build
     
@@ -363,13 +355,7 @@ verify_installation() {
     fi
     
     # Check dashboard
-    EXO_DIR="$HOME/exo-termux"
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
-        EXO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-    fi
-    
-    if [[ -d "$EXO_DIR/dashboard/dist" ]]; then
+    if [[ -d "$REPO_DIR/dashboard/dist" ]]; then
         log_success "dashboard: OK"
     else
         log_error "dashboard: NOT BUILT"
@@ -381,19 +367,13 @@ verify_installation() {
 
 # Print completion message
 print_completion() {
-    EXO_DIR="$HOME/exo-termux"
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
-        EXO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-    fi
-    
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}  ✓ EXO Installation Complete!${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "  ${CYAN}To run EXO:${NC}"
-    echo -e "    cd $EXO_DIR"
+    echo -e "    cd $REPO_DIR"
     echo -e "    python -m exo"
     echo ""
     echo -e "  ${CYAN}Dashboard:${NC}"
