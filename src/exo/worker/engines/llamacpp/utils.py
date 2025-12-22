@@ -449,15 +449,33 @@ class DistributedLlamaServer:
         return False
 
     def _is_healthy(self) -> bool:
-        """Check if the server is responding."""
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(2)
-            try:
-                sock.connect(("127.0.0.1", self.port))
+        """Check if the server is responding and ready to serve requests."""
+        import requests
+        try:
+            # First check if the port is open
+            response = requests.get(
+                f"http://127.0.0.1:{self.port}/health",
+                timeout=5
+            )
+            if response.status_code == 200:
+                # Server is ready
                 return True
-            except (OSError, socket.timeout):
+            elif response.status_code == 503:
+                # Server is still loading the model
+                logger.debug("Server responded 503 - still loading model")
                 return False
+            else:
+                logger.debug(f"Server health check returned {response.status_code}")
+                return False
+        except requests.exceptions.ConnectionError:
+            # Server not yet accepting connections
+            return False
+        except requests.exceptions.Timeout:
+            logger.debug("Server health check timed out")
+            return False
+        except Exception as e:
+            logger.debug(f"Server health check error: {e}")
+            return False
 
     def stop(self) -> None:
         """Stop the llama-server."""
