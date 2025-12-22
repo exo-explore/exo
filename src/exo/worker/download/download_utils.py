@@ -276,6 +276,7 @@ def create_http_session(
             sock_read=sock_read_timeout,
             sock_connect=sock_connect_timeout,
         ),
+        trust_env=True,  # Respect http_proxy, https_proxy, no_proxy env variables
     )
 
 
