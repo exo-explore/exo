@@ -482,6 +482,7 @@ def _run_llamacpp_master(
     try:
         with task_receiver as tasks:
             for task in tasks:
+                logger.info(f"[MASTER] Received task: {type(task).__name__}, current_status={type(current_status).__name__}")
                 event_sender.send(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running))
                 event_sender.send(TaskAcknowledged(task_id=task.task_id))
 
@@ -563,7 +564,8 @@ def _run_llamacpp_master(
                         break
 
                     case _:
-                        raise ValueError("Received task outside of state machine")
+                        logger.warning(f"[MASTER] Unhandled task {type(task).__name__} in state {type(current_status).__name__}")
+                        raise ValueError(f"Received task {type(task).__name__} outside of state machine (state={type(current_status).__name__})")
 
                 event_sender.send(TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete))
 
