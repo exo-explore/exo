@@ -172,6 +172,8 @@ class RpcServerManager:
 
                 if is_rpc_server_responding(port, "127.0.0.1"):
                     logger.info(f"rpc-server started successfully on {host}:{port}")
+                    # Also log the external IPs this server should be reachable on
+                    self._log_network_info(port)
                     return True
 
                 time.sleep(0.5)
@@ -209,6 +211,39 @@ class RpcServerManager:
             os.system(f"pkill -f 'rpc-server.*--port {self.port}'")
         except Exception:
             pass
+
+    def _log_network_info(self, port: int) -> None:
+        """Log network interface information for debugging connectivity."""
+        try:
+            import socket
+            hostname = socket.gethostname()
+            # Get all IP addresses for this host
+            try:
+                addrs = socket.getaddrinfo(hostname, None, socket.AF_INET)
+                ips = list(set(addr[4][0] for addr in addrs))
+                logger.info(f"RPC server reachable on: {', '.join(f'{ip}:{port}' for ip in ips)}")
+            except socket.gaierror:
+                pass
+
+            # Also try to get interface IPs via netifaces-like approach
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["ip", "-4", "addr", "show"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    import re
+                    ips = re.findall(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
+                    external_ips = [ip for ip in ips if not ip.startswith('127.')]
+                    if external_ips:
+                        logger.info(f"External IPs: {', '.join(external_ips)}")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Failed to get network info: {e}")
 
 
 def assign_rpc_port(device_rank: int) -> int:

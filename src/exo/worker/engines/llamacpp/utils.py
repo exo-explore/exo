@@ -202,6 +202,10 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
     shard_assignments = instance.shard_assignments
     rpc_addresses: list[str] = []
 
+    # Debug log the hosts array
+    logger.debug(f"Instance hosts: {[(h.ip, h.port) for h in instance.hosts]}")
+    logger.debug(f"RPC ports: {instance.rpc_ports}")
+
     for node_id, runner_id in shard_assignments.node_to_runner.items():
         shard = shard_assignments.runner_to_shard.get(runner_id)
         if shard is None:
@@ -212,18 +216,24 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
 
         rpc_port = instance.rpc_ports.get(node_id, 0)
         if rpc_port == 0:
+            logger.warning(f"No RPC port for node {node_id} (rank {shard.device_rank})")
             continue
 
         # Use device_rank as index into hosts list (hosts are ordered by rank)
         host_index = shard.device_rank
         if host_index < len(instance.hosts):
             host = instance.hosts[host_index]
+            logger.debug(f"Rank {shard.device_rank} -> host[{host_index}] = {host.ip}:{rpc_port}")
             if host.ip and host.ip != "0.0.0.0":
                 rpc_addresses.append(f"{host.ip}:{rpc_port}")
+            else:
+                logger.warning(f"Invalid IP for rank {shard.device_rank}: {host.ip}")
         else:
-            logger.warning(f"No host found for device_rank {shard.device_rank}")
+            logger.warning(f"No host found for device_rank {shard.device_rank} (only {len(instance.hosts)} hosts)")
 
-    return ",".join(rpc_addresses)
+    result = ",".join(rpc_addresses)
+    logger.info(f"Built RPC address list: {result}")
+    return result
 
 
 def build_tensor_split_string(bound_instance: BoundInstance) -> str:
@@ -274,7 +284,11 @@ def is_rpc_port_responding(host: str, port: int, timeout: float = 2.0) -> bool:
             sock.settimeout(timeout)
             sock.connect((host, port))
             return True
-    except (OSError, socket.timeout):
+    except socket.timeout:
+        logger.debug(f"Connection to {host}:{port} timed out")
+        return False
+    except OSError as e:
+        logger.debug(f"Connection to {host}:{port} failed: {e}")
         return False
 
 
@@ -317,6 +331,9 @@ def wait_for_rpc_workers(rpc_addresses: str, timeout: int = 120) -> bool:
             return True
 
         elapsed = int(time.time() - start_time)
+        # Log progress every 10 seconds
+        if elapsed % 10 == 0 and elapsed > 0:
+            logger.info(f"Still waiting for RPC workers: {not_ready} ({elapsed}s / {timeout}s)")
         logger.debug(f"Waiting for RPC workers: {not_ready} ({elapsed}s / {timeout}s)")
         time.sleep(2)
 
