@@ -39,7 +39,25 @@ This guide covers installing and running exo (Distributed AI Inference) on Andro
 
 ## Quick Start
 
-For experienced users who want the fastest path to running exo:
+### One-Line Install (Recommended)
+
+Run this single command in Termux to install everything automatically:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/lukewrightmain/exo/main/scripts/install_exo-termux.sh | bash
+```
+
+This installs all dependencies, builds llama.cpp/llama-server, builds the Rust bindings, and sets up EXO. Takes ~30-45 minutes.
+
+After installation:
+
+```bash
+cd ~/exo-termux && python -m exo
+```
+
+### Manual Install
+
+For experienced users who want more control:
 
 ```bash
 # 1. Install packages
@@ -68,19 +86,19 @@ pip install llama-cpp-python maturin requests
 
 # 5. Clone and build exo
 cd ~
-git clone https://github.com/exo-explore/exo.git
-cd exo/rust/exo_pyo3_bindings
+git clone https://github.com/lukewrightmain/exo.git exo-termux
+cd exo-termux/rust/exo_pyo3_bindings
 # Edit pyproject.toml: change requires-python to ">=3.12"
 maturin build --release
-pip install ~/exo/target/wheels/exo_pyo3_bindings-*.whl
+pip install ~/exo-termux/target/wheels/exo_pyo3_bindings-*.whl
 
 # 6. Install exo and build dashboard
-cd ~/exo
+cd ~/exo-termux
 pip install -e .
 cd dashboard && npm install && npm run build
 
 # 7. Run exo
-cd ~/exo && python -m exo
+cd ~/exo-termux && python -m exo
 ```
 
 **Total time:** ~30-45 minutes
@@ -170,10 +188,12 @@ python -c "import requests; print('requests OK')"
 
 ### Step 6: Clone and Build exo
 
+> **Alternative:** You can also run the automated install script: `curl -sSL https://raw.githubusercontent.com/lukewrightmain/exo/main/scripts/install_exo-termux.sh | bash`
+
 ```bash
 cd ~
-git clone https://github.com/exo-explore/exo.git
-cd exo
+git clone https://github.com/lukewrightmain/exo.git exo-termux
+cd exo-termux
 ```
 
 ### Step 7: Build Rust Networking Bindings
@@ -182,7 +202,7 @@ cd exo
 # Install maturin (via pip, NOT pkg)
 pip install maturin
 
-cd ~/exo/rust/exo_pyo3_bindings
+cd ~/exo-termux/rust/exo_pyo3_bindings
 
 # Edit pyproject.toml to allow Python 3.12 (if needed)
 # Change: requires-python = ">=3.13" to requires-python = ">=3.12"
@@ -192,20 +212,20 @@ nano pyproject.toml
 maturin build --release
 
 # Install the wheel
-pip install ~/exo/target/wheels/exo_pyo3_bindings-*.whl
+pip install ~/exo-termux/target/wheels/exo_pyo3_bindings-*.whl
 ```
 
 ### Step 8: Install exo
 
 ```bash
-cd ~/exo
+cd ~/exo-termux
 pip install -e .
 ```
 
 ### Step 9: Build the Dashboard
 
 ```bash
-cd ~/exo/dashboard
+cd ~/exo-termux/dashboard
 npm install
 npm run build
 ```
@@ -232,7 +252,7 @@ If all checks pass, you're ready to run EXO!
 ### Using the Download Script
 
 ```bash
-cd ~/exo
+cd ~/exo-termux
 
 # List available models
 ./scripts/download_model.sh list
@@ -264,7 +284,7 @@ For detailed model lists, see [MODELS.md](./MODELS.md).
 ### Basic Usage
 
 ```bash
-cd ~/exo
+cd ~/exo-termux
 python -m exo
 ```
 
@@ -429,7 +449,7 @@ adb push pyproject.toml /sdcard/exo/
 
 # In Termux
 cp -r /sdcard/exo ~/exo
-cd ~/exo && pip install -e .
+cd ~/exo-termux && pip install -e .
 ```
 
 ---
@@ -453,8 +473,8 @@ source $PREFIX/etc/profile.d/rust-nightly.sh
 pkg remove rust rust-std-aarch64-linux-android
 
 # Clean and rebuild
-rm -rf ~/.cargo/registry ~/exo/target
-cd ~/exo/rust/exo_pyo3_bindings
+rm -rf ~/.cargo/registry ~/exo-termux/target
+cd ~/exo-termux/rust/exo_pyo3_bindings
 maturin build --release
 ```
 
@@ -476,7 +496,7 @@ pip install llama-cpp-python
 ### Dashboard 404 Errors
 
 ```bash
-cd ~/exo/dashboard
+cd ~/exo-termux/dashboard
 rm -rf node_modules dist
 npm install
 npm run build
@@ -621,8 +641,8 @@ adb connect <device-ip>:5555
 | llama.cpp libraries | `~/llama.cpp/build/bin/*.so` |
 | llama-server binary | `~/llama.cpp/build/bin/llama-server` |
 | llama-cli binary | `~/llama.cpp/build/bin/llama-cli` |
-| Rust bindings wheel | `~/exo/target/wheels/*.whl` |
-| Dashboard build | `~/exo/dashboard/dist/` |
+| Rust bindings wheel | `~/exo-termux/target/wheels/*.whl` |
+| Dashboard build | `~/exo-termux/dashboard/dist/` |
 | Models | `~/.exo/models/` |
 
 ---
