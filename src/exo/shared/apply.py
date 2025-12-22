@@ -235,37 +235,36 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
             profile.chip_id = info.chip
         # TODO: makes me slightly sad
         case Sequence():
-            if info != []:
-                match info[0]:
-                    case NetworkInterfaceInfo():
-                        profile.network_interfaces = cast(
-                            Sequence[NetworkInterfaceInfo], info
+            assert info != [], "Missing functionality here!"
+            match info[0]:
+                case NetworkInterfaceInfo():
+                    profile.network_interfaces = cast(
+                        Sequence[NetworkInterfaceInfo], info
+                    )
+                case TBIdentifier():
+                    profile.tb_interfaces = cast(Sequence[TBIdentifier], info)
+                case TBConnection():
+                    info = cast(Sequence[TBConnection], info)
+                    conn_map = {
+                        tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
+                        for nid in state.node_profiles
+                        for tb_ident in state.node_profiles[nid].tb_interfaces
+                    }
+                    as_rdma_conns = [
+                        (
+                            conn_map[tb_conn.sink_uuid][0],
+                            RDMAConnection(
+                                source_rdma_iface=conn_map[tb_conn.source_uuid][1],
+                                sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
+                            ),
                         )
-                    case TBIdentifier():
-                        profile.tb_interfaces = cast(Sequence[TBIdentifier], info)
-                    case TBConnection():
-                        info = cast(Sequence[TBConnection], info)
-                        conn_map = {
-                            tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
-                            for nid in state.node_profiles
-                            for tb_ident in state.node_profiles[nid].tb_interfaces
-                        }
-                        as_rdma_conns = [
-                            (
-                                conn_map[tb_conn.sink_uuid][0],
-                                RDMAConnection(
-                                    source_rdma_iface=conn_map[tb_conn.source_uuid][1],
-                                    sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
-                                ),
-                            )
-                            for tb_conn in info
-                            if tb_conn.source_uuid in conn_map
-                            if tb_conn.sink_uuid in conn_map
-                        ]
-                        topology.replace_all_out_tb_connections(
-                            event.node_id, as_rdma_conns
-                        )
-                        # TODO:
+                        for tb_conn in info
+                        if tb_conn.source_uuid in conn_map
+                        if tb_conn.sink_uuid in conn_map
+                    ]
+                    topology.replace_all_out_tb_connections(
+                        event.node_id, as_rdma_conns
+                    )
 
     last_seen = {**state.last_seen, event.node_id: datetime.fromisoformat(event.when)}
     new_profiles = {**state.node_profiles, event.node_id: profile}
