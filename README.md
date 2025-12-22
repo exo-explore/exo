@@ -65,16 +65,19 @@ There are two ways to run exo:
 
 **Prerequisites:**
 - [brew](https://github.com/Homebrew/brew) (for simple package management on MacOS)
+  
   ```bash
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
+  
   ```bash
   brew install uv macmon node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   rustup toolchain install nightly
