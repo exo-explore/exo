@@ -72,7 +72,7 @@ There are two ways to run exo:
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
 - [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
- 
+  
   ```bash
   brew install uv macmon node
   ```
