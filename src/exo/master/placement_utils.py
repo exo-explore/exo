@@ -19,6 +19,9 @@ from exo.shared.types.worker.shards import (
 )
 
 
+RPC_BASE_PORT: int = 50052
+
+
 class NodeWithProfile(BaseModel):
     node_id: NodeId
     node_profile: NodePerformanceProfile
@@ -297,3 +300,61 @@ def get_mlx_ibv_coordinators(
     return {
         n.node_id: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle
     }
+
+
+def get_rpc_ports_for_llamacpp(
+    selected_cycle: list[NodeInfo],
+) -> dict[NodeId, int]:
+    """
+    Assign RPC ports for llama.cpp distributed inference.
+
+    Master node (device_rank 0) doesn't need an RPC port (it connects to others).
+    Worker nodes (device_rank > 0) get sequential ports starting from RPC_BASE_PORT.
+
+    Returns a dict mapping node_id to RPC port (0 for master node).
+    """
+    rpc_ports: dict[NodeId, int] = {}
+
+    for device_rank, node in enumerate(selected_cycle):
+        if device_rank == 0:
+            rpc_ports[node.node_id] = 0
+        else:
+            rpc_ports[node.node_id] = RPC_BASE_PORT + device_rank - 1
+
+    return rpc_ports
+
+
+def get_tensor_split_for_llamacpp(
+    selected_cycle: list[NodeInfo],
+) -> list[float]:
+    """
+    Calculate tensor split ratios for llama.cpp distributed inference.
+
+    The tensor_split parameter controls how layers are distributed across devices.
+    Ratios are based on available memory on each node.
+
+    Returns a list of floats representing the fraction of layers for each device.
+    For single-node instances, returns an empty list.
+    """
+    if len(selected_cycle) <= 1:
+        return []
+
+    if not narrow_all_nodes(selected_cycle):
+        # If any node doesn't have a profile, use equal split
+        equal_ratio = 1.0 / len(selected_cycle)
+        return [equal_ratio for _ in selected_cycle]
+
+    total_memory = sum(
+        (node.node_profile.memory.ram_available.in_bytes for node in selected_cycle),
+    )
+
+    if total_memory == 0:
+        equal_ratio = 1.0 / len(selected_cycle)
+        return [equal_ratio for _ in selected_cycle]
+
+    tensor_split: list[float] = []
+    for node in selected_cycle:
+        ratio = node.node_profile.memory.ram_available.in_bytes / total_memory
+        tensor_split.append(round(ratio, 4))
+
+    return tensor_split

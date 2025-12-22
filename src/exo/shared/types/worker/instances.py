@@ -38,9 +38,21 @@ class LlamaCppInstance(BaseInstance):
     """
     Instance type for llama.cpp-based inference.
     Used for cross-platform inference on Android, Linux, and other non-Apple platforms.
+
+    For multi-node distributed inference using llama.cpp RPC backend:
+    - Worker nodes (device_rank > 0) run rpc-server on their assigned port
+    - Master node (device_rank == 0) connects to workers via --rpc flag
+    - Layers are distributed via tensor_split based on memory ratios
     """
 
     hosts: list[Host]
+    rpc_ports: dict[NodeId, int] = {}
+    tensor_split: list[float] = []
+
+    @property
+    def is_distributed(self) -> bool:
+        """Check if this instance uses distributed inference across multiple nodes."""
+        return len(self.rpc_ports) > 0 and len(self.tensor_split) > 1
 
 
 Instance = MlxRingInstance | MlxJacclInstance | LlamaCppInstance

@@ -158,7 +158,8 @@ setup_build_env() {
     print_header "Setting Up Build Environment"
     
     # Set environment variables for Android/ARM builds
-    export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=ON -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF"
+    # GGML_RPC=ON enables distributed inference across multiple nodes
+    export CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_NATIVE=ON -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_RPC=ON"
     export FORCE_CMAKE=1
     export CC=clang
     export CXX=clang++
@@ -167,6 +168,98 @@ setup_build_env() {
     
     print_success "Build environment configured"
     print_info "CMAKE_ARGS: $CMAKE_ARGS"
+}
+
+# Build llama.cpp from source with RPC support
+build_llamacpp_native() {
+    print_header "Building llama.cpp with RPC Support"
+    
+    local LLAMA_DIR="$HOME/llama.cpp"
+    
+    # Clone or update llama.cpp
+    if [ -d "$LLAMA_DIR" ]; then
+        print_info "llama.cpp directory exists, updating..."
+        cd "$LLAMA_DIR"
+        git pull --ff-only 2>/dev/null || print_warning "Could not update llama.cpp"
+    else
+        print_info "Cloning llama.cpp..."
+        git clone https://github.com/ggerganov/llama.cpp.git "$LLAMA_DIR" || {
+            print_error "Failed to clone llama.cpp"
+            return 1
+        }
+        cd "$LLAMA_DIR"
+    fi
+    
+    # Clean previous build
+    rm -rf build 2>/dev/null || true
+    
+    # Configure with RPC support for distributed inference
+    print_info "Configuring with RPC support for distributed inference..."
+    cmake -B build \
+        -DGGML_RPC=ON \
+        -DGGML_NATIVE=ON \
+        -DGGML_BLAS=OFF \
+        -DGGML_METAL=OFF \
+        -DGGML_CUDA=OFF \
+        -DGGML_VULKAN=OFF \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_FLAGS="-O2 -Wno-error" \
+        -DCMAKE_CXX_FLAGS="-O2 -Wno-error" \
+        2>&1 | tee /tmp/llama_cmake.log || {
+            print_error "CMake configuration failed"
+            print_info "Check /tmp/llama_cmake.log for details"
+            return 1
+        }
+    
+    # Build main binaries
+    print_info "Building llama.cpp binaries (this may take 10-20 minutes)..."
+    local num_jobs=$(nproc 2>/dev/null || echo 4)
+    
+    # Build essential targets including rpc-server
+    cmake --build build -j"$num_jobs" --target llama-server --target llama-cli --target rpc-server 2>&1 | tee /tmp/llama_build.log || {
+        print_warning "Some targets failed, trying individual builds..."
+        
+        # Try building each target separately
+        cmake --build build -j"$num_jobs" --target llama-server 2>/dev/null || print_warning "llama-server build failed"
+        cmake --build build -j"$num_jobs" --target llama-cli 2>/dev/null || print_warning "llama-cli build failed"
+        cmake --build build -j"$num_jobs" --target rpc-server 2>/dev/null || print_warning "rpc-server build failed"
+    }
+    
+    # Verify binaries
+    local binaries_ok=true
+    
+    if [ -f "build/bin/llama-server" ]; then
+        print_success "llama-server: OK"
+    else
+        print_warning "llama-server: NOT BUILT"
+        binaries_ok=false
+    fi
+    
+    if [ -f "build/bin/llama-cli" ]; then
+        print_success "llama-cli: OK"
+    else
+        print_warning "llama-cli: NOT BUILT"
+        binaries_ok=false
+    fi
+    
+    if [ -f "build/bin/rpc-server" ]; then
+        print_success "rpc-server: OK (distributed inference enabled)"
+    else
+        print_warning "rpc-server: NOT BUILT (distributed inference will not work)"
+        binaries_ok=false
+    fi
+    
+    cd "$EXO_DIR"
+    
+    if [ "$binaries_ok" = true ]; then
+        print_success "llama.cpp built successfully with RPC support!"
+        return 0
+    else
+        print_warning "Some llama.cpp binaries were not built"
+        print_info "Check /tmp/llama_build.log for details"
+        return 1
+    fi
 }
 
 # Install maturin for building Rust Python bindings
@@ -337,6 +430,25 @@ verify_installation() {
     # Check Python
     print_info "Python: $(python3 --version)"
     
+    # Check llama.cpp native binaries
+    echo ""
+    print_info "Checking llama.cpp native binaries..."
+    local llama_bin="$HOME/llama.cpp/build/bin"
+    
+    if [ -f "$llama_bin/llama-server" ]; then
+        print_success "llama-server: OK"
+    else
+        print_warning "llama-server: NOT FOUND"
+        all_ok=false
+    fi
+    
+    if [ -f "$llama_bin/rpc-server" ]; then
+        print_success "rpc-server: OK (distributed inference enabled)"
+    else
+        print_warning "rpc-server: NOT FOUND (distributed inference disabled)"
+        all_ok=false
+    fi
+    
     # Check llama-cpp-python
     echo ""
     print_info "Checking llama-cpp-python..."
@@ -436,6 +548,7 @@ main() {
     setup_build_env
     install_maturin
     install_python_deps
+    build_llamacpp_native
     install_llama_cpp
     build_pyo3_bindings
     install_exo

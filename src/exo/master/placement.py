@@ -10,8 +10,10 @@ from exo.master.placement_utils import (
     get_hosts_from_subgraph,
     get_mlx_ibv_coordinators,
     get_mlx_ibv_devices_matrix,
+    get_rpc_ports_for_llamacpp,
     get_shard_assignments,
     get_smallest_cycles,
+    get_tensor_split_for_llamacpp,
 )
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
@@ -144,6 +146,15 @@ def place_instance(
             )
         case InstanceMeta.LlamaCpp:
             hosts = get_hosts_from_subgraph(cycle_digraph)
+            rpc_ports = get_rpc_ports_for_llamacpp(selected_cycle)
+            tensor_split = get_tensor_split_for_llamacpp(selected_cycle)
+
+            if len(selected_cycle) > 1:
+                logger.info(
+                    f"LlamaCpp distributed instance: {len(selected_cycle)} nodes, "
+                    f"tensor_split={tensor_split}"
+                )
+
             target_instances[instance_id] = LlamaCppInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
@@ -154,6 +165,8 @@ def place_instance(
                     )
                     for host in hosts
                 ],
+                rpc_ports=rpc_ports,
+                tensor_split=tensor_split,
             )
 
     return target_instances
