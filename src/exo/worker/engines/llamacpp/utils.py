@@ -428,12 +428,7 @@ class DistributedLlamaServer:
                 logger.warning(f"Failed to start distributed llama-server (attempt {attempt + 1}): {error}")
 
         logger.error(f"Server failed to start after {max_retries} attempts")
-            self.stop()
-            return False
-
-        except Exception as error:
-            logger.error(f"Failed to start distributed llama-server: {error}")
-            return False
+        return False
 
     def _is_healthy(self) -> bool:
         """Check if the server is responding."""
