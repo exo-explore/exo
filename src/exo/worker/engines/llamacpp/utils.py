@@ -266,6 +266,64 @@ def get_lib_path() -> str:
     return ":".join(str(directory) for directory in lib_dirs if directory.exists())
 
 
+def is_rpc_port_responding(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Check if an RPC server is responding on the given host:port."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+            return True
+    except (OSError, socket.timeout):
+        return False
+
+
+def wait_for_rpc_workers(rpc_addresses: str, timeout: int = 120) -> bool:
+    """
+    Wait for all RPC worker servers to be available.
+
+    Polls each worker's RPC port until they're all responding or timeout is reached.
+    Returns True if all workers are ready, False if timeout occurred.
+    """
+    if not rpc_addresses:
+        return True
+
+    addresses = [addr.strip() for addr in rpc_addresses.split(",") if addr.strip()]
+    if not addresses:
+        return True
+
+    logger.info(f"Waiting for {len(addresses)} RPC worker(s) to be ready...")
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        all_ready = True
+        not_ready = []
+
+        for addr in addresses:
+            try:
+                host, port_str = addr.split(":")
+                port = int(port_str)
+                if not is_rpc_port_responding(host, port):
+                    all_ready = False
+                    not_ready.append(addr)
+            except (ValueError, IndexError):
+                logger.warning(f"Invalid RPC address format: {addr}")
+                all_ready = False
+                not_ready.append(addr)
+
+        if all_ready:
+            elapsed = int(time.time() - start_time)
+            logger.info(f"All {len(addresses)} RPC workers ready after {elapsed}s")
+            return True
+
+        elapsed = int(time.time() - start_time)
+        logger.debug(f"Waiting for RPC workers: {not_ready} ({elapsed}s / {timeout}s)")
+        time.sleep(2)
+
+    logger.error(f"Timeout waiting for RPC workers after {timeout}s")
+    return False
+
+
 class DistributedLlamaServer:
     """
     Manages a llama-server instance for distributed inference (master node).
@@ -289,11 +347,22 @@ class DistributedLlamaServer:
         self.server_path = find_llama_server()
         self.lib_path = get_lib_path()
 
-    def start(self) -> bool:
-        """Start the distributed llama-server."""
+    def start(self, max_retries: int = 3) -> bool:
+        """Start the distributed llama-server.
+        
+        Waits for all RPC workers to be available before starting,
+        and retries on failure.
+        """
         if self.server_path is None:
             logger.error("llama-server not found")
             return False
+
+        # Wait for worker RPC servers to be ready before starting master
+        if self.rpc_addresses:
+            logger.info("Waiting for worker RPC servers to be ready...")
+            if not wait_for_rpc_workers(self.rpc_addresses, timeout=120):
+                logger.error("Worker RPC servers not available, cannot start distributed inference")
+                return False
 
         command = [
             str(self.server_path),
@@ -321,32 +390,44 @@ class DistributedLlamaServer:
         logger.info(f"RPC addresses: {self.rpc_addresses}")
         logger.info(f"Tensor split: {self.tensor_split}")
 
-        try:
-            self.process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-            )
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    logger.info(f"Retry attempt {attempt + 1}/{max_retries}...")
+                    time.sleep(5)
 
-            start_time = time.time()
-            while time.time() - start_time < DISTRIBUTED_SERVER_STARTUP_TIMEOUT:
-                if self.process.poll() is not None:
-                    stderr_output = ""
-                    if self.process.stderr:
-                        stderr_output = self.process.stderr.read().decode()
-                    logger.error(f"Distributed llama-server died: {stderr_output[:500]}")
-                    self.process = None
-                    return False
+                self.process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                )
 
-                if self._is_healthy():
-                    logger.info(f"Distributed llama-server started on port {self.port}")
-                    return True
+                start_time = time.time()
+                while time.time() - start_time < DISTRIBUTED_SERVER_STARTUP_TIMEOUT:
+                    if self.process.poll() is not None:
+                        stderr_output = ""
+                        if self.process.stderr:
+                            stderr_output = self.process.stderr.read().decode()
+                        logger.warning(f"Distributed llama-server died (attempt {attempt + 1}): {stderr_output[:500]}")
+                        self.process = None
+                        break
 
-                time.sleep(1)
-                logger.debug(f"Waiting for server... ({int(time.time() - start_time)}s)")
+                    if self._is_healthy():
+                        logger.info(f"Distributed llama-server started on port {self.port}")
+                        return True
 
-            logger.error(f"Server failed to start within {DISTRIBUTED_SERVER_STARTUP_TIMEOUT}s")
+                    time.sleep(1)
+                    logger.debug(f"Waiting for server... ({int(time.time() - start_time)}s)")
+
+                if self.process is not None:
+                    logger.warning(f"Server startup timeout (attempt {attempt + 1})")
+                    self.stop()
+
+            except Exception as error:
+                logger.warning(f"Failed to start distributed llama-server (attempt {attempt + 1}): {error}")
+
+        logger.error(f"Server failed to start after {max_retries} attempts")
             self.stop()
             return False
 
