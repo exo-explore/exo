@@ -135,6 +135,7 @@ extension ClusterState {
         var totalCompletedFiles = 0
         var totalFileCount = 0
         var hasActiveDownload = false
+        var activeNodeCount = 0
 
         for nodeId in nodeIds {
             guard let nodeDownloads = downloads[nodeId] else { continue }
@@ -149,16 +150,23 @@ extension ClusterState {
                 }
                 totalCompletedFiles += progress.completedFiles ?? 0
                 totalFileCount += progress.totalFiles ?? 0
+                activeNodeCount += 1
             }
         }
 
         guard hasActiveDownload else { return nil }
 
+        // Mean across active nodes to avoid inflated aggregates
+        let divisor = max(activeNodeCount, 1)
+        let meanDownloaded = Int64(Double(totalDownloaded) / Double(divisor))
+        let meanSpeed = totalSpeed / Double(divisor)
+        let etaSeconds = meanSpeed > 0 ? (Double(totalSize) - Double(meanDownloaded)) / meanSpeed : nil
+
         return DownloadProgressViewModel(
-            downloadedBytes: totalDownloaded,
+            downloadedBytes: meanDownloaded,
             totalBytes: totalSize,
-            speedBytesPerSecond: totalSpeed,
-            etaSeconds: maxEtaMs > 0 ? Double(maxEtaMs) / 1000.0 : nil,
+            speedBytesPerSecond: meanSpeed,
+            etaSeconds: etaSeconds,
             completedFiles: totalCompletedFiles,
             totalFiles: totalFileCount
         )   
