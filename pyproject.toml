@@ -16,7 +16,6 @@ dependencies = [
     "filelock>=3.18.0",
     "aiosqlite>=0.21.0",
     "networkx>=3.5",
-    "pathlib>=1.0.1",
     "protobuf>=6.32.0",
     "rich>=14.1.0",
     "rustworkx>=0.17.1",
