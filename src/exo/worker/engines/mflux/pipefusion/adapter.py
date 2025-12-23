@@ -217,8 +217,8 @@ class ModelAdapter(Protocol):
     def get_blocks(self) -> list[tuple[Any, BlockType]]:
         """Get all transformer blocks in execution order with their types.
 
-        This method provides a unified view of all blocks, regardless of their
-        specific type (joint, single, unified). New model adapters can override
+        This method provides a combined view of all blocks, regardless of their
+        specific type (joint or single). New model adapters can override
         this to return blocks in their native arrangement.
 
         Returns:
@@ -242,15 +242,15 @@ class ModelAdapter(Protocol):
     ) -> tuple[mx.array, mx.array | None]:
         """Apply any transformer block type.
 
-        This unified method dispatches to the appropriate block-specific logic
+        This method dispatches to the appropriate block-specific logic
         based on block_type. New model adapters can implement this directly
         without needing separate apply_joint_block/apply_single_block methods.
 
         Args:
             block: The transformer block
-            block_type: Type of block (JOINT, SINGLE, or UNIFIED)
-            hidden_states: Image hidden states (or concatenated for SINGLE/UNIFIED)
-            encoder_hidden_states: Text hidden states (None for SINGLE/UNIFIED)
+            block_type: Type of block (JOINT or SINGLE)
+            hidden_states: Image hidden states (or concatenated for SINGLE)
+            encoder_hidden_states: Text hidden states (None for SINGLE)
             text_embeddings: Conditioning embeddings
             rotary_embeddings: Rotary position embeddings
             kv_cache: KV cache (None if not using cache)
@@ -262,7 +262,7 @@ class ModelAdapter(Protocol):
         Returns:
             Tuple of (hidden_states, encoder_hidden_states or None)
             - For JOINT blocks: (image_hidden, text_hidden)
-            - For SINGLE/UNIFIED blocks: (concatenated_hidden, None)
+            - For SINGLE blocks: (concatenated_hidden, None)
         """
         ...
 
@@ -271,10 +271,10 @@ class ModelAdapter(Protocol):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
     ) -> mx.array:
-        """Merge image and text streams for transition to single/unified blocks.
+        """Merge image and text streams for transition to single blocks.
 
         This is called at the transition point from joint blocks (which process
-        image and text separately) to single/unified blocks (which process them
+        image and text separately) to single blocks (which process them
         together). Override to customize the merge strategy.
 
         Args:

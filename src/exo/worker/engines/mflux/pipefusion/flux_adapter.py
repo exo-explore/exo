@@ -219,7 +219,7 @@ class FluxModelAdapter:
                 patch_end=patch_end,
             )
             return hidden_out, enc_out
-        elif block_type == BlockType.SINGLE:
+        else:  # block_type == BlockType.SINGLE
             hidden_out = self.apply_single_block(
                 block=cast(SingleBlockInterface, block),
                 hidden_states=hidden_states,
@@ -232,10 +232,6 @@ class FluxModelAdapter:
                 patch_end=patch_end,
             )
             return hidden_out, None
-        else:
-            raise NotImplementedError(
-                f"Block type {block_type} not supported by FluxModelAdapter"
-            )
 
     def merge_streams(
         self,

@@ -144,10 +144,10 @@ class SingleBlockWrapper:
 
 
 class BlockWrapper:
-    """Unified wrapper for any transformer block type.
+    """Generic wrapper for any transformer block type.
 
-    This wrapper provides a consistent interface for all block types (JOINT, SINGLE,
-    UNIFIED) by delegating to the model adapter's apply_block() method. This enables
+    This wrapper provides a consistent interface for all block types (JOINT, SINGLE)
+    by delegating to the model adapter's apply_block() method. This enables
     model-agnostic block processing in DistributedDenoising.
 
     The wrapper is created once at initialization and reused across calls.
@@ -165,7 +165,7 @@ class BlockWrapper:
 
         Args:
             block: The transformer block to wrap
-            block_type: Type of block (JOINT, SINGLE, or UNIFIED)
+            block_type: Type of block (JOINT or SINGLE)
             adapter: Model adapter for model-specific operations
         """
         self.block = block
@@ -187,8 +187,8 @@ class BlockWrapper:
         """Apply the block.
 
         Args:
-            hidden_states: Image hidden states (or concatenated for SINGLE/UNIFIED)
-            encoder_hidden_states: Text hidden states (None for SINGLE/UNIFIED)
+            hidden_states: Image hidden states (or concatenated for SINGLE)
+            encoder_hidden_states: Text hidden states (None for SINGLE)
             text_embeddings: Conditioning embeddings
             rotary_embeddings: Rotary position embeddings
             text_seq_len: Text sequence length
@@ -200,7 +200,7 @@ class BlockWrapper:
         Returns:
             Tuple of (hidden_states, encoder_hidden_states or None)
             - For JOINT blocks: (image_hidden, text_hidden)
-            - For SINGLE/UNIFIED blocks: (concatenated_hidden, None)
+            - For SINGLE blocks: (concatenated_hidden, None)
         """
         return self.adapter.apply_block(
             block=self.block,
