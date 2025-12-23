@@ -331,27 +331,6 @@ def make_kv_cache(
     assert hasattr(model, "layers")
 
     if max_kv_size is None:
-        # Check for features incompatible with Quantized SDPA in mlx_lm
-        model_config: Any = getattr(model, "config", None)  
-        if model_config is None:
-             model_config = getattr(model, "args", None)
-        if model_config is None and hasattr(model, "model"):
-             model_config = getattr(model.model, "config", getattr(model.model, "args", None))  # type: ignore
-
-        # check for attention sink
-        has_attention_sink = model_config is not None and getattr(model_config, "attention_sink", None) is not None  # type: ignore
-        
-        # Check for sliding window
-        sliding_window = getattr(model_config, "sliding_window", None)  # type: ignore
-        has_sliding_window = sliding_window is not None and isinstance(sliding_window, int) and sliding_window > 0
-
-        if KV_CACHE_BITS is not None and (has_attention_sink or has_sliding_window):
-            reason: list[str] = []
-            if has_attention_sink: reason.append("attention_sink")
-            if has_sliding_window: reason.append("sliding_window")
-            logger.info(f"Disabling KV cache quantization (model has incompatible features: {', '.join(reason)})")
-            return [KVCache() for _ in model.layers]
-
         if KV_CACHE_BITS is None:
             logger.info("Using default KV cache")
             return [KVCache() for _ in model.layers]
