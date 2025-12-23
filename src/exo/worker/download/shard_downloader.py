@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from copy import copy
 from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator, Callable
@@ -12,7 +13,7 @@ from exo.shared.types.worker.shards import (
 from exo.worker.download.download_utils import RepoDownloadProgress
 
 
-# TODO: the PipelineShardMetadata getting reinstantiated is a bit messy. Shoudl this be a classmethod?
+# TODO: the PipelineShardMetadata getting reinstantiated is a bit messy. Should this be a classmethod?
 class ShardDownloader(ABC):
     @abstractmethod
     async def ensure_shard(
@@ -43,34 +44,7 @@ class ShardDownloader(ABC):
         Yields:
             tuple[Path, RepoDownloadProgress]: The path and progress of a shard download.
         """
-        yield (
-            Path("/tmp/noop_shard"),
-            RepoDownloadProgress(
-                repo_id="noop",
-                repo_revision="noop",
-                shard=PipelineShardMetadata(
-                    model_meta=ModelMetadata(
-                        model_id=ModelId("noop"),
-                        pretty_name="noope",
-                        storage_size=Memory.from_bytes(0),
-                        n_layers=1,
-                    ),
-                    device_rank=0,
-                    world_size=1,
-                    start_layer=0,
-                    end_layer=1,
-                    n_layers=1,
-                ),
-                completed_files=0,
-                total_files=0,
-                downloaded_bytes=Memory.from_bytes(0),
-                downloaded_bytes_this_session=Memory.from_bytes(0),
-                total_bytes=Memory.from_bytes(0),
-                overall_speed=0,
-                overall_eta=timedelta(seconds=0),
-                status="complete",
-            ),
-        )
+        yield (Path("/tmp/noop_shard"), NOOP_DOWNLOAD_PROGRESS)
 
     @abstractmethod
     async def get_shard_download_status_for_shard(
@@ -94,46 +68,41 @@ class NoopShardDownloader(ShardDownloader):
     ) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
         yield (
             Path("/tmp/noop_shard"),
-            RepoDownloadProgress(
-                repo_id="noop",
-                repo_revision="noop",
-                shard=PipelineShardMetadata(
-                    model_meta=ModelMetadata(
-                        model_id=ModelId("noop"),
-                        pretty_name="noope",
-                        storage_size=Memory.from_bytes(0),
-                        n_layers=1,
-                    ),
-                    device_rank=0,
-                    world_size=1,
-                    start_layer=0,
-                    end_layer=1,
-                    n_layers=1,
-                ),
-                completed_files=0,
-                total_files=0,
-                downloaded_bytes=Memory.from_bytes(0),
-                downloaded_bytes_this_session=Memory.from_bytes(0),
-                total_bytes=Memory.from_bytes(0),
-                overall_speed=0,
-                overall_eta=timedelta(seconds=0),
-                status="complete",
-            ),
+            NOOP_DOWNLOAD_PROGRESS,
         )
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata
     ) -> RepoDownloadProgress:
-        return RepoDownloadProgress(
-            repo_id="noop",
-            repo_revision="noop",
-            shard=shard,
-            completed_files=0,
-            total_files=0,
-            downloaded_bytes=Memory.from_bytes(0),
-            downloaded_bytes_this_session=Memory.from_bytes(0),
-            total_bytes=Memory.from_bytes(0),
-            overall_speed=0,
-            overall_eta=timedelta(seconds=0),
-            status="complete",
-        )
+        dp = copy(NOOP_DOWNLOAD_PROGRESS)
+        dp.shard = shard
+        return dp
+
+
+NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(
+    repo_id="noop",
+    repo_revision="noop",
+    shard=PipelineShardMetadata(
+        model_meta=ModelMetadata(
+            model_id=ModelId("noop"),
+            pretty_name="noope",
+            storage_size=Memory.from_bytes(0),
+            n_layers=1,
+            hidden_size=0,
+            supports_tensor=False,
+        ),
+        device_rank=0,
+        world_size=1,
+        start_layer=0,
+        end_layer=1,
+        n_layers=1,
+    ),
+    completed_files=0,
+    total_files=0,
+    downloaded_bytes=Memory.from_bytes(0),
+    downloaded_bytes_this_session=Memory.from_bytes(0),
+    total_bytes=Memory.from_bytes(0),
+    overall_speed=0,
+    overall_eta=timedelta(seconds=0),
+    status="complete",
+)

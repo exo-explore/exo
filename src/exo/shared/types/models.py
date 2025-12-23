@@ -14,3 +14,5 @@ class ModelMetadata(CamelCaseModel):
     pretty_name: str
     storage_size: Memory
     n_layers: PositiveInt
+    hidden_size: PositiveInt
+    supports_tensor: bool

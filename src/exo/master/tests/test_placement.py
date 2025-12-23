@@ -50,6 +50,8 @@ def model_meta() -> ModelMetadata:
         storage_size=Memory.from_kb(1000),
         pretty_name="Test Model",
         n_layers=10,
+        hidden_size=10,
+        supports_tensor=True,
     )
 
 
@@ -140,6 +142,8 @@ def test_get_instance_placements_one_node_exact_fit(
             storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
     )
     placements = place_instance(cic, topology, {})
@@ -165,6 +169,8 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
             storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
     )
     placements = place_instance(cic, topology, {})
@@ -190,6 +196,8 @@ def test_get_instance_placements_one_node_not_fit(
             storage_size=Memory.from_kb(1001),
             pretty_name="Test Model",
             n_layers=10,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
     )
 
