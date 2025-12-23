@@ -2,6 +2,7 @@
 """
 Test script to verify custom model registration works correctly.
 """
+import argparse
 import asyncio
 import json
 import os
@@ -13,20 +14,19 @@ from exo.shared.models.model_cards import get_model_cards, MODEL_CARDS
 from exo.worker.download.impl_shard_downloader import build_base_shard
 
 
-async def test_custom_model_registration():
+async def test_custom_model_registration(model_id: str, exo_home: str | None = None):
     """Test that a custom model is registered and persisted."""
     
-    # Test model ID
-    test_model_id = "mlx-community/gpt-oss-20b-MXFP4-Q8"
+    test_model_id = model_id
     
     print(f"\n{'='*70}")
     print(f"Testing custom model registration for: {test_model_id}")
     print(f"{'='*70}\n")
     
     # Get the persistent storage path
-    exo_home = os.environ.get("EXO_HOME")
-    if exo_home:
-        storage_path = Path(exo_home) / "custom_models.json"
+    env_exo_home = exo_home or os.environ.get("EXO_HOME")
+    if env_exo_home:
+        storage_path = Path(env_exo_home) / "custom_models.json"
     else:
         storage_path = Path.home() / ".exo" / "custom_models.json"
     
@@ -93,7 +93,11 @@ async def test_custom_model_registration():
     
     # Reset the loaded flag to force a reload
     import exo.shared.models.model_cards as mc
-    mc.custom_models_loaded = False
+    # reset the loaded flag (handle both older and newer names)
+    if hasattr(mc, "_custom_models_loaded"):
+        setattr(mc, "_custom_models_loaded", False)
+    elif hasattr(mc, "custom_models_loaded"):
+        setattr(mc, "custom_models_loaded", False)
     
     # Load from persistent storage
     model_cards = get_model_cards()
@@ -116,5 +120,12 @@ async def test_custom_model_registration():
 
 
 if __name__ == "__main__":
-    success = asyncio.run(test_custom_model_registration())
+    parser = argparse.ArgumentParser(description="Register and persist custom model test")
+    parser.add_argument("--model", type=str, required=False, default="mlx-community/Qwen3-4B-Instruct-2507-4bit")
+    parser.add_argument("--exo-home", type=str, required=False, default=None, help="Override EXO_HOME for test persistence")
+    args = parser.parse_args()
+
+    model_arg: str = cast(str, args.model)
+    exo_home_arg: str | None = cast(str | None, args.exo_home)
+    success = asyncio.run(test_custom_model_registration(model_arg, exo_home_arg))
     exit(0 if success else 1)
