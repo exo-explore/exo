@@ -129,7 +129,7 @@ def mlx_distributed_init(
             group = mx.distributed.init(backend="ring", strict=True)
 
         case MlxJacclInstance(
-            ibv_devices=ibv_devices, ibv_coordinators=ibv_coordinators
+            ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
         ):
             # Use RDMA connectivity matrix
             devices_file = f"./hosts_{rank}.json"
@@ -138,13 +138,13 @@ def mlx_distributed_init(
             with open(devices_file, "w") as f:
                 _ = f.write(ibv_devices_json)
 
-            ibv_coordinator = ibv_coordinators[bound_instance.bound_node_id]
+            jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
             logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
-            logger.info(f"rank {rank} MLX_IBV_COORDINATOR: {ibv_coordinator}")
+            logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
             os.environ["MLX_IBV_DEVICES"] = devices_file
             os.environ["MLX_RANK"] = str(rank)
-            os.environ["MLX_IBV_COORDINATOR"] = ibv_coordinator
+            os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
             group = mx.distributed.init(backend="jaccl", strict=True)
 
     logger.info(f"Rank {rank} mlx distributed initialization complete")
