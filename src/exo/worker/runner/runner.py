@@ -49,7 +49,7 @@ from exo.worker.engines.image import (
     generate_image,
     warmup_image_generator,
 )
-from exo.worker.engines.mflux.utils_mflux import initialize_mflux
+from exo.worker.engines.image import initialize_image_model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -138,7 +138,7 @@ def main(
                             ModelTask.TextToImage in model_tasks
                             or ModelTask.ImageToImage in model_tasks
                         ):
-                            model = initialize_mflux(bound_instance)
+                            model = initialize_image_model(bound_instance)
                         else:
                             raise ValueError(
                                 f"Unknown model task(s): {model_card.tasks}"
