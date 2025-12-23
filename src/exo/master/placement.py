@@ -64,7 +64,6 @@ def place_instance(
         candidate_cycles, command.model_meta.storage_size
     )
     if not cycles_with_sufficient_memory:
-        logger.error("Not enough memory in any cycle")
         raise ValueError("No cycles found with sufficient memory")
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
