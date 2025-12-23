@@ -2,15 +2,14 @@ import os
 import sys
 from pathlib import Path
 
-EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
+_EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
 
 def _get_xdg_dir(env_var: str, fallback: str) -> Path:
-    """Get XDG directory with fallback. On non-Linux platforms, use ~/.exo."""
+    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
 
-    # Setting EXO_HOME takes precedence over setting XDG_HOME
-    if EXO_HOME_ENV is not None:
-        return Path.home() / EXO_HOME_ENV
+    if _EXO_HOME_ENV is not None:
+        return Path.home() / _EXO_HOME_ENV
 
     if sys.platform != "linux":
         return Path.home() / ".exo"
@@ -26,9 +25,11 @@ EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
 EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
 
 # Models directory (data)
-EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR")
+_EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR", None)
 EXO_MODELS_DIR = (
-    Path(EXO_MODELS_DIR_ENV) if EXO_MODELS_DIR_ENV else EXO_DATA_HOME / "models"
+    EXO_DATA_HOME / "models"
+    if _EXO_MODELS_DIR_ENV is None
+    else Path.home() / _EXO_MODELS_DIR_ENV
 )
 
 # Log files (data/logs or cache)
