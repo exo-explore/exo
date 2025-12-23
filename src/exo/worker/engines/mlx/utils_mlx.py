@@ -153,7 +153,9 @@ def initialize_mlx(
     # TODO: pass in seed from params
     mx.random.seed(42)
 
-    assert len(bound_instance.instance.shard_assignments.node_to_runner) > 1, "Tried to initialize mlx for a single node instance"
+    assert len(bound_instance.instance.shard_assignments.node_to_runner) > 1, (
+        "Tried to initialize mlx for a single node instance"
+    )
     return mlx_distributed_init(bound_instance)
 
 

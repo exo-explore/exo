@@ -99,7 +99,12 @@ def main(
                         current_status = RunnerConnected()
 
                     # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-                    case LoadModel() if isinstance(current_status, RunnerConnected) and group is not None or isinstance(current_status, RunnerIdle) and group is None:
+                    case LoadModel() if (
+                        isinstance(current_status, RunnerConnected)
+                        and group is not None
+                        or isinstance(current_status, RunnerIdle)
+                        and group is None
+                    ):
                         current_status = RunnerLoading()
                         logger.info("runner loading")
                         event_sender.send(

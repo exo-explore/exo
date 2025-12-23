@@ -1,13 +1,15 @@
 # Check tasks are complete before runner is ever ready.
 from collections.abc import Iterable
+from typing import Callable
+
 import pytest
 
 import exo.worker.runner.runner as mlx_runner
 from exo.shared.types.api import ChatCompletionMessage
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
-    Event,
     ChunkGenerated,
+    Event,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -19,19 +21,19 @@ from exo.shared.types.tasks import (
     LoadModel,
     Shutdown,
     StartWarmup,
-    TaskStatus,
     Task,
+    TaskStatus,
 )
 from exo.shared.types.worker.runner_response import GenerationResponse
 from exo.shared.types.worker.runners import (
+    RunnerConnected,
+    RunnerConnecting,
     RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
-    RunnerConnecting,
-    RunnerConnected,
     RunnerWarmingUp,
 )
 from exo.utils.channels import mp_channel
@@ -49,6 +51,16 @@ from ...constants import (
     WARMUP_TASK_ID,
 )
 from ..conftest import get_bound_mlx_ring_instance
+
+
+def make_nothin[T, U, V](res: T) -> Callable[[], T]:
+    def nothin(*_1: U, **_2: V) -> T:
+        return res
+
+    return nothin
+
+
+nothin = make_nothin(None)
 
 
 INIT_TASK = ConnectToGroup(
@@ -96,16 +108,12 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", lambda bound_instance: object())
-    monkeypatch.setattr(
-        mlx_runner,
-        "load_mlx_items",
-        lambda bound_instance, group: (object(), object(), object()),
-    )
-    monkeypatch.setattr(mlx_runner, "warmup_inference", lambda **kwargs: 1)
-    monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", lambda *_: None)
+    monkeypatch.setattr(mlx_runner, "initialize_mlx", nothin)
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", nothin)
+    monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
+    monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
 
-    def fake_generate(model, tokenizer, sampler, task):
+    def fake_generate(*_: object):
         yield GenerationResponse(token=0, text="hi", finish_reason="stop")
 
     monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
