@@ -39,6 +39,7 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
+    load_mlx_items,
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
@@ -66,9 +67,10 @@ def main(
         model = None
         tokenizer = None
         sampler = None
+        group = None
 
         current_status: RunnerStatus = RunnerIdle()
-        logger.info("runner waiting for model")
+        logger.info("runner created")
         event_sender.send(
             RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
         )
@@ -81,7 +83,9 @@ def main(
                 )
                 event_sender.send(TaskAcknowledged(task_id=task.task_id))
                 match task:
-                    case ConnectToGroup() if isinstance (RunnerIdle, RunnerFailed):
+                    case ConnectToGroup() if isinstance(
+                        current_status, (RunnerIdle, RunnerFailed)
+                    ):
                         logger.info("runner connecting")
                         current_status = RunnerConnecting()
                         event_sender.send(
@@ -89,15 +93,12 @@ def main(
                                 runner_id=runner_id, runner_status=current_status
                             )
                         )
-                        model, tokenizer, sampler = initialize_mlx(bound_instance)
+                        group = initialize_mlx(bound_instance)
 
                         logger.info("runner connected")
                         current_status = RunnerConnected()
 
-
-                    case LoadModel() if isinstance(
-                        current_status, RunnerConnected
-                    ):
+                    case LoadModel() if isinstance(current_status, RunnerConnected):
                         current_status = RunnerLoading()
                         logger.info("runner loading")
                         event_sender.send(
@@ -106,7 +107,9 @@ def main(
                             )
                         )
 
-                        model, tokenizer, sampler = initialize_mlx(bound_instance)
+                        model, tokenizer, sampler = load_mlx_items(
+                            bound_instance, group
+                        )
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")

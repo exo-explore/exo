@@ -334,6 +334,7 @@ dependencies = [
     { name = "hypercorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "mlx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "mlx", extra = ["cpu"], marker = "sys_platform == 'linux'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "networkx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -375,6 +376,7 @@ requires-dist = [
     { name = "hypercorn", specifier = ">=0.18.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mlx", specifier = ">=0.30.1" },
+    { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = ">=0.30.1" },
     { name = "mlx-lm", specifier = ">=0.28.3" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "protobuf", specifier = ">=6.32.0" },
@@ -799,6 +801,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/56/a7/49e41fb141de95b6a376091a963c737839c9cda04e423c67f57460a50458/mlx-0.30.1-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:cfba13e2a52255d663a1ad62f0f83eb3991e42147edf9a8d38cdd224e48ca49b", size = 570406, upload-time = "2025-12-18T00:15:57.177Z" },
     { url = "https://files.pythonhosted.org/packages/73/99/a43cb112167cf865c069f5e108ae42f5314663930ff3dd86c2d23d984191/mlx-0.30.1-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:bebfec377208eb29cc88aa86c897c7446aa0984838669e138f273f9225d627ff", size = 646461, upload-time = "2025-12-18T01:55:55.285Z" },
     { url = "https://files.pythonhosted.org/packages/d4/ff/1e1968f107b4221a98dc26832586b1f646b27ddf3e55c95051c09d751f0a/mlx-0.30.1-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:d18012d5cf0f013bc4a405cfd1e9d2d28e798f4d2dc4f15aa0fbffff73c02ba2", size = 687114, upload-time = "2025-12-18T01:55:56.506Z" },
+]
+
+[package.optional-dependencies]
+cpu = [
+    { name = "mlx-cpu", marker = "sys_platform == 'linux'" },
+]
+
+[[package]]
+name = "mlx-cpu"
+version = "0.29.3"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/ff/474abb13000ca641985084055c145a70c1214973d867979ebfe7420c2df2/mlx_cpu-0.29.3-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:e76763434a9d1d878bb0d6dd965ad319a0a63b0b1d69314e4c97d8332f5e7170", size = 10225301, upload-time = "2025-10-17T19:24:03.544Z" },
 ]
 
 [[package]]

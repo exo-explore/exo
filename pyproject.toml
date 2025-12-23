@@ -30,6 +30,7 @@ dependencies = [
     "anyio==4.11.0",
     "bidict>=0.23.1",
     "mlx>=0.30.1",
+    "mlx[cpu]>=0.30.1; sys_platform == 'linux'",
     "mlx-lm>=0.28.3",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
