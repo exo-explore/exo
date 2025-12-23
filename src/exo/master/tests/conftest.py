@@ -6,6 +6,7 @@ from exo.shared.types.common import NodeId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     MemoryPerformanceProfile,
+    MemoryPressureLevel,
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
@@ -14,7 +15,11 @@ from exo.shared.types.topology import Connection, ConnectionProfile, NodeInfo
 
 @pytest.fixture
 def create_node():
-    def _create_node(memory: int, node_id: NodeId | None = None) -> NodeInfo:
+    def _create_node(
+        memory: int,
+        node_id: NodeId | None = None,
+        pressure_level: MemoryPressureLevel = MemoryPressureLevel.NORMAL,
+    ) -> NodeInfo:
         if node_id is None:
             node_id = NodeId()
         return NodeInfo(
@@ -28,6 +33,7 @@ def create_node():
                     ram_available=memory,
                     swap_total=1000,
                     swap_available=1000,
+                    pressure_level=pressure_level,
                 ),
                 network_interfaces=[],
                 system=SystemPerformanceProfile(),

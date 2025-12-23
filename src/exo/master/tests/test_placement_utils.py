@@ -13,7 +13,11 @@ from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
-from exo.shared.types.profiling import NetworkInterfaceInfo, NodePerformanceProfile
+from exo.shared.types.profiling import (
+    MemoryPressureLevel,
+    NetworkInterfaceInfo,
+    NodePerformanceProfile,
+)
 from exo.shared.types.topology import Connection, NodeInfo
 from exo.shared.types.worker.shards import Sharding
 
@@ -395,3 +399,193 @@ def test_get_mlx_ibv_coordinators(
     assert coordinators[node_c_id] == (
         f"{conn_c_a.send_back_multiaddr.ip_address}:5000"
     ), "node_c should use the IP from conn_c_a"
+
+
+# ============================================================================
+# Memory Pressure-Aware Tests
+# ============================================================================
+
+
+def test_filter_cycles_excludes_critical_pressure_nodes(
+    topology: Topology,
+    create_node: Callable[..., NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    """Test that nodes under critical memory pressure are effectively excluded.
+
+    When a node is under critical pressure, its effective_available is 0,
+    so cycles containing it won't meet memory requirements.
+    """
+    # arrange
+    node1_id = NodeId()
+    node2_id = NodeId()
+
+    # Node 1 has plenty of memory but is under critical pressure
+    node1 = create_node(
+        1000 * 1024, node1_id, pressure_level=MemoryPressureLevel.CRITICAL
+    )
+    # Node 2 has normal pressure
+    node2 = create_node(
+        1000 * 1024, node2_id, pressure_level=MemoryPressureLevel.NORMAL
+    )
+
+    topology.add_node(node1)
+    topology.add_node(node2)
+
+    connection1 = create_connection(node1_id, node2_id)
+    connection2 = create_connection(node2_id, node1_id)
+
+    topology.add_connection(connection1)
+    topology.add_connection(connection2)
+
+    cycles = topology.get_cycles()
+
+    # act - require 1500KB which would normally be met by 2000KB total
+    # but node1's effective_available is 0 due to critical pressure
+    filtered_cycles = filter_cycles_by_memory(cycles, Memory.from_kb(1500))
+
+    # assert - cycle should be excluded because effective memory is only 1000KB
+    assert len(filtered_cycles) == 0
+
+
+def test_filter_cycles_with_warn_pressure_uses_half_memory(
+    topology: Topology,
+    create_node: Callable[..., NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    """Test that nodes under warning pressure contribute only half their memory.
+
+    When a node is under warning pressure, effective_available is halved.
+    """
+    # arrange
+    node1_id = NodeId()
+    node2_id = NodeId()
+
+    # Node 1 has 2000KB but is under warning pressure (effective = 1000KB)
+    node1 = create_node(2000 * 1024, node1_id, pressure_level=MemoryPressureLevel.WARN)
+    # Node 2 has 1000KB with normal pressure (effective = 1000KB)
+    node2 = create_node(
+        1000 * 1024, node2_id, pressure_level=MemoryPressureLevel.NORMAL
+    )
+
+    topology.add_node(node1)
+    topology.add_node(node2)
+
+    connection1 = create_connection(node1_id, node2_id)
+    connection2 = create_connection(node2_id, node1_id)
+
+    topology.add_connection(connection1)
+    topology.add_connection(connection2)
+
+    cycles = topology.get_cycles()
+
+    # act - require 2000KB
+    # raw available: 3000KB (would pass)
+    # effective available: 1000KB + 1000KB = 2000KB (should pass)
+    filtered_cycles = filter_cycles_by_memory(cycles, Memory.from_kb(2000))
+
+    # assert - cycle should pass with exactly 2000KB effective
+    assert len(filtered_cycles) == 1
+
+    # act - require 2001KB (should fail)
+    filtered_cycles_fail = filter_cycles_by_memory(cycles, Memory.from_kb(2001))
+    assert len(filtered_cycles_fail) == 0
+
+
+def test_filter_cycles_normal_pressure_uses_full_memory(
+    topology: Topology,
+    create_node: Callable[..., NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    """Test that nodes under normal pressure contribute their full memory."""
+    # arrange
+    node1_id = NodeId()
+    node2_id = NodeId()
+
+    node1 = create_node(
+        1000 * 1024, node1_id, pressure_level=MemoryPressureLevel.NORMAL
+    )
+    node2 = create_node(
+        1000 * 1024, node2_id, pressure_level=MemoryPressureLevel.NORMAL
+    )
+
+    topology.add_node(node1)
+    topology.add_node(node2)
+
+    connection1 = create_connection(node1_id, node2_id)
+    connection2 = create_connection(node2_id, node1_id)
+
+    topology.add_connection(connection1)
+    topology.add_connection(connection2)
+
+    cycles = topology.get_cycles()
+
+    # act - require exactly 2000KB
+    filtered_cycles = filter_cycles_by_memory(cycles, Memory.from_kb(2000))
+
+    # assert - cycle should pass with exactly 2000KB
+    assert len(filtered_cycles) == 1
+
+
+def test_shard_assignments_respects_pressure(
+    topology: Topology,
+    create_node: Callable[..., NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    """Test that shard assignments use effective_available for layer distribution.
+
+    Nodes under pressure should receive fewer layers proportional to their
+    effective available memory.
+    """
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+
+    # Node A: 1000KB with warning pressure -> 500KB effective
+    node_a = create_node(
+        1000 * 1024, node_a_id, pressure_level=MemoryPressureLevel.WARN
+    )
+    # Node B: 500KB with normal pressure -> 500KB effective
+    node_b = create_node(
+        500 * 1024, node_b_id, pressure_level=MemoryPressureLevel.NORMAL
+    )
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+
+    topology.add_connection(create_connection(node_a_id, node_b_id))
+    topology.add_connection(create_connection(node_b_id, node_a_id))
+
+    model_meta = ModelMetadata(
+        model_id=ModelId("test-model"),
+        pretty_name="Test Model",
+        n_layers=10,
+        storage_size=Memory.from_kb(500),
+    )
+
+    cycles = topology.get_cycles()
+    assert len(cycles) == 1
+    selected_cycle = cycles[0]
+
+    # act
+    shard_assignments = get_shard_assignments(
+        model_meta, selected_cycle, Sharding.Pipeline
+    )
+
+    # assert - both nodes have same effective memory (500KB each)
+    # so layers should be split evenly (5 each)
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+
+    # With equal effective memory, layers should be equal (5 each)
+    assert layers_a == 5
+    assert layers_b == 5

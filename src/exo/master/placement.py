@@ -87,7 +87,7 @@ def place_instance(
         cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
             (
-                node.node_profile.memory.ram_available
+                node.node_profile.memory.effective_available
                 for node in cycle
                 if node.node_profile is not None
             ),
