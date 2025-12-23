@@ -112,11 +112,12 @@ def mlx_distributed_init(
     try:
         # TODO: singleton instances
         match bound_instance.instance:
-            case MlxRingInstance(hosts=hosts):
+            case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
                 coordination_file = (
                     f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
                 )
-                hosts_json = HostList.from_hosts(hosts).model_dump_json()
+                hosts_for_node = hosts_by_node[bound_instance.bound_node_id]
+                hosts_json = HostList.from_hosts(hosts_for_node).model_dump_json()
 
                 with open(coordination_file, "w") as f:
                     _ = f.write(hosts_json)

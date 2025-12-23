@@ -215,9 +215,11 @@ def get_mlx_ibv_devices_matrix(
                 continue
 
             # Find the IP J uses to talk to I
-            for connection_ip in _find_connection_ip(node_j, node_i, cycle_digraph):
+            for connection_ip, _ in _find_connection_ip(node_j, node_i, cycle_digraph):
                 # This is a local IP on I, which is attached to an interface: find that interface
-                if interface_name := _find_interface_name_for_ip(connection_ip, node_i):
+                if interface_name := _find_rdma_interface_name_for_ip(
+                    connection_ip, node_i
+                ):
                     matrix[i][j] = interface_name
                     logger.info(
                         f"Interface name for {connection_ip} on {node_i.node_id}: {interface_name}"
@@ -238,17 +240,17 @@ def _find_connection_ip(
     node_i: NodeInfo,
     node_j: NodeInfo,
     cycle_digraph: Topology,
-) -> Generator[str]:
-    """Find all IP addresses that connect node i to node j."""
+) -> Generator[tuple[str, bool]]:
+    """Find all IP addresses that connect node i to node j, with thunderbolt flag."""
     for connection in cycle_digraph.list_connections():
         if (
             connection.local_node_id == node_i.node_id
             and connection.send_back_node_id == node_j.node_id
         ):
-            yield connection.send_back_multiaddr.ip_address
+            yield connection.send_back_multiaddr.ip_address, connection.is_thunderbolt()
 
 
-def _find_interface_name_for_ip(
+def _find_rdma_interface_name_for_ip(
     ip_address: str,
     node_info: NodeInfo,
 ) -> str | None:
@@ -269,6 +271,109 @@ def _find_interface_name_for_ip(
     return None
 
 
+def _find_interface_name_for_ip(
+    ip_address: str,
+    node_info: NodeInfo,
+) -> str | None:
+    """Find the interface name for an IP address on a node (any interface)."""
+    if node_info.node_profile is None:
+        return None
+
+    for interface in node_info.node_profile.network_interfaces:
+        if interface.ip_address == ip_address:
+            return interface.name
+
+    return None
+
+
+def _find_ip_prioritised(
+    node: NodeInfo, other_node: NodeInfo, cycle_digraph: Topology
+) -> str | None:
+    # TODO: Actually prioritize in the correct Ethernet > Wifi > Non-TB > TB order.
+    """Find an IP address between nodes with prioritization.
+
+    Priority order:
+    1. en0 (Ethernet on Mac Studio, WiFi on MacBook)
+    2. en1 (WiFi on Mac Studio, Ethernet on MacBook)
+    3. Non-Thunderbolt connections
+    4. Any other IP address
+    """
+    ips = list(_find_connection_ip(node, other_node, cycle_digraph))
+    # We expect a unique iface -> ip mapping
+    iface_map = {_find_interface_name_for_ip(ip, other_node): ip for ip, _ in ips}
+
+    en0_ip = iface_map.get("en0")
+    if en0_ip:
+        return en0_ip
+
+    en1_ip = iface_map.get("en1")
+    if en1_ip:
+        return en1_ip
+
+    non_thunderbolt_ip = next(
+        (ip for (ip, is_thunderbolt) in ips if not is_thunderbolt), None
+    )
+
+    if non_thunderbolt_ip:
+        return non_thunderbolt_ip
+
+    if ips:
+        return ips[0][0]
+
+    return None
+
+
+def get_mlx_ring_hosts_by_node(
+    selected_cycle: list[NodeInfo],
+    cycle_digraph: Topology,
+    ephemeral_port: int,
+) -> dict[NodeId, list[Host]]:
+    """Generate per-node host lists for MLX ring backend.
+
+    Each node gets a list where:
+    - Self position: Host(ip="0.0.0.0", port=ephemeral_port)
+    - Left/right neighbors: actual connection IPs
+    - Non-neighbors: Host(ip="198.51.100.1", port=0) placeholder (RFC 5737 TEST-NET-2)
+    """
+    world_size = len(selected_cycle)
+    if world_size == 0:
+        return {}
+
+    hosts_by_node: dict[NodeId, list[Host]] = {}
+
+    for rank, node in enumerate(selected_cycle):
+        node_id = node.node_id
+        left_rank = (rank - 1) % world_size
+        right_rank = (rank + 1) % world_size
+
+        hosts_for_node: list[Host] = []
+
+        for idx, other_node in enumerate(selected_cycle):
+            if idx == rank:
+                hosts_for_node.append(Host(ip="0.0.0.0", port=ephemeral_port))
+                continue
+
+            if idx not in {left_rank, right_rank}:
+                # Placeholder IP from RFC 5737 TEST-NET-2
+                hosts_for_node.append(Host(ip="198.51.100.1", port=0))
+                continue
+
+            connection_ip = _find_ip_prioritised(node, other_node, cycle_digraph)
+            if connection_ip is None:
+                logger.warning(
+                    f"Failed to find prioritised connection IP between {node_id} and {other_node.node_id}"
+                )
+                raise ValueError(
+                    "MLX ring backend requires connectivity between neighbouring nodes"
+                )
+
+            hosts_for_node.append(Host(ip=connection_ip, port=ephemeral_port))
+
+        hosts_by_node[node_id] = hosts_for_node
+
+    return hosts_by_node
+
+
 def get_mlx_jaccl_coordinators(
     selected_cycle: list[NodeInfo],
     coordinator_port: int,
@@ -286,7 +391,7 @@ def get_mlx_jaccl_coordinators(
         if n.node_id == rank_0_node.node_id:
             return "0.0.0.0"
 
-        for ip in _find_connection_ip(n, rank_0_node, cycle_digraph):
+        for ip, _ in _find_connection_ip(n, rank_0_node, cycle_digraph):
             return ip
 
         logger.warning(
