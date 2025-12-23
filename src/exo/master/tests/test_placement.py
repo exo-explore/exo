@@ -437,7 +437,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     assert isinstance(instance, MlxJacclInstance)
 
     assert instance.ibv_devices is not None
-    assert instance.ibv_coordinators is not None
+    assert instance.jaccl_coordinators is not None
 
     matrix = instance.ibv_devices
     assert len(matrix) == 3
@@ -459,10 +459,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
     assert matrix[idx_c][idx_a] == "rdma_en3"
 
     # Verify coordinators are set for all nodes
-    assert len(instance.ibv_coordinators) == 3
+    assert len(instance.jaccl_coordinators) == 3
     for node_id in assigned_nodes:
-        assert node_id in instance.ibv_coordinators
-        coordinator = instance.ibv_coordinators[node_id]
+        assert node_id in instance.jaccl_coordinators
+        coordinator = instance.jaccl_coordinators[node_id]
         assert ":" in coordinator
         # Rank 0 node should use 0.0.0.0, others should use connection-specific IPs
         if node_id == assigned_nodes[0]:

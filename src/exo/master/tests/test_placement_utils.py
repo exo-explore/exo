@@ -5,7 +5,7 @@ import pytest
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
     get_hosts_from_subgraph,
-    get_mlx_ibv_coordinators,
+    get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_smallest_cycles,
 )
@@ -265,7 +265,7 @@ def test_get_hosts_from_subgraph(
         assert expected_host in hosts
 
 
-def test_get_mlx_ibv_coordinators(
+def test_get_mlx_jaccl_coordinators(
     topology: Topology,
     create_node: Callable[[int, NodeId | None], NodeInfo],
     create_connection: Callable[[NodeId, NodeId, int | None], Connection],
@@ -357,7 +357,7 @@ def test_get_mlx_ibv_coordinators(
     cycle = [node_a, node_b, node_c]
 
     # act
-    coordinators = get_mlx_ibv_coordinators(
+    coordinators = get_mlx_jaccl_coordinators(
         cycle, coordinator_port=5000, cycle_digraph=topology
     )
 

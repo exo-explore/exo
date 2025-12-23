@@ -269,12 +269,12 @@ def _find_interface_name_for_ip(
     return None
 
 
-def get_mlx_ibv_coordinators(
+def get_mlx_jaccl_coordinators(
     selected_cycle: list[NodeInfo],
     coordinator_port: int,
     cycle_digraph: Topology,
 ) -> dict[NodeId, str]:
-    """Get the coordinator addresses for MLX IBV (rank 0 device).
+    """Get the coordinator addresses for MLX Jaccl (rank 0 device).
 
     Select an IP address that each node can reach for the rank 0 node. Returns
     address in format "X.X.X.X:PORT" per node.
