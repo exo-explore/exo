@@ -5,8 +5,8 @@ from mlx_lm import stream_generate
 from mlx_lm.models.cache import KVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-# from exo.engines.mlx.cache import KVPrefixCache
 from exo.shared.types.api import ChatCompletionMessage, FinishReason
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -90,6 +90,7 @@ def mlx_generate(
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
     task: ChatCompletionTaskParams,
+    kv_prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
     # Currently we support chat-completion tasks only.
     logger.info(f"task_params: {task}")
@@ -99,9 +100,14 @@ def mlx_generate(
         chat_task_data=task,
     )
 
-    caches = make_kv_cache(model=model)
+    # Use prefix cache if available, otherwise create fresh cache
+    if kv_prefix_cache is not None:
+        caches = kv_prefix_cache.get_kv_cache(model, tokenizer, sampler, prompt)
+    else:
+        caches = make_kv_cache(model=model)
 
     max_tokens = task.max_tokens or MAX_TOKENS
+    generated_tokens = []
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
@@ -113,6 +119,7 @@ def mlx_generate(
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
+        generated_tokens.append(out.token)
         logger.info(out.text)
         if out.finish_reason is not None and out.finish_reason not in get_args(
             FinishReason
@@ -130,4 +137,9 @@ def mlx_generate(
         )
 
         if out.finish_reason is not None:
+            # Save cache for future prefix matching (clear first to keep only the last one)
+            if kv_prefix_cache is not None:
+                kv_prefix_cache.clear()
+                full_prompt = prompt + tokenizer.decode(generated_tokens)
+                kv_prefix_cache.add_kv_cache(tokenizer, full_prompt, caches)
             break
