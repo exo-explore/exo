@@ -316,8 +316,9 @@ class DiffusionRunner:
                 mode=BlockWrapperMode.CACHING,
             )
 
-        # Merge streams for single blocks
-        hidden_states = self.adapter.merge_streams(hidden_states, encoder_hidden_states)
+        # Merge streams for single blocks (only if we had joint blocks)
+        if self.joint_block_wrappers:
+            hidden_states = self.adapter.merge_streams(hidden_states, encoder_hidden_states)
 
         # Run through all single blocks
         for wrapper in self.single_block_wrappers:

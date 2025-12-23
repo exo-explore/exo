@@ -5,16 +5,11 @@ from pydantic import BaseModel
 
 
 class BlockType(Enum):
-    """Type of transformer block in the model architecture."""
-
-    JOINT = "joint"  # Separate image/text streams (Flux, Fibo)
-    SINGLE = "single"  # Concatenated streams (Flux, Fibo)
-    UNIFIED = "unified"  # Single block type handling both (Qwen)
+    JOINT = "joint"  # Separate image/text streams
+    SINGLE = "single"  # Concatenated streams
 
 
 class TransformerBlockConfig(BaseModel):
-    """Configuration for a transformer block type."""
-
     model_config = {"frozen": True}
 
     block_type: BlockType
@@ -23,11 +18,6 @@ class TransformerBlockConfig(BaseModel):
 
 
 class ImageModelConfig(BaseModel):
-    """Model-agnostic configuration for distributed image generation.
-
-    Encapsulates all model-specific constants needed for PipeFusion.
-    """
-
     model_config = {"frozen": True}
 
     # Model identification
@@ -35,9 +25,9 @@ class ImageModelConfig(BaseModel):
     model_variant: str  # "schnell", "dev", etc.
 
     # Architecture parameters
-    hidden_dim: int  # 3072 for most models
-    num_heads: int  # 24 for most models
-    head_dim: int  # 128 for most models
+    hidden_dim: int
+    num_heads: int
+    head_dim: int
 
     # Block configuration - ordered sequence of block types
     block_configs: tuple[TransformerBlockConfig, ...]
@@ -70,13 +60,6 @@ class ImageModelConfig(BaseModel):
         """Number of single transformer blocks."""
         return sum(
             bc.count for bc in self.block_configs if bc.block_type == BlockType.SINGLE
-        )
-
-    @property
-    def unified_block_count(self) -> int:
-        """Number of unified transformer blocks."""
-        return sum(
-            bc.count for bc in self.block_configs if bc.block_type == BlockType.UNIFIED
         )
 
     def get_steps_for_quality(self, quality: str) -> int:
