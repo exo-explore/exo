@@ -19,8 +19,8 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerFailed,
+    RunnerIdle,
     RunnerStatus,
-    RunnerWaitingForModel,
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
@@ -41,7 +41,7 @@ class RunnerSupervisor:
     _event_sender: Sender[Event]
     # err_path: str
     _tg: TaskGroup | None = field(default=None, init=False)
-    status: RunnerStatus = field(default_factory=RunnerWaitingForModel, init=False)
+    status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
 
     @classmethod

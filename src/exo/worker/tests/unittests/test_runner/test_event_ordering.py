@@ -127,11 +127,13 @@ def _run(tasks: Iterable[Task]):
             task_sender.send(t)
 
         # worst monkeypatch known to man
-        def nothin() -> None: pass
+        def nothin() -> None:
+            pass
+
         event_sender.close = nothin
-        event_sender.join =  nothin
-        task_receiver.close = nothin 
-        task_receiver.join = nothin 
+        event_sender.join = nothin
+        task_receiver.close = nothin
+        task_receiver.join = nothin
 
         mlx_runner.main(bound_instance, event_sender, task_receiver)
 

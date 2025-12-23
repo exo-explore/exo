@@ -11,28 +11,28 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     ChatCompletion,
+    ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
     TaskStatus,
-    ConnectToGroup,
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.shared.types.worker.runners import (
+    RunnerConnected,
+    RunnerConnecting,
     RunnerFailed,
+    RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
     RunnerStatus,
-    RunnerConnecting,
-    RunnerConnected,
-    RunnerIdle,
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
@@ -98,7 +98,8 @@ def main(
                         logger.info("runner connected")
                         current_status = RunnerConnected()
 
-                    case LoadModel() if isinstance(current_status, RunnerConnected):
+                    # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
+                    case LoadModel() if isinstance(current_status, RunnerConnected) and group is not None or isinstance(current_status, RunnerIdle) and group is None:
                         current_status = RunnerLoading()
                         logger.info("runner loading")
                         event_sender.send(
@@ -113,11 +114,6 @@ def main(
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
                     case StartWarmup() if isinstance(current_status, RunnerLoaded):
                         assert model
                         assert tokenizer
@@ -143,11 +139,6 @@ def main(
                         )
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case ChatCompletion(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
@@ -192,11 +183,6 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case Shutdown():
                         logger.info("runner shutting down")
                         event_sender.send(
@@ -210,6 +196,11 @@ def main(
                 event_sender.send(
                     TaskStatusUpdated(
                         task_id=task.task_id, task_status=TaskStatus.Complete
+                    )
+                )
+                event_sender.send(
+                    RunnerStatusUpdated(
+                        runner_id=runner_id, runner_status=current_status
                     )
                 )
         event_sender.send(

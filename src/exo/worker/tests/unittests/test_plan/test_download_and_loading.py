@@ -4,7 +4,8 @@ from exo.shared.types.tasks import LoadModel
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
-    RunnerWaitingForModel,
+    RunnerConnected,
+    RunnerIdle,
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.tests.constants import (
@@ -38,13 +39,11 @@ def test_plan_requests_download_when_waiting_and_shard_not_downloaded():
     bound_instance = BoundInstance(
         instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
     )
-    runner = FakeRunnerSupervisor(
-        bound_instance=bound_instance, status=RunnerWaitingForModel()
-    )
+    runner = FakeRunnerSupervisor(bound_instance=bound_instance, status=RunnerIdle())
 
     runners = {RUNNER_1_ID: runner}
     instances = {INSTANCE_1_ID: instance}
-    all_runners = {RUNNER_1_ID: RunnerWaitingForModel()}
+    all_runners = {RUNNER_1_ID: RunnerIdle()}
 
     # No entry for this shard -> should trigger DownloadModel
     download_status: dict[ShardMetadata, DownloadProgress] = {}
@@ -82,15 +81,15 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
         instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
     )
     local_runner = FakeRunnerSupervisor(
-        bound_instance=bound_instance, status=RunnerWaitingForModel()
+        bound_instance=bound_instance, status=RunnerConnected()
     )
 
     runners = {RUNNER_1_ID: local_runner}
     instances = {INSTANCE_1_ID: instance}
 
     all_runners = {
-        RUNNER_1_ID: RunnerWaitingForModel(),
-        RUNNER_2_ID: RunnerWaitingForModel(),
+        RUNNER_1_ID: RunnerConnected(),
+        RUNNER_2_ID: RunnerConnected(),
     }
 
     # Local node has already marked its shard as downloaded (not actually used by _load_model)
@@ -133,13 +132,11 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
     bound_instance = BoundInstance(
         instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
     )
-    runner = FakeRunnerSupervisor(
-        bound_instance=bound_instance, status=RunnerWaitingForModel()
-    )
+    runner = FakeRunnerSupervisor(bound_instance=bound_instance, status=RunnerIdle())
 
     runners = {RUNNER_1_ID: runner}
     instances = {INSTANCE_1_ID: instance}
-    all_runners = {RUNNER_1_ID: RunnerWaitingForModel()}
+    all_runners = {RUNNER_1_ID: RunnerIdle()}
 
     # Local status claims the shard is downloaded already
     local_download_status = {
@@ -183,14 +180,14 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
     )
     local_runner = FakeRunnerSupervisor(
-        bound_instance=bound_instance, status=RunnerWaitingForModel()
+        bound_instance=bound_instance, status=RunnerIdle()
     )
 
     runners = {RUNNER_1_ID: local_runner}
     instances = {INSTANCE_1_ID: instance}
     all_runners = {
-        RUNNER_1_ID: RunnerWaitingForModel(),
-        RUNNER_2_ID: RunnerWaitingForModel(),
+        RUNNER_1_ID: RunnerIdle(),
+        RUNNER_2_ID: RunnerIdle(),
     }
 
     # Only NODE_A's shard is recorded as downloaded globally

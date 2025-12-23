@@ -148,13 +148,12 @@ def mlx_distributed_init(
 
 def initialize_mlx(
     bound_instance: BoundInstance,
-) -> Group | None:
+) -> Group:
     # should we unseed it?
     # TODO: pass in seed from params
     mx.random.seed(42)
 
-    if len(bound_instance.instance.shard_assignments.node_to_runner) <= 1:
-        return None
+    assert len(bound_instance.instance.shard_assignments.node_to_runner) > 1, "Tried to initialize mlx for a single node instance"
     return mlx_distributed_init(bound_instance)
 
 

@@ -3,13 +3,12 @@
 from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import NodeId
-from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import (
     ChatCompletion,
+    ConnectToGroup,
     CreateRunner,
     DownloadModel,
     LoadModel,
-    ConnectToGroup,
     Shutdown,
     StartWarmup,
     Task,
@@ -23,18 +22,17 @@ from exo.shared.types.worker.downloads import (
 )
 from exo.shared.types.worker.instances import BoundInstance, Instance, InstanceId
 from exo.shared.types.worker.runners import (
+    RunnerConnected,
+    RunnerConnecting,
     RunnerFailed,
     RunnerId,
     RunnerIdle,
-    RunnerConnecting,
-    RunnerConnected,
     RunnerLoaded,
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
     RunnerStatus,
     RunnerWarmingUp,
-    ShardAssignments,
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
@@ -45,7 +43,7 @@ def plan(
     # Runners is expected to be FRESH and so should not come from state
     runners: Mapping[RunnerId, RunnerSupervisor],
     # DL_status is expected to be FRESH and so should not come from state
-    download_status: Mapping[ModelId, DownloadProgress],
+    download_status: Mapping[ShardMetadata, DownloadProgress],
     # gdls is not expected to be fresh
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     instances: Mapping[InstanceId, Instance],
@@ -113,13 +111,12 @@ def _create_runner(
 
 def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
-    download_status: Mapping[ModelId, DownloadProgress],
+    download_status: Mapping[ShardMetadata, DownloadProgress],
 ) -> DownloadModel | None:
     for runner in runners.values():
         if isinstance(runner.status, RunnerIdle) and (
-            runner.bound_instance.bound_shard.model_meta.model_id not in download_status
-            or not isinstance(
-                download_status[runner.bound_instance.bound_shard.model_meta.model_id],
+            not isinstance(
+                download_status.get(runner.bound_instance.bound_shard, None),
                 (DownloadOngoing, DownloadCompleted),
             )
         ):
@@ -150,7 +147,7 @@ def _init_distributed_backend(
                 and dp.shard_metadata.model_meta.model_id == shard_assignments.model_id
                 for dp in global_download_status[nid]
             )
-            for nid in shard_assignments.node_to_runner.keys()
+            for nid in shard_assignments.node_to_runner
         )
 
         runner_is_idle = isinstance(runner.status, RunnerIdle)
