@@ -8,13 +8,13 @@ from mflux.utils.exceptions import StopImageGenerationException
 from tqdm import tqdm
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.engines.mflux.config.model_config import ImageModelConfig
-from exo.worker.engines.mflux.pipefusion.adapter import BlockWrapperMode, ModelAdapter
-from exo.worker.engines.mflux.pipefusion.block_wrapper import (
+from exo.worker.engines.image.config import ImageModelConfig
+from exo.worker.engines.image.pipeline.adapter import BlockWrapperMode, ModelAdapter
+from exo.worker.engines.image.pipeline.block_wrapper import (
     JointBlockWrapper,
     SingleBlockWrapper,
 )
-from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
+from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: int):

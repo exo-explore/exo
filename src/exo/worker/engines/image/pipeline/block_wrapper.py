@@ -2,14 +2,14 @@ from typing import Any
 
 import mlx.core as mx
 
-from exo.worker.engines.mflux.config.model_config import BlockType
-from exo.worker.engines.mflux.pipefusion.adapter import (
+from exo.worker.engines.image.config import BlockType
+from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
     ModelAdapter,
     SingleBlockInterface,
 )
-from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
+from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 class JointBlockWrapper:

@@ -13,13 +13,13 @@ from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
-from exo.worker.engines.mflux.config.model_config import BlockType, ImageModelConfig
-from exo.worker.engines.mflux.pipefusion.adapter import (
+from exo.worker.engines.image.config import BlockType, ImageModelConfig
+from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
     SingleBlockInterface,
 )
-from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
+from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 class FluxModelAdapter:
