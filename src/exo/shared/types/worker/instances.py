@@ -25,7 +25,8 @@ class BaseInstance(TaggedModel):
 
 
 class MlxRingInstance(BaseInstance):
-    hosts: list[Host]
+    hosts_by_node: dict[NodeId, list[Host]]
+    ephemeral_port: int
 
 
 class MlxJacclInstance(BaseInstance):

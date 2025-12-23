@@ -72,7 +72,8 @@ def get_mlx_ring_instance(
         shard_assignments=get_shard_assignments(
             model_id, node_to_runner, runner_to_shard
         ),
-        hosts=[],
+        hosts_by_node={},
+        ephemeral_port=50000,
     )
 
 

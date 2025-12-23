@@ -7,9 +7,9 @@ from loguru import logger
 
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
-    get_hosts_from_subgraph,
     get_mlx_ibv_devices_matrix,
     get_mlx_jaccl_coordinators,
+    get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
 )
@@ -19,7 +19,6 @@ from exo.shared.types.commands import (
     DeleteInstance,
     PlaceInstance,
 )
-from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.topology import NodeInfo
@@ -130,17 +129,17 @@ def place_instance(
                 jaccl_coordinators=mlx_jaccl_coordinators,
             )
         case InstanceMeta.MlxRing:
-            hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
+            ephemeral_port = random_ephemeral_port()
+            hosts_by_node = get_mlx_ring_hosts_by_node(
+                selected_cycle=selected_cycle,
+                cycle_digraph=cycle_digraph,
+                ephemeral_port=ephemeral_port,
+            )
             target_instances[instance_id] = MlxRingInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
-                hosts=[
-                    Host(
-                        ip=host.ip,
-                        port=random_ephemeral_port(),
-                    )
-                    for host in hosts
-                ],
+                hosts_by_node=hosts_by_node,
+                ephemeral_port=ephemeral_port,
             )
 
     return target_instances

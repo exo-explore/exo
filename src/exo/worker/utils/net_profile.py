@@ -1,33 +1,64 @@
-import socket
+import http.client
 
 from anyio import create_task_group, to_thread
+from loguru import logger
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
 
 
-# TODO: ref. api port
 async def check_reachability(
-    target_ip: str, target_node_id: NodeId, out: dict[NodeId, set[str]]
+    target_ip: str,
+    expected_node_id: NodeId,
+    self_node_id: NodeId,
+    out: dict[NodeId, set[str]],
 ) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1)  # 1 second timeout
-    try:
-        result = await to_thread.run_sync(sock.connect_ex, (target_ip, 52415))
-    except socket.gaierror:
-        # seems to throw on ipv6 loopback. oh well
-        # logger.warning(f"invalid {target_ip=}")
+    """Check if a node is reachable at the given IP and verify its identity."""
+
+    def _fetch_remote_node_id() -> NodeId | None:
+        connection = http.client.HTTPConnection(target_ip, 52415, timeout=1)
+        try:
+            connection.request("GET", "/node_id")
+            response = connection.getresponse()
+            if response.status != 200:
+                return None
+
+            body = response.read().decode("utf-8").strip()
+
+            # Strip quotes if present (JSON string response)
+            if body.startswith('"') and body.endswith('"') and len(body) >= 2:
+                body = body[1:-1]
+
+            return NodeId(body) or None
+        except OSError:
+            return None
+        finally:
+            connection.close()
+
+    remote_node_id = await to_thread.run_sync(_fetch_remote_node_id)
+    if remote_node_id is None:
         return
-    finally:
-        sock.close()
 
-    if result == 0:
-        if target_node_id not in out:
-            out[target_node_id] = set()
-        out[target_node_id].add(target_ip)
+    if remote_node_id == self_node_id:
+        return
+
+    if remote_node_id != expected_node_id:
+        logger.warning(
+            f"Discovered node with unexpected node_id; "
+            f"ip={target_ip}, expected_node_id={expected_node_id}, "
+            f"remote_node_id={remote_node_id}"
+        )
+        return
+
+    if remote_node_id not in out:
+        out[remote_node_id] = set()
+    out[remote_node_id].add(target_ip)
 
 
-async def check_reachable(topology: Topology) -> dict[NodeId, set[str]]:
+async def check_reachable(
+    topology: Topology, self_node_id: NodeId
+) -> dict[NodeId, set[str]]:
+    """Check which nodes are reachable and return their IPs."""
     reachable: dict[NodeId, set[str]] = {}
     async with create_task_group() as tg:
         for node in topology.list_nodes():
@@ -35,7 +66,11 @@ async def check_reachable(topology: Topology) -> dict[NodeId, set[str]]:
                 continue
             for iface in node.node_profile.network_interfaces:
                 tg.start_soon(
-                    check_reachability, iface.ip_address, node.node_id, reachable
+                    check_reachability,
+                    iface.ip_address,
+                    node.node_id,
+                    self_node_id,
+                    reachable,
                 )
 
     return reachable

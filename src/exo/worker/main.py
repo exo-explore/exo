@@ -414,9 +414,14 @@ class Worker:
         while True:
             # TODO: EdgeDeleted
             edges = set(self.state.topology.list_connections())
-            conns = await check_reachable(self.state.topology)
+            conns = await check_reachable(self.state.topology, self.node_id)
             for nid in conns:
                 for ip in conns[nid]:
+                    if "127.0.0.1" in ip or "localhost" in ip:
+                        logger.warning(
+                            f"Loopback connection should not happen: {ip=} for {nid=}"
+                        )
+
                     edge = Connection(
                         local_node_id=self.node_id,
                         send_back_node_id=nid,
