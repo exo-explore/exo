@@ -9,8 +9,9 @@ from mlx_lm.models.cache import _BaseCache, trim_prompt_cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.constants import KEEP_KV_SIZE, KV_BITS, KV_GROUP_SIZE
+from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE
 from exo.worker.engines.mlx.utils_mlx import make_kv_cache
+from exo.worker.runner.bootstrap import logger
 
 
 class KVPrefixCache:
@@ -19,12 +20,18 @@ class KVPrefixCache:
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
         self.caches: list[list[_BaseCache]] = []
 
+    def clear(self):
+        """Clear all cached prompts and caches."""
+        self.prompts.clear()
+        self.caches.clear()
+
     def add_kv_cache(
         self, tokenizer: TokenizerWrapper, prompt: str, cache: list[_BaseCache]
     ):
         tokenized_prompt = self.encode_prompt(tokenizer, prompt)
         self.prompts.append(tokenized_prompt)
         self.caches.append(deepcopy(cache))
+        logger.info(f"KV cache saved: {len(tokenized_prompt)} tokens")
 
     def get_kv_cache(
         self,
@@ -42,26 +49,42 @@ class KVPrefixCache:
             length = _get_prefix_length(tokenized_prompt, cached_prompt)
 
             if length == max_length:
-                return self.caches[i]
+                return deepcopy(self.caches[i])
 
             if length > best_snapshot_length:
                 best_snapshot_index, best_snapshot_length = i, length
 
         if best_snapshot_index is not None:
-            prompt_cache = deepcopy(self.caches[best_snapshot_index])
-            trim_prompt_cache(prompt_cache, max_length - best_snapshot_length)
-            tokenized_prompt = tokenized_prompt[best_snapshot_index:]
-
-        else:
-            prompt_cache = make_kv_cache(
-                model,
-                # max_kv_size=MAX_KV_SIZE,
-                # keep=KEEP_KV_SIZE
+            new_tokens = max_length - best_snapshot_length
+            logger.info(
+                f"KV cache prefix match: {best_snapshot_length}/{max_length} tokens "
+                f"(reusing {best_snapshot_length}, processing {new_tokens} new)"
             )
 
-        prefill(model, tokenizer, sampler, tokenized_prompt, prompt_cache)
+            prompt_cache = deepcopy(self.caches[best_snapshot_index])
 
-        return prompt_cache
+            # Trim removes tokens from the end, so we trim (cached_length - prefix_length) to keep the prefix
+            cached_length = _cache_length(self.caches[best_snapshot_index])
+            tokens_to_trim = cached_length - best_snapshot_length
+            if tokens_to_trim > 0:
+                trim_prompt_cache(prompt_cache, tokens_to_trim)
+
+            # Prefill the remaining tokens
+            remaining_tokens = tokenized_prompt[best_snapshot_length:]
+            if len(remaining_tokens) > 0:
+                prefill(model, tokenizer, sampler, remaining_tokens, prompt_cache)
+
+            return prompt_cache
+
+        else:
+            prompt_cache = make_kv_cache(model)
+            if len(self.prompts) == 0:
+                logger.info("KV cache empty, created new")
+            else:
+                logger.info("KV cache no prefix match, starting fresh")
+                prefill(model, tokenizer, sampler, tokenized_prompt, prompt_cache)
+
+            return prompt_cache
 
     def encode_prompt(self, tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
         add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
@@ -73,8 +96,15 @@ class KVPrefixCache:
         return mx.array(tokenized_prompt)
 
 
+def _cache_length(cache: list[_BaseCache]) -> int:
+    """Get the number of tokens in a KV cache."""
+    # Use .offset attribute which all cache types have (len() not implemented in older QuantizedKVCache)
+    return max(c.offset for c in cache)
+
+
 def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
-    n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]), KEEP_KV_SIZE)
+    """Find the length of the common prefix between two token arrays."""
+    n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]))
     if n == 0:
         return 0
 
@@ -90,15 +120,19 @@ def prefill(
     prompt: mx.array,
     cache: list[_BaseCache],
 ) -> None:
+    # Use max_tokens=1 because max_tokens=0 is buggy in some mlx_lm versions
+    # We just throw away the generated token - we only care about filling the cache
     for _ in stream_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt,
-        max_tokens=0,
+        max_tokens=1,
         sampler=sampler,
         prompt_cache=cache,
         prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
-        pass
+        break  # Stop after first iteration - cache is now filled
+    # Trim the extra token we generated (max_tokens=1 workaround)
+    trim_prompt_cache(cache, 1)
