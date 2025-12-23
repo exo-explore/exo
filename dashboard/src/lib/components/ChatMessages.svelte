@@ -8,89 +8,80 @@
 		regenerateLastResponse
 	} from '$lib/stores/app.svelte';
 	import type { MessageAttachment } from '$lib/stores/app.svelte';
-import { tick, onDestroy } from 'svelte';
+	import MarkdownContent from './MarkdownContent.svelte';
 
-interface Props {
-	class?: string;
-	scrollParent?: HTMLElement | null;
-}
+	interface Props {
+		class?: string;
+		scrollParent?: HTMLElement | null;
+	}
 
-let { class: className = '', scrollParent = null }: Props = $props();
+	let { class: className = '', scrollParent = null }: Props = $props();
 
 	const messageList = $derived(messages());
 	const response = $derived(currentResponse());
 	const loading = $derived(isLoading());
 
-// Ref for scroll anchor at bottom
-let scrollAnchorRef: HTMLDivElement | undefined = $state();
+	// Scroll management - user controls scroll, show button when not at bottom
+	const SCROLL_THRESHOLD = 100;
+	let showScrollButton = $state(false);
+	let lastMessageCount = 0;
+	let containerRef: HTMLDivElement | undefined = $state();
 
-// Scroll management
-const SCROLL_BOTTOM_THRESHOLD = 120;
-let autoScrollEnabled = true;
-let currentScrollEl: HTMLElement | null = null;
-
-function resolveScrollElement(): HTMLElement | null {
-	if (scrollParent) return scrollParent;
-	let node: HTMLElement | null = scrollAnchorRef?.parentElement as HTMLElement | null;
-	while (node) {
-		const isScrollable = node.scrollHeight > node.clientHeight + 1;
-		if (isScrollable) return node;
-		node = node.parentElement;
+	function getScrollContainer(): HTMLElement | null {
+		if (scrollParent) return scrollParent;
+		return containerRef?.parentElement ?? null;
 	}
-	return null;
-}
 
-function handleScroll() {
-	if (!currentScrollEl) return;
-	const distanceFromBottom = currentScrollEl.scrollHeight - currentScrollEl.scrollTop - currentScrollEl.clientHeight;
-	const isNearBottom = distanceFromBottom < SCROLL_BOTTOM_THRESHOLD;
-	autoScrollEnabled = isNearBottom;
-}
-
-function attachScrollListener() {
-	const nextEl = resolveScrollElement();
-	if (currentScrollEl === nextEl) return;
-	if (currentScrollEl) {
-		currentScrollEl.removeEventListener('scroll', handleScroll);
+	function isNearBottom(el: HTMLElement): boolean {
+		return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
 	}
-	currentScrollEl = nextEl;
-	if (currentScrollEl) {
-		currentScrollEl.addEventListener('scroll', handleScroll);
-		// Initialize state based on current position
-		handleScroll();
-	}
-}
 
-onDestroy(() => {
-	if (currentScrollEl) {
-		currentScrollEl.removeEventListener('scroll', handleScroll);
-	}
-});
-
-$effect(() => {
-	// Re-evaluate scroll container if prop changes or after mount
-	scrollParent;
-	attachScrollListener();
-});
-
-// Auto-scroll to bottom when messages change or response updates, but only if user is near bottom
-$effect(() => {
-	// Track these values to trigger effect
-	const _ = messageList.length;
-	const __ = response;
-	const ___ = loading;
-	
-	tick().then(() => {
-		const el = currentScrollEl ?? resolveScrollElement();
-		if (!el || !scrollAnchorRef) return;
-		const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-		const isNearBottom = distanceFromBottom < SCROLL_BOTTOM_THRESHOLD;
-		if (autoScrollEnabled || isNearBottom) {
-			scrollAnchorRef.scrollIntoView({ behavior: 'smooth', block: 'end' });
-			autoScrollEnabled = true;
+	function scrollToBottom() {
+		const el = getScrollContainer();
+		if (el) {
+			el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
 		}
+	}
+
+	function updateScrollButtonVisibility() {
+		const el = getScrollContainer();
+		if (!el) return;
+		showScrollButton = !isNearBottom(el);
+	}
+
+	// Attach scroll listener
+	$effect(() => {
+		const el = scrollParent ?? containerRef?.parentElement;
+		if (!el) return;
+		
+		el.addEventListener('scroll', updateScrollButtonVisibility, { passive: true });
+		// Initial check
+		updateScrollButtonVisibility();
+		return () => el.removeEventListener('scroll', updateScrollButtonVisibility);
 	});
-});
+
+	// Auto-scroll when user sends a new message
+	$effect(() => {
+		const count = messageList.length;
+		if (count > lastMessageCount) {
+			const el = getScrollContainer();
+			if (el) {
+				requestAnimationFrame(() => {
+					el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+				});
+			}
+		}
+		lastMessageCount = count;
+	});
+
+	// Update scroll button visibility when content changes
+	$effect(() => {
+		// Track response to trigger re-check during streaming
+		const _ = response;
+		
+		// Small delay to let DOM update
+		requestAnimationFrame(() => updateScrollButtonVisibility());
+	});
 
 	// Edit state
 	let editingMessageId = $state<string | null>(null);
@@ -231,7 +222,7 @@ function isThinkingExpanded(messageId: string): boolean {
 <div class="flex flex-col gap-4 sm:gap-6 {className}">
 	{#each messageList as message (message.id)}
 		<div class="group flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
-			<div class="{message.role === 'user' ? 'max-w-[85%] sm:max-w-[70%] flex flex-col items-end' : 'max-w-[95%] sm:max-w-[85%]'}">
+			<div class="{message.role === 'user' ? 'max-w-[85%] sm:max-w-[70%] flex flex-col items-end' : 'w-full max-w-[98%] sm:max-w-[95%]'}">
 				{#if message.role === 'assistant'}
 					<!-- Assistant message header -->
 					<div class="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
@@ -305,7 +296,7 @@ function isThinkingExpanded(messageId: string): boolean {
 				{:else}
 					<div class="{message.role === 'user' 
 						? 'command-panel rounded-lg rounded-tr-sm inline-block' 
-						: 'command-panel rounded-lg rounded-tl-sm border-l-2 border-l-exo-yellow/50 inline-block'}">
+						: 'command-panel rounded-lg rounded-tl-sm border-l-2 border-l-exo-yellow/50 block w-full'}">
 						
 						{#if message.role === 'user'}
 							<!-- User message styling -->
@@ -331,7 +322,7 @@ function isThinkingExpanded(messageId: string): boolean {
 								{/if}
 								
 								{#if message.content}
-									<div class="text-sm text-foreground font-mono tracking-wide whitespace-pre-wrap break-words leading-relaxed">
+									<div class="text-xs text-foreground font-mono tracking-wide whitespace-pre-wrap break-words leading-relaxed">
 										{message.content}
 									</div>
 								{/if}
@@ -360,7 +351,7 @@ function isThinkingExpanded(messageId: string): boolean {
 												</svg>
 												<span>Thinking...</span>
 											</span>
-											<span class="text-[10px] tracking-[0.2em] text-exo-light-gray/60">
+											<span class="text-[10px] tracking-[0.2em] text-exo-light-gray/60 ml-4">
 												{isThinkingExpanded(message.id) ? 'HIDE' : 'SHOW'}
 											</span>
 										</button>
@@ -374,8 +365,8 @@ function isThinkingExpanded(messageId: string): boolean {
 										{/if}
 									</div>
 								{/if}
-								<div class="text-sm text-foreground font-mono tracking-wide whitespace-pre-wrap break-words leading-relaxed">
-									{message.content || (loading ? response : '')}
+								<div class="text-xs text-foreground">
+									<MarkdownContent content={message.content || (loading ? response : '')} />
 									{#if loading && !message.content}
 										<span class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"></span>
 									{/if}
@@ -457,6 +448,20 @@ function isThinkingExpanded(messageId: string): boolean {
 		</div>
 	{/if}
 	
-	<!-- Scroll anchor for auto-scroll -->
-	<div bind:this={scrollAnchorRef}></div>
+	<!-- Invisible element for container reference -->
+	<div bind:this={containerRef}></div>
+
+	<!-- Scroll to bottom button -->
+	{#if showScrollButton}
+		<button
+			type="button"
+			onclick={scrollToBottom}
+			class="sticky bottom-4 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-exo-dark-gray/90 border border-exo-medium-gray/50 flex items-center justify-center text-exo-light-gray hover:text-exo-yellow hover:border-exo-yellow/50 transition-all shadow-lg cursor-pointer z-10"
+			title="Scroll to bottom"
+		>
+			<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+			</svg>
+		</button>
+	{/if}
 </div>

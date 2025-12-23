@@ -345,13 +345,19 @@
 							<div class="rounded border border-exo-medium-gray/30 bg-exo-dark-gray/60 p-3 space-y-2">
 								<div class="flex items-center justify-between gap-3">
 									<div class="min-w-0 space-y-0.5">
-										<div class="text-sm font-mono text-white truncate">{model.prettyName ?? model.modelId}</div>
-										<div class="text-[11px] text-exo-light-gray font-mono truncate">
-											{model.modelId}
-										</div>
-										<div class="text-[11px] text-exo-light-gray font-mono">
-											{formatBytes(model.downloadedBytes)} / {formatBytes(model.totalBytes)}
-										</div>
+										<div 
+											class="text-xs font-mono text-white truncate"
+											title={model.prettyName ?? model.modelId}
+										>{model.prettyName ?? model.modelId}</div>
+										<div 
+											class="text-[10px] text-exo-light-gray font-mono truncate"
+											title={model.modelId}
+										>{model.modelId}</div>
+										{#if model.status !== 'completed'}
+											<div class="text-[11px] text-exo-light-gray font-mono">
+												{formatBytes(model.downloadedBytes)} / {formatBytes(model.totalBytes)}
+											</div>
+										{/if}
 									</div>
 									<div class="flex items-center gap-2">
 										<span class="text-xs font-mono {pct >= 100 ? 'text-green-400' : pct <= 0 ? 'text-red-400' : 'text-exo-yellow'}">
@@ -426,14 +432,14 @@
 <style>
 	.downloads-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 	}
 	@media (min-width: 1024px) {
 		.downloads-grid {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
 		}
 	}
-	@media (min-width: 1440px) {
+	@media (min-width: 1600px) {
 		.downloads-grid {
 			grid-template-columns: repeat(4, minmax(0, 1fr));
 		}
