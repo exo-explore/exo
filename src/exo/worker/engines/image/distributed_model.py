@@ -15,11 +15,9 @@ from PIL import Image
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
-from exo.worker.engines.mflux.config import get_config_for_model
-from exo.worker.engines.mflux.config.model_config import ImageModelConfig
-from exo.worker.engines.mflux.pipefusion import create_adapter_for_model
-from exo.worker.engines.mflux.pipefusion.adapter import ModelAdapter
-from exo.worker.engines.mflux.pipefusion.diffusion_runner import DiffusionRunner
+from exo.worker.engines.image.config import ImageModelConfig
+from exo.worker.engines.image.models import create_adapter_for_model, get_config_for_model
+from exo.worker.engines.image.pipeline import DiffusionRunner, ModelAdapter
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
 
@@ -256,3 +254,8 @@ class DistributedImageModel:
             image_strength=runtime_config.image_strength,
             generation_time=0,  # TODO: Track time in runner if needed
         )
+
+
+def initialize_image_model(bound_instance: BoundInstance) -> DistributedImageModel:
+    """Initialize DistributedImageModel from a BoundInstance."""
+    return DistributedImageModel.from_bound_instance(bound_instance)

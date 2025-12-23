@@ -1,4 +1,4 @@
-from exo.worker.engines.mflux.config.model_config import (
+from exo.worker.engines.image.config import (
     BlockType,
     ImageModelConfig,
     TransformerBlockConfig,

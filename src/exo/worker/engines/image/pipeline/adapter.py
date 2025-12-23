@@ -4,8 +4,8 @@ from typing import Any, Protocol
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
 
-from exo.worker.engines.mflux.config.model_config import BlockType, ImageModelConfig
-from exo.worker.engines.mflux.pipefusion.kv_cache import ImagePatchKVCache
+from exo.worker.engines.image.config import BlockType, ImageModelConfig
+from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
 class AttentionInterface(Protocol):
