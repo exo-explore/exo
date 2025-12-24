@@ -429,7 +429,10 @@ def _run_llamacpp_worker(
                 match task:
                     case LoadModel() if isinstance(current_status, (RunnerWaitingForModel, RunnerFailed)):
                         current_status = RunnerLoading()
-                        logger.info(f"Worker starting RPC server on port {rpc_port}")
+                        logger.info("=" * 60)
+                        logger.info(f"WORKER: Received LoadModel task (rank {shard_metadata.device_rank})")
+                        logger.info(f"WORKER: Starting RPC server on 0.0.0.0:{rpc_port}")
+                        logger.info("=" * 60)
                         event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status))
 
                         rpc_manager = RpcServerManager.get_instance()
@@ -455,7 +458,9 @@ def _run_llamacpp_worker(
                             logger.warning("Could not determine external IP addresses. Master may not be able to connect.")
 
                         current_status = RunnerLoaded()
-                        logger.info(f"Worker RPC server running on port {rpc_port}")
+                        logger.info("=" * 60)
+                        logger.info(f"WORKER: RPC server READY on port {rpc_port}")
+                        logger.info("=" * 60)
                         event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status))
 
                     case StartWarmup() if isinstance(current_status, RunnerLoaded):
@@ -530,15 +535,33 @@ def _run_llamacpp_master(
                 match task:
                     case LoadModel() if isinstance(current_status, (RunnerWaitingForModel, RunnerFailed)):
                         current_status = RunnerLoading()
-                        logger.info("Master loading distributed model")
+                        logger.info("=" * 60)
+                        logger.info("MASTER: Received LoadModel task")
+                        logger.info("=" * 60)
                         event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status))
 
+                        # Log instance details for debugging
+                        instance = bound_instance.instance
+                        if isinstance(instance, LlamaCppInstance):
+                            logger.info(f"MASTER: Instance has {len(instance.hosts)} hosts")
+                            for i, h in enumerate(instance.hosts):
+                                logger.info(f"  Host[{i}]: {h.ip}:{h.port}")
+                            logger.info(f"MASTER: Instance rpc_ports: {instance.rpc_ports}")
+                            logger.info(f"MASTER: Instance tensor_split: {instance.tensor_split}")
+                            logger.info(f"MASTER: shard_assignments.node_to_runner: {dict(instance.shard_assignments.node_to_runner)}")
+                        
                         gguf_path = get_gguf_path_for_instance(bound_instance)
                         rpc_addresses = build_rpc_address_list(bound_instance)
                         tensor_split = build_tensor_split_string(bound_instance)
 
-                        logger.info(f"Master connecting to workers: {rpc_addresses}")
-                        logger.info(f"Tensor split: {tensor_split}")
+                        logger.info(f"MASTER: Final RPC addresses: '{rpc_addresses}'")
+                        logger.info(f"MASTER: Final tensor split: '{tensor_split}'")
+                        
+                        # Give workers time to receive their LoadModel tasks and start RPC servers
+                        # This helps with the race condition where master starts before workers
+                        if rpc_addresses:
+                            logger.info("MASTER: Waiting 10s for workers to start RPC servers...")
+                            time.sleep(10)
 
                         distributed_server = DistributedLlamaServer(
                             model_path=str(gguf_path),
