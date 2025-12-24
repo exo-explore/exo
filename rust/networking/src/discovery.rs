@@ -24,13 +24,14 @@ use util::wakerdeque::WakerDeque;
 
 const RETRY_CONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
-// WORKAROUND: Static peers for cross-platform discovery
-// This bypasses mDNS multicast issues between Linux and macOS
-// TODO: Replace with config file support or fix cross-platform mDNS
+// BRIDGE FIX: Static peers using FIXED bridge ports (NOT dynamic Exo ports)
+// Bridge listens on fixed ports (7000, 7001, 7002) and forwards to dynamic Exo ports
+// This solves dynamic port issue without modifying Exo's core code
+// See: exo_p2p_bridge.py and start_bridge_cluster.sh
 const STATIC_PEERS: &[(&str, &str)] = &[
-    ("12D3KooWLC7a3t6givH4e7VtQ8WpmadfnpxvBSaVKxKa8Y3kCAuf", "/ip4/192.168.0.160/tcp/42183"),
-    ("12D3KooWCw583XUFccb2RfCd55GpoSd8EFJ1NYwq7yNcjAj1swqv", "/ip4/192.168.0.106/tcp/38651"),
-    ("12D3KooWB698CkfuX3CB9MZyySrirrHamvePF66Kz5xwbGZu4xsv", "/ip4/192.168.0.134/tcp/60092"),
+    ("12D3KooWLC7a3t6givH4e7VtQ8WpmadfnpxvBSaVKxKa8Y3kCAuf", "/ip4/192.168.0.160/tcp/7000"),
+    ("12D3KooWCw583XUFccb2RfCd55GpoSd8EFJ1NYwq7yNcjAj1swqv", "/ip4/192.168.0.106/tcp/7001"),
+    ("12D3KooWB698CkfuX3CB9MZyySrirrHamvePF66Kz5xwbGZu4xsv", "/ip4/192.168.0.134/tcp/7002"),
 ];
 
 mod managed {
