@@ -218,13 +218,20 @@ configure_environment() {
         log_info "Added LD_LIBRARY_PATH to ~/.bashrc"
     fi
     
+    # PATH for llama-server / rpc-server binaries
+    if ! grep -q "llama.cpp/build/bin" "$BASHRC" 2>/dev/null; then
+        echo 'export PATH=$HOME/llama.cpp/build/bin:$PATH' >> "$BASHRC"
+        log_info "Added llama.cpp bin to PATH in ~/.bashrc"
+    fi
+
     # LLAMA_CPP_LIB
     if ! grep -q "LLAMA_CPP_LIB" "$BASHRC" 2>/dev/null; then
         echo 'export LLAMA_CPP_LIB=$HOME/llama.cpp/build/bin/libllama.so' >> "$BASHRC"
         log_info "Added LLAMA_CPP_LIB to ~/.bashrc"
     fi
-    
+
     # Source for current session
+    export PATH="$HOME/llama.cpp/build/bin:$PATH"
     export LD_LIBRARY_PATH="$HOME/llama.cpp/build/bin:$LD_LIBRARY_PATH"
     export LLAMA_CPP_LIB="$HOME/llama.cpp/build/bin/libllama.so"
     
