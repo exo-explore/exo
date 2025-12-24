@@ -20,6 +20,8 @@ struct ContentView: View {
     @State private var showDebugInfo = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
+    @State private var showAdvancedOptions = false
+    @State private var pendingNamespace: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -197,6 +199,8 @@ struct ContentView: View {
                 updater.checkForUpdates()
             }
             .padding(.bottom, 8)
+            advancedOptionsSection
+                .padding(.bottom, 8)
             debugSection
                 .padding(.bottom, 8)
             controlButton(title: "Quit", tint: .secondary) {
@@ -325,6 +329,47 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private var advancedOptionsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Advanced Options")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                collapseButton(isExpanded: $showAdvancedOptions)
+            }
+            .animation(nil, value: showAdvancedOptions)
+            if showAdvancedOptions {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cluster Namespace")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            TextField("optional", text: $pendingNamespace)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingNamespace = controller.customNamespace
+                                }
+                            Button("Save & Restart") {
+                                controller.customNamespace = pendingNamespace
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingNamespace == controller.customNamespace)
+                        }
+
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showAdvancedOptions)
     }
 
     private var debugSection: some View {
