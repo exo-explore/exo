@@ -9,6 +9,25 @@ from exo.shared.types.profiling import ConnectionProfile, NodePerformanceProfile
 from exo.shared.types.topology import Connection, NodeInfo
 
 
+def _normalize_cycle_order(cycle: list[NodeInfo]) -> list[NodeInfo]:
+    """
+    Normalize cycle ordering to ensure consistent device_rank assignment.
+
+    Cycles from rustworkx.simple_cycles() have non-deterministic ordering based
+    on internal graph indexing. This causes different nodes to see different
+    orderings, leading to device_rank mismatches in distributed inference.
+
+    We normalize by:
+    1. Finding the node with the lexicographically smallest node_id
+    2. Rotating the cycle so that node is first (becomes device_rank=0)
+    """
+    if not cycle:
+        return cycle
+
+    min_idx = min(range(len(cycle)), key=lambda i: str(cycle[i].node_id))
+    return cycle[min_idx:] + cycle[:min_idx]
+
+
 class TopologySnapshot(BaseModel):
     nodes: list[NodeInfo]
     connections: list[Connection]
@@ -156,7 +175,7 @@ class Topology:
         cycles: list[list[NodeInfo]] = []
         for cycle_idx in cycle_idxs:
             cycle = [self._graph[idx] for idx in cycle_idx]
-            cycles.append(cycle)
+            cycles.append(_normalize_cycle_order(cycle))
 
         return cycles
 
@@ -177,7 +196,7 @@ class Topology:
         cycles: list[list[NodeInfo]] = []
         for cycle_idx in cycle_idxs:
             cycle = [tb_graph[idx] for idx in cycle_idx]
-            cycles.append(cycle)
+            cycles.append(_normalize_cycle_order(cycle))
 
         return cycles
 

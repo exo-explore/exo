@@ -199,6 +199,40 @@ def _is_valid_rpc_ip(ip: str) -> bool:
     return True
 
 
+def _get_current_node_ips() -> set[str]:
+    """Get all IP addresses of the current node for self-connection detection."""
+    import socket
+
+    local_ips: set[str] = {"127.0.0.1", "localhost", "::1"}
+    try:
+        hostname = socket.gethostname()
+        try:
+            addrs = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            for addr in addrs:
+                local_ips.add(addr[4][0])
+        except socket.gaierror:
+            pass
+
+        try:
+            result = subprocess.run(
+                ["ip", "-4", "addr", "show"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                import re
+
+                ips = re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", result.stdout)
+                local_ips.update(ips)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return local_ips
+
+
 def build_rpc_address_list(bound_instance: BoundInstance) -> str:
     """
     Build the RPC address list for llama.cpp --rpc flag.
@@ -206,9 +240,10 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
     Format: "ip1:port1,ip2:port2,..."
     Only includes worker nodes (device_rank > 0).
     Hosts are ordered by device_rank in the instance.
-    
+
     Validates that IPs are external (not localhost) and logs warnings
-    for any configuration issues.
+    for any configuration issues. Also detects if the master node's own IP
+    is incorrectly included in the worker list (a sign of cycle ordering bugs).
     """
     instance = bound_instance.instance
     if not isinstance(instance, LlamaCppInstance):
@@ -218,11 +253,15 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
     rpc_addresses: list[str] = []
     invalid_workers: list[str] = []
 
-    # Log full instance configuration for debugging
+    master_device_rank = bound_instance.bound_shard.device_rank
+    current_node_ips = _get_current_node_ips()
+
     logger.info(f"Building RPC address list for {len(instance.hosts)} hosts")
     logger.info(f"Instance hosts: {[(h.ip, h.port) for h in instance.hosts]}")
     logger.info(f"RPC ports: {instance.rpc_ports}")
     logger.info(f"Tensor split: {instance.tensor_split}")
+    logger.info(f"Current node device_rank: {master_device_rank}")
+    logger.info(f"Current node IPs: {current_node_ips}")
 
     for node_id, runner_id in shard_assignments.node_to_runner.items():
         shard = shard_assignments.runner_to_shard.get(runner_id)
@@ -239,12 +278,10 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
             invalid_workers.append(f"{node_id}:no_port")
             continue
 
-        # Use device_rank as index into hosts list (hosts are ordered by rank)
         host_index = shard.device_rank
         if host_index < len(instance.hosts):
             host = instance.hosts[host_index]
-            
-            # Validate IP is external
+
             if not _is_valid_rpc_ip(host.ip):
                 logger.error(
                     f"Invalid IP for worker rank {shard.device_rank}: '{host.ip}'. "
@@ -253,7 +290,17 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
                 )
                 invalid_workers.append(f"{node_id}:{host.ip}")
                 continue
-            
+
+            if master_device_rank == 0 and host.ip in current_node_ips:
+                logger.error(
+                    f"CYCLE ORDERING BUG DETECTED: Worker IP {host.ip} matches this master node's IP! "
+                    f"This node (device_rank={master_device_rank}) should not connect to itself. "
+                    "Skipping this address to prevent self-connection. "
+                    "This indicates a mismatch between cycle ordering and device_rank assignment."
+                )
+                invalid_workers.append(f"{node_id}:self_ip")
+                continue
+
             rpc_address = f"{host.ip}:{rpc_port}"
             logger.info(f"Worker rank {shard.device_rank} ({node_id}): {rpc_address}")
             rpc_addresses.append(rpc_address)
