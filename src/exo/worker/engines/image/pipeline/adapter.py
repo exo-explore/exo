@@ -1,11 +1,16 @@
 from enum import Enum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
 
 from exo.worker.engines.image.config import BlockType, ImageModelConfig
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
+
+if TYPE_CHECKING:
+    from mflux.config.config import Config
+
+    from exo.worker.engines.image.pipeline.runner import DiffusionRunner
 
 
 class AttentionInterface(Protocol):
@@ -283,5 +288,29 @@ class ModelAdapter(Protocol):
 
         Returns:
             Merged hidden states (default: concatenate [text, image])
+        """
+        ...
+
+    def generate_image(
+        self,
+        settings: "Config",
+        prompt: str,
+        seed: int,
+        runner: "DiffusionRunner | None" = None,
+    ) -> Any:
+        """Generate an image using this model.
+
+        This is the main entry point for image generation. Implementations
+        should handle the full generation flow: latent creation, prompt
+        encoding, denoising loop, and decoding.
+
+        Args:
+            settings: Generation config (steps, height, width)
+            prompt: Text prompt
+            seed: Random seed
+            runner: Optional DiffusionRunner for distributed mode
+
+        Returns:
+            GeneratedImage result
         """
         ...
