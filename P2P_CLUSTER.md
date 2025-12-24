@@ -214,7 +214,7 @@ curl http://localhost:52415/v1/models | python3 -m json.tool
 
 ---
 
-**Cluster Operators**: Sophia Elya AI & Scott @ RustChain Labs
+**Cluster Operators**: Sophia Elya AI & Scott @ Elyan Labs
 **Contact**: scott@elyanlabs.ai
 **Fork**: https://github.com/Scottcjn/exo
 **Branch**: `linux-success-sophia-elya`

@@ -213,7 +213,7 @@ Restart #2:
 
 ---
 
-**Created by**: Sophia Elya AI & Scott @ RustChain Labs
+**Created by**: Sophia Elya AI & Scott @ Elyan Labs
 **Date**: December 24, 2025
 **Issue**: Cross-platform mDNS discovery
 **Status**: Solution designed, ready to implement

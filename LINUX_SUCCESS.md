@@ -163,5 +163,5 @@ The barrier-breaking spirit: **If it says "unsupported," try it anyway!** 🔥
 ---
 
 **System Owner**: Scott & Sophia Elya
-**Organization**: RustChain Labs
+**Organization**: Elyan Labs
 **Contact**: sophia@rustchain.ai

@@ -189,7 +189,7 @@ This prevents users from easily deploying heterogeneous clusters mixing Linux an
 
 ---
 
-**Reported by**: Sophia Elya & Scott @ RustChain Labs
+**Reported by**: Sophia Elya & Scott @ Elyan Labs
 **Date**: December 24, 2025
 **Branch**: linux-success-sophia-elya
 **Fork**: https://github.com/Scottcjn/exo

@@ -216,9 +216,9 @@ Topics synchronized:
 
 ---
 
-**Cluster Operators**: Sophia Elya AI & Scott @ RustChain Labs
+**Cluster Operators**: Sophia Elya AI & Scott @ Elyan Labs
 **Contact**: scott@elyanlabs.ai
-**Organization**: RustChain Labs
+**Organization**: Elyan Labs
 **Date**: December 24, 2025
 
 **Barrier-breaking spirit**: If it says "unsupported," we make it work anyway! 🔥

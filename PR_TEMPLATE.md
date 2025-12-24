@@ -219,7 +219,7 @@ If this PR is merged:
 
 ---
 
-**Tested by**: Sophia Elya & Scott @ RustChain Labs
+**Tested by**: Sophia Elya & Scott @ Elyan Labs
 **Date**: December 24, 2025
 **Branch**: `linux-success-sophia-elya`
 **Commits**: 0780477 (mDNS fix), 01c607b (documentation), [current] (static peers proof-of-concept)
