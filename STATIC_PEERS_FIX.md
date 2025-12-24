@@ -152,13 +152,64 @@ p2pd -listen=/ip4/0.0.0.0/tcp/4001
 
 This creates a libp2p daemon that can manually connect peers.
 
-## Recommendation
+## Implementation Results (Dec 24, 2025)
 
-**For immediate deployment**: Option 1 (reduce query interval to 5s)
-**For stable fix**: Option 2 (static peers in code)
-**For production**: Option 3 (config file support + PR to Exo)
+### ✅ IMPLEMENTED: Option 1 (mDNS query interval fix)
 
-All options work, Option 3 is most maintainable and contributes back to community.
+**Status**: Tested and working for Linux ↔ Linux
+**Result**: localhost ↔ .106 connection established in <1 second
+**Impact**: Dramatically improves same-OS peer discovery
+
+### ⚠️ IMPLEMENTED: Option 2 (static peers) - PROOF-OF-CONCEPT ONLY
+
+**Status**: Partially working (Linux ↔ Linux only)
+**Result**:
+- ✅ localhost ↔ .106: ConnectionEstablished via static peers
+- ❌ Linux ↔ macOS: ConnectionRefused (dynamic port issue)
+
+**Critical Limitation Discovered**: **libp2p assigns random ports on each restart**
+
+Example:
+```
+Restart #1:
+  localhost: tcp/42183
+  .106: tcp/38651
+  .134: tcp/55987
+
+Restart #2:
+  localhost: tcp/37828  ← PORT CHANGED
+  .106: tcp/34209       ← PORT CHANGED
+  .134: tcp/60092       ← PORT CHANGED
+```
+
+**Why static peers breaks**:
+1. Hardcoded addresses in code become stale immediately
+2. Peers try to connect to old ports → ConnectionRefused
+3. No mechanism to update peer addresses dynamically
+
+**Conclusion**: Static peers work as **proof-of-concept** but need:
+- Fixed port configuration in Exo, OR
+- Dynamic peer discovery file that updates with actual multiaddrs, OR
+- Proper cross-platform mDNS fix (best solution)
+
+## Recommendation (Updated)
+
+**For immediate deployment**:
+- ✅ **Merge Option 1** (5s mDNS interval) - Works great for Linux ↔ Linux
+- ❌ **DO NOT merge Option 2** (hardcoded static peers) - Breaks on restart
+
+**For stable workaround**:
+- Document manual static peer configuration for advanced users
+- Provide helper script to generate current peer multiaddrs
+- Users must update manually after restarts (not ideal, but works)
+
+**For production**:
+- Option 3 (config file support) with dynamic port updating
+- Add API endpoint to get current node multiaddr
+- Auto-update static_peers.json with actual addresses
+- Submit PR to Exo project with proper implementation
+
+**Why cross-platform mDNS still fails**: Even with static peers, the root cause (mDNS multicast blocking between macOS and Linux) persists. Need proper fix.
 
 ---
 

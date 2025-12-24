@@ -24,6 +24,15 @@ use util::wakerdeque::WakerDeque;
 
 const RETRY_CONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
+// WORKAROUND: Static peers for cross-platform discovery
+// This bypasses mDNS multicast issues between Linux and macOS
+// TODO: Replace with config file support or fix cross-platform mDNS
+const STATIC_PEERS: &[(&str, &str)] = &[
+    ("12D3KooWLC7a3t6givH4e7VtQ8WpmadfnpxvBSaVKxKa8Y3kCAuf", "/ip4/192.168.0.160/tcp/42183"),
+    ("12D3KooWCw583XUFccb2RfCd55GpoSd8EFJ1NYwq7yNcjAj1swqv", "/ip4/192.168.0.106/tcp/38651"),
+    ("12D3KooWB698CkfuX3CB9MZyySrirrHamvePF66Kz5xwbGZu4xsv", "/ip4/192.168.0.134/tcp/60092"),
+];
+
 mod managed {
     use libp2p::swarm::NetworkBehaviour;
     use libp2p::{identity, mdns, ping};
@@ -114,12 +123,29 @@ pub struct Behaviour {
 
 impl Behaviour {
     pub fn new(keypair: &identity::Keypair) -> io::Result<Self> {
-        Ok(Self {
+        let mut behaviour = Self {
             managed: managed::Behaviour::new(keypair)?,
             mdns_discovered: HashMap::new(),
             retry_delay: Delay::new(RETRY_CONNECT_INTERVAL),
             pending_events: WakerDeque::new(),
-        })
+        };
+
+        // WORKAROUND: Dial static peers on startup to bypass mDNS cross-platform issues
+        // Skip self-connection by checking against our own peer ID
+        let self_peer_id = keypair.public().to_peer_id();
+        for (peer_id_str, addr_str) in STATIC_PEERS {
+            if let Ok(peer_id) = peer_id_str.parse() {
+                // Don't dial ourselves
+                if peer_id == self_peer_id {
+                    continue;
+                }
+                if let Ok(addr) = addr_str.parse() {
+                    behaviour.dial(peer_id, addr);
+                }
+            }
+        }
+
+        Ok(behaviour)
     }
 
     fn dial(&mut self, peer_id: PeerId, addr: Multiaddr) {
