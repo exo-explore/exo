@@ -213,6 +213,7 @@ class API:
                 ),
                 topology=self.state.topology,
                 current_instances=self.state.instances,
+                master_node_id=self.node_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -268,6 +269,7 @@ class API:
                         ),
                         topology=self.state.topology,
                         current_instances=self.state.instances,
+                        master_node_id=self.node_id,
                     )
                 except ValueError as exc:
                     if (card.model_id, sharding, instance_meta, 0) not in seen:

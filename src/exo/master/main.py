@@ -158,6 +158,7 @@ class Master:
                                 command,
                                 self.state.topology,
                                 self.state.instances,
+                                master_node_id=self.node_id,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement

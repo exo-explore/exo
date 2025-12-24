@@ -22,7 +22,7 @@ from exo.shared.types.commands import (
     DeleteInstance,
     PlaceInstance,
 )
-from exo.shared.types.common import Host
+from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.topology import NodeInfo
@@ -55,11 +55,20 @@ def place_instance(
     command: PlaceInstance,
     topology: Topology,
     current_instances: Mapping[InstanceId, Instance],
+    master_node_id: NodeId | None = None,
 ) -> dict[InstanceId, Instance]:
+    """
+    Place an instance on the topology.
+
+    For llama.cpp instances, the master_node_id should be provided to ensure
+    the EXO master node becomes device_rank=0 (runs llama-server with --rpc
+    to connect to worker rpc-servers). This aligns the EXO orchestration
+    master with the llama.cpp inference master.
+    """
     all_nodes = list(topology.list_nodes())
 
     logger.info("finding cycles:")
-    cycles = topology.get_cycles()
+    cycles = topology.get_cycles(preferred_first=master_node_id)
     singleton_cycles = [[node] for node in all_nodes]
     candidate_cycles = list(
         filter(lambda it: len(it) >= command.min_nodes, cycles + singleton_cycles)
