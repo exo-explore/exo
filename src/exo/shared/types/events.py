@@ -42,6 +42,11 @@ class TaskDeleted(BaseEvent):
     task_id: TaskId
 
 
+class TaskCancellationRequested(BaseEvent):
+    task_id: TaskId
+    command_id: CommandId
+
+
 class TaskStatusUpdated(BaseEvent):
     task_id: TaskId
     task_status: TaskStatus
@@ -120,6 +125,7 @@ Event = (
     | TaskStatusUpdated
     | TaskFailed
     | TaskDeleted
+    | TaskCancellationRequested
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted

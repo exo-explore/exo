@@ -60,6 +60,10 @@ class Shutdown(BaseTask):  # emitted by Worker
     runner_id: RunnerId
 
 
+class CancelGeneration(BaseTask):  # emitted by Master when client disconnects
+    command_id: CommandId
+
+
 Task = (
     CreateRunner
     | DownloadModel
@@ -68,4 +72,5 @@ Task = (
     | StartWarmup
     | ChatCompletion
     | Shutdown
+    | CancelGeneration
 )

@@ -10,6 +10,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
+    CancelGeneration,
     ChatCompletion,
     ConnectToGroup,
     LoadModel,
@@ -36,7 +37,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender, WouldBlock
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -161,12 +162,33 @@ def main(
                         assert task_params.messages[0].content is not None
                         _check_for_debug_prompts(task_params.messages[0].content)
 
+                        # Track if client cancelled the request
+                        generation_cancelled = False
+
+                        def check_cancelled() -> bool:
+                            nonlocal generation_cancelled
+                            if generation_cancelled:
+                                return True
+                            # Non-blocking check for CancelGeneration task
+                            try:
+                                pending_task = task_receiver.receive_nowait()
+                                if isinstance(pending_task, CancelGeneration):
+                                    logger.info(
+                                        "Received CancelGeneration during generation"
+                                    )
+                                    generation_cancelled = True
+                                    return True
+                            except WouldBlock:
+                                pass
+                            return False
+
                         # Generate responses using the actual MLX generation
                         for response in mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
                             sampler=sampler,
                             task=task_params,
+                            is_cancelled=check_cancelled,
                         ):
                             match response:
                                 case GenerationResponse():
@@ -189,6 +211,17 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=RunnerReady()
+                            )
+                        )
+                    case CancelGeneration():
+                        # Cancellation handled in the check_cancelled callback during generation
+                        # If we receive it here, the generation already finished
+                        logger.info(
+                            "Received CancelGeneration but generation already complete"
+                        )
                     case Shutdown():
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")

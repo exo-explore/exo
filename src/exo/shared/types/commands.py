@@ -39,6 +39,10 @@ class TaskFinished(BaseCommand):
     finished_command_id: CommandId
 
 
+class TaskCancelled(BaseCommand):
+    cancelled_command_id: CommandId
+
+
 class RequestEventLog(BaseCommand):
     since_idx: int
 
@@ -51,6 +55,7 @@ Command = (
     | CreateInstance
     | DeleteInstance
     | TaskFinished
+    | TaskCancelled
 )
 
 

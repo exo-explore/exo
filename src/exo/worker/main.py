@@ -18,6 +18,7 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
+    TaskCancellationRequested,
     TaskCreated,
     TaskStatusUpdated,
     TopologyEdgeCreated,
@@ -28,6 +29,7 @@ from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
+    CancelGeneration,
     CreateRunner,
     DownloadModel,
     Shutdown,
@@ -172,6 +174,23 @@ class Worker:
 
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
+
+                    # Handle cancellation requests immediately
+                    if isinstance(event, TaskCancellationRequested):
+                        self._handle_cancellation_request(event)
+
+    def _handle_cancellation_request(self, event: TaskCancellationRequested):
+        for runner in self.runners.values():
+            # Send cancellation to all runners. The runner will check command_id
+            cancel_task = CancelGeneration(
+                task_id=event.task_id,
+                command_id=event.command_id,
+                instance_id=runner.bound_instance.instance.instance_id,
+            )
+            runner.send_task_nowait(cancel_task)
+            logger.info(
+                f"Sent CancelGeneration for command {event.command_id} to runner"
+            )
 
     async def plan_step(self):
         while True:

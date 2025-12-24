@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 from typing import cast
 
 import anyio
-from anyio import create_task_group
+from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,6 +52,7 @@ from exo.shared.types.commands import (
     DeleteInstance,
     ForwarderCommand,
     PlaceInstance,
+    TaskCancelled,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
@@ -429,17 +430,22 @@ class API:
                             break
 
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
-            """
-            self.command_sender.send_nowait(
-                ForwarderCommand(origin=self.node_id, command=command)
-            )
-            """
-            raise
-        finally:
-            command = TaskFinished(finished_command_id=command_id)
-            await self._send(command)
+            # Client disconnected - send cancellation to stop generation
+            logger.info(f"Client disconnected, cancelling command {command_id}")
+            cancel_command = TaskCancelled(cancelled_command_id=command_id)
+            # Shield from cancellation so the send actually completes
+            with anyio.CancelScope(shield=True):
+                await self._send(cancel_command)
+            # Don't send TaskFinished - TaskCancelled will handle cleanup
             del self._chat_completion_queues[command_id]
+            # Don't re-raise - just return to end the generator cleanly
+            return
+        finally:
+            # Only send TaskFinished if not cancelled (queue still exists)
+            if command_id in self._chat_completion_queues:
+                command = TaskFinished(finished_command_id=command_id)
+                await self._send(command)
+                del self._chat_completion_queues[command_id]
 
     async def _generate_chat_stream(
         self, command_id: CommandId, parse_gpt_oss: bool
@@ -659,9 +665,15 @@ class API:
                         and event.command_id in self._chat_completion_queues
                     ):
                         assert isinstance(event.chunk, TokenChunk)
-                        await self._chat_completion_queues[event.command_id].send(
-                            event.chunk
-                        )
+                        try:
+                            await self._chat_completion_queues[event.command_id].send(
+                                event.chunk
+                            )
+                        except BrokenResourceError:
+                            # Client disconnected, queue was closed - ignore late chunks
+                            logger.debug(
+                                f"Dropping chunk for disconnected client {event.command_id}"
+                            )
 
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
