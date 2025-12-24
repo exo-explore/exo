@@ -88,7 +88,7 @@ NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(
             pretty_name="noope",
             storage_size=Memory.from_bytes(0),
             n_layers=1,
-            hidden_size=0,
+            hidden_size=1,
             supports_tensor=False,
         ),
         device_rank=0,
