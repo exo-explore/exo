@@ -87,9 +87,13 @@ class RpcServerManager:
 
         if self.server_path is None:
             logger.warning(
-                "rpc-server not found. Distributed inference will not work. "
-                "Build with: cd ~/llama.cpp && cmake -B build -DGGML_RPC=ON && "
-                "cmake --build build --target rpc-server"
+                "rpc-server not found. Distributed inference will not work.\n"
+                "Build llama.cpp with RPC support:\n"
+                "  cd ~/llama.cpp\n"
+                "  rm -rf build\n"
+                "  cmake -B build -DGGML_RPC=ON -DBUILD_SHARED_LIBS=ON\n"
+                "  cmake --build build --target llama-server rpc-server\n"
+                "Then restart EXO."
             )
 
     @classmethod

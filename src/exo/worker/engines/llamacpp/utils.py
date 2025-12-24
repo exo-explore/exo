@@ -398,6 +398,39 @@ def find_llama_server() -> Path | None:
     return None
 
 
+def verify_llama_server_rpc_support(server_path: Path) -> bool:
+    """
+    Verify that llama-server was built with RPC support (-DGGML_RPC=ON).
+
+    Returns True if the binary supports --rpc flag, False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            [str(server_path), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        # Check if --rpc appears in the help output
+        return "--rpc" in result.stdout or "--rpc" in result.stderr
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as exc:
+        logger.warning(f"Failed to check llama-server RPC support: {exc}")
+        return False
+
+
+RPC_BUILD_INSTRUCTIONS = """
+llama-server was not built with RPC support. To enable distributed inference:
+
+  cd ~/llama.cpp
+  rm -rf build
+  cmake -B build -DGGML_RPC=ON -DBUILD_SHARED_LIBS=ON
+  cmake --build build --target llama-server rpc-server
+
+Then restart EXO. The installer script (scripts/install_exo-termux.sh) now
+builds with RPC enabled by default.
+""".strip()
+
+
 def get_lib_path() -> str:
     """Get LD_LIBRARY_PATH for llama.cpp libraries."""
     lib_dirs = [
@@ -568,6 +601,11 @@ class DistributedLlamaServer:
         """
         if self.server_path is None:
             logger.error("llama-server not found. Build with: cmake --build build --target llama-server")
+            return False
+
+        # Verify llama-server has RPC support before attempting distributed inference
+        if self.rpc_addresses and not verify_llama_server_rpc_support(self.server_path):
+            logger.error(RPC_BUILD_INSTRUCTIONS)
             return False
 
         # Pre-check: verify we can reach all workers before starting
