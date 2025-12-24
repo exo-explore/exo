@@ -31,7 +31,7 @@ mod managed {
     use std::time::Duration;
 
     const MDNS_RECORD_TTL: Duration = Duration::from_secs(2_500);
-    const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(1_500);
+    const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(5); // Changed from 1_500 (25 min) to 5s for cross-platform discovery
     const PING_TIMEOUT: Duration = Duration::from_millis(2_500);
     const PING_INTERVAL: Duration = Duration::from_millis(2_500);
 

@@ -1,0 +1,16 @@
+{
+  "static_peers": [
+    {
+      "name": "localhost (4x V100)",
+      "multiaddr": "/ip4/192.168.0.160/tcp/34765/p2p/12D3KooWLC7a3t6givH4e7VtQ8WpmadfnpxvBSaVKxKa8Y3kCAuf"
+    },
+    {
+      "name": ".106 (RTX 5070)",
+      "multiaddr": "/ip4/192.168.0.106/tcp/38651/p2p/12D3KooWCw583XUFccb2RfCd55GpoSd8EFJ1NYwq7yNcjAj1swqv"
+    },
+    {
+      "name": ".134 (M2 Mac)",
+      "multiaddr": "/ip4/192.168.0.134/tcp/55987/p2p/12D3KooWB698CkfuX3CB9MZyySrirrHamvePF66Kz5xwbGZu4xsv"
+    }
+  ]
+}
