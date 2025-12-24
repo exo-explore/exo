@@ -200,7 +200,10 @@ def _is_valid_rpc_ip(ip: str) -> bool:
 
 
 def _get_current_node_ips() -> set[str]:
-    """Get all IP addresses of the current node for self-connection detection."""
+    """Get all IP addresses of the current node for self-connection detection.
+    
+    Uses ifconfig on Android/Termux (ip command doesn't work there).
+    """
     import socket
 
     local_ips: set[str] = {"127.0.0.1", "localhost", "::1"}
@@ -213,24 +216,55 @@ def _get_current_node_ips() -> set[str]:
         except socket.gaierror:
             pass
 
-        try:
-            result = subprocess.run(
-                ["ip", "-4", "addr", "show"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                import re
-
-                ips = re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", result.stdout)
-                local_ips.update(ips)
-        except Exception:
-            pass
+        # Try ifconfig first (works on Android/Termux)
+        ifconfig_ips = _get_ips_from_ifconfig()
+        if ifconfig_ips:
+            local_ips.update(ifconfig_ips)
+        else:
+            # Fall back to ip command
+            try:
+                result = subprocess.run(
+                    ["ip", "-4", "addr", "show"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    import re
+                    ips = re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", result.stdout)
+                    local_ips.update(ips)
+            except Exception:
+                pass
     except Exception:
         pass
 
     return local_ips
+
+
+def _get_ips_from_ifconfig() -> list[str]:
+    """Get IP addresses using ifconfig command (works on Android/Termux)."""
+    ips: list[str] = []
+    try:
+        result = subprocess.run(
+            ["ifconfig"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if 'inet ' in line and 'inet6' not in line:
+                    parts = line.strip().split()
+                    for i, part in enumerate(parts):
+                        if part == 'inet' and i + 1 < len(parts):
+                            ip = parts[i + 1]
+                            if ip.startswith('addr:'):
+                                ip = ip[5:]
+                            ips.append(ip)
+                            break
+    except Exception:
+        pass
+    return ips
 
 
 def build_rpc_address_list(bound_instance: BoundInstance) -> str:
@@ -569,9 +603,7 @@ class DistributedLlamaServer:
             "-m", self.model_path,
             "--port", str(self.port),
             "--host", "127.0.0.1",
-            "-c", "1024",  # Reduced context for memory-constrained distributed inference
-            "-t", str(os.cpu_count() or 4),
-            "--batch-size", "128",  # Smaller batch for stability
+            "-c", "2048",
             "--verbose",
         ]
 

@@ -368,11 +368,43 @@ def _run_llamacpp_runner(
 
 
 def _get_external_ips() -> list[str]:
-    """Get external (non-loopback) IP addresses for this device."""
+    """Get external (non-loopback) IP addresses for this device.
+    
+    Uses ifconfig on Android/Termux (ip command doesn't work there).
+    Falls back to ip command on other platforms.
+    """
     import re
     import subprocess
     
     external_ips: list[str] = []
+    
+    # Try ifconfig first (works on Android/Termux)
+    try:
+        result = subprocess.run(
+            ["ifconfig"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            # Parse "inet x.x.x.x" or "inet addr:x.x.x.x"
+            for line in result.stdout.split('\n'):
+                if 'inet ' in line and 'inet6' not in line:
+                    parts = line.strip().split()
+                    for i, part in enumerate(parts):
+                        if part == 'inet' and i + 1 < len(parts):
+                            ip = parts[i + 1]
+                            if ip.startswith('addr:'):
+                                ip = ip[5:]  # Remove "addr:" prefix
+                            if not ip.startswith('127.'):
+                                external_ips.append(ip)
+                            break
+            if external_ips:
+                return external_ips
+    except Exception:
+        pass
+    
+    # Fall back to ip command (for non-Android Linux)
     try:
         result = subprocess.run(
             ["ip", "-4", "addr", "show"],
@@ -385,6 +417,7 @@ def _get_external_ips() -> list[str]:
             external_ips = [ip for ip in ips if not ip.startswith('127.')]
     except Exception:
         pass
+    
     return external_ips
 
 

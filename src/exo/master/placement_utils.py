@@ -193,7 +193,10 @@ def _is_preferred_network_ip(ip: str) -> bool:
 def _get_external_ip_from_node_profile(node: NodeInfo) -> str | None:
     """Extract the best external IP from a node's profile.
     
-    Prefers private network IPs (10.x, 192.168.x, 172.16-31.x) over other IPs.
+    Prefers:
+    1. wlan0 interface (WiFi on Android - most reliable for RPC)
+    2. Private network IPs (10.x, 192.168.x, 172.16-31.x)
+    3. Any valid external IP
     """
     if node.node_profile is None:
         logger.warning(f"Node {node.node_id} has no profile, cannot get IP")
@@ -208,14 +211,20 @@ def _get_external_ip_from_node_profile(node: NodeInfo) -> str | None:
     for iface in node.node_profile.network_interfaces:
         logger.info(f"  - {iface.name}: {iface.ip_address}")
     
-    # First pass: look for preferred private network IPs
+    # PRIORITY 1: Look for wlan0 with valid IP (most reliable for Android RPC)
+    for interface in node.node_profile.network_interfaces:
+        if interface.name == "wlan0" and _is_valid_external_ip(interface.ip_address):
+            logger.info(f"Selected wlan0 IP {interface.ip_address} for node {node.node_id}")
+            return interface.ip_address
+    
+    # PRIORITY 2: Look for preferred private network IPs
     for interface in node.node_profile.network_interfaces:
         ip = interface.ip_address
         if _is_preferred_network_ip(ip):
             logger.info(f"Selected preferred IP {ip} from interface {interface.name} for node {node.node_id}")
             return ip
     
-    # Second pass: any valid external IP
+    # PRIORITY 3: Any valid external IP
     for interface in node.node_profile.network_interfaces:
         ip = interface.ip_address
         if _is_valid_external_ip(ip):
@@ -308,6 +317,9 @@ def get_hosts_for_llamacpp(
     For llama.cpp RPC, we need the IP addresses that the master (rank 0)
     can use to reach each worker (rank > 0).
     
+    This is CRITICAL for Android/Termux: we must use the real wlan0 IPs
+    from each device's node profile, NOT localhost or connection IPs.
+    
     Returns a list of Host objects ordered by device_rank.
     """
     hosts: list[Host] = []
@@ -317,78 +329,83 @@ def get_hosts_for_llamacpp(
     
     master_node = selected_cycle[0]
     
-    # Log all available connections for debugging
-    all_connections = list(cycle_digraph.list_connections())
-    logger.info(f"=== DEBUG: Building hosts for {len(selected_cycle)} nodes ===")
-    logger.info(f"Master node: {master_node.node_id}")
-    logger.info(f"Total connections in topology: {len(all_connections)}")
-    for conn in all_connections:
-        logger.info(
-            f"  Connection: {conn.local_node_id} -> {conn.send_back_node_id} "
-            f"at {conn.send_back_multiaddr.ip_address}:{conn.send_back_multiaddr.port}"
-        )
+    logger.info("=" * 70)
+    logger.info("LLAMA.CPP RPC HOST CONFIGURATION")
+    logger.info("=" * 70)
+    logger.info(f"Total nodes in cluster: {len(selected_cycle)}")
+    logger.info(f"Master node (rank 0): {master_node.node_id}")
     
-    # Collect all node IPs from node profiles for reference
+    # Log all node profiles for debugging
+    logger.info("")
+    logger.info("[PROFILE] Collecting IPs from node profiles (ifconfig):")
     node_profile_ips: dict[str, str] = {}
-    for node in selected_cycle:
+    for i, node in enumerate(selected_cycle):
         ip = _get_external_ip_from_node_profile(node)
         if ip:
             node_profile_ips[str(node.node_id)] = ip
-            logger.info(f"  Node {node.node_id} profile IP: {ip}")
+            role = "MASTER" if i == 0 else f"WORKER {i}"
+            logger.info(f"  [{role}] Node {str(node.node_id)[:12]}... -> IP: {ip}")
+        else:
+            logger.warning(f"  [WARN] Node {str(node.node_id)[:12]}... -> NO VALID IP FOUND!")
+    
+    # Also log connection topology for reference
+    all_connections = list(cycle_digraph.list_connections())
+    if all_connections:
+        logger.info("")
+        logger.info(f"[CONN] Connection topology ({len(all_connections)} connections):")
+        for conn in all_connections:
+            ip = conn.send_back_multiaddr.ip_address
+            is_localhost = ip.startswith("127.") or ip == "localhost"
+            status = "LOCALHOST (unusable)" if is_localhost else "external"
+            logger.info(f"  {str(conn.local_node_id)[:8]}... -> {str(conn.send_back_node_id)[:8]}... at {ip} ({status})")
+    
+    logger.info("")
+    logger.info("[BUILDING] RPC host list for llama-server --rpc flag:")
     
     for rank, node in enumerate(selected_cycle):
         if rank == 0:
             # Master doesn't need a host entry for RPC (it makes outgoing connections)
-            # But we include a placeholder to keep indices aligned with device_rank
             hosts.append(Host(ip="0.0.0.0", port=0))
+            logger.info(f"  Rank 0 (MASTER): N/A (master makes outgoing connections)")
             continue
-        
-        logger.info(f"=== Finding IP for worker rank {rank}: {node.node_id} ===")
         
         # Find the IP the master can use to reach this worker
         worker_ip: str | None = None
         
         # PRIORITY 1: Use node profile IP (most reliable for Android)
-        # Node profiles contain the actual network interface IPs
         worker_ip = _get_external_ip_from_node_profile(node)
         if worker_ip:
-            logger.info(f"  [PROFILE] Found worker {rank} IP from node profile: {worker_ip}")
+            logger.info(f"  Rank {rank} (WORKER): {worker_ip}:{RPC_BASE_PORT} [from node profile]")
         
-        # PRIORITY 2: Look for connection FROM this worker (worker as local_node_id)
-        # When worker connects to master, it reports its own external IP
+        # PRIORITY 2: Fall back to connection IP if no profile IP
         if worker_ip is None:
-            for connection in all_connections:
-                if connection.local_node_id == node.node_id:
-                    # This is a connection FROM the worker, check what IP others see it at
-                    # Actually, we need to find connections where OTHERS connect TO this worker
-                    pass  # Skip this approach
-            
-            # Look for connections where this worker is the destination
             for connection in all_connections:
                 if connection.send_back_node_id == node.node_id:
                     ip = connection.send_back_multiaddr.ip_address
-                    logger.info(
-                        f"  [CONN] Considering connection from {connection.local_node_id}: "
-                        f"send_back to {connection.send_back_node_id} at {ip}"
-                    )
                     if _is_valid_external_ip(ip):
                         worker_ip = ip
-                        logger.info(f"  [CONN] Using IP from connection: {worker_ip}")
+                        logger.info(f"  Rank {rank} (WORKER): {worker_ip}:{RPC_BASE_PORT} [from connection]")
                         break
-                    else:
-                        logger.info(f"  [CONN] Rejected invalid IP: {ip}")
         
         if worker_ip is None:
-            logger.warning(
-                f"Could not find external IP for worker node {node.node_id} (rank {rank}). "
-                "Distributed inference may fail."
-            )
-            worker_ip = "localhost"  # Fallback, but will likely fail
+            logger.error(f"  Rank {rank} (WORKER): NO VALID IP! Node {node.node_id}")
+            logger.error("    Distributed inference WILL FAIL. Check that:")
+            logger.error("    1. Device is connected to WiFi (not mobile data)")
+            logger.error("    2. ifconfig returns a valid wlan0 IP")
+            logger.error("    3. Node profile was collected successfully")
+            worker_ip = "localhost"  # Fallback, will fail but lets us continue
         
-        # All workers use the same port (60000) since they're on different IPs
-        rpc_port = RPC_BASE_PORT
-        hosts.append(Host(ip=worker_ip, port=rpc_port))
-        logger.info(f"=== Worker {rank} ({node.node_id}): FINAL IP = {worker_ip}:{rpc_port} ===")
+        hosts.append(Host(ip=worker_ip, port=RPC_BASE_PORT))
+    
+    # Final summary
+    logger.info("")
+    logger.info("[SUMMARY] Final RPC configuration:")
+    rpc_workers = [f"{h.ip}:{h.port}" for h in hosts[1:] if h.ip != "0.0.0.0"]
+    if rpc_workers:
+        logger.info(f"  --rpc {','.join(rpc_workers)}")
+    else:
+        logger.error("  NO VALID WORKERS! Distributed inference will fail.")
+    logger.info("=" * 70)
     
     return hosts
 

@@ -153,6 +153,23 @@ class RpcServerManager:
         # Enable RPC debug logging for troubleshooting distributed inference
         env["GGML_RPC_DEBUG"] = "1"
 
+        # Log prominent startup message with wlan0 IP
+        logger.info("=" * 60)
+        logger.info("STARTING RPC WORKER SERVER")
+        logger.info("=" * 60)
+        
+        # Get and display the external IP (should be wlan0 on Android)
+        external_ips = self._get_external_ips_via_ifconfig()
+        wlan0_ip = next((ip for ip in external_ips if ip.startswith("10.") or ip.startswith("192.168.")), None)
+        
+        if wlan0_ip:
+            logger.info(f"  THIS WORKER IP: {wlan0_ip}:{port}")
+            logger.info(f"  Master should connect to: {wlan0_ip}:{port}")
+        else:
+            logger.warning(f"  WARNING: No valid wlan0 IP found! External IPs: {external_ips}")
+            logger.warning(f"  Distributed inference may fail!")
+        
+        logger.info(f"  Binding to: {host}:{port}")
         logger.info(f"Starting rpc-server: {' '.join(command)}")
         logger.info(f"RPC debug logging enabled (GGML_RPC_DEBUG=1)")
 
@@ -230,23 +247,28 @@ class RpcServerManager:
             except socket.gaierror:
                 pass
 
-            # Also try to get interface IPs via netifaces-like approach
-            try:
-                import subprocess
-                result = subprocess.run(
-                    ["ip", "-4", "addr", "show"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    import re
-                    ips = re.findall(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
-                    external_ips = [ip for ip in ips if not ip.startswith('127.')]
-                    if external_ips:
-                        logger.info(f"External IPs for RPC: {', '.join(f'{ip}:{port}' for ip in external_ips)}")
-            except Exception:
-                pass
+            # Get interface IPs - try ifconfig first (works on Android/Termux)
+            external_ips = self._get_external_ips_via_ifconfig()
+            
+            # Fall back to ip command if ifconfig didn't work
+            if not external_ips:
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ["ip", "-4", "addr", "show"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        import re
+                        ips = re.findall(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
+                        external_ips = [ip for ip in ips if not ip.startswith('127.')]
+                except Exception:
+                    pass
+            
+            if external_ips:
+                logger.info(f"External IPs for RPC: {', '.join(f'{ip}:{port}' for ip in external_ips)}")
 
             # Test if we can bind and accept on the external interface
             if external_ips:
@@ -261,6 +283,33 @@ class RpcServerManager:
                         logger.warning(f"Self-test FAILED: cannot connect to {ip}:{port} - {e}")
         except Exception as e:
             logger.debug(f"Failed to get network info: {e}")
+    
+    def _get_external_ips_via_ifconfig(self) -> list[str]:
+        """Get external IPs using ifconfig (works on Android/Termux)."""
+        import subprocess
+        external_ips: list[str] = []
+        try:
+            result = subprocess.run(
+                ["ifconfig"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'inet ' in line and 'inet6' not in line:
+                        parts = line.strip().split()
+                        for i, part in enumerate(parts):
+                            if part == 'inet' and i + 1 < len(parts):
+                                ip = parts[i + 1]
+                                if ip.startswith('addr:'):
+                                    ip = ip[5:]
+                                if not ip.startswith('127.'):
+                                    external_ips.append(ip)
+                                break
+        except Exception:
+            pass
+        return external_ips
 
 
 def assign_rpc_port(device_rank: int) -> int:
