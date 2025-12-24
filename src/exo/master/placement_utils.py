@@ -545,31 +545,42 @@ def get_tensor_split_for_llamacpp(
     """
     Calculate tensor split ratios for llama.cpp distributed inference.
 
-    The tensor_split parameter controls how layers are distributed across devices.
-    Ratios are based on available memory on each node.
+    IMPORTANT: --tensor-split length must equal the number of RPC WORKERS only.
+    The master node (device_rank=0) is NOT included in the split - it runs
+    llama-server and distributes work to workers via --rpc flag.
 
-    Returns a list of floats representing the fraction of layers for each device.
+    For 3 nodes (1 master + 2 workers): returns [0.5, 0.5] (2 values)
+    For 4 nodes (1 master + 3 workers): returns [0.33, 0.33, 0.34] (3 values)
+
+    Returns a list of floats representing the fraction of layers for each WORKER.
     For single-node instances, returns an empty list.
     """
     if len(selected_cycle) <= 1:
         return []
 
-    if not narrow_all_nodes(selected_cycle):
-        # If any node doesn't have a profile, use equal split
-        equal_ratio = 1.0 / len(selected_cycle)
-        return [equal_ratio for _ in selected_cycle]
+    # Workers only - skip master (first node, device_rank=0)
+    workers = selected_cycle[1:]
+    
+    if len(workers) == 0:
+        return []
 
-    total_memory = sum(
-        (node.node_profile.memory.ram_available.in_bytes for node in selected_cycle),
+    if not narrow_all_nodes(selected_cycle):
+        # If any node doesn't have a profile, use equal split among workers
+        equal_ratio = 1.0 / len(workers)
+        return [round(equal_ratio, 4) for _ in workers]
+
+    # Calculate based on worker memory only
+    total_worker_memory = sum(
+        (node.node_profile.memory.ram_available.in_bytes for node in workers),
     )
 
-    if total_memory == 0:
-        equal_ratio = 1.0 / len(selected_cycle)
-        return [equal_ratio for _ in selected_cycle]
+    if total_worker_memory == 0:
+        equal_ratio = 1.0 / len(workers)
+        return [round(equal_ratio, 4) for _ in workers]
 
     tensor_split: list[float] = []
-    for node in selected_cycle:
-        ratio = node.node_profile.memory.ram_available.in_bytes / total_memory
+    for node in workers:
+        ratio = node.node_profile.memory.ram_available.in_bytes / total_worker_memory
         tensor_split.append(round(ratio, 4))
 
     return tensor_split

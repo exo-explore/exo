@@ -84,6 +84,7 @@ class RpcServerManager:
         self.host: str = "0.0.0.0"
         self.server_path: Path | None = find_rpc_server()
         self.lib_path: str = get_lib_path()
+        self._log_threads_started = False
 
         if self.server_path is None:
             logger.warning(
@@ -199,6 +200,8 @@ class RpcServerManager:
                     logger.info(f"rpc-server started successfully on {host}:{port}")
                     # Also log the external IPs this server should be reachable on
                     self._log_network_info(port)
+                    # Start streaming logs from rpc-server
+                    self._start_log_threads()
                     return True
 
                 time.sleep(0.5)
@@ -211,6 +214,31 @@ class RpcServerManager:
         except Exception as error:
             logger.error(f"Failed to start rpc-server: {error}")
             return False
+
+    def _start_log_threads(self) -> None:
+        """Stream stdout/stderr from rpc-server for diagnostics.
+        
+        This shows the RPC debug output like [hello], [set_tensor], [graph_compute].
+        """
+        if self.process is None or self._log_threads_started:
+            return
+        
+        self._log_threads_started = True
+        
+        import threading
+        from typing import Any
+
+        def _reader(stream: Any, label: str) -> None:
+            if stream is None:
+                return
+            for line in iter(stream.readline, b""):
+                text = line.decode(errors="replace").strip()
+                if text:
+                    logger.info(f"[rpc-server:{label}] {text}")
+
+        threading.Thread(target=_reader, args=(self.process.stdout, "stdout"), daemon=True).start()
+        threading.Thread(target=_reader, args=(self.process.stderr, "stderr"), daemon=True).start()
+        logger.info("RPC server log streaming started")
 
     def stop(self) -> None:
         """Stop the rpc-server."""
@@ -228,6 +256,7 @@ class RpcServerManager:
             self.process.wait()
 
         self.process = None
+        self._log_threads_started = False
         logger.info("rpc-server stopped")
 
     def _kill_existing_server(self) -> None:
