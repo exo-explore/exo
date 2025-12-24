@@ -2,10 +2,11 @@ from typing import Any, Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm import stream_generate
-from mlx_lm.models.cache import KVCache
+from mlx_lm.models.cache import KVCache, trim_prompt_cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import ChatCompletionMessage, FinishReason
+from exo.shared.types.mlx import KVCacheType
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -36,6 +37,41 @@ def maybe_quantize_kv_cache(
             hasattr(c, "to_quantized") and c.offset >= quantized_kv_start  # type: ignore
         ):
             prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
+
+
+def prefill(
+    model: Model,
+    tokenizer: TokenizerWrapper,
+    sampler: Callable[[mx.array], mx.array],
+    prompt_tokens: mx.array,
+    cache: KVCacheType,
+) -> None:
+    """Prefill the KV cache with prompt tokens.
+
+    This runs the model over the prompt tokens to populate the cache,
+    then trims off the extra generated token.
+    """
+    num_tokens = len(prompt_tokens)
+    if num_tokens <= 1:
+        # Nothing to prefill - stream_generate will handle single token
+        return
+
+    # Use max_tokens=1 because max_tokens=0 is buggy in some mlx_lm versions
+    # We just throw away the generated token - we only care about filling the cache
+    for _ in stream_generate(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt_tokens[:-1],  # Prefill all but last token
+        max_tokens=1,
+        sampler=sampler,
+        prompt_cache=cache,
+        prefill_step_size=65536,
+        kv_group_size=KV_GROUP_SIZE,
+        kv_bits=KV_BITS,
+    ):
+        break  # Stop after first iteration - cache is now filled
+    # Trim the extra token we generated (max_tokens=1 workaround)
+    trim_prompt_cache(cache, 1)  # type: ignore[arg-type]
 
 
 def warmup_inference(
@@ -102,19 +138,23 @@ def mlx_generate(
 
     # Use prefix cache if available, otherwise create fresh cache
     if kv_prefix_cache is not None:
-        caches, prompt_tokens = kv_prefix_cache.get_kv_cache(
-            model, tokenizer, sampler, prompt
-        )
+        caches, prompt_tokens = kv_prefix_cache.get_kv_cache(model, tokenizer, prompt)
     else:
         caches = make_kv_cache(model=model)
         prompt_tokens = encode_prompt(tokenizer, prompt)
+
+    # Prefill cache with all tokens except the last one
+    prefill(model, tokenizer, sampler, prompt_tokens, caches)
+
+    # stream_generate starts from the last token
+    last_token = prompt_tokens[-1:]
 
     max_tokens = task.max_tokens or MAX_TOKENS
     generated_text_parts: list[str] = []
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
-        prompt=prompt_tokens,
+        prompt=last_token,
         max_tokens=max_tokens,
         sampler=sampler,
         prompt_cache=caches,
