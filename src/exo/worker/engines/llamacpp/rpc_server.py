@@ -268,9 +268,15 @@ def assign_rpc_port(device_rank: int) -> int:
     Assign an RPC port for a device based on its rank.
 
     Master (rank 0) doesn't need an RPC port.
-    Workers (rank > 0) get sequential ports starting from RPC_BASE_PORT.
+    Workers (rank > 0) use RPC_BASE_PORT (60000).
+    
+    Since each worker runs on a separate physical device with its own IP,
+    they can all use the same port without conflicts.
     """
     if device_rank == 0:
         return 0
-    return RPC_BASE_PORT + device_rank - 1
+    # All workers use the same port - they're on different devices
+    return RPC_BASE_PORT
+    # Previous logic for different ports per rank (if multiple workers on same machine):
+    # return RPC_BASE_PORT + device_rank - 1
 
