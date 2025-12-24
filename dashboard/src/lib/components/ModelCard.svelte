@@ -206,12 +206,8 @@ function toggleNodeDetails(nodeId: string): void {
 		const centerY = topoHeight / 2;
 		const radius = numNodes === 1 ? 0 : numNodes === 2 ? 45 : Math.min(topoWidth, topoHeight) * 0.32;
 		
-		// Use API preview data if available
+		// Only use API preview data - no local estimation
 		const hasApiPreview = apiPreview !== null && apiPreview.error === null && apiPreview.memory_delta_by_node !== null;
-		const canFit = hasApiPreview ? true : (() => {
-			const totalAvailable = nodeArray.reduce((sum, n) => sum + n.availableGB, 0);
-			return totalAvailable >= estimatedMemory;
-		})();
 		const error = apiPreview?.error ?? null;
 		
 		let placementNodes: Array<{ 
@@ -232,129 +228,39 @@ function toggleNodeDetails(nodeId: string): void {
 			modelFillHeight: number;
 		}> = [];
 		
-		if (hasApiPreview && apiPreview.memory_delta_by_node) {
-			// Use API placement data
-			const memoryDelta = apiPreview.memory_delta_by_node;
-			placementNodes = nodeArray.map((n, i) => {
-				const deltaBytes = memoryDelta[n.id] ?? 0;
-				const modelUsageGB = deltaBytes / (1024 * 1024 * 1024);
-				const isUsed = deltaBytes > 0;
-				const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-				const safeTotal = Math.max(n.totalGB, 0.001);
-				const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-				const newPercent = clampPercent(((n.usedGB + modelUsageGB) / safeTotal) * 100);
-				const screenHeight = iconSize * 0.58;
-				
-				return {
-					id: n.id,
-					deviceName: n.deviceName,
-					deviceType: n.deviceType,
-					totalGB: n.totalGB,
-					currentUsedGB: n.usedGB,
-					modelUsageGB,
-					currentPercent,
-					newPercent,
-					isUsed,
-					x: centerX + Math.cos(angle) * radius,
-					y: centerY + Math.sin(angle) * radius,
-					iconSize,
-					screenHeight,
-					currentFillHeight: screenHeight * (currentPercent / 100),
-					modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
-				};
-			});
-		} else if (apiPreview?.error) {
-			// API returned an error - model can't fit, show all nodes as unused
-			placementNodes = nodeArray.map((n, i) => {
-				const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-				const safeTotal = Math.max(n.totalGB, 0.001);
-				const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-				const screenHeight = iconSize * 0.58;
-				
-				return {
-					id: n.id,
-					deviceName: n.deviceName,
-					deviceType: n.deviceType,
-					totalGB: n.totalGB,
-					currentUsedGB: n.usedGB,
-					modelUsageGB: 0,
-					currentPercent,
-					newPercent: currentPercent,
-					isUsed: false,
-					x: centerX + Math.cos(angle) * radius,
-					y: centerY + Math.sin(angle) * radius,
-					iconSize,
-					screenHeight,
-					currentFillHeight: screenHeight * (currentPercent / 100),
-					modelFillHeight: 0
-				};
-			});
-		} else {
-			// Fallback: local estimation based on sharding strategy
-			const memoryNeeded = estimatedMemory;
+		// Use API placement data directly
+		const memoryDelta = apiPreview?.memory_delta_by_node ?? {};
+		placementNodes = nodeArray.map((n, i) => {
+			const deltaBytes = memoryDelta[n.id] ?? 0;
+			const modelUsageGB = deltaBytes / (1024 * 1024 * 1024);
+			const isUsed = deltaBytes > 0;
+			const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
+			const safeTotal = Math.max(n.totalGB, 0.001);
+			const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
+			const newPercent = clampPercent(((n.usedGB + modelUsageGB) / safeTotal) * 100);
+			const screenHeight = iconSize * 0.58;
 			
-			if (sharding === 'Pipeline') {
-				const memoryPerNode = memoryNeeded / numNodes;
-				placementNodes = nodeArray.map((n, i) => {
-					const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-					const safeTotal = Math.max(n.totalGB, 0.001);
-					const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-					const newPercent = clampPercent(((n.usedGB + memoryPerNode) / safeTotal) * 100);
-					const screenHeight = iconSize * 0.58;
-					
-					return {
-						id: n.id,
-						deviceName: n.deviceName,
-						deviceType: n.deviceType,
-						totalGB: n.totalGB,
-						currentUsedGB: n.usedGB,
-						modelUsageGB: memoryPerNode,
-						currentPercent,
-						newPercent,
-						isUsed: true,
-						x: centerX + Math.cos(angle) * radius,
-						y: centerY + Math.sin(angle) * radius,
-						iconSize,
-						screenHeight,
-						currentFillHeight: screenHeight * (currentPercent / 100),
-						modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
-					};
-				});
-			} else {
-				let remaining = memoryNeeded;
-				placementNodes = nodeArray.map((n, i) => {
-					const allocated = Math.min(remaining, n.availableGB);
-					remaining -= allocated;
-					const isUsed = allocated > 0;
-					const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-					const safeTotal = Math.max(n.totalGB, 0.001);
-					const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-					const newPercent = clampPercent(((n.usedGB + allocated) / safeTotal) * 100);
-					const screenHeight = iconSize * 0.58;
-					
-					return {
-						id: n.id,
-						deviceName: n.deviceName,
-						deviceType: n.deviceType,
-						totalGB: n.totalGB,
-						currentUsedGB: n.usedGB,
-						modelUsageGB: allocated,
-						currentPercent,
-						newPercent,
-						isUsed,
-						x: centerX + Math.cos(angle) * radius,
-						y: centerY + Math.sin(angle) * radius,
-						iconSize,
-						screenHeight,
-						currentFillHeight: screenHeight * (currentPercent / 100),
-						modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
-					};
-				});
-			}
-		}
+			return {
+				id: n.id,
+				deviceName: n.deviceName,
+				deviceType: n.deviceType,
+				totalGB: n.totalGB,
+				currentUsedGB: n.usedGB,
+				modelUsageGB,
+				currentPercent,
+				newPercent,
+				isUsed,
+				x: centerX + Math.cos(angle) * radius,
+				y: centerY + Math.sin(angle) * radius,
+				iconSize,
+				screenHeight,
+				currentFillHeight: screenHeight * (currentPercent / 100),
+				modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
+			};
+		});
 		
 		const totalAvailable = nodeArray.reduce((sum, n) => sum + n.availableGB, 0);
-		return { nodes: placementNodes, canFit: hasApiPreview || canFit, totalAvailable, topoWidth, topoHeight, error };
+		return { nodes: placementNodes, canFit: hasApiPreview, totalAvailable, topoWidth, topoHeight, error };
 	});
 	
 	const canFit = $derived(apiPreview ? apiPreview.error === null : placementPreview().canFit);
