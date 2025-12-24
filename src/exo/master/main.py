@@ -18,6 +18,7 @@ from exo.shared.types.commands import (
     ForwarderCommand,
     PlaceInstance,
     RequestEventLog,
+    TaskCancelled,
     TaskFinished,
     TestCommand,
 )
@@ -28,6 +29,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InstanceDeleted,
     NodeTimedOut,
+    TaskCancellationRequested,
     TaskCreated,
     TaskDeleted,
 )
@@ -184,6 +186,25 @@ class Master:
                             if command.finished_command_id in self.command_task_mapping:
                                 del self.command_task_mapping[
                                     command.finished_command_id
+                                ]
+                        case TaskCancelled():
+                            if (
+                                command.cancelled_command_id
+                                in self.command_task_mapping
+                            ):
+                                task_id = self.command_task_mapping[
+                                    command.cancelled_command_id
+                                ]
+                                generated_events.append(
+                                    TaskCancellationRequested(
+                                        task_id=task_id,
+                                        command_id=command.cancelled_command_id,
+                                    )
+                                )
+                                # Also delete the task from mapping
+                                generated_events.append(TaskDeleted(task_id=task_id))
+                                del self.command_task_mapping[
+                                    command.cancelled_command_id
                                 ]
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages

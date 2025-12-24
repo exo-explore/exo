@@ -117,6 +117,17 @@ class RunnerSupervisor:
         assert self._tg
         self._tg.cancel_scope.cancel()
 
+    def send_task_nowait(self, task: Task):
+        """Send a task to the runner without waiting for completion.
+
+        Used for cancellation tasks that need to interrupt ongoing work.
+        """
+        logger.info(f"Sending task (nowait) {task}")
+        try:
+            self._task_sender.send(task)
+        except ClosedResourceError:
+            logger.warning(f"Task {task} dropped, runner closed communication.")
+
     async def start_task(self, task: Task):
         logger.info(f"Starting task {task}")
         event = anyio.Event()

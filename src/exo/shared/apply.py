@@ -19,6 +19,7 @@ from exo.shared.types.events import (
     RunnerDeleted,
     RunnerStatusUpdated,
     TaskAcknowledged,
+    TaskCancellationRequested,
     TaskCreated,
     TaskDeleted,
     TaskFailed,
@@ -40,8 +41,12 @@ def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent() | ChunkGenerated() | TaskAcknowledged()
+            TestEvent()
+            | ChunkGenerated()
+            | TaskAcknowledged()
+            | TaskCancellationRequested()
         ):  # TaskAcknowledged should never be sent by a worker but i dont mind if it just gets ignored
+            # TaskCancellationRequested doesn't modify state - handled separately by worker
             return state
         case InstanceCreated():
             return apply_instance_created(event, state)
