@@ -640,6 +640,10 @@ class DistributedLlamaServer:
                 )
                 return False
             logger.info("All workers are ready!")
+            
+            # Give workers a moment to fully initialize before master connects
+            logger.info("Waiting 5s for workers to stabilize...")
+            time.sleep(5)
 
         # Verify model file exists before starting
         model_file = Path(self.model_path)
@@ -703,7 +707,18 @@ class DistributedLlamaServer:
                 start_time = time.time()
                 last_log_time = start_time
                 
+                # RPC handshake grace period: llama.cpp RPC goes through ~60s of
+                # connect/disconnect cycles before stabilizing. During this time,
+                # we only check if the process is alive, not health endpoint.
+                rpc_grace_period = 90 if self.rpc_addresses else 0
+                
+                if rpc_grace_period > 0:
+                    logger.info(f"RPC handshake grace period: {rpc_grace_period}s (no health checks)")
+                    logger.info("This allows llama.cpp RPC to complete initial handshake with workers...")
+                
                 while time.time() - start_time < DISTRIBUTED_SERVER_STARTUP_TIMEOUT:
+                    elapsed = int(time.time() - start_time)
+                    
                     if self.process.poll() is not None:
                         stderr_output = ""
                         if self.process.stderr:
@@ -712,8 +727,10 @@ class DistributedLlamaServer:
                         self.process = None
                         break
 
-                    if self._is_healthy():
-                        elapsed = int(time.time() - start_time)
+                    # During grace period, only check process is alive
+                    in_grace_period = elapsed < rpc_grace_period
+                    
+                    if not in_grace_period and self._is_healthy():
                         logger.info("=" * 60)
                         logger.info(f"DISTRIBUTED LLAMA-SERVER READY (took {elapsed}s)")
                         logger.info(f"Listening on: http://127.0.0.1:{self.port}")
@@ -723,11 +740,12 @@ class DistributedLlamaServer:
                     # Log progress every 30 seconds
                     now = time.time()
                     if now - last_log_time >= 30:
-                        elapsed = int(now - start_time)
-                        logger.info(f"Still loading model... ({elapsed}s / {DISTRIBUTED_SERVER_STARTUP_TIMEOUT}s)")
+                        phase = "RPC handshake" if in_grace_period else "Loading model"
+                        logger.info(f"{phase}... ({elapsed}s / {DISTRIBUTED_SERVER_STARTUP_TIMEOUT}s)")
                         last_log_time = now
                     
-                    time.sleep(1)
+                    # Slower polling during grace period
+                    time.sleep(5 if in_grace_period else 1)
 
                 if self.process is not None:
                     elapsed = int(time.time() - start_time)
