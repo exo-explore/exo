@@ -592,6 +592,7 @@ class DistributedLlamaServer:
         self.process: subprocess.Popen[bytes] | None = None
         self.server_path = find_llama_server()
         self.lib_path = get_lib_path()
+        self._model_loaded = threading.Event()
 
     def start(self, max_retries: int = 3) -> bool:
         """Start the distributed llama-server.
@@ -657,7 +658,7 @@ class DistributedLlamaServer:
             "-m", self.model_path,
             "--port", str(self.port),
             "--host", "127.0.0.1",
-            "-c", "2048",
+            "-c", "1024",
             "--verbose",
         ]
 
@@ -684,6 +685,9 @@ class DistributedLlamaServer:
 
         for attempt in range(max_retries):
             try:
+                # Reset model loaded flag for each attempt
+                self._model_loaded.clear()
+                
                 if attempt > 0:
                     # Exponential backoff: 5s, 10s, 20s...
                     backoff = 5 * (2 ** (attempt - 1))
@@ -766,19 +770,22 @@ class DistributedLlamaServer:
     def _is_healthy(self) -> bool:
         """Check if the server is responding and ready to serve requests.
 
-        For distributed mode (with RPC workers), we trust process liveness.
-        Distributed llama-server only returns /health=200 after first inference,
-        so we can't rely on HTTP health checks for initial readiness.
+        For distributed mode (with RPC workers), we wait for "model loaded"
+        in the stderr output. Distributed llama-server only returns /health=200
+        after first inference, so HTTP health checks are unreliable.
 
         For single-node mode, require HTTP /health to return 200.
         """
-        # For distributed mode, trust process liveness instead of /health
-        # Distributed llama-server returns 503 until first inference completes
+        # For distributed mode, wait for "model loaded" indicator from stderr
+        # This is more reliable than /health which requires inference to trigger
         if self.rpc_addresses:
             is_alive = self.process is not None and self.process.poll() is None
-            if is_alive:
-                logger.info("Distributed mode: process alive, considering ready")
-            return is_alive
+            if not is_alive:
+                return False
+            if self._model_loaded.is_set():
+                logger.info("Distributed mode: model loaded, server ready")
+                return True
+            return False
 
         import requests
 
@@ -811,7 +818,10 @@ class DistributedLlamaServer:
             return False
 
     def _start_log_threads(self) -> None:
-        """Stream stdout/stderr from llama-server for diagnostics."""
+        """Stream stdout/stderr from llama-server for diagnostics.
+        
+        Also watches for "model loaded" indicator to signal readiness.
+        """
         if self.process is None:
             return
 
@@ -822,6 +832,12 @@ class DistributedLlamaServer:
                 text = line.decode(errors="replace").strip()
                 if text:
                     logger.info(f"[llama-server:{label}] {text}")
+                    # Detect when model is fully loaded and ready
+                    if "model loaded" in text.lower() or "server is listening" in text.lower():
+                        logger.info("=" * 60)
+                        logger.info("DETECTED: Model loaded successfully!")
+                        logger.info("=" * 60)
+                        self._model_loaded.set()
 
         threading.Thread(target=_reader, args=(self.process.stdout, "stdout"), daemon=True).start()
         threading.Thread(target=_reader, args=(self.process.stderr, "stderr"), daemon=True).start()
