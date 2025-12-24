@@ -6,12 +6,12 @@ from mlx_lm.models.cache import KVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.api import ChatCompletionMessage, FinishReason
-from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
+from exo.worker.engines.mlx.cache import KVPrefixCache, encode_prompt
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -102,16 +102,19 @@ def mlx_generate(
 
     # Use prefix cache if available, otherwise create fresh cache
     if kv_prefix_cache is not None:
-        caches = kv_prefix_cache.get_kv_cache(model, tokenizer, sampler, prompt)
+        caches, prompt_tokens = kv_prefix_cache.get_kv_cache(
+            model, tokenizer, sampler, prompt
+        )
     else:
         caches = make_kv_cache(model=model)
+        prompt_tokens = encode_prompt(tokenizer, prompt)
 
     max_tokens = task.max_tokens or MAX_TOKENS
-    generated_tokens = []
+    generated_text_parts: list[str] = []
     for out in stream_generate(
         model=model,
         tokenizer=tokenizer,
-        prompt=prompt,
+        prompt=prompt_tokens,
         max_tokens=max_tokens,
         sampler=sampler,
         prompt_cache=caches,
@@ -119,7 +122,7 @@ def mlx_generate(
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
-        generated_tokens.append(out.token)
+        generated_text_parts.append(out.text)
         logger.info(out.text)
         if out.finish_reason is not None and out.finish_reason not in get_args(
             FinishReason
@@ -140,6 +143,6 @@ def mlx_generate(
             # Save cache for future prefix matching (clear first to keep only the last one)
             if kv_prefix_cache is not None:
                 kv_prefix_cache.clear()
-                full_prompt = prompt + tokenizer.decode(generated_tokens)
+                full_prompt = prompt + "".join(generated_text_parts)
                 kv_prefix_cache.add_kv_cache(tokenizer, full_prompt, caches)
             break
