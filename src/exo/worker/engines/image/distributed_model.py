@@ -3,28 +3,24 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import mlx.core as mx
 from mflux.config.config import Config
-from mflux.config.runtime_config import RuntimeConfig
-from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
-from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
-from mflux.models.flux.model.flux_text_encoder.prompt_encoder import PromptEncoder
-from mflux.models.flux.variants.txt2img.flux import Flux1
-from mflux.utils.array_util import ArrayUtil
-from mflux.utils.image_util import ImageUtil
 from PIL import Image
 
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.download.download_utils import build_model_path
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.models import create_adapter_for_model, get_config_for_model
-from exo.worker.engines.image.pipeline import DiffusionRunner, ModelAdapter
+from exo.worker.engines.image.models import (
+    create_adapter_for_model,
+    get_config_for_model,
+)
+from exo.worker.engines.image.models.base import BaseModelAdapter
+from exo.worker.engines.image.pipeline import DiffusionRunner
 from exo.worker.engines.mlx.utils_mlx import mlx_distributed_init, mx_barrier
 from exo.worker.runner.bootstrap import logger
 
 
 class DistributedImageModel:
     __slots__ = (
-        "_model",
         "_config",
         "_adapter",
         "_group",
@@ -32,9 +28,8 @@ class DistributedImageModel:
         "_runner",
     )
 
-    _model: Flux1  # Will be generalized to support other model types
     _config: ImageModelConfig
-    _adapter: ModelAdapter
+    _adapter: BaseModelAdapter
     _group: Optional[mx.distributed.Group]
     _shard_metadata: PipelineShardMetadata
     _runner: DiffusionRunner
@@ -51,9 +46,6 @@ class DistributedImageModel:
         config = get_config_for_model(model_id)
         adapter = create_adapter_for_model(config, model_id, local_path, quantize)
 
-        # Get model from adapter
-        model = adapter.model
-
         # Create diffusion runner (handles both single-node and distributed modes)
         num_sync_steps = config.get_num_sync_steps("medium") if group else 0
         runner = DiffusionRunner(
@@ -67,10 +59,10 @@ class DistributedImageModel:
         if group is not None:
             logger.info("Initialized distributed diffusion runner")
 
-            mx.eval(model.parameters())
+            mx.eval(adapter.model.parameters())
 
             # TODO: Do we need this?
-            mx.eval(model)
+            mx.eval(adapter.model)
 
             # Synchronize processes before generation to avoid timeout
             mx_barrier(group)
@@ -78,7 +70,6 @@ class DistributedImageModel:
         else:
             logger.info("Single-node initialization")
 
-        object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_config", config)
         object.__setattr__(self, "_adapter", adapter)
         object.__setattr__(self, "_group", group)
@@ -114,15 +105,16 @@ class DistributedImageModel:
         )
 
     @property
-    def model(self) -> Flux1:
-        return self._model
+    def model(self) -> Any:
+        """Return the underlying mflux model via the adapter."""
+        return self._adapter.model
 
     @property
     def config(self) -> ImageModelConfig:
         return self._config
 
     @property
-    def adapter(self) -> ModelAdapter:
+    def adapter(self) -> BaseModelAdapter:
         return self._adapter
 
     @property
@@ -157,17 +149,16 @@ class DistributedImageModel:
     def runner(self) -> DiffusionRunner:
         return self._runner
 
-    # Delegate attribute access to the underlying model.
+    # Delegate attribute access to the underlying model via the adapter.
     # Guarded with TYPE_CHECKING to prevent type checker complaints
     # while still providing full delegation at runtime.
     if not TYPE_CHECKING:
 
         def __getattr__(self, name: str) -> Any:
-            return getattr(self._model, name)
+            return getattr(self._adapter.model, name)
 
         def __setattr__(self, name: str, value: Any) -> None:
             if name in (
-                "_model",
                 "_config",
                 "_adapter",
                 "_group",
@@ -176,7 +167,7 @@ class DistributedImageModel:
             ):
                 object.__setattr__(self, name, value)
             else:
-                setattr(self._model, name, value)
+                setattr(self._adapter.model, name, value)
 
     def generate(
         self,
@@ -198,61 +189,16 @@ class DistributedImageModel:
             return image.image
 
     def _generate_image(self, settings: Config, prompt: str, seed: int) -> Any:
-        model = self._model
+        """Generate image by delegating to the adapter.
 
-        # Create runtime config
-        runtime_config = RuntimeConfig(settings, model.model_config)
-
-        # Create initial latents (all nodes create the same latents with same seed)
-        latents = LatentCreator.create_for_txt2img_or_img2img(
-            seed=seed,
-            height=runtime_config.height,
-            width=runtime_config.width,
-            img2img=Img2Img(
-                vae=model.vae,
-                latent_creator=FluxLatentCreator,
-                image_path=runtime_config.image_path,
-                sigmas=runtime_config.scheduler.sigmas,
-                init_time_step=runtime_config.init_time_step,
-            ),
-        )
-
-        # Encode the prompt (all nodes encode to get consistent embeddings)
-        prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
+        The adapter handles all model-specific logic (latent creation,
+        prompt encoding, denoising loop, decoding) via the template method pattern.
+        """
+        return self._adapter.generate_image(
+            settings=settings,
             prompt=prompt,
-            prompt_cache=model.prompt_cache,
-            t5_tokenizer=model.t5_tokenizer,
-            clip_tokenizer=model.clip_tokenizer,
-            t5_text_encoder=model.t5_text_encoder,
-            clip_text_encoder=model.clip_text_encoder,
-        )
-
-        # Run the diffusion loop (runner handles callbacks internally)
-        latents = self._runner.run(
-            latents=latents,
-            prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            runtime_config=runtime_config,
             seed=seed,
-            prompt=prompt,
-        )
-
-        # Decode latents to image (all nodes decode for now)
-        latents = ArrayUtil.unpack_latents(
-            latents=latents, height=runtime_config.height, width=runtime_config.width
-        )
-        decoded = model.vae.decode(latents)
-        return ImageUtil.to_image(
-            decoded_latents=decoded,
-            config=runtime_config,
-            seed=seed,
-            prompt=prompt,
-            quantization=model.bits,
-            lora_paths=model.lora_paths,
-            lora_scales=model.lora_scales,
-            image_path=runtime_config.image_path,
-            image_strength=runtime_config.image_strength,
-            generation_time=0,  # TODO: Track time in runner if needed
+            runner=self._runner if self.is_distributed else None,
         )
 
 
