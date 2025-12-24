@@ -164,20 +164,65 @@ def _is_valid_external_ip(ip: str) -> bool:
         return False
     if ip.startswith("127."):
         return False
+    # Skip IPv6 addresses (contain colons)
+    if ":" in ip:
+        return False
     return True
 
 
+def _is_preferred_network_ip(ip: str) -> bool:
+    """Check if IP is on a preferred private network (10.x.x.x, 192.168.x.x, 172.16-31.x.x)."""
+    if not _is_valid_external_ip(ip):
+        return False
+    # Prefer private network ranges commonly used for local clusters
+    if ip.startswith("10."):
+        return True
+    if ip.startswith("192.168."):
+        return True
+    if ip.startswith("172."):
+        # Check for 172.16.0.0 - 172.31.255.255
+        try:
+            second_octet = int(ip.split(".")[1])
+            if 16 <= second_octet <= 31:
+                return True
+        except (ValueError, IndexError):
+            pass
+    return False
+
+
 def _get_external_ip_from_node_profile(node: NodeInfo) -> str | None:
-    """Extract the best external IP from a node's profile."""
+    """Extract the best external IP from a node's profile.
+    
+    Prefers private network IPs (10.x, 192.168.x, 172.16-31.x) over other IPs.
+    """
     if node.node_profile is None:
+        logger.warning(f"Node {node.node_id} has no profile, cannot get IP")
         return None
     
+    if not node.node_profile.network_interfaces:
+        logger.warning(f"Node {node.node_id} has no network interfaces in profile")
+        return None
+    
+    # Log all interfaces for debugging
+    logger.info(f"Node {node.node_id} network interfaces:")
+    for iface in node.node_profile.network_interfaces:
+        logger.info(f"  - {iface.name}: {iface.ip_address}")
+    
+    # First pass: look for preferred private network IPs
+    for interface in node.node_profile.network_interfaces:
+        ip = interface.ip_address
+        if _is_preferred_network_ip(ip):
+            logger.info(f"Selected preferred IP {ip} from interface {interface.name} for node {node.node_id}")
+            return ip
+    
+    # Second pass: any valid external IP
     for interface in node.node_profile.network_interfaces:
         ip = interface.ip_address
         if _is_valid_external_ip(ip):
-            logger.debug(f"Found external IP {ip} on interface {interface.name} for node {node.node_id}")
+            logger.info(f"Selected fallback IP {ip} from interface {interface.name} for node {node.node_id}")
             return ip
     
+    logger.warning(f"No valid external IP found for node {node.node_id}")
     return None
 
 
@@ -272,6 +317,25 @@ def get_hosts_for_llamacpp(
     
     master_node = selected_cycle[0]
     
+    # Log all available connections for debugging
+    all_connections = list(cycle_digraph.list_connections())
+    logger.info(f"=== DEBUG: Building hosts for {len(selected_cycle)} nodes ===")
+    logger.info(f"Master node: {master_node.node_id}")
+    logger.info(f"Total connections in topology: {len(all_connections)}")
+    for conn in all_connections:
+        logger.info(
+            f"  Connection: {conn.local_node_id} -> {conn.send_back_node_id} "
+            f"at {conn.send_back_multiaddr.ip_address}:{conn.send_back_multiaddr.port}"
+        )
+    
+    # Collect all node IPs from node profiles for reference
+    node_profile_ips: dict[str, str] = {}
+    for node in selected_cycle:
+        ip = _get_external_ip_from_node_profile(node)
+        if ip:
+            node_profile_ips[str(node.node_id)] = ip
+            logger.info(f"  Node {node.node_id} profile IP: {ip}")
+    
     for rank, node in enumerate(selected_cycle):
         if rank == 0:
             # Master doesn't need a host entry for RPC (it makes outgoing connections)
@@ -279,36 +343,40 @@ def get_hosts_for_llamacpp(
             hosts.append(Host(ip="0.0.0.0", port=0))
             continue
         
+        logger.info(f"=== Finding IP for worker rank {rank}: {node.node_id} ===")
+        
         # Find the IP the master can use to reach this worker
         worker_ip: str | None = None
         
-        # Try 1: Look for connection from master to this worker
-        for connection in cycle_digraph.list_connections():
-            if (
-                connection.local_node_id == master_node.node_id
-                and connection.send_back_node_id == node.node_id
-            ):
-                ip = connection.send_back_multiaddr.ip_address
-                if _is_valid_external_ip(ip):
-                    worker_ip = ip
-                    logger.debug(f"Found worker {rank} IP from master connection: {ip}")
-                    break
+        # PRIORITY 1: Use node profile IP (most reliable for Android)
+        # Node profiles contain the actual network interface IPs
+        worker_ip = _get_external_ip_from_node_profile(node)
+        if worker_ip:
+            logger.info(f"  [PROFILE] Found worker {rank} IP from node profile: {worker_ip}")
         
-        # Try 2: Look for any connection TO this worker (send_back gives us worker's IP)
+        # PRIORITY 2: Look for connection FROM this worker (worker as local_node_id)
+        # When worker connects to master, it reports its own external IP
         if worker_ip is None:
-            for connection in cycle_digraph.list_connections():
+            for connection in all_connections:
+                if connection.local_node_id == node.node_id:
+                    # This is a connection FROM the worker, check what IP others see it at
+                    # Actually, we need to find connections where OTHERS connect TO this worker
+                    pass  # Skip this approach
+            
+            # Look for connections where this worker is the destination
+            for connection in all_connections:
                 if connection.send_back_node_id == node.node_id:
                     ip = connection.send_back_multiaddr.ip_address
+                    logger.info(
+                        f"  [CONN] Considering connection from {connection.local_node_id}: "
+                        f"send_back to {connection.send_back_node_id} at {ip}"
+                    )
                     if _is_valid_external_ip(ip):
                         worker_ip = ip
-                        logger.debug(f"Found worker {rank} IP from any connection: {ip}")
+                        logger.info(f"  [CONN] Using IP from connection: {worker_ip}")
                         break
-        
-        # Try 3: Get IP from worker's node profile
-        if worker_ip is None:
-            worker_ip = _get_external_ip_from_node_profile(node)
-            if worker_ip:
-                logger.debug(f"Found worker {rank} IP from node profile: {worker_ip}")
+                    else:
+                        logger.info(f"  [CONN] Rejected invalid IP: {ip}")
         
         if worker_ip is None:
             logger.warning(
@@ -319,7 +387,7 @@ def get_hosts_for_llamacpp(
         
         rpc_port = RPC_BASE_PORT + rank - 1
         hosts.append(Host(ip=worker_ip, port=rpc_port))
-        logger.info(f"Worker {rank} ({node.node_id}): {worker_ip}:{rpc_port}")
+        logger.info(f"=== Worker {rank} ({node.node_id}): FINAL IP = {worker_ip}:{rpc_port} ===")
     
     return hosts
 
