@@ -766,8 +766,20 @@ class DistributedLlamaServer:
     def _is_healthy(self) -> bool:
         """Check if the server is responding and ready to serve requests.
 
-        Require HTTP /health to return 200. Do NOT treat TCP-open or 503 as ready.
+        For distributed mode (with RPC workers), we trust process liveness.
+        Distributed llama-server only returns /health=200 after first inference,
+        so we can't rely on HTTP health checks for initial readiness.
+
+        For single-node mode, require HTTP /health to return 200.
         """
+        # For distributed mode, trust process liveness instead of /health
+        # Distributed llama-server returns 503 until first inference completes
+        if self.rpc_addresses:
+            is_alive = self.process is not None and self.process.poll() is None
+            if is_alive:
+                logger.info("Distributed mode: process alive, considering ready")
+            return is_alive
+
         import requests
 
         try:
@@ -780,7 +792,6 @@ class DistributedLlamaServer:
                 logger.info("Health check: Server is ready (200 OK)")
                 return True
             if status == 503:
-                # Log the actual response body to understand what's happening
                 try:
                     body = response.json()
                     error_msg = body.get("error", {}).get("message", "Unknown")
