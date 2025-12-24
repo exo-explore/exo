@@ -1,7 +1,13 @@
 import socket
 import subprocess
 import sys
+import warnings
 from subprocess import CalledProcessError
+
+# Suppress psutil warnings about /proc/vmstat on Android (permission denied)
+if "termux" in sys.prefix.lower() or "android" in sys.prefix.lower():
+    warnings.filterwarnings("ignore", message=".*swap memory stats.*")
+    warnings.filterwarnings("ignore", message=".*Permission denied.*vmstat.*")
 
 import psutil
 from anyio import run_process
@@ -93,20 +99,17 @@ def get_external_ip_for_rpc() -> str | None:
     # Priority 1: Look for wlan0 with a valid IP
     for iface in interfaces:
         if iface.name == 'wlan0' and _is_valid_external_ip(iface.ip_address):
-            print(f"[EXO] Using wlan0 IP for RPC: {iface.ip_address}")
             return iface.ip_address
     
     # Priority 2: Look for any private network IP
     for iface in interfaces:
         ip = iface.ip_address
         if _is_preferred_private_ip(ip):
-            print(f"[EXO] Using {iface.name} IP for RPC: {ip}")
             return ip
     
     # Priority 3: Any valid external IP
     for iface in interfaces:
         if _is_valid_external_ip(iface.ip_address):
-            print(f"[EXO] Using {iface.name} IP for RPC (fallback): {iface.ip_address}")
             return iface.ip_address
     
     return None
@@ -159,10 +162,6 @@ def get_network_interfaces() -> list[NetworkInterfaceInfo]:
         ifconfig_interfaces = _get_ifconfig_interfaces()
         if ifconfig_interfaces:
             interfaces_info.extend(ifconfig_interfaces)
-            # Log what we found for debugging
-            for iface in ifconfig_interfaces:
-                if not iface.ip_address.startswith('127.'):
-                    print(f"[EXO] Found network interface: {iface.name} = {iface.ip_address}")
         
         # If ifconfig found useful IPs, return them (don't mix with psutil)
         has_useful_ip = any(
