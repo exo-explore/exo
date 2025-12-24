@@ -156,7 +156,37 @@ def get_shard_assignments(
             )
 
 
+def _is_valid_external_ip(ip: str) -> bool:
+    """Check if an IP address is a valid external (non-loopback) address."""
+    if not ip:
+        return False
+    if ip in ("127.0.0.1", "::1", "localhost", "0.0.0.0"):
+        return False
+    if ip.startswith("127."):
+        return False
+    return True
+
+
+def _get_external_ip_from_node_profile(node: NodeInfo) -> str | None:
+    """Extract the best external IP from a node's profile."""
+    if node.node_profile is None:
+        return None
+    
+    for interface in node.node_profile.network_interfaces:
+        ip = interface.ip_address
+        if _is_valid_external_ip(ip):
+            logger.debug(f"Found external IP {ip} on interface {interface.name} for node {node.node_id}")
+            return ip
+    
+    return None
+
+
 def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
+    """Get host addresses for nodes in the topology.
+    
+    Attempts to find real network IPs (not localhost) for each node.
+    Falls back to node profile IPs if connection topology only has localhost.
+    """
     cycles = cycle_digraph.get_cycles()
     expected_length = len(list(cycle_digraph.list_nodes()))
     cycles = [cycle for cycle in cycles if len(cycle) == expected_length]
@@ -180,6 +210,9 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
         next_node = cycle[(i + 1) % len(cycle)]
 
         best_host: Host | None = None
+        fallback_port: int = 0
+        
+        # First try: find external IP from connection topology
         for connection in cycle_digraph.list_connections():
             if (
                 connection.local_node_id == current_node.node_id
@@ -189,18 +222,105 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
                     continue
                 assert connection.send_back_multiaddr is not None
                 ip = connection.send_back_multiaddr.ip_address
+                fallback_port = connection.send_back_multiaddr.port
+                
                 # Skip loopback addresses - prefer real network IPs
-                if ip == "127.0.0.1" or ip == "::1":
+                if not _is_valid_external_ip(ip):
+                    logger.debug(f"Skipping localhost IP {ip} from connection {current_node.node_id} -> {next_node.node_id}")
                     continue
+                    
                 host = Host(
                     ip=ip,
                     port=connection.send_back_multiaddr.port,
                 )
                 best_host = host
                 break
+        
+        # Second try: if no valid IP from connections, try node profile
+        if best_host is None:
+            external_ip = _get_external_ip_from_node_profile(next_node)
+            if external_ip:
+                logger.info(f"Using node profile IP {external_ip} for {next_node.node_id} (connection had localhost)")
+                best_host = Host(
+                    ip=external_ip,
+                    port=fallback_port if fallback_port else 52415,
+                )
+        
         if best_host is not None:
             hosts.append(best_host)
+        else:
+            logger.warning(f"Could not find valid external IP for node {next_node.node_id}")
 
+    return hosts
+
+
+def get_hosts_for_llamacpp(
+    selected_cycle: list[NodeInfo],
+    cycle_digraph: Topology,
+) -> list[Host]:
+    """Get host addresses specifically for llama.cpp distributed inference.
+    
+    For llama.cpp RPC, we need the IP addresses that the master (rank 0)
+    can use to reach each worker (rank > 0).
+    
+    Returns a list of Host objects ordered by device_rank.
+    """
+    hosts: list[Host] = []
+    
+    if len(selected_cycle) <= 1:
+        return hosts
+    
+    master_node = selected_cycle[0]
+    
+    for rank, node in enumerate(selected_cycle):
+        if rank == 0:
+            # Master doesn't need a host entry for RPC (it makes outgoing connections)
+            # But we include a placeholder to keep indices aligned with device_rank
+            hosts.append(Host(ip="0.0.0.0", port=0))
+            continue
+        
+        # Find the IP the master can use to reach this worker
+        worker_ip: str | None = None
+        
+        # Try 1: Look for connection from master to this worker
+        for connection in cycle_digraph.list_connections():
+            if (
+                connection.local_node_id == master_node.node_id
+                and connection.send_back_node_id == node.node_id
+            ):
+                ip = connection.send_back_multiaddr.ip_address
+                if _is_valid_external_ip(ip):
+                    worker_ip = ip
+                    logger.debug(f"Found worker {rank} IP from master connection: {ip}")
+                    break
+        
+        # Try 2: Look for any connection TO this worker (send_back gives us worker's IP)
+        if worker_ip is None:
+            for connection in cycle_digraph.list_connections():
+                if connection.send_back_node_id == node.node_id:
+                    ip = connection.send_back_multiaddr.ip_address
+                    if _is_valid_external_ip(ip):
+                        worker_ip = ip
+                        logger.debug(f"Found worker {rank} IP from any connection: {ip}")
+                        break
+        
+        # Try 3: Get IP from worker's node profile
+        if worker_ip is None:
+            worker_ip = _get_external_ip_from_node_profile(node)
+            if worker_ip:
+                logger.debug(f"Found worker {rank} IP from node profile: {worker_ip}")
+        
+        if worker_ip is None:
+            logger.warning(
+                f"Could not find external IP for worker node {node.node_id} (rank {rank}). "
+                "Distributed inference may fail."
+            )
+            worker_ip = "localhost"  # Fallback, but will likely fail
+        
+        rpc_port = RPC_BASE_PORT + rank - 1
+        hosts.append(Host(ip=worker_ip, port=rpc_port))
+        logger.info(f"Worker {rank} ({node.node_id}): {worker_ip}:{rpc_port}")
+    
     return hosts
 
 

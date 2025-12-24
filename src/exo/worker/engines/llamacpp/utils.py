@@ -188,6 +188,17 @@ def is_distributed_instance(bound_instance: BoundInstance) -> bool:
     return instance.is_distributed
 
 
+def _is_valid_rpc_ip(ip: str) -> bool:
+    """Check if an IP is valid for RPC connections (not localhost/loopback)."""
+    if not ip:
+        return False
+    if ip in ("127.0.0.1", "::1", "localhost", "0.0.0.0"):
+        return False
+    if ip.startswith("127."):
+        return False
+    return True
+
+
 def build_rpc_address_list(bound_instance: BoundInstance) -> str:
     """
     Build the RPC address list for llama.cpp --rpc flag.
@@ -195,6 +206,9 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
     Format: "ip1:port1,ip2:port2,..."
     Only includes worker nodes (device_rank > 0).
     Hosts are ordered by device_rank in the instance.
+    
+    Validates that IPs are external (not localhost) and logs warnings
+    for any configuration issues.
     """
     instance = bound_instance.instance
     if not isinstance(instance, LlamaCppInstance):
@@ -202,10 +216,13 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
 
     shard_assignments = instance.shard_assignments
     rpc_addresses: list[str] = []
+    invalid_workers: list[str] = []
 
-    # Debug log the hosts array
-    logger.debug(f"Instance hosts: {[(h.ip, h.port) for h in instance.hosts]}")
-    logger.debug(f"RPC ports: {instance.rpc_ports}")
+    # Log full instance configuration for debugging
+    logger.info(f"Building RPC address list for {len(instance.hosts)} hosts")
+    logger.info(f"Instance hosts: {[(h.ip, h.port) for h in instance.hosts]}")
+    logger.info(f"RPC ports: {instance.rpc_ports}")
+    logger.info(f"Tensor split: {instance.tensor_split}")
 
     for node_id, runner_id in shard_assignments.node_to_runner.items():
         shard = shard_assignments.runner_to_shard.get(runner_id)
@@ -213,27 +230,59 @@ def build_rpc_address_list(bound_instance: BoundInstance) -> str:
             continue
 
         if shard.device_rank == 0:
+            logger.debug(f"Skipping master node {node_id} (rank 0)")
             continue
 
         rpc_port = instance.rpc_ports.get(node_id, 0)
         if rpc_port == 0:
             logger.warning(f"No RPC port for node {node_id} (rank {shard.device_rank})")
+            invalid_workers.append(f"{node_id}:no_port")
             continue
 
         # Use device_rank as index into hosts list (hosts are ordered by rank)
         host_index = shard.device_rank
         if host_index < len(instance.hosts):
             host = instance.hosts[host_index]
-            logger.debug(f"Rank {shard.device_rank} -> host[{host_index}] = {host.ip}:{rpc_port}")
-            if host.ip and host.ip != "0.0.0.0":
-                rpc_addresses.append(f"{host.ip}:{rpc_port}")
-            else:
-                logger.warning(f"Invalid IP for rank {shard.device_rank}: {host.ip}")
+            
+            # Validate IP is external
+            if not _is_valid_rpc_ip(host.ip):
+                logger.error(
+                    f"Invalid IP for worker rank {shard.device_rank}: '{host.ip}'. "
+                    "Distributed inference requires external network IPs, not localhost. "
+                    "Check network topology and ensure devices are on the same VLAN/WiFi."
+                )
+                invalid_workers.append(f"{node_id}:{host.ip}")
+                continue
+            
+            rpc_address = f"{host.ip}:{rpc_port}"
+            logger.info(f"Worker rank {shard.device_rank} ({node_id}): {rpc_address}")
+            rpc_addresses.append(rpc_address)
         else:
-            logger.warning(f"No host found for device_rank {shard.device_rank} (only {len(instance.hosts)} hosts)")
+            logger.warning(
+                f"No host found for device_rank {shard.device_rank} "
+                f"(only {len(instance.hosts)} hosts in instance)"
+            )
+            invalid_workers.append(f"{node_id}:no_host")
+
+    if invalid_workers:
+        logger.warning(
+            f"Some workers have invalid configurations: {invalid_workers}. "
+            "These workers will not participate in distributed inference."
+        )
 
     result = ",".join(rpc_addresses)
-    logger.info(f"Built RPC address list: {result}")
+    
+    if result:
+        logger.info(f"Built RPC address list: {result}")
+    else:
+        logger.error(
+            "RPC address list is empty! No valid worker IPs found. "
+            "Distributed inference will fail. Check that:\n"
+            "  1. Devices are on the same network (same VLAN/WiFi)\n"
+            "  2. Client isolation is disabled on the network\n"
+            "  3. Devices have discovered each other with real IPs (not localhost)"
+        )
+    
     return result
 
 
@@ -294,6 +343,47 @@ def is_rpc_port_responding(host: str, port: int, timeout: float = 2.0) -> bool:
         return False
 
 
+def precheck_rpc_connectivity(rpc_addresses: str) -> dict[str, bool]:
+    """
+    Pre-check connectivity to all RPC workers without waiting.
+    
+    Returns a dict mapping each address to its reachability status.
+    This is useful for quick diagnostics before starting the full wait loop.
+    """
+    if not rpc_addresses:
+        return {}
+    
+    addresses = [addr.strip() for addr in rpc_addresses.split(",") if addr.strip()]
+    results: dict[str, bool] = {}
+    
+    logger.info("Pre-checking RPC worker connectivity...")
+    
+    for addr in addresses:
+        try:
+            host, port_str = addr.split(":")
+            port = int(port_str)
+            reachable = is_rpc_port_responding(host, port, timeout=3.0)
+            results[addr] = reachable
+            status = "REACHABLE" if reachable else "UNREACHABLE"
+            logger.info(f"  {addr}: {status}")
+        except (ValueError, IndexError):
+            logger.warning(f"  {addr}: INVALID FORMAT")
+            results[addr] = False
+    
+    reachable_count = sum(1 for v in results.values() if v)
+    total_count = len(results)
+    
+    if reachable_count == total_count:
+        logger.info(f"Pre-check: All {total_count} workers reachable")
+    else:
+        logger.warning(
+            f"Pre-check: Only {reachable_count}/{total_count} workers reachable. "
+            "Distributed inference may fail or be delayed."
+        )
+    
+    return results
+
+
 def wait_for_rpc_workers(rpc_addresses: str, timeout: int = 120) -> bool:
     """
     Wait for all RPC worker servers to be available.
@@ -308,38 +398,61 @@ def wait_for_rpc_workers(rpc_addresses: str, timeout: int = 120) -> bool:
     if not addresses:
         return True
 
-    logger.info(f"Waiting for {len(addresses)} RPC worker(s) to be ready...")
+    logger.info(f"Checking connectivity to {len(addresses)} RPC worker(s)...")
+    
+    # Track which workers we've seen become ready
+    workers_ready: set[str] = set()
 
     start_time = time.time()
+    last_log_time = start_time
+    
     while time.time() - start_time < timeout:
-        all_ready = True
-        not_ready = []
+        not_ready: list[str] = []
 
         for addr in addresses:
+            if addr in workers_ready:
+                continue
+                
             try:
                 host, port_str = addr.split(":")
                 port = int(port_str)
-                if not is_rpc_port_responding(host, port):
-                    all_ready = False
+                if is_rpc_port_responding(host, port):
+                    if addr not in workers_ready:
+                        logger.info(f"  Worker {addr}: READY")
+                        workers_ready.add(addr)
+                else:
                     not_ready.append(addr)
             except (ValueError, IndexError):
                 logger.warning(f"Invalid RPC address format: {addr}")
-                all_ready = False
                 not_ready.append(addr)
 
-        if all_ready:
+        if len(workers_ready) == len(addresses):
             elapsed = int(time.time() - start_time)
             logger.info(f"All {len(addresses)} RPC workers ready after {elapsed}s")
             return True
 
         elapsed = int(time.time() - start_time)
+        now = time.time()
+        
         # Log progress every 10 seconds
-        if elapsed % 10 == 0 and elapsed > 0:
-            logger.info(f"Still waiting for RPC workers: {not_ready} ({elapsed}s / {timeout}s)")
-        logger.debug(f"Waiting for RPC workers: {not_ready} ({elapsed}s / {timeout}s)")
+        if now - last_log_time >= 10:
+            ready_count = len(workers_ready)
+            total_count = len(addresses)
+            logger.info(
+                f"Waiting for workers: {ready_count}/{total_count} ready, "
+                f"pending: {not_ready} ({elapsed}s / {timeout}s)"
+            )
+            last_log_time = now
+            
         time.sleep(2)
 
-    logger.error(f"Timeout waiting for RPC workers after {timeout}s")
+    # Log final status
+    elapsed = int(time.time() - start_time)
+    missing = [addr for addr in addresses if addr not in workers_ready]
+    logger.error(
+        f"Timeout after {elapsed}s waiting for RPC workers. "
+        f"Ready: {list(workers_ready)}, Missing: {missing}"
+    )
     return False
 
 
@@ -370,18 +483,39 @@ class DistributedLlamaServer:
         """Start the distributed llama-server.
         
         Waits for all RPC workers to be available before starting,
-        and retries on failure.
+        and retries on failure with exponential backoff.
         """
         if self.server_path is None:
-            logger.error("llama-server not found")
+            logger.error("llama-server not found. Build with: cmake --build build --target llama-server")
             return False
 
-        # Wait for worker RPC servers to be ready before starting master
+        # Pre-check: verify we can reach all workers before starting
         if self.rpc_addresses:
+            logger.info("=" * 60)
+            logger.info("DISTRIBUTED INFERENCE STARTUP")
+            logger.info("=" * 60)
+            logger.info(f"Model: {self.model_path}")
+            logger.info(f"RPC workers: {self.rpc_addresses}")
+            logger.info(f"Tensor split: {self.tensor_split}")
+            logger.info("=" * 60)
+            
+            # Log individual worker addresses
+            addresses = [addr.strip() for addr in self.rpc_addresses.split(",") if addr.strip()]
+            for i, addr in enumerate(addresses):
+                logger.info(f"  Worker {i + 1}: {addr}")
+            
             logger.info("Waiting for worker RPC servers to be ready...")
-            if not wait_for_rpc_workers(self.rpc_addresses, timeout=120):
-                logger.error("Worker RPC servers not available, cannot start distributed inference")
+            # Longer timeout for Android WiFi (180 seconds)
+            if not wait_for_rpc_workers(self.rpc_addresses, timeout=180):
+                logger.error(
+                    "Worker RPC servers not available. Troubleshooting:\n"
+                    "  1. Ensure all workers have started their rpc-server\n"
+                    "  2. Check that devices are on the same network/VLAN\n"
+                    "  3. Verify client isolation is disabled on the WiFi\n"
+                    "  4. Test connectivity manually: nc -zv <worker-ip> <port>"
+                )
                 return False
+            logger.info("All workers are ready!")
 
         command = [
             str(self.server_path),
@@ -402,9 +536,6 @@ class DistributedLlamaServer:
 
         # Always disable mmap for distributed inference (critical for Android/Termux)
         command.append("--no-mmap")
-        
-        # Disable flash attention to prevent hangs on heterogeneous setups
-        command.append("--no-flash-attn")
 
         env = os.environ.copy()
         if self.lib_path:
@@ -415,15 +546,22 @@ class DistributedLlamaServer:
         env["LLAMA_LOG_VERBOSITY"] = "0"
         env["LLAMA_LOG_TIMESTAMPS"] = "1"
 
-        logger.info(f"Starting distributed llama-server: {' '.join(command[:10])}...")
-        logger.info(f"RPC addresses: {self.rpc_addresses}")
-        logger.info(f"Tensor split: {self.tensor_split}")
+        logger.info(f"Starting llama-server with distributed inference...")
+        logger.info(f"Command: {' '.join(command)}")
 
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    logger.info(f"Retry attempt {attempt + 1}/{max_retries}...")
-                    time.sleep(5)
+                    # Exponential backoff: 5s, 10s, 20s...
+                    backoff = 5 * (2 ** (attempt - 1))
+                    logger.info(f"Retry attempt {attempt + 1}/{max_retries} (waiting {backoff}s)...")
+                    time.sleep(backoff)
+                    
+                    # Re-check workers before retry
+                    if self.rpc_addresses:
+                        logger.info("Re-checking worker availability...")
+                        if not wait_for_rpc_workers(self.rpc_addresses, timeout=60):
+                            logger.warning("Workers still not ready, retrying anyway...")
 
                 self.process = subprocess.Popen(
                     command,
@@ -434,30 +572,48 @@ class DistributedLlamaServer:
                 self._start_log_threads()
 
                 start_time = time.time()
+                last_log_time = start_time
+                
                 while time.time() - start_time < DISTRIBUTED_SERVER_STARTUP_TIMEOUT:
                     if self.process.poll() is not None:
                         stderr_output = ""
                         if self.process.stderr:
                             stderr_output = self.process.stderr.read().decode()
-                        logger.warning(f"Distributed llama-server died (attempt {attempt + 1}): {stderr_output[:500]}")
+                        logger.warning(f"llama-server died (attempt {attempt + 1}): {stderr_output[:500]}")
                         self.process = None
                         break
 
                     if self._is_healthy():
-                        logger.info(f"Distributed llama-server started on port {self.port}")
+                        elapsed = int(time.time() - start_time)
+                        logger.info("=" * 60)
+                        logger.info(f"DISTRIBUTED LLAMA-SERVER READY (took {elapsed}s)")
+                        logger.info(f"Listening on: http://127.0.0.1:{self.port}")
+                        logger.info("=" * 60)
                         return True
 
+                    # Log progress every 30 seconds
+                    now = time.time()
+                    if now - last_log_time >= 30:
+                        elapsed = int(now - start_time)
+                        logger.info(f"Still loading model... ({elapsed}s / {DISTRIBUTED_SERVER_STARTUP_TIMEOUT}s)")
+                        last_log_time = now
+                    
                     time.sleep(1)
-                    logger.debug(f"Waiting for server... ({int(time.time() - start_time)}s)")
 
                 if self.process is not None:
-                    logger.warning(f"Server startup timeout (attempt {attempt + 1})")
+                    elapsed = int(time.time() - start_time)
+                    logger.warning(f"Server startup timeout after {elapsed}s (attempt {attempt + 1})")
                     self.stop()
 
             except Exception as error:
-                logger.warning(f"Failed to start distributed llama-server (attempt {attempt + 1}): {error}")
+                logger.warning(f"Failed to start llama-server (attempt {attempt + 1}): {error}")
+                import traceback
+                logger.debug(traceback.format_exc())
 
-        logger.error(f"Server failed to start after {max_retries} attempts")
+        logger.error(
+            f"Server failed to start after {max_retries} attempts. "
+            "Check the logs above for specific errors."
+        )
         return False
 
     def _is_healthy(self) -> bool:

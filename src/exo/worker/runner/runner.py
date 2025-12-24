@@ -367,6 +367,27 @@ def _run_llamacpp_runner(
     event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerShutdown()))
 
 
+def _get_external_ips() -> list[str]:
+    """Get external (non-loopback) IP addresses for this device."""
+    import re
+    import subprocess
+    
+    external_ips: list[str] = []
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "addr", "show"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            ips = re.findall(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout)
+            external_ips = [ip for ip in ips if not ip.startswith('127.')]
+    except Exception:
+        pass
+    return external_ips
+
+
 def _run_llamacpp_worker(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
@@ -381,6 +402,7 @@ def _run_llamacpp_worker(
     Workers run an RPC server that the master node connects to for
     distributed tensor operations. They don't load the model themselves.
     """
+    import socket
     from exo.worker.engines.llamacpp.rpc_server import RpcServerManager
 
     instance = bound_instance.instance
@@ -395,6 +417,7 @@ def _run_llamacpp_worker(
 
     current_status: RunnerStatus = RunnerWaitingForModel()
     logger.info(f"Worker node (rank {shard_metadata.device_rank}) waiting for model")
+    logger.info(f"Worker will start RPC server on 0.0.0.0:{rpc_port}")
     event_sender.send(RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status))
 
     try:
@@ -412,6 +435,24 @@ def _run_llamacpp_worker(
                         rpc_manager = RpcServerManager.get_instance()
                         if not rpc_manager.start(port=rpc_port):
                             raise RuntimeError(f"Failed to start RPC server on port {rpc_port}")
+
+                        # Log external IPs for debugging
+                        external_ips = _get_external_ips()
+                        if external_ips:
+                            logger.info(f"Worker RPC server reachable on: {', '.join(f'{ip}:{rpc_port}' for ip in external_ips)}")
+                            
+                            # Verify we can connect to ourselves on external IP
+                            for ip in external_ips:
+                                try:
+                                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                                    test_sock.settimeout(2)
+                                    test_sock.connect((ip, rpc_port))
+                                    test_sock.close()
+                                    logger.info(f"Self-connectivity test PASSED: {ip}:{rpc_port}")
+                                except Exception as e:
+                                    logger.warning(f"Self-connectivity test FAILED for {ip}:{rpc_port}: {e}")
+                        else:
+                            logger.warning("Could not determine external IP addresses. Master may not be able to connect.")
 
                         current_status = RunnerLoaded()
                         logger.info(f"Worker RPC server running on port {rpc_port}")

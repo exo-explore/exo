@@ -19,8 +19,8 @@ from loguru import logger
 
 
 RPC_SERVER_STARTUP_TIMEOUT: Final[int] = 30
-DEFAULT_RPC_PORT: Final[int] = 50052
-RPC_BASE_PORT: Final[int] = 50052
+DEFAULT_RPC_PORT: Final[int] = 60000
+RPC_BASE_PORT: Final[int] = 60000
 
 
 def find_rpc_server() -> Path | None:
@@ -149,8 +149,12 @@ class RpcServerManager:
         env = os.environ.copy()
         if self.lib_path:
             env["LD_LIBRARY_PATH"] = self.lib_path
+        
+        # Enable RPC debug logging for troubleshooting distributed inference
+        env["GGML_RPC_DEBUG"] = "1"
 
         logger.info(f"Starting rpc-server: {' '.join(command)}")
+        logger.info(f"RPC debug logging enabled (GGML_RPC_DEBUG=1)")
 
         try:
             self.process = subprocess.Popen(

@@ -7,6 +7,7 @@ from loguru import logger
 
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
+    get_hosts_for_llamacpp,
     get_hosts_from_subgraph,
     get_mlx_ibv_coordinators,
     get_mlx_ibv_devices_matrix,
@@ -145,26 +146,23 @@ def place_instance(
                 ],
             )
         case InstanceMeta.LlamaCpp:
-            hosts = get_hosts_from_subgraph(cycle_digraph)
             rpc_ports = get_rpc_ports_for_llamacpp(selected_cycle)
             tensor_split = get_tensor_split_for_llamacpp(selected_cycle)
+            
+            # Use specialized function for llama.cpp that finds external IPs
+            llamacpp_hosts = get_hosts_for_llamacpp(selected_cycle, cycle_digraph)
 
             if len(selected_cycle) > 1:
                 logger.info(
                     f"LlamaCpp distributed instance: {len(selected_cycle)} nodes, "
-                    f"tensor_split={tensor_split}"
+                    f"tensor_split={tensor_split}, "
+                    f"hosts={[(h.ip, h.port) for h in llamacpp_hosts]}"
                 )
 
             target_instances[instance_id] = LlamaCppInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
-                hosts=[
-                    Host(
-                        ip=host.ip,
-                        port=random_ephemeral_port(),
-                    )
-                    for host in hosts
-                ],
+                hosts=llamacpp_hosts,
                 rpc_ports=rpc_ports,
                 tensor_split=tensor_split,
             )
