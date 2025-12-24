@@ -1,9 +1,11 @@
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import mlx.core as mx
 from mflux.config.model_config import ModelConfig
 from mflux.config.runtime_config import RuntimeConfig
+from mflux.models.flux.latent_creator.flux_latent_creator import FluxLatentCreator
+from mflux.models.flux.model.flux_text_encoder.prompt_encoder import PromptEncoder
 from mflux.models.flux.model.flux_transformer.common.attention_utils import (
     AttentionUtils,
 )
@@ -14,6 +16,7 @@ from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
 from exo.worker.engines.image.config import BlockType, ImageModelConfig
+from exo.worker.engines.image.models.base import BaseModelAdapter
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
@@ -21,8 +24,11 @@ from exo.worker.engines.image.pipeline.adapter import (
 )
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
+if TYPE_CHECKING:
+    from exo.worker.engines.image.pipeline.runner import DiffusionRunner
 
-class FluxModelAdapter:
+
+class FluxModelAdapter(BaseModelAdapter):
     def __init__(
         self,
         config: ImageModelConfig,
@@ -54,6 +60,52 @@ class FluxModelAdapter:
     @property
     def hidden_dim(self) -> int:
         return self._transformer.x_embedder.weight.shape[0]
+
+    # -------------------------------------------------------------------------
+    # BaseModelAdapter abstract method implementations
+    # -------------------------------------------------------------------------
+
+    def _get_latent_creator(self) -> type:
+        return FluxLatentCreator
+
+    def _encode_prompt(self, prompt: str) -> tuple[mx.array, mx.array]:
+        return PromptEncoder.encode_prompt(
+            prompt=prompt,
+            prompt_cache=self._model.prompt_cache,
+            t5_tokenizer=self._model.t5_tokenizer,
+            clip_tokenizer=self._model.clip_tokenizer,
+            t5_text_encoder=self._model.t5_text_encoder,
+            clip_text_encoder=self._model.clip_text_encoder,
+        )
+
+    def _run_denoising(
+        self,
+        latents: mx.array,
+        prompt_data: tuple[mx.array, mx.array],
+        runtime_config: RuntimeConfig,
+        runner: "DiffusionRunner | None",
+    ) -> mx.array:
+        prompt_embeds, pooled_prompt_embeds = prompt_data
+        if runner:
+            # Distributed mode - use DiffusionRunner
+            return runner.run(
+                latents=latents,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                runtime_config=runtime_config,
+                seed=0,  # Not used by runner
+                prompt="",  # Not used by runner
+            )
+        else:
+            # Single-node mode - use DiffusionRunner with no distribution
+            # This path shouldn't be hit in practice since we always have a runner
+            raise NotImplementedError(
+                "Single-node FLUX generation requires a DiffusionRunner"
+            )
+
+    # -------------------------------------------------------------------------
+    # ModelAdapter protocol implementations (for distributed inference)
+    # -------------------------------------------------------------------------
 
     def compute_embeddings(
         self,
