@@ -603,10 +603,15 @@ class DistributedLlamaServer:
             logger.error("llama-server not found. Build with: cmake --build build --target llama-server")
             return False
 
+        logger.info(f"Using llama-server binary: {self.server_path}")
+
         # Verify llama-server has RPC support before attempting distributed inference
-        if self.rpc_addresses and not verify_llama_server_rpc_support(self.server_path):
-            logger.error(RPC_BUILD_INSTRUCTIONS)
-            return False
+        if self.rpc_addresses:
+            has_rpc = verify_llama_server_rpc_support(self.server_path)
+            logger.info(f"llama-server RPC support: {has_rpc}")
+            if not has_rpc:
+                logger.error(RPC_BUILD_INSTRUCTIONS)
+                return False
 
         # Pre-check: verify we can reach all workers before starting
         if self.rpc_addresses:
@@ -636,6 +641,13 @@ class DistributedLlamaServer:
                 return False
             logger.info("All workers are ready!")
 
+        # Verify model file exists before starting
+        model_file = Path(self.model_path)
+        if not model_file.exists():
+            logger.error(f"Model file not found: {self.model_path}")
+            return False
+        logger.info(f"Model file: {self.model_path} ({model_file.stat().st_size / (1024*1024):.1f} MB)")
+
         command = [
             str(self.server_path),
             "-m", self.model_path,
@@ -664,7 +676,7 @@ class DistributedLlamaServer:
         env["LLAMA_LOG_TIMESTAMPS"] = "1"
 
         logger.info(f"Starting llama-server with distributed inference...")
-        logger.info(f"Command: {' '.join(command)}")
+        logger.info(f"Full command: {' '.join(command)}")
 
         for attempt in range(max_retries):
             try:
