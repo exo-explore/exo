@@ -387,8 +387,10 @@ verify_installation() {
         ERRORS=$((ERRORS + 1))
     fi
     
-    # Check dashboard
-    if [[ -d "$REPO_DIR/dashboard/dist" ]]; then
+    # Check dashboard (SvelteKit adapter-static outputs to "build", not "dist")
+    if [[ -d "$REPO_DIR/dashboard/build" ]]; then
+        log_success "dashboard: OK"
+    elif [[ -d "$REPO_DIR/dashboard/dist" ]]; then
         log_success "dashboard: OK"
     else
         log_error "dashboard: NOT BUILT"

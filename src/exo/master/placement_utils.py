@@ -385,7 +385,8 @@ def get_hosts_for_llamacpp(
             )
             worker_ip = "localhost"  # Fallback, but will likely fail
         
-        rpc_port = RPC_BASE_PORT + rank - 1
+        # All workers use the same port (60000) since they're on different IPs
+        rpc_port = RPC_BASE_PORT
         hosts.append(Host(ip=worker_ip, port=rpc_port))
         logger.info(f"=== Worker {rank} ({node.node_id}): FINAL IP = {worker_ip}:{rpc_port} ===")
     
@@ -504,7 +505,8 @@ def get_rpc_ports_for_llamacpp(
     Assign RPC ports for llama.cpp distributed inference.
 
     Master node (device_rank 0) doesn't need an RPC port (it connects to others).
-    Worker nodes (device_rank > 0) get sequential ports starting from RPC_BASE_PORT.
+    Worker nodes (device_rank > 0) all use the same RPC_BASE_PORT (60000) since
+    they are on different IPs.
 
     Returns a dict mapping node_id to RPC port (0 for master node).
     """
@@ -514,7 +516,8 @@ def get_rpc_ports_for_llamacpp(
         if device_rank == 0:
             rpc_ports[node.node_id] = 0
         else:
-            rpc_ports[node.node_id] = RPC_BASE_PORT + device_rank - 1
+            # All workers use the same port - they're on different IPs
+            rpc_ports[node.node_id] = RPC_BASE_PORT
 
     return rpc_ports
 
