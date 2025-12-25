@@ -163,7 +163,6 @@ def main(
                         for response in mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
-                            sampler=sampler,
                             task=task_params,
                         ):
                             match response:
