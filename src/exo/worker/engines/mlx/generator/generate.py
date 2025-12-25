@@ -33,9 +33,7 @@ def maybe_quantize_kv_cache(
     if kv_bits is None:
         return
     for e, c in enumerate(prompt_cache):
-        if (
-            hasattr(c, "to_quantized") and c.offset >= quantized_kv_start  # type: ignore
-        ):
+        if hasattr(c, "to_quantized") and c.offset >= quantized_kv_start:
             prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
 
 
@@ -71,7 +69,7 @@ def prefill(
     ):
         break  # Stop after first iteration - cache is now filled
     # Trim the extra token we generated (max_tokens=1 workaround)
-    trim_prompt_cache(cache, 1)  # type: ignore[arg-type]
+    trim_prompt_cache(cache, 1)
 
 
 def warmup_inference(

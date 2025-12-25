@@ -1,11 +1,7 @@
-# type: ignore
-# TODO: Fix this file, including types!
 from copy import deepcopy
 
 import mlx.core as mx
-from mlx_lm.models.cache import (
-    trim_prompt_cache,
-)
+from mlx_lm.models.cache import trim_prompt_cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.mlx import KVCacheType
@@ -129,6 +125,6 @@ def _get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     if n == 0:
         return 0
 
-    equal = (prompt[:n] == cached_prompt[:n]).astype(mx.int32)
+    equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
     prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
     return int(mx.sum(prefix_mask).item())
