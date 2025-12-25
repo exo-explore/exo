@@ -84,15 +84,6 @@ function wrapLine(text: string, maxLen: number): string[] {
 	return lines;
 }
 
-// State for hover tooltip
-let hoveredEdgeData: { 
-	connections: Array<{ from: string; to: string; ip: string; ifaceLabel: string; missingIface: boolean }>;
-	x: number;
-	y: number;
-	labelA: string;
-	labelB: string;
-	flipBelow: boolean;
-} | null = $state(null);
 
 	// Apple logo path for MacBook Pro screen
 	const APPLE_LOGO_PATH = "M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z";
@@ -265,6 +256,7 @@ let hoveredEdgeData: {
 		const debugLabelsGroup = svg.append('g').attr('class', 'debug-edge-labels');
 
 		const pairMap = new Map<string, { a: string; b: string; aToB: boolean; bToA: boolean; connections: Array<{ from: string; to: string; ip: string; ifaceLabel: string; missingIface: boolean }> }>();
+		let debugEdgeLabels: Array<{ connections: typeof pairMap extends Map<string, infer V> ? V['connections'] : never; isLeft: boolean; isTop: boolean; mx: number; my: number }> | null = null;
 		edges.forEach(edge => {
 			if (!edge.source || !edge.target || edge.source === edge.target) return;
 			if (!positionById[edge.source] || !positionById[edge.target]) return;
@@ -341,40 +333,97 @@ let hoveredEdgeData: {
 					.attr('marker-end', 'url(#arrowhead)');
 			}
 
-			// Debug mode: add invisible hover area over edge
+			// Collect debug labels for later positioning at edges
 			if (debugEnabled && entry.connections.length > 0) {
-				const labelA = getNodeLabel(entry.a);
-				const labelB = getNodeLabel(entry.b);
-				const connections = entry.connections;
-
-				// Invisible wider line for hover detection
-				linksGroup.append('line')
-					.attr('x1', posA.x)
-					.attr('y1', posA.y)
-					.attr('x2', posB.x)
-					.attr('y2', posB.y)
-					.attr('stroke', 'transparent')
-					.attr('stroke-width', 20)
-					.style('cursor', 'pointer')
-					.on('mouseenter', function(event: MouseEvent) {
-						// Estimate tooltip height (roughly 50px per connection + header)
-						const estimatedHeight = Math.min(connections.length * 55 + 20, 300);
-						// Flip below if too close to top
-						const flipBelow = my < estimatedHeight + 20;
-						hoveredEdgeData = {
-							connections,
-							x: mx,
-							y: my,
-							labelA,
-							labelB,
-							flipBelow
-						};
-					})
-					.on('mouseleave', function() {
-						hoveredEdgeData = null;
-					});
+				// Determine which side of viewport based on edge midpoint
+				const isLeft = mx < centerX;
+				const isTop = my < safeCenterY;
+				
+				// Store for batch rendering after all edges processed
+				if (!debugEdgeLabels) debugEdgeLabels = [];
+				debugEdgeLabels.push({
+					connections: entry.connections,
+					isLeft,
+					isTop,
+					mx,
+					my
+				});
 			}
 		});
+
+		// Render debug labels at viewport edges/corners
+		if (debugEdgeLabels && debugEdgeLabels.length > 0) {
+			const fontSize = isMinimized ? 10 : 12;
+			const lineHeight = fontSize + 4;
+			const padding = 10;
+			
+			// Helper to get arrow based on direction vector
+			function getArrow(fromId: string, toId: string): string {
+				const fromPos = positionById[fromId];
+				const toPos = positionById[toId];
+				if (!fromPos || !toPos) return '→';
+				
+				const dirX = toPos.x - fromPos.x;
+				const dirY = toPos.y - fromPos.y;
+				const absX = Math.abs(dirX);
+				const absY = Math.abs(dirY);
+				
+				if (absX > absY * 2) {
+					return dirX > 0 ? '→' : '←';
+				} else if (absY > absX * 2) {
+					return dirY > 0 ? '↓' : '↑';
+				} else {
+					if (dirX > 0 && dirY > 0) return '↘';
+					if (dirX > 0 && dirY < 0) return '↗';
+					if (dirX < 0 && dirY > 0) return '↙';
+					return '↖';
+				}
+			}
+			
+			// Group by quadrant: topLeft, topRight, bottomLeft, bottomRight
+			const quadrants: Record<string, typeof debugEdgeLabels> = {
+				topLeft: [],
+				topRight: [],
+				bottomLeft: [],
+				bottomRight: []
+			};
+			
+			debugEdgeLabels.forEach(edge => {
+				const key = (edge.isTop ? 'top' : 'bottom') + (edge.isLeft ? 'Left' : 'Right');
+				quadrants[key].push(edge);
+			});
+			
+			// Render each quadrant
+			Object.entries(quadrants).forEach(([quadrant, edges]) => {
+				if (edges.length === 0) return;
+				
+				const isLeft = quadrant.includes('Left');
+				const isTop = quadrant.includes('top');
+				
+				let baseX = isLeft ? padding : width - padding;
+				let baseY = isTop ? padding : height - padding;
+				const textAnchor = isLeft ? 'start' : 'end';
+				
+				let currentY = baseY;
+				
+				edges.forEach(edge => {
+					edge.connections.forEach(conn => {
+						const arrow = getArrow(conn.from, conn.to);
+						const label = `${arrow} ${conn.ip} ${conn.ifaceLabel}`;
+						debugLabelsGroup.append('text')
+							.attr('x', baseX)
+							.attr('y', currentY)
+							.attr('text-anchor', textAnchor)
+							.attr('dominant-baseline', isTop ? 'hanging' : 'auto')
+							.attr('font-size', fontSize)
+							.attr('font-family', 'SF Mono, monospace')
+							.attr('fill', conn.missingIface ? 'rgba(248,113,113,0.9)' : 'rgba(255,255,255,0.85)')
+							.text(label);
+						currentY += isTop ? lineHeight : -lineHeight;
+					});
+				});
+			});
+		}
 
 		// Draw nodes
 		const nodesGroup = svg.append('g').attr('class', 'nodes-group');
@@ -903,36 +952,12 @@ let hoveredEdgeData: {
 	});
 </script>
 
-<div class="topology-container {className}">
-	<svg 
-		bind:this={svgContainer}
-		class="w-full h-full"
-	></svg>
-
-	{#if debugEnabled && hoveredEdgeData}
-		<div 
-			class="debug-tooltip"
-			class:flip-below={hoveredEdgeData.flipBelow}
-			style="left: {hoveredEdgeData.x}px; top: {hoveredEdgeData.y}px;"
-		>
-			{#each hoveredEdgeData.connections as conn}
-				<div class="conn-row" class:missing={conn.missingIface}>
-					<span class="direction">{getNodeLabel(conn.from)}→{getNodeLabel(conn.to)}</span>
-					<span class="ip">{conn.ip}</span>
-					<span class="iface" class:missing={!conn.ifaceLabel || conn.ifaceLabel === '?'}>{conn.ifaceLabel && conn.ifaceLabel !== '?' ? conn.ifaceLabel : '?'}</span>
-				</div>
-			{/each}
-		</div>
-	{/if}
-</div>
+<svg 
+	bind:this={svgContainer}
+	class="w-full h-full {className}"
+></svg>
 
 <style>
-	.topology-container {
-		position: relative;
-		width: 100%;
-		height: 100%;
-	}
-
 	:global(.graph-node) {
 		transition: transform 0.2s ease, opacity 0.2s ease;
 	}
@@ -951,55 +976,4 @@ let hoveredEdgeData: {
 		to { stroke-dashoffset: -10; }
 	}
 
-	.debug-tooltip {
-		position: absolute;
-		transform: translate(-50%, -100%) translateY(-12px);
-		background: rgba(0, 0, 0, 0.92);
-		border: 1px solid rgba(255, 215, 0, 0.3);
-		border-radius: 6px;
-		padding: 8px 12px;
-		font-family: 'SF Mono', Monaco, monospace;
-		font-size: 11px;
-		z-index: 1000;
-		pointer-events: none;
-		white-space: nowrap;
-	}
-
-	.debug-tooltip.flip-below {
-		transform: translate(-50%, 0) translateY(12px);
-	}
-
-	.conn-row {
-		display: flex;
-		flex-direction: row;
-		align-items: center;
-		gap: 10px;
-		padding: 4px 0;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-	}
-
-	.conn-row:last-child {
-		border-bottom: none;
-	}
-
-	.conn-row.missing {
-		opacity: 0.7;
-	}
-
-	.direction {
-		color: #FFD700;
-		font-weight: 600;
-	}
-
-	.ip {
-		color: #fff;
-	}
-
-	.iface {
-		color: rgba(179, 179, 179, 0.9);
-	}
-
-	.iface.missing {
-		color: rgba(248, 113, 113, 0.9);
-	}
 </style>
