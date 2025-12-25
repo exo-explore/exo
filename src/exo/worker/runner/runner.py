@@ -197,7 +197,9 @@ def main(
                         )
                         break
                     case _:
-                        raise ValueError("Received task outside of state machine")
+                        raise ValueError(
+                            f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
+                        )
                 event_sender.send(
                     TaskStatusUpdated(
                         task_id=task.task_id, task_status=TaskStatus.Complete

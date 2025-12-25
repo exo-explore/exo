@@ -231,6 +231,7 @@ def _ready_to_warmup(
         assert device_rank < world_size
         assert device_rank >= 0
 
+        # TODO: Ensure these align with MLX distributeds expectations.
         # Rank != 0
         accepting_ranks_ready = device_rank > 0 and all(
             isinstance(
@@ -268,6 +269,8 @@ def _pending_tasks(
         for runner in runners.values():
             if task.instance_id != runner.bound_instance.instance.instance_id:
                 continue
+
+            # TODO: Check ordering aligns with MLX distributeds expectations.
 
             if isinstance(runner.status, RunnerReady) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))

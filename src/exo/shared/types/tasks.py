@@ -63,9 +63,9 @@ class Shutdown(BaseTask):  # emitted by Worker
 Task = (
     CreateRunner
     | DownloadModel
+    | ConnectToGroup
     | LoadModel
     | StartWarmup
     | ChatCompletion
     | Shutdown
-    | ConnectToGroup
 )

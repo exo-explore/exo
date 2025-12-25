@@ -375,7 +375,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.33.4" },
     { name = "hypercorn", specifier = ">=0.18.0" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mlx", specifier = ">=0.30.1" },
+    { name = "mlx", marker = "sys_platform != 'linux'", specifier = ">=0.30.1" },
     { name = "mlx", extras = ["cpu"], marker = "sys_platform == 'linux'", specifier = ">=0.30.1" },
     { name = "mlx-lm", specifier = ">=0.28.3" },
     { name = "networkx", specifier = ">=3.5" },
@@ -810,10 +810,11 @@ cpu = [
 
 [[package]]
 name = "mlx-cpu"
-version = "0.29.3"
+version = "0.30.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/ff/474abb13000ca641985084055c145a70c1214973d867979ebfe7420c2df2/mlx_cpu-0.29.3-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:e76763434a9d1d878bb0d6dd965ad319a0a63b0b1d69314e4c97d8332f5e7170", size = 10225301, upload-time = "2025-10-17T19:24:03.544Z" },
+    { url = "https://files.pythonhosted.org/packages/64/51/32903727a68a61e972383e28a775c1f5e5f0628552c85cbc6103d68c0dc4/mlx_cpu-0.30.1-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:3f5dc2e4d0849181f8253508bb6a0854250483fc63d43ac79ec614b19824b172", size = 8992394, upload-time = "2025-12-18T00:16:13.696Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/74/69c21bb907f3c4064881ab0653029c939ae15fc4e63a5301ef8643cb1d68/mlx_cpu-0.30.1-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:c9ea6992d8c001e1123dfd3b4d4405ff576c787eec52656ad405e3d033a8be60", size = 10553055, upload-time = "2025-12-18T00:16:16.104Z" },
 ]
 
 [[package]]

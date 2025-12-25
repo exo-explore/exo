@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from mlx.core.distributed import Group
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.sample_utils import make_sampler
@@ -21,6 +20,7 @@ try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
+
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.utils import load_model
@@ -48,6 +48,7 @@ from exo.worker.engines.mlx.auto_parallel import (
 )
 from exo.worker.runner.bootstrap import logger
 
+Group = mx.distributed.Group
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
@@ -191,7 +192,7 @@ def load_mlx_items(
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
-    group: mx.distributed.Group,
+    group: Group,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 

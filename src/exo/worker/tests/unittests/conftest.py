@@ -79,12 +79,18 @@ def get_mlx_ring_instance(
 def get_bound_mlx_ring_instance(
     instance_id: InstanceId, model_id: ModelId, runner_id: RunnerId, node_id: NodeId
 ) -> BoundInstance:
-    shard = get_pipeline_shard_metadata(model_id=model_id, device_rank=0, world_size=1)
+    shard = get_pipeline_shard_metadata(model_id=model_id, device_rank=0, world_size=2)
+    other_shard = get_pipeline_shard_metadata(
+        model_id=model_id, device_rank=1, world_size=2
+    )
     instance = get_mlx_ring_instance(
         instance_id=instance_id,
         model_id=model_id,
-        node_to_runner={node_id: runner_id},
-        runner_to_shard={runner_id: shard},
+        node_to_runner={
+            node_id: runner_id,
+            NodeId("other_node"): RunnerId("other_runner"),
+        },
+        runner_to_shard={runner_id: shard, RunnerId("other_runner"): other_shard},
     )
     return BoundInstance(
         instance=instance, bound_runner_id=runner_id, bound_node_id=node_id
