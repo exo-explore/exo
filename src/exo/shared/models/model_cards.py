@@ -417,6 +417,20 @@ GGUF_MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=22,
         ),
     ),
+    # AutoGLM-Phone vision model for mobile agents
+    "autoglm-phone-9b-gguf": ModelCard(
+        short_id="autoglm-phone-9b-gguf",
+        model_id=ModelId("mradermacher/AutoGLM-Phone-9B-Multilingual-i1-GGUF"),
+        name="AutoGLM Phone 9B (GGUF Q4_K_M)",
+        description="""AutoGLM Phone 9B - multilingual vision model for mobile phone agents.""",
+        tags=["gguf", "mobile", "vision", "agent", "multilingual"],
+        metadata=ModelMetadata(
+            model_id=ModelId("mradermacher/AutoGLM-Phone-9B-Multilingual-i1-GGUF"),
+            pretty_name="AutoGLM Phone 9B (GGUF)",
+            storage_size=Memory.from_mb(6170),
+            n_layers=40,
+        ),
+    ),
 }
 
 # Combined model cards - currently GGUF only for Android focus
