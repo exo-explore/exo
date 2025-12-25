@@ -440,14 +440,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			return { isDownloading: false, progress: null, perNode: [] };
 		}
 
-		let modelTotalBytes = 0;
-		let modelTotalFiles = 0;
+		let totalBytes = 0;
+		let downloadedBytes = 0;
 		let totalSpeed = 0;
-		let maxEtaMs = 0;
-		let minCompletedFiles = Infinity;
+		let completedFiles = 0;
+		let totalFiles = 0;
 		let isDownloading = false;
-		let firstNodeFiles: DownloadProgress['files'] = [];
-		const nodeProgresses: number[] = []; // Track downloadedBytes per node for averaging
+		const allFiles: DownloadProgress['files'] = [];
 		const perNode: Array<{ nodeId: string; nodeName: string; progress: DownloadProgress }> = [];
 
 		// Check all nodes for downloads matching this model
@@ -479,25 +478,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				
 				const progress = parseDownloadProgress(downloadPayload);
 				if (progress) {
-					// All nodes download the same files, so totalBytes and totalFiles are the same
-					// Just capture from the first node
-					if (modelTotalBytes === 0) {
-						modelTotalBytes = progress.totalBytes;
-						modelTotalFiles = progress.totalFiles;
-						firstNodeFiles = progress.files;
-					}
-					
-					// Track each node's downloaded bytes for averaging
-					nodeProgresses.push(progress.downloadedBytes);
-					
-					// Sum speeds (total bandwidth across cluster)
+					// Sum all values across nodes - each node downloads independently
+					totalBytes += progress.totalBytes;
+					downloadedBytes += progress.downloadedBytes;
 					totalSpeed += progress.speed;
-					
-					// Track minimum completed files (all nodes must complete a file for it to count)
-					minCompletedFiles = Math.min(minCompletedFiles, progress.completedFiles);
-					
-					// Track maximum ETA (slowest node determines when download is done)
-					maxEtaMs = Math.max(maxEtaMs, progress.etaMs);
+					completedFiles += progress.completedFiles;
+					totalFiles += progress.totalFiles;
+					allFiles.push(...progress.files);
 
 					const nodeName = data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
 					perNode.push({ nodeId, nodeName, progress });
@@ -505,27 +492,25 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			}
 		}
 
-		if (!isDownloading || nodeProgresses.length === 0) {
+		if (!isDownloading) {
 			return { isDownloading: false, progress: null, perNode: [] };
 		}
 
-		// Calculate average downloaded bytes across all nodes
-		const avgDownloadedBytes = nodeProgresses.reduce((a, b) => a + b, 0) / nodeProgresses.length;
-		
-		// Use min completed files; if no nodes found, default to 0
-		const completedFiles = minCompletedFiles === Infinity ? 0 : minCompletedFiles;
+		// ETA = total remaining bytes / total speed across all nodes
+		const remainingBytes = totalBytes - downloadedBytes;
+		const etaMs = totalSpeed > 0 ? (remainingBytes / totalSpeed) * 1000 : 0;
 
 		return {
 			isDownloading: true,
 			progress: {
-				totalBytes: modelTotalBytes,
-				downloadedBytes: avgDownloadedBytes,
+				totalBytes,
+				downloadedBytes,
 				speed: totalSpeed,
-				etaMs: maxEtaMs,
-				percentage: modelTotalBytes > 0 ? (avgDownloadedBytes / modelTotalBytes) * 100 : 0,
+				etaMs,
+				percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
 				completedFiles,
-				totalFiles: modelTotalFiles,
-				files: firstNodeFiles
+				totalFiles,
+				files: allFiles
 			},
 			perNode
 		};
@@ -566,14 +551,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			runnerToNode[runnerId] = nodeId;
 		}
 
-		let modelTotalBytes = 0;
-		let modelTotalFiles = 0;
+		let totalBytes = 0;
+		let downloadedBytes = 0;
 		let totalSpeed = 0;
-		let maxEtaMs = 0;
-		let minCompletedFiles = Infinity;
+		let completedFiles = 0;
+		let totalFiles = 0;
 		let isDownloading = false;
-		let firstNodeFiles: DownloadProgress['files'] = [];
-		const nodeProgresses: number[] = []; // Track downloadedBytes per node for averaging
+		const allFiles: DownloadProgress['files'] = [];
 		const perNode: Array<{ nodeId: string; nodeName: string; progress: DownloadProgress }> = [];
 
 		// Check downloads for nodes that are part of this instance
@@ -603,25 +587,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 					
 					const progress = parseDownloadProgress(downloadPayload);
 					if (progress) {
-						// All nodes download the same files, so totalBytes and totalFiles are the same
-						// Just capture from the first node
-						if (modelTotalBytes === 0) {
-							modelTotalBytes = progress.totalBytes;
-							modelTotalFiles = progress.totalFiles;
-							firstNodeFiles = progress.files;
-						}
-						
-						// Track each node's downloaded bytes for averaging
-						nodeProgresses.push(progress.downloadedBytes);
-						
-						// Sum speeds (total bandwidth across cluster)
+						// Sum all values across nodes - each node downloads independently
+						totalBytes += progress.totalBytes;
+						downloadedBytes += progress.downloadedBytes;
 						totalSpeed += progress.speed;
-						
-						// Track minimum completed files (all nodes must complete a file for it to count)
-						minCompletedFiles = Math.min(minCompletedFiles, progress.completedFiles);
-						
-						// Track maximum ETA (slowest node determines when download is done)
-						maxEtaMs = Math.max(maxEtaMs, progress.etaMs);
+						completedFiles += progress.completedFiles;
+						totalFiles += progress.totalFiles;
+						allFiles.push(...progress.files);
 
 						const nodeName = data?.nodes?.[nodeId]?.friendly_name ?? nodeId.slice(0, 8);
 						perNode.push({ nodeId, nodeName, progress });
@@ -630,29 +602,27 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 			}
 		}
 
-		if (!isDownloading || nodeProgresses.length === 0) {
+		if (!isDownloading) {
 			// Check runner status for other states
 			const statusInfo = deriveInstanceStatus(instanceWrapped);
 			return { isDownloading: false, progress: null, statusText: statusInfo.statusText, perNode: [] };
 		}
 
-		// Calculate average downloaded bytes across all nodes
-		const avgDownloadedBytes = nodeProgresses.reduce((a, b) => a + b, 0) / nodeProgresses.length;
-		
-		// Use min completed files; if no nodes found, default to 0
-		const completedFiles = minCompletedFiles === Infinity ? 0 : minCompletedFiles;
+		// ETA = total remaining bytes / total speed across all nodes
+		const remainingBytes = totalBytes - downloadedBytes;
+		const etaMs = totalSpeed > 0 ? (remainingBytes / totalSpeed) * 1000 : 0;
 
 		return {
 			isDownloading: true,
 			progress: {
-				totalBytes: modelTotalBytes,
-				downloadedBytes: avgDownloadedBytes,
+				totalBytes,
+				downloadedBytes,
 				speed: totalSpeed,
-				etaMs: maxEtaMs,
-				percentage: modelTotalBytes > 0 ? (avgDownloadedBytes / modelTotalBytes) * 100 : 0,
+				etaMs,
+				percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
 				completedFiles,
-				totalFiles: modelTotalFiles,
-				files: firstNodeFiles
+				totalFiles,
+				files: allFiles
 			},
 			statusText: 'DOWNLOADING',
 			perNode
