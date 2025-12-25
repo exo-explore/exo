@@ -24,19 +24,36 @@ function getNodeLabel(nodeId: string): string {
 
 function getInterfaceLabel(nodeId: string, ip?: string): { label: string; missing: boolean } {
 	if (!ip) return { label: '?', missing: true };
-	const node = data?.nodes?.[nodeId];
-	if (!node) return { label: '?', missing: true };
+	
+	// Strip port if present (e.g., "192.168.1.1:8080" -> "192.168.1.1")
+	const cleanIp = ip.includes(':') && !ip.includes('[') ? ip.split(':')[0] : ip;
+	
+	// Helper to check a node's interfaces
+	function checkNode(node: typeof data.nodes[string]): string | null {
+		if (!node) return null;
+		
+		const matchFromInterfaces = node.network_interfaces?.find((iface) =>
+			(iface.addresses || []).some((addr) => addr === cleanIp || addr === ip)
+		);
+		if (matchFromInterfaces?.name) {
+			return matchFromInterfaces.name;
+		}
 
-	const matchFromInterfaces = node.network_interfaces?.find((iface) =>
-		(iface.addresses || []).some((addr) => addr === ip)
-	);
-	if (matchFromInterfaces?.name) {
-		return { label: matchFromInterfaces.name, missing: false };
+		const mapped = node.ip_to_interface?.[cleanIp] || node.ip_to_interface?.[ip];
+		if (mapped && mapped.trim().length > 0) {
+			return mapped;
+		}
+		return null;
 	}
-
-	const mapped = node.ip_to_interface?.[ip];
-	if (mapped && mapped.trim().length > 0) {
-		return { label: mapped, missing: false };
+	
+	// Try specified node first
+	const result = checkNode(data?.nodes?.[nodeId]);
+	if (result) return { label: result, missing: false };
+	
+	// Fallback: search all nodes for this IP
+	for (const [, otherNode] of Object.entries(data?.nodes || {})) {
+		const otherResult = checkNode(otherNode);
+		if (otherResult) return { label: otherResult, missing: false };
 	}
 
 	return { label: '?', missing: true };
@@ -66,6 +83,16 @@ function wrapLine(text: string, maxLen: number): string[] {
 	if (current) lines.push(current);
 	return lines;
 }
+
+// State for hover tooltip
+let hoveredEdgeData: { 
+	connections: Array<{ from: string; to: string; ip: string; ifaceLabel: string; missingIface: boolean }>;
+	x: number;
+	y: number;
+	labelA: string;
+	labelB: string;
+	flipBelow: boolean;
+} | null = $state(null);
 
 	// Apple logo path for MacBook Pro screen
 	const APPLE_LOGO_PATH = "M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z";
@@ -314,107 +341,38 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('marker-end', 'url(#arrowhead)');
 			}
 
+			// Debug mode: add invisible hover area over edge
 			if (debugEnabled && entry.connections.length > 0) {
-				const maxBoxes = 6;
-				const fontSize = isMinimized ? 8 : 9;
-				const lineGap = 2;
-				const labelOffsetOut = Math.max(140, minDimension * 0.38);
-				const labelOffsetSide = isMinimized ? 16 : 20;
-				const boxWidth = 170;
-				const maxLineLen = 26;
+				const labelA = getNodeLabel(entry.a);
+				const labelB = getNodeLabel(entry.b);
+				const connections = entry.connections;
 
-				const connections = entry.connections.slice(0, maxBoxes);
-				if (entry.connections.length > maxBoxes) {
-					const remaining = entry.connections.length - maxBoxes;
-					connections.push({
-						from: '',
-						to: '',
-						ip: `(+${remaining} more)`,
-						ifaceLabel: '',
-						missingIface: false
+				// Invisible wider line for hover detection
+				linksGroup.append('line')
+					.attr('x1', posA.x)
+					.attr('y1', posA.y)
+					.attr('x2', posB.x)
+					.attr('y2', posB.y)
+					.attr('stroke', 'transparent')
+					.attr('stroke-width', 20)
+					.style('cursor', 'pointer')
+					.on('mouseenter', function(event: MouseEvent) {
+						// Estimate tooltip height (roughly 50px per connection + header)
+						const estimatedHeight = Math.min(connections.length * 55 + 20, 300);
+						// Flip below if too close to top
+						const flipBelow = my < estimatedHeight + 20;
+						hoveredEdgeData = {
+							connections,
+							x: mx,
+							y: my,
+							labelA,
+							labelB,
+							flipBelow
+						};
+					})
+					.on('mouseleave', function() {
+						hoveredEdgeData = null;
 					});
-				}
-
-				let dirX = mx - centerX;
-				let dirY = my - centerY;
-				const dirLen = Math.hypot(dirX, dirY);
-				if (dirLen < 1) {
-					dirX = -uy;
-					dirY = ux;
-				} else {
-					dirX /= dirLen;
-					dirY /= dirLen;
-				}
-
-				const nx = -dirY;
-				const ny = dirX;
-
-				const labelXRaw = mx + dirX * labelOffsetOut + nx * labelOffsetSide;
-				const labelYRaw = my + dirY * labelOffsetOut + ny * labelOffsetSide;
-				const clampPad = Math.min(120, minDimension * 0.12);
-				const labelX = Math.max(clampPad, Math.min(width - clampPad, labelXRaw));
-				const labelY = Math.max(clampPad, Math.min(height - clampPad, labelYRaw));
-
-				const labelGroup = debugLabelsGroup.append('g')
-					.attr('transform', `translate(${labelX}, ${labelY})`);
-
-				const textGroup = labelGroup.append('g');
-
-				connections.forEach((conn, idx) => {
-					const rawLines = conn.from && conn.to
-						? [
-							`${getNodeLabel(conn.from)}→${getNodeLabel(conn.to)}`,
-							`${conn.ip}`,
-							`${conn.ifaceLabel}`
-						]
-						: [conn.ip];
-
-					const wrapped = rawLines.flatMap(line => wrapLine(line, maxLineLen));
-
-					wrapped.forEach((line, lineIdx) => {
-						textGroup.append('text')
-							.attr('x', 0)
-							.attr('y', (idx * (wrapped.length * (fontSize + lineGap))) + lineIdx * (fontSize + lineGap))
-							.attr('text-anchor', 'middle')
-							.attr('dominant-baseline', 'hanging')
-							.attr('font-size', fontSize)
-							.attr('font-family', 'SF Mono, monospace')
-							.attr('fill', conn.missingIface ? 'rgba(248,113,113,0.9)' : 'rgba(255,255,255,0.9)')
-							.text(line);
-					});
-				});
-
-				const bbox = textGroup.node()?.getBBox();
-				if (bbox) {
-					const paddedWidth = Math.max(boxWidth, bbox.width + 14);
-					const boxHeight = bbox.height + 8;
-					const boxMinX = labelX - paddedWidth / 2;
-					const boxMaxX = labelX + paddedWidth / 2;
-					const boxMinY = labelY + bbox.y - 4;
-					const boxMaxY = boxMinY + boxHeight;
-
-					const clampPadDynamic = Math.min(140, minDimension * 0.18);
-					let shiftX = 0;
-					let shiftY = 0;
-					if (boxMinX < clampPadDynamic) shiftX = clampPadDynamic - boxMinX;
-					if (boxMaxX > width - clampPadDynamic) shiftX = (width - clampPadDynamic) - boxMaxX;
-					if (boxMinY < clampPadDynamic) shiftY = clampPadDynamic - boxMinY;
-					if (boxMaxY > height - clampPadDynamic) shiftY = (height - clampPadDynamic) - boxMaxY;
-
-					const finalX = labelX + shiftX;
-					const finalY = labelY + shiftY;
-					labelGroup.attr('transform', `translate(${finalX}, ${finalY})`);
-
-					labelGroup.insert('rect', 'g')
-						.attr('x', -paddedWidth / 2)
-						.attr('y', bbox.y - 4)
-						.attr('width', paddedWidth)
-						.attr('height', boxHeight)
-						.attr('rx', 4)
-						.attr('fill', 'rgba(0,0,0,0.75)')
-						.attr('stroke', 'rgba(255,255,255,0.12)')
-						.attr('stroke-width', 0.6);
-				}
 			}
 		});
 
@@ -945,12 +903,36 @@ function wrapLine(text: string, maxLen: number): string[] {
 	});
 </script>
 
-<svg 
-	bind:this={svgContainer}
-	class="w-full h-full {className}"
-></svg>
+<div class="topology-container {className}">
+	<svg 
+		bind:this={svgContainer}
+		class="w-full h-full"
+	></svg>
+
+	{#if debugEnabled && hoveredEdgeData}
+		<div 
+			class="debug-tooltip"
+			class:flip-below={hoveredEdgeData.flipBelow}
+			style="left: {hoveredEdgeData.x}px; top: {hoveredEdgeData.y}px;"
+		>
+			{#each hoveredEdgeData.connections as conn}
+				<div class="conn-row" class:missing={conn.missingIface}>
+					<span class="direction">{getNodeLabel(conn.from)}→{getNodeLabel(conn.to)}</span>
+					<span class="ip">{conn.ip}</span>
+					<span class="iface" class:missing={!conn.ifaceLabel || conn.ifaceLabel === '?'}>{conn.ifaceLabel && conn.ifaceLabel !== '?' ? conn.ifaceLabel : '?'}</span>
+				</div>
+			{/each}
+		</div>
+	{/if}
+</div>
 
 <style>
+	.topology-container {
+		position: relative;
+		width: 100%;
+		height: 100%;
+	}
+
 	:global(.graph-node) {
 		transition: transform 0.2s ease, opacity 0.2s ease;
 	}
@@ -967,5 +949,57 @@ function wrapLine(text: string, maxLen: number): string[] {
 	@keyframes flowAnimation {
 		from { stroke-dashoffset: 0; }
 		to { stroke-dashoffset: -10; }
+	}
+
+	.debug-tooltip {
+		position: absolute;
+		transform: translate(-50%, -100%) translateY(-12px);
+		background: rgba(0, 0, 0, 0.92);
+		border: 1px solid rgba(255, 215, 0, 0.3);
+		border-radius: 6px;
+		padding: 8px 12px;
+		font-family: 'SF Mono', Monaco, monospace;
+		font-size: 11px;
+		z-index: 1000;
+		pointer-events: none;
+		white-space: nowrap;
+	}
+
+	.debug-tooltip.flip-below {
+		transform: translate(-50%, 0) translateY(12px);
+	}
+
+	.conn-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 10px;
+		padding: 4px 0;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.conn-row:last-child {
+		border-bottom: none;
+	}
+
+	.conn-row.missing {
+		opacity: 0.7;
+	}
+
+	.direction {
+		color: #FFD700;
+		font-weight: 600;
+	}
+
+	.ip {
+		color: #fff;
+	}
+
+	.iface {
+		color: rgba(179, 179, 179, 0.9);
+	}
+
+	.iface.missing {
+		color: rgba(248, 113, 113, 0.9);
 	}
 </style>
