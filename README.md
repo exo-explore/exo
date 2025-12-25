@@ -221,3 +221,29 @@ On macOS, exo uses the GPU. On Linux, exo currently runs on CPU. We are working 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to exo.
+
+---
+
+## Linux & POWER8 Port Attribution
+
+**This fork includes work on Linux x86 and IBM POWER8 compatibility.**
+
+- **Linux x86**: Mac works out of the box, Linux x86 support in progress
+- **POWER8 ppc64le**: Work on IBM POWER8 servers (576GB RAM, 128 threads!)
+
+If you use these platform-specific changes, please give credit:
+
+```
+exo Linux/POWER8 Port by Scott (Scottcjn)
+https://github.com/Scottcjn/exo
+```
+
+Check the `linux-success-sophia-elya` branch for platform-specific changes.
+
+**A year of development, real hardware, and a dedicated lab went into this.**
+
+## Related Projects
+
+- [llama-cpp-tigerleopard](https://github.com/Scottcjn/llama-cpp-tigerleopard) - llama.cpp for Tiger/Leopard
+- [llama-cpp-power8](https://github.com/Scottcjn/llama-cpp-power8) - llama.cpp for POWER8
+- [ppc-tiger-tools](https://github.com/Scottcjn/ppc-tiger-tools) - PowerPC development tools
