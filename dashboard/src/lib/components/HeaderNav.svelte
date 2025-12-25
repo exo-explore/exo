@@ -48,7 +48,7 @@
 	<!-- Center: Logo (clickable to go home) -->
 	<button
 		onclick={handleHome}
-		class="hover:opacity-80 transition-opacity {showHome ? 'cursor-pointer' : 'cursor-default'}"
+		class="bg-transparent border-none outline-none focus:outline-none transition-opacity duration-200 hover:opacity-90 {showHome ? 'cursor-pointer' : 'cursor-default'}"
 		title={showHome ? 'Go to home' : ''}
 		disabled={!showHome}
 	>
