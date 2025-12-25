@@ -19,7 +19,6 @@ use networking::swarm::create_swarm;
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use std::net::IpAddr;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use util::ext::VecExt as _;
@@ -27,9 +26,7 @@ use util::ext::VecExt as _;
 mod exception {
     use pyo3::types::PyTuple;
     use pyo3::{PyErrArguments, exceptions::PyException, prelude::*};
-    use pyo3_stub_gen::derive::*;
 
-    #[gen_stub_pyclass]
     #[pyclass(frozen, extends=PyException, name="NoPeersSubscribedToTopicError")]
     pub struct PyNoPeersSubscribedToTopicError {}
 
@@ -46,7 +43,6 @@ mod exception {
         }
     }
 
-    #[gen_stub_pymethods]
     #[pymethods]
     impl PyNoPeersSubscribedToTopicError {
         #[new]
@@ -65,7 +61,6 @@ mod exception {
         }
     }
 
-    #[gen_stub_pyclass]
     #[pyclass(frozen, extends=PyException, name="AllQueuesFullError")]
     pub struct PyAllQueuesFullError {}
 
@@ -81,7 +76,6 @@ mod exception {
         }
     }
 
-    #[gen_stub_pymethods]
     #[pymethods]
     impl PyAllQueuesFullError {
         #[new]
@@ -102,7 +96,6 @@ mod exception {
 }
 
 /// Connection or disconnection event discriminant type.
-#[gen_stub_pyclass_enum]
 #[pyclass(eq, eq_int, name = "ConnectionUpdateType")]
 #[derive(Debug, Clone, PartialEq)]
 enum PyConnectionUpdateType {
@@ -110,7 +103,6 @@ enum PyConnectionUpdateType {
     Disconnected,
 }
 
-#[gen_stub_pyclass]
 #[pyclass(frozen, name = "ConnectionUpdate")]
 #[derive(Debug, Clone)]
 struct PyConnectionUpdate {
@@ -293,7 +285,6 @@ async fn networking_task(
     log::info!("RUST: networking task stopped");
 }
 
-#[gen_stub_pyclass]
 #[pyclass(name = "NetworkingHandle")]
 #[derive(Debug)]
 struct PyNetworkingHandle {
@@ -333,7 +324,6 @@ impl PyNetworkingHandle {
     }
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyNetworkingHandle {
     // NOTE: `async fn`s here that use `.await` will wrap the future in `.allow_threads_py()`
@@ -376,12 +366,10 @@ impl PyNetworkingHandle {
         ))
     }
 
-    #[gen_stub(skip)]
     const fn __traverse__(&self, _visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         Ok(()) // This is needed purely so `__clear__` can work
     }
 
-    #[gen_stub(skip)]
     fn __clear__(&mut self) {
         // TODO: may or may not need to await a "kill-signal" oneshot channel message,
         //       to ensure that the networking task is done BEFORE exiting the clear function...

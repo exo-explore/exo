@@ -27,7 +27,6 @@ use crate::pylibp2p::multiaddr::multiaddr_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::prelude::*;
 use pyo3::{Bound, PyResult, pyclass, pymodule};
-use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Namespace for all the constants used by this crate.
 pub(crate) mod r#const {
@@ -214,4 +213,3 @@ fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-define_stub_info_gatherer!(stub_info);

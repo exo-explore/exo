@@ -4,15 +4,12 @@ use libp2p::identity::Keypair;
 use pyo3::prelude::{PyBytesMethods as _, PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
 use pyo3::{Bound, PyResult, Python, pyclass, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 /// Identity keypair of a node.
-#[gen_stub_pyclass]
 #[pyclass(name = "Keypair", frozen)]
 #[repr(transparent)]
 pub struct PyKeypair(pub Keypair);
 
-#[gen_stub_pymethods]
 #[pymethods]
 #[allow(clippy::needless_pass_by_value)]
 impl PyKeypair {
@@ -79,24 +76,20 @@ impl PyKeypair {
     }
 
     // /// Hidden constructor for pickling support. TODO: figure out how to do pickling...
-    // #[gen_stub(skip)]
     // #[new]
     // fn py_new(bytes: Bound<'_, PyBytes>) -> PyResult<Self> {
     //     Self::from_protobuf_encoding(bytes)
     // }
     //
-    // #[gen_stub(skip)]
     // fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
     //     *self = Self::from_protobuf_encoding(state)?;
     //     Ok(())
     // }
     //
-    // #[gen_stub(skip)]
     // fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
     //     self.to_protobuf_encoding(py)
     // }
     //
-    // #[gen_stub(skip)]
     // pub fn __getnewargs__<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyBytes>,)> {
     //     Ok((self.to_protobuf_encoding(py)?,))
     // }
@@ -106,13 +99,11 @@ impl PyKeypair {
 ///
 /// The data is a `CIDv0` compatible multihash of the protobuf encoded public key of the peer
 /// as specified in [specs/peer-ids](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md).
-#[gen_stub_pyclass]
 #[pyclass(name = "PeerId", frozen)]
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct PyPeerId(pub PeerId);
 
-#[gen_stub_pymethods]
 #[pymethods]
 #[allow(clippy::needless_pass_by_value)]
 impl PyPeerId {

@@ -13,11 +13,11 @@ name = "exo_pyo3_bindings"
 # "rlib" needed for stub-gen to run
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-path = "src/bin/stub_gen.rs"
-name = "stub_gen"
-doc = false
-
+# [[bin]]
+# path = "src/bin/stub_gen.rs"
+# name = "stub_gen"
+# doc = false
+# 
 [lints]
 workspace = true
 
@@ -28,6 +28,7 @@ networking = { workspace = true }
 pyo3 = { version = "0.27.1", features = [
     # "abi3-py311", # tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.11
     "nightly", # enables better-supported GIL integration
+    "auto-initialize", # automatically initialize Python interpreter (fixes PowerPC crash)
     "experimental-async", # async support in #[pyfunction] & #[pymethods]
     #"experimental-inspect", # inspection of generated binary => easier to automate type-hint generation
     #"py-clone", # adding Clone-ing of `Py<T>` without GIL (may cause panics - remove if panics happen)
@@ -38,7 +39,7 @@ pyo3 = { version = "0.27.1", features = [
     "ordered-float", "rust_decimal", "smallvec",
     # "anyhow", "chrono", "chrono-local", "chrono-tz", "eyre", "jiff-02", "lock_api", "parking-lot", "time",  "serde",
 ] }
-pyo3-stub-gen = { version = "0.17.2" }
+# pyo3-stub-gen = { version = "0.17.2" }
 pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime", "testing"] }
 pyo3-log = "0.13.2"
 

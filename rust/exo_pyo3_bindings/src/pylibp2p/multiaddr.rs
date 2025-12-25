@@ -3,17 +3,14 @@ use libp2p::Multiaddr;
 use pyo3::prelude::{PyBytesMethods as _, PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
 use pyo3::{Bound, PyResult, Python, pyclass, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::str::FromStr as _;
 
 /// Representation of a Multiaddr.
-#[gen_stub_pyclass]
 #[pyclass(name = "Multiaddr", frozen)]
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct PyMultiaddr(pub Multiaddr);
 
-#[gen_stub_pymethods]
 #[pymethods]
 #[allow(clippy::needless_pass_by_value)]
 impl PyMultiaddr {
@@ -63,12 +60,10 @@ impl PyMultiaddr {
         self.0.to_string()
     }
 
-    #[gen_stub(skip)]
     fn __repr__(&self) -> String {
         format!("Multiaddr({})", self.0)
     }
 
-    #[gen_stub(skip)]
     fn __str__(&self) -> String {
         self.to_string()
     }
