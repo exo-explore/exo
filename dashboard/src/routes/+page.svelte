@@ -1355,14 +1355,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 																			{:else}
 																				{#each nodeProg.progress.files as f}
 																					{@const filePercent = Math.min(100, Math.max(0, f.percentage ?? 0))}
+																					{@const isFileComplete = filePercent >= 100}
 																					<div class="rounded border border-exo-medium-gray/30 bg-exo-black/40 p-2">
 																						<div class="flex items-center justify-between text-[10px] font-mono text-exo-light-gray/90">
 																							<span class="truncate pr-2">{f.name}</span>
-																							<span class="text-white/80">{filePercent.toFixed(1)}%</span>
+																							<span class={isFileComplete ? 'text-green-400' : 'text-white/80'}>{filePercent.toFixed(1)}%</span>
 																						</div>
 																						<div class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1">
 																							<div 
-																								class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow/70 transition-all duration-300"
+																								class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete ? 'from-green-500 to-green-400' : 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
 																								style="width: {filePercent.toFixed(1)}%"
 																							></div>
 																						</div>
@@ -1856,14 +1857,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 																			{:else}
 																				{#each nodeProg.progress.files as f}
 																					{@const filePercent = Math.min(100, Math.max(0, f.percentage ?? 0))}
+																					{@const isFileComplete = filePercent >= 100}
 																					<div class="rounded border border-exo-medium-gray/30 bg-exo-black/40 p-2">
 																						<div class="flex items-center justify-between text-[10px] font-mono text-exo-light-gray/90">
 																							<span class="truncate pr-2">{f.name}</span>
-																							<span class="text-white/80">{filePercent.toFixed(1)}%</span>
+																							<span class={isFileComplete ? 'text-green-400' : 'text-white/80'}>{filePercent.toFixed(1)}%</span>
 																						</div>
 																						<div class="relative h-1 bg-exo-black/60 rounded-sm overflow-hidden mt-1">
 																							<div 
-																								class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow/70 transition-all duration-300"
+																								class="absolute inset-y-0 left-0 bg-gradient-to-r {isFileComplete ? 'from-green-500 to-green-400' : 'from-exo-yellow to-exo-yellow/70'} transition-all duration-300"
 																								style="width: {filePercent.toFixed(1)}%"
 																							></div>
 																						</div>
