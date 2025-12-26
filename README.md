@@ -77,6 +77,10 @@ There are two ways to run exo:
   brew install uv macmon node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+ ⚠️ Linux users: Ensure Python 3.11+ and Node.js 20+ are installed.  
+ On Debian/Ubuntu-based distributions, you may also need `build-essential`, `python3-dev`, and `npm` packages.  
+ On Fedora/RHEL-based distributions, install `gcc`, `python3-devel`, and `npm`.  
+ Use your package manager (`apt`, `dnf`, `pacman`, etc.) to install dependencies if needed.
 
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
