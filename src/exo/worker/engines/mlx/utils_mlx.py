@@ -112,44 +112,52 @@ def mlx_distributed_init(
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
 
-    # TODO: singleton instances
-    match bound_instance.instance:
-        case MlxRingInstance(hosts=hosts):
-            hostfile = f"./hosts_{rank}.json"
-            hosts_json = HostList.from_hosts(hosts).model_dump_json()
+    coordination_file = None
+    try:
+        # TODO: singleton instances
+        match bound_instance.instance:
+            case MlxRingInstance(hosts=hosts):
+                coordination_file = f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                hosts_json = HostList.from_hosts(hosts).model_dump_json()
 
-            with open(hostfile, "w") as f:
-                _ = f.write(hosts_json)
+                with open(coordination_file, "w") as f:
+                    _ = f.write(hosts_json)
 
-            logger.info(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
+                logger.info(f"rank {rank} hostfile: {coordination_file} hosts: {hosts_json}")
 
-            os.environ["MLX_HOSTFILE"] = hostfile
-            os.environ["MLX_RANK"] = str(rank)
-            os.environ["MLX_RING_VERBOSE"] = "1"
-            group = mx.distributed.init(backend="ring", strict=True)
+                os.environ["MLX_HOSTFILE"] = coordination_file
+                os.environ["MLX_RANK"] = str(rank)
+                os.environ["MLX_RING_VERBOSE"] = "1"
+                group = mx.distributed.init(backend="ring", strict=True)
 
-        case MlxJacclInstance(
-            ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
-        ):
-            # Use RDMA connectivity matrix
-            devices_file = f"./hosts_{rank}.json"
-            ibv_devices_json = json.dumps(ibv_devices)
+            case MlxJacclInstance(
+                ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
+            ):
+                # Use RDMA connectivity matrix
+                coordination_file = f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                ibv_devices_json = json.dumps(ibv_devices)
 
-            with open(devices_file, "w") as f:
-                _ = f.write(ibv_devices_json)
+                with open(coordination_file, "w") as f:
+                    _ = f.write(ibv_devices_json)
 
-            jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
+                jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-            logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
-            logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-            os.environ["MLX_IBV_DEVICES"] = devices_file
-            os.environ["MLX_RANK"] = str(rank)
-            os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
-            group = mx.distributed.init(backend="jaccl", strict=True)
+                logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
+                logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
+                os.environ["MLX_IBV_DEVICES"] = coordination_file
+                os.environ["MLX_RANK"] = str(rank)
+                os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
+                group = mx.distributed.init(backend="jaccl", strict=True)
 
-    logger.info(f"Rank {rank} mlx distributed initialization complete")
+        logger.info(f"Rank {rank} mlx distributed initialization complete")
 
-    return group
+        return group
+    finally:
+        if coordination_file:
+            try:
+                os.remove(coordination_file)
+            except FileNotFoundError:
+                pass
 
 
 def initialize_mlx(
