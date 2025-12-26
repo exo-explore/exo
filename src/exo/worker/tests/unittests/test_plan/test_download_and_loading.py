@@ -180,14 +180,14 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         instance=instance, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
     )
     local_runner = FakeRunnerSupervisor(
-        bound_instance=bound_instance, status=RunnerIdle()
+        bound_instance=bound_instance, status=RunnerConnected()
     )
 
     runners = {RUNNER_1_ID: local_runner}
     instances = {INSTANCE_1_ID: instance}
     all_runners = {
-        RUNNER_1_ID: RunnerIdle(),
-        RUNNER_2_ID: RunnerIdle(),
+        RUNNER_1_ID: RunnerConnected(),
+        RUNNER_2_ID: RunnerConnected(),
     }
 
     # Only NODE_A's shard is recorded as downloaded globally
@@ -210,3 +210,22 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
     )
 
     assert result is None
+
+    global_download_status = {
+        NODE_A: [DownloadCompleted(shard_metadata=shard1, node_id=NODE_A)],
+        NODE_B: [
+            DownloadCompleted(shard_metadata=shard2, node_id=NODE_B)
+        ],  # NODE_B has no downloads completed yet
+    }
+
+    result = plan_mod.plan(
+        node_id=NODE_A,
+        runners=runners,  # type: ignore
+        download_status=local_download_status,
+        global_download_status=global_download_status,
+        instances=instances,
+        all_runners=all_runners,
+        tasks={},
+    )
+
+    assert result is not None

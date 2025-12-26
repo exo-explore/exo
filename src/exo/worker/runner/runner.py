@@ -102,9 +102,7 @@ def main(
                     case LoadModel() if (
                         isinstance(current_status, RunnerConnected)
                         and group is not None
-                        or isinstance(current_status, RunnerIdle)
-                        and group is None
-                    ):
+                    ) or (isinstance(current_status, RunnerIdle) and group is None):
                         current_status = RunnerLoading()
                         logger.info("runner loading")
                         event_sender.send(

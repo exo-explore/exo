@@ -108,12 +108,13 @@ def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Even
 
 @pytest.fixture
 def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(mlx_runner, "initialize_mlx", nothin)
-    monkeypatch.setattr(mlx_runner, "load_mlx_items", nothin)
+    # initialize_mlx returns a "group" equal to 1
+    monkeypatch.setattr(mlx_runner, "initialize_mlx", make_nothin(1))
+    monkeypatch.setattr(mlx_runner, "load_mlx_items", make_nothin((1, 1, 1)))
     monkeypatch.setattr(mlx_runner, "warmup_inference", make_nothin(1))
     monkeypatch.setattr(mlx_runner, "_check_for_debug_prompts", nothin)
 
-    def fake_generate(*_: object):
+    def fake_generate(*_1: object, **_2: object):
         yield GenerationResponse(token=0, text="hi", finish_reason="stop")
 
     monkeypatch.setattr(mlx_runner, "mlx_generate", fake_generate)
@@ -135,9 +136,7 @@ def _run(tasks: Iterable[Task]):
             task_sender.send(t)
 
         # worst monkeypatch known to man
-        def nothin() -> None:
-            pass
-
+        # this is some c++ nonsense
         event_sender.close = nothin
         event_sender.join = nothin
         task_receiver.close = nothin
