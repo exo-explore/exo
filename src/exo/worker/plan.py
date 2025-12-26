@@ -55,8 +55,8 @@ def plan(
         _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances)
         or _model_needs_download(runners, download_status)
-        or _init_distributed_backend(runners, all_runners, global_download_status)
-        or _load_model(runners, all_runners)
+        or _init_distributed_backend(runners, all_runners)
+        or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners)
     )
@@ -130,7 +130,6 @@ def _model_needs_download(
 def _init_distributed_backend(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
-    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ):
     for runner in runners.values():
         instance = runner.bound_instance.instance
@@ -139,16 +138,6 @@ def _init_distributed_backend(
         is_single_node_instance = len(shard_assignments.runner_to_shard) == 1
         if is_single_node_instance:
             continue
-
-        all_local_downloads_complete = all(
-            nid in global_download_status
-            and any(
-                isinstance(dp, DownloadCompleted)
-                and dp.shard_metadata.model_meta.model_id == shard_assignments.model_id
-                for dp in global_download_status[nid]
-            )
-            for nid in shard_assignments.node_to_runner
-        )
 
         runner_is_idle = isinstance(runner.status, RunnerIdle)
         all_runners_connecting = all(
@@ -159,9 +148,7 @@ def _init_distributed_backend(
             for global_runner_id in shard_assignments.runner_to_shard
         )
 
-        if not (
-            all_local_downloads_complete and runner_is_idle and all_runners_connecting
-        ):
+        if not (runner_is_idle and all_runners_connecting):
             continue
 
         runner_id = runner.bound_instance.bound_runner_id
@@ -193,10 +180,27 @@ def _init_distributed_backend(
 def _load_model(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
+    global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
 ) -> LoadModel | None:
     for runner in runners.values():
         instance = runner.bound_instance.instance
         shard_assignments = instance.shard_assignments
+
+        all_local_downloads_complete = all(
+            nid in global_download_status
+            and any(
+                isinstance(dp, DownloadCompleted)
+                and dp.shard_metadata.model_meta.model_id == shard_assignments.model_id
+                for dp in global_download_status[nid]
+            )
+            for nid in shard_assignments.node_to_runner
+        )
+        if not all_local_downloads_complete:
+            continue
+
+        is_single_node_instance = len(instance.shard_assignments.runner_to_shard) == 1
+        if is_single_node_instance and isinstance(runner.status, RunnerIdle):
+            return LoadModel(instance_id=instance.instance_id)
 
         is_runner_waiting = isinstance(runner.status, RunnerConnected)
 
