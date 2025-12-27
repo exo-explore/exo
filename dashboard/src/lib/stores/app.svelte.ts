@@ -96,7 +96,7 @@ interface RawNodeProfile {
 
 interface RawTopologyNode {
 	nodeId: string;
-	nodeProfile: RawNodeProfile;
+	nodeProfile?: RawNodeProfile;
 }
 
 interface RawTopologyConnection {
@@ -105,9 +105,13 @@ interface RawTopologyConnection {
 	sendBackMultiaddr?: { multiaddr?: string; address?: string; ip_address?: string } | string;
 }
 
+// Connection can be an object or a tuple [source, target, metadata]
+type RawConnectionItem = RawTopologyConnection | [string, string, { sinkMultiaddr?: { ip_address?: string; address?: string } }?];
+
 interface RawTopology {
-	nodes: RawTopologyNode[];
-	connections?: RawTopologyConnection[];
+	// nodes can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
+	nodes: (string | RawTopologyNode)[];
+	connections?: RawConnectionItem[];
 }
 
 type RawNodeProfiles = Record<string, RawNodeProfile>;
@@ -198,9 +202,17 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
 
+	// Handle nodes - can be array of strings (node IDs) or array of objects with nodeId/nodeProfile
 	for (const node of raw.nodes || []) {
-		const mergedProfile = profiles?.[node.nodeId];
-		const profile = { ...(node.nodeProfile ?? {}), ...(mergedProfile ?? {}) };
+		// Determine the node ID - could be a string or an object with nodeId property
+		const nodeId = typeof node === 'string' ? node : node.nodeId;
+		if (!nodeId) continue;
+		
+		// Get the profile - from the separate profiles map or from the node object itself
+		const profileFromMap = profiles?.[nodeId];
+		const profileFromNode = typeof node === 'object' ? node.nodeProfile : undefined;
+		const profile = { ...(profileFromNode ?? {}), ...(profileFromMap ?? {}) };
+		
 		const ramTotal = profile?.memory?.ramTotal?.inBytes ?? 0;
 		const ramAvailable = profile?.memory?.ramAvailable?.inBytes ?? 0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
@@ -238,7 +250,7 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 			}
 		}
 
-		nodes[node.nodeId] = {
+		nodes[nodeId] = {
 			system_info: {
 				model_id: profile?.modelId ?? 'Unknown',
 				chip: profile?.chipId,
@@ -260,14 +272,34 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 		};
 	}
 
+	// Handle connections - can be objects with localNodeId/sendBackNodeId or tuples [source, target, metadata]
 	for (const conn of raw.connections || []) {
-		if (!conn.localNodeId || !conn.sendBackNodeId) continue;
-		if (conn.localNodeId === conn.sendBackNodeId) continue;
-		if (!nodes[conn.localNodeId] || !nodes[conn.sendBackNodeId]) continue;
+		let localNodeId: string | undefined;
+		let sendBackNodeId: string | undefined;
+		let sendBackMultiaddr: { multiaddr?: string; address?: string; ip_address?: string } | string | undefined;
+		
+		// Check if it's a tuple format [source, target, metadata]
+		if (Array.isArray(conn)) {
+			localNodeId = conn[0] as string;
+			sendBackNodeId = conn[1] as string;
+			const metadata = conn[2] as { sinkMultiaddr?: { ip_address?: string; address?: string } } | undefined;
+			if (metadata?.sinkMultiaddr) {
+				sendBackMultiaddr = metadata.sinkMultiaddr;
+			}
+		} else {
+			// Object format with localNodeId/sendBackNodeId
+			localNodeId = conn.localNodeId;
+			sendBackNodeId = conn.sendBackNodeId;
+			sendBackMultiaddr = conn.sendBackMultiaddr;
+		}
+		
+		if (!localNodeId || !sendBackNodeId) continue;
+		if (localNodeId === sendBackNodeId) continue;
+		if (!nodes[localNodeId] || !nodes[sendBackNodeId]) continue;
 
 		let sendBackIp: string | undefined;
-		if (conn.sendBackMultiaddr) {
-			const multi = conn.sendBackMultiaddr;
+		if (sendBackMultiaddr) {
+			const multi = sendBackMultiaddr;
 			if (typeof multi === 'string') {
 				sendBackIp = extractIpFromMultiaddr(multi);
 			} else {
@@ -276,8 +308,8 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 		}
 
 		edges.push({
-			source: conn.localNodeId,
-			target: conn.sendBackNodeId,
+			source: localNodeId,
+			target: sendBackNodeId,
 			sendBackIp
 		});
 	}

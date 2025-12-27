@@ -101,13 +101,7 @@ def mlx_distributed_init(
     bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
     """
-    Initialize the MLX distributed (runs in thread pool).
-
-    Either hosts or mlx_ibv_devices must be provided:
-    - hosts: traditional host-based connectivity using MLX_HOSTFILE
-    - mlx_ibv_devices: RDMA connectivity matrix using MLX_IBV_DEVICES
-    - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
-    - strict: if True, raise an error if the distributed backend is not available
+    Initialize the MLX distributed
     """
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
@@ -129,20 +123,20 @@ def mlx_distributed_init(
             group = mx.distributed.init(backend="ring", strict=True)
 
         case MlxJacclInstance(
-            ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
+            jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
         ):
             # Use RDMA connectivity matrix
             devices_file = f"./hosts_{rank}.json"
-            ibv_devices_json = json.dumps(ibv_devices)
+            jaccl_devices_json = json.dumps(jaccl_devices)
 
             with open(devices_file, "w") as f:
-                _ = f.write(ibv_devices_json)
+                _ = f.write(jaccl_devices_json)
 
             jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-            logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
+            logger.info(f"rank {rank} MLX_JACCL_DEVICES: {jaccl_devices_json}")
             logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-            os.environ["MLX_IBV_DEVICES"] = devices_file
+            os.environ["MLX_JACCL_DEVICES"] = devices_file
             os.environ["MLX_RANK"] = str(rank)
             os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
             group = mx.distributed.init(backend="jaccl", strict=True)

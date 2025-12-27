@@ -19,6 +19,7 @@
 25. Rethink retry logic
 26. Task cancellation. When API http request gets cancelled, it should cancel corresponding task.
 27. Log cleanup - per-module log filters and default to DEBUG log levels
+28. Validate RDMA connections with ibv_devinfo in the info gatherer
 
 Potential refactors:
 
