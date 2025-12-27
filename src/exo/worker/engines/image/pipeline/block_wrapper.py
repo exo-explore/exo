@@ -1,8 +1,5 @@
-from typing import Any
-
 import mlx.core as mx
 
-from exo.worker.engines.image.config import BlockType
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
     JointBlockInterface,
@@ -133,80 +130,6 @@ class SingleBlockWrapper:
         return self.adapter.apply_single_block(
             block=self.block,
             hidden_states=hidden_states,
-            text_embeddings=text_embeddings,
-            rotary_embeddings=rotary_embeddings,
-            kv_cache=kv_cache,
-            mode=mode,
-            text_seq_len=text_seq_len,
-            patch_start=patch_start,
-            patch_end=patch_end,
-        )
-
-
-class BlockWrapper:
-    """Generic wrapper for any transformer block type.
-
-    This wrapper provides a consistent interface for all block types (JOINT, SINGLE)
-    by delegating to the model adapter's apply_block() method. This enables
-    model-agnostic block processing in DistributedDenoising.
-
-    The wrapper is created once at initialization and reused across calls.
-    Mode and KV cache are passed at call time to support switching between
-    sync and async pipelines.
-    """
-
-    def __init__(
-        self,
-        block: Any,
-        block_type: BlockType,
-        adapter: ModelAdapter,
-    ):
-        """Initialize the block wrapper.
-
-        Args:
-            block: The transformer block to wrap
-            block_type: Type of block (JOINT or SINGLE)
-            adapter: Model adapter for model-specific operations
-        """
-        self.block = block
-        self.block_type = block_type
-        self.adapter = adapter
-
-    def __call__(
-        self,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array | None,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-        text_seq_len: int,
-        kv_cache: ImagePatchKVCache | None,
-        mode: BlockWrapperMode,
-        patch_start: int | None = None,
-        patch_end: int | None = None,
-    ) -> tuple[mx.array, mx.array | None]:
-        """Apply the block.
-
-        Args:
-            hidden_states: Image hidden states (or concatenated for SINGLE)
-            encoder_hidden_states: Text hidden states (None for SINGLE)
-            text_embeddings: Conditioning embeddings
-            rotary_embeddings: Rotary position embeddings
-            text_seq_len: Text sequence length
-            kv_cache: KV cache for storing/retrieving image K/V (None if not using cache)
-            mode: CACHING (populate cache) or PATCHED (use cached K/V)
-            patch_start: Start index for patched mode (required if mode=PATCHED)
-            patch_end: End index for patched mode (required if mode=PATCHED)
-
-        Returns:
-            Tuple of (hidden_states, encoder_hidden_states or None)
-            - For JOINT blocks: (image_hidden, text_hidden)
-            - For SINGLE blocks: (concatenated_hidden, None)
-        """
-        return self.adapter.apply_block(
-            block=self.block,
-            block_type=self.block_type,
-            hidden_states=hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
             text_embeddings=text_embeddings,
             rotary_embeddings=rotary_embeddings,
             kv_cache=kv_cache,
