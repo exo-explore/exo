@@ -36,6 +36,8 @@ def get_pipeline_shard_metadata(
             pretty_name=str(model_id),
             storage_size=Memory.from_mb(100000),
             n_layers=32,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
         device_rank=device_rank,
         world_size=world_size,
