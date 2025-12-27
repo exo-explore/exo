@@ -33,6 +33,7 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -63,6 +64,7 @@ def main(
         model = None
         tokenizer = None
         sampler = None
+        kv_prefix_cache: KVPrefixCache | None = None
 
         current_status: RunnerStatus = RunnerWaitingForModel()
         logger.info("runner waiting for model")
@@ -90,6 +92,7 @@ def main(
                         )
 
                         model, tokenizer, sampler = initialize_mlx(bound_instance)
+                        kv_prefix_cache = KVPrefixCache()
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
@@ -151,6 +154,7 @@ def main(
                             tokenizer=tokenizer,
                             sampler=sampler,
                             task=task_params,
+                            kv_prefix_cache=kv_prefix_cache,
                         ):
                             match response:
                                 case GenerationResponse():
