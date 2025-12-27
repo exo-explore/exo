@@ -1,8 +1,8 @@
 import asyncio
 from pathlib import Path
 from typing import AsyncIterator, Callable
-
-from exo.shared.models.model_cards import MODEL_CARDS
+from loguru import logger
+from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, save_custom_models, load_custom_models_once
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -11,6 +11,32 @@ from exo.shared.types.worker.shards import (
 from exo.worker.download.download_utils import RepoDownloadProgress, download_shard
 from exo.worker.download.shard_downloader import ShardDownloader
 
+def register_custom_model(shard: ShardMetadata) -> None:
+    """Registers a custom model in MODEL_CARDS and persists it."""
+    load_custom_models_once()
+    
+    model_id = shard.model_meta.model_id
+    
+    # Check if model is already registered
+    if any(c.model_id == model_id for c in MODEL_CARDS.values()):
+        return
+    
+    short_id: str = str(model_id).split("/")[-1]
+    logger.debug(f"Registering new model with short_id: {short_id}")
+    
+    custom_card = ModelCard(
+        short_id=short_id,
+        model_id=model_id,
+        name=short_id,
+        description=f"Custom model from {str(model_id).split('/')[0]}",
+        tags=["custom"],
+        metadata=shard.model_meta,
+    )
+    MODEL_CARDS[short_id] = custom_card
+    logger.info(f"✓ Registered custom model: {short_id} ({model_id})")
+    
+    # Persist to storage
+    save_custom_models()
 
 def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
     return SingletonShardDownloader(
@@ -19,8 +45,9 @@ def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
 
 
 async def build_base_shard(model_id: str) -> ShardMetadata:
+    logger.debug(f"Building base shard for model: {model_id}")
     model_meta = await get_model_meta(model_id)
-    return PipelineShardMetadata(
+    shard = PipelineShardMetadata(
         model_meta=model_meta,
         device_rank=0,
         world_size=1,
@@ -28,6 +55,9 @@ async def build_base_shard(model_id: str) -> ShardMetadata:
         end_layer=model_meta.n_layers,
         n_layers=model_meta.n_layers,
     )
+    # Register as custom model if not in built-in MODEL_CARDS
+    register_custom_model(shard)
+    return shard
 
 
 async def build_full_shard(model_id: str) -> PipelineShardMetadata:
@@ -90,11 +120,18 @@ class CachedShardDownloader(ShardDownloader):
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
-        if (shard.model_meta.model_id, shard) in self.cache:
-            return self.cache[(shard.model_meta.model_id, shard)]
+        # We use a tuple key if ShardMetadata is hashable, otherwise this might need adjustment
+        cache_key = (str(shard.model_meta.model_id), shard)
+        if not config_only and cache_key in self.cache:
+            return self.cache[cache_key]
 
-        target_dir = await self.shard_downloader.ensure_shard(shard, config_only)
-        self.cache[(shard.model_meta.model_id, shard)] = target_dir
+        target_dir = await self.shard_downloader.ensure_shard(
+            shard, config_only=config_only
+        )
+        
+        if not config_only:
+            self.cache[cache_key] = target_dir
+            
         return target_dir
 
     async def get_shard_download_status(
@@ -130,9 +167,12 @@ class ResumableShardDownloader(ShardDownloader):
     async def ensure_shard(
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
+        # Register custom model before download
+        register_custom_model(shard)
+
         allow_patterns = ["config.json"] if config_only else None
 
-        target_dir, _ = await download_shard(
+        target_dir, _= await download_shard(
             shard,
             self.on_progress_wrapper,
             max_parallel_downloads=self.max_parallel_downloads,
@@ -153,6 +193,7 @@ class ResumableShardDownloader(ShardDownloader):
             )
 
         # Kick off download status coroutines concurrently
+        # MODEL_CARDS now contains both built-in and custom models, so we only iterate once
         tasks = [
             asyncio.create_task(_status_for_model(model_card.model_id))
             for model_card in MODEL_CARDS.values()
@@ -161,9 +202,8 @@ class ResumableShardDownloader(ShardDownloader):
         for task in asyncio.as_completed(tasks):
             try:
                 yield await task
-            # TODO: except Exception
             except Exception as e:
-                print("Error downloading shard:", e)
+                logger.warning(f"Error getting download status for model: {e}")
 
     async def get_shard_download_status_for_shard(
         self, shard: ShardMetadata

@@ -18,7 +18,6 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     ChatCompletionMessage,
@@ -77,11 +76,23 @@ def chunk_to_response(
 
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
+    from exo.shared.models.model_cards import get_model_cards
+    
+    # Load custom models from persistent storage if not already loaded
+    model_cards = get_model_cards()
+    
+    # Check if model_id is a key (short_id) in MODEL_CARDS
+    if model_id in model_cards:
+        model_card = model_cards[model_id]
         return model_card.metadata
-    else:
-        return await get_model_meta(model_id)
+    
+    # Check if model_id matches any ModelCard's full model_id
+    for card in model_cards.values():
+        if str(card.model_id) == model_id:
+            return card.metadata
+    
+    # Not found in MODEL_CARDS, fetch from HuggingFace
+    return await get_model_meta(model_id)
 
 
 class API:
@@ -233,7 +244,10 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.short_id == model_id]
+        from exo.shared.models.model_cards import get_model_cards
+        model_cards = get_model_cards()
+        
+        cards = [card for card in model_cards.values() if card.short_id == model_id]
         if not cards:
             raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
@@ -434,6 +448,11 @@ class API:
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""
+        from exo.shared.models.model_cards import get_model_cards
+        
+        # Load custom models from persistent storage if not already loaded
+        model_cards = get_model_cards()
+        
         return ModelList(
             data=[
                 ModelListModel(
@@ -442,8 +461,9 @@ class API:
                     name=card.name,
                     description=card.description,
                     tags=card.tags,
+                    storage_size_megabytes=int(card.metadata.storage_size.in_mb),
                 )
-                for card in MODEL_CARDS.values()
+                for card in model_cards.values()
             ]
         )
 
