@@ -23,7 +23,7 @@ def _get_keypair_concurrent_subprocess_task(
     sem.release()
     # wait to be told to begin simultaneous read
     ev.wait()
-    queue.put(get_node_id_keypair().to_protobuf_encoding())
+    queue.put(get_node_id_keypair().to_postcard_encoding())
 
 
 def _get_keypair_concurrent(num_procs: int) -> bytes:

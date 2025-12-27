@@ -1,74 +1,85 @@
-use futures::stream::StreamExt as _;
-use libp2p::{gossipsub, identity, swarm::SwarmEvent};
-use networking::{discovery, swarm};
-use tokio::{io, io::AsyncBufReadExt as _, select};
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::cargo)]
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use iroh::SecretKey;
+use iroh_gossip::api::{Event, Message};
+use n0_future::StreamExt as _;
+use networking::ExoNet;
+use tokio::time::sleep;
+use tokio::{io, io::AsyncBufReadExt as _};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
 #[tokio::main]
 async fn main() {
-    let _ = tracing_subscriber::fmt()
+    tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()))
-        .try_init();
+        .try_init()
+        .expect("logger");
 
     // Configure swarm
-    let mut swarm =
-        swarm::create_swarm(identity::Keypair::generate_ed25519()).expect("Swarm creation failed");
+    let net = Arc::new(
+        ExoNet::init_iroh(SecretKey::generate(&mut rand::rng()), "chatroom")
+            .await
+            .expect("iroh init shouldn't fail"),
+    );
+    let innet = Arc::clone(&net);
+    let jh1 = tokio::spawn(async move { innet.start_auto_dialer().await });
+
+    while net.known_peers.lock().await.is_empty() {
+        sleep(Duration::from_secs(1)).await;
+    }
 
     // Create a Gossipsub topic & subscribe
-    let topic = gossipsub::IdentTopic::new("test-net");
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&topic)
-        .expect("Subscribing to topic failed");
+    let (send, mut recv) = net
+        .subscribe("chatting")
+        .await
+        .expect("topic shouldn't fail");
 
     // Read full lines from stdin
     let mut stdin = io::BufReader::new(io::stdin()).lines();
     println!("Enter messages via STDIN and they will be sent to connected peers using Gossipsub");
 
-    // Kick it off
-    loop {
-        select! {
-            // on gossipsub outgoing
-            Ok(Some(line)) = stdin.next_line() => {
-                if let Err(e) = swarm
-                    .behaviour_mut().gossipsub
-                    .publish(topic.clone(), line.as_bytes()) {
-                    println!("Publish error: {e:?}");
-                }
-            }
-            event = swarm.select_next_some() => match event {
-                // on gossipsub incoming
-                SwarmEvent::Behaviour(swarm::BehaviourEvent::Gossipsub(gossipsub::Event::Message {
-                    propagation_source: peer_id,
-                    message_id: id,
-                    message,
-                })) => println!(
-                        "\n\nGot message: '{}' with id: {id} from peer: {peer_id}\n\n",
-                        String::from_utf8_lossy(&message.data),
-                    ),
-
-                // on discovery
-                SwarmEvent::Behaviour(swarm::BehaviourEvent::Discovery(e)) => match e {
-                    discovery::Event::ConnectionEstablished {
-                        peer_id, connection_id, remote_ip, remote_tcp_port
-                    } => {
-                        println!("\n\nConnected to: {peer_id}; connection ID: {connection_id}; remote IP: {remote_ip}; remote TCP port: {remote_tcp_port}\n\n");
-                    }
-                    discovery::Event::ConnectionClosed {
-                        peer_id, connection_id, remote_ip, remote_tcp_port
-                    } => {
-                        eprintln!("\n\nDisconnected from: {peer_id}; connection ID: {connection_id}; remote IP: {remote_ip}; remote TCP port: {remote_tcp_port}\n\n");
-                    }
-                }
-
-                // ignore outgoing errors: those are normal
-                e@SwarmEvent::OutgoingConnectionError { .. } => { log::debug!("Outgoing connection error: {e:?}"); }
-
-                // otherwise log any other event
-                e => { log::info!("Other event {e:?}"); }
+    let jh2 = tokio::spawn(async move {
+        loop {
+            if let Ok(Some(line)) = stdin.next_line().await
+                && let Err(e) = send.broadcast(line.into()).await
+            {
+                println!("Publish error: {e:?}");
             }
         }
-    }
+    });
+
+    tokio::spawn(async move {
+        while let Some(Ok(event)) = recv.next().await {
+            match event {
+                // on gossipsub incoming
+                Event::Received(Message {
+                    content,
+                    delivered_from,
+                    ..
+                }) => println!(
+                    "\n\nGot message: '{}' with from peer: {delivered_from}\n\n",
+                    String::from_utf8_lossy(&content),
+                ),
+
+                // on discovery
+                Event::NeighborUp(peer_id) => {
+                    println!("\n\nConnected to: {peer_id}\n\n");
+                }
+                Event::NeighborDown(peer_id) => {
+                    eprintln!("\n\nDisconnected from: {peer_id}\n\n");
+                }
+                Event::Lagged => {
+                    eprintln!("\n\nLagged\n\n");
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    jh1.await.unwrap();
+    jh2.await.unwrap();
 }

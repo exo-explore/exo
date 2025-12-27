@@ -1,64 +1,149 @@
-//! TODO: crate documentation
-//!
-//! this is here as a placeholder documentation
-//!
-//!
+use std::collections::BTreeSet;
 
-// enable Rust-unstable features for convenience
-#![feature(trait_alias)]
-// #![feature(stmt_expr_attributes)]
-// #![feature(unboxed_closures)]
-// #![feature(assert_matches)]
-// #![feature(async_fn_in_dyn_trait)]
-// #![feature(async_for_loop)]
-// #![feature(auto_traits)]
-// #![feature(negative_impls)]
+use iroh::{
+    Endpoint, EndpointId, SecretKey, TransportAddr,
+    discovery::{
+        Discovery as _, EndpointData, IntoDiscoveryError,
+        mdns::{DiscoveryEvent, MdnsDiscovery},
+    },
+    endpoint::BindError,
+    endpoint_info::EndpointIdExt as _,
+    protocol::Router,
+};
+use iroh_gossip::{
+    Gossip, TopicId,
+    api::{ApiError, GossipReceiver, GossipSender},
+};
 
-pub mod discovery;
-pub mod keep_alive;
-pub mod swarm;
+use n0_error::{e, stack_error};
+use n0_future::{Stream, StreamExt as _};
+use tokio::sync::Mutex;
 
-/// Namespace for all the type/trait aliases used by this crate.
-pub(crate) mod alias {
-    use std::error::Error;
-
-    pub type AnyError = Box<dyn Error + Send + Sync + 'static>;
-    pub type AnyResult<T> = Result<T, AnyError>;
+#[stack_error(derive, add_meta, from_sources)]
+pub enum ExoError {
+    #[error(transparent)]
+    FailedBinding { source: BindError },
+    /// The gossip topic was closed.
+    #[error(transparent)]
+    FailedCommunication { source: ApiError },
+    #[error("No IP Protocol supported on device")]
+    IPNotSupported { source: IntoDiscoveryError },
+    #[error("No peers found before subscribing")]
+    NoPeers,
 }
 
-/// Namespace for crate-wide extension traits/methods
-pub(crate) mod ext {
-    use extend::ext;
-    use libp2p::Multiaddr;
-    use libp2p::multiaddr::Protocol;
-    use std::net::IpAddr;
+#[derive(Debug)]
+pub struct ExoNet {
+    pub alpn: String,
+    pub router: Router,
+    pub gossip: Gossip,
+    pub mdns: MdnsDiscovery,
+    pub known_peers: Mutex<BTreeSet<EndpointId>>,
+}
 
-    #[ext(pub, name = MultiaddrExt)]
-    impl Multiaddr {
-        /// If the multiaddress corresponds to a TCP address, extracts it
-        fn try_to_tcp_addr(&self) -> Option<(IpAddr, u16)> {
-            let mut ps = self.into_iter();
-            let ip = if let Some(p) = ps.next() {
-                match p {
-                    Protocol::Ip4(ip) => IpAddr::V4(ip),
-                    Protocol::Ip6(ip) => IpAddr::V6(ip),
-                    _ => return None,
+impl ExoNet {
+    #[inline]
+    pub async fn init_iroh(sk: SecretKey, namespace: &str) -> Result<Self, ExoError> {
+        let endpoint = Endpoint::empty_builder(iroh::RelayMode::Disabled)
+            .secret_key(sk)
+            .bind()
+            .await?;
+        let mdns = MdnsDiscovery::builder().build(endpoint.id())?;
+        let endpoint_addr = endpoint.addr();
+
+        let bound = endpoint_addr.ip_addrs().map(|it| TransportAddr::Ip(*it));
+
+        log::info!("publishing {endpoint_addr:?} with mdns");
+        mdns.publish(&EndpointData::new(bound));
+        endpoint.discovery().add(mdns.clone());
+        let alpn = format!("/exo_discovery_network/{namespace}");
+        // max msg size 4MB
+        let gossip = Gossip::builder()
+            .max_message_size(4 * 1024 * 1024)
+            .alpn(&alpn)
+            .spawn(endpoint.clone());
+        let router = Router::builder(endpoint)
+            .accept(&alpn, gossip.clone())
+            .spawn();
+        Ok(Self {
+            alpn,
+            router,
+            gossip,
+            mdns,
+            known_peers: Mutex::new(BTreeSet::new()),
+        })
+    }
+
+    #[inline]
+    pub async fn start_auto_dialer(&self) {
+        let mut recv = self.connection_info().await;
+
+        log::info!(
+            "Starting auto dialer for id {}",
+            self.router.endpoint().id().to_z32()
+        );
+        while let Some(item) = recv.next().await {
+            match item {
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    let id = endpoint_info.endpoint_id;
+                    if id == self.router.endpoint().id() {
+                        continue;
+                    }
+                    if !self
+                        .known_peers
+                        .lock()
+                        .await
+                        .contains(&endpoint_info.endpoint_id)
+                        && let Ok(conn) = self
+                            .router
+                            .endpoint()
+                            .connect(endpoint_info, self.alpn.as_bytes())
+                            .await
+                        && conn.alpn() == self.alpn.as_bytes()
+                    {
+                        self.known_peers.lock().await.insert(id);
+                        match self.gossip.handle_connection(conn).await {
+                            Ok(()) => log::info!("Successfully dialled"),
+                            Err(_) => log::info!("Failed to dial peer"),
+                        }
+                    }
                 }
-            } else {
-                return None;
-            };
-            let Some(Protocol::Tcp(port)) = ps.next() else {
-                return None;
-            };
-            Some((ip, port))
+                DiscoveryEvent::Expired { endpoint_id } => {
+                    log::info!("Peer expired {}", endpoint_id.to_z32());
+                    self.known_peers.lock().await.remove(&endpoint_id);
+                }
+            }
         }
+        log::info!("Auto dialer stopping");
+    }
+
+    #[inline]
+    pub async fn connection_info(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
+        self.mdns.subscribe().await
+    }
+
+    #[inline]
+    pub async fn subscribe(&self, topic: &str) -> Result<(GossipSender, GossipReceiver), ExoError> {
+        if self.known_peers.lock().await.is_empty() {
+            return Err(e!(ExoError::NoPeers));
+        }
+        Ok(self
+            .gossip
+            .subscribe_and_join(
+                str_to_topic_id(topic),
+                self.known_peers.lock().await.clone().into_iter().collect(),
+            )
+            .await?
+            .split())
+    }
+
+    #[inline]
+    #[allow(clippy::expect_used)]
+    pub async fn shutdown(&self) {
+        self.router.shutdown().await.expect("router panic");
     }
 }
 
-pub(crate) mod private {
-    #![allow(dead_code)]
-
-    /// Sealed traits support
-    pub trait Sealed {}
-    impl<T: ?Sized> Sealed for T {}
+fn str_to_topic_id(data: &str) -> TopicId {
+    TopicId::from_bytes(*blake3::hash(data.as_bytes()).as_bytes())
 }

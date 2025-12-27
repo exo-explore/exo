@@ -31,22 +31,24 @@
         "aarch64-darwin"
         "aarch64-linux"
       ];
-      fenixToolchain = system: inputs.fenix.packages.${system}.complete;
+      fenixToolchain = system: inputs.fenix.packages.${system}.stable;
     in
     inputs.flake-utils.lib.eachSystem systems (
       system:
       let
         pkgs = import inputs.nixpkgs {
           inherit system;
-          overlays = [ inputs.fenix.overlays.default ];
+          overlays = [ ];
         };
         treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
-          programs.ruff-format.enable = true;
-          programs.ruff-format.excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
-          programs.rustfmt.enable = true;
-          programs.rustfmt.package = (fenixToolchain system).rustfmt;
-          programs.nixpkgs-fmt.enable = true;
+          programs = {
+            ruff-format.enable = true;
+            ruff-format.excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
+            rustfmt.enable = true;
+            rustfmt.package = (fenixToolchain system).rustfmt;
+            nixpkgs-fmt.enable = true;
+          };
         };
       in
       {
@@ -76,6 +78,8 @@
                 "rustfmt"
                 "rust-src"
               ])
+              cargo-machete
+              bacon
               rustup # Just here to make RustRover happy
 
               # NIX

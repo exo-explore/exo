@@ -95,6 +95,7 @@ class Master:
         self._tg.cancel_scope.cancel()
 
     async def _command_processor(self) -> None:
+        retry_num = 0
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
@@ -186,11 +187,12 @@ class Master:
                                     command.finished_command_id
                                 ]
                         case RequestEventLog():
+                            retry_num += 1
                             # We should just be able to send everything, since other buffers will ignore old messages
                             for i in range(command.since_idx, len(self._event_log)):
-                                await self._send_event(
-                                    IndexedEvent(idx=i, event=self._event_log[i])
-                                )
+                                event = self._event_log[i]
+                                event.retry = retry_num
+                                await self._send_event(IndexedEvent(idx=i, event=event))
                     for event in generated_events:
                         await self.event_sender.send(event)
                 except ValueError as e:
@@ -232,7 +234,7 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
-                    logger.debug(f"Master indexing event: {str(event)[:100]}")
+                    logger.trace(f"Master indexing event: {str(event)[:100]}")
                     indexed = IndexedEvent(event=event, idx=len(self._event_log))
                     self.state = apply(self.state, indexed)
 
