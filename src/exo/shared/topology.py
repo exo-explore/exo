@@ -1,5 +1,5 @@
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -11,8 +11,10 @@ from exo.shared.types.topology import RDMAConnection, SocketConnection
 
 
 class TopologySnapshot(BaseModel):
-    nodes: list[NodeId]
-    connections: list[tuple[NodeId, NodeId, SocketConnection | RDMAConnection]]
+    nodes: Sequence[NodeId]
+    connections: Mapping[
+        NodeId, Mapping[NodeId, Sequence[SocketConnection | RDMAConnection]]
+    ]
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -27,8 +29,7 @@ class Topology:
 
     def to_snapshot(self) -> TopologySnapshot:
         return TopologySnapshot(
-            nodes=list(self.list_nodes()),
-            connections=list(self.list_connections()),
+            nodes=list(self.list_nodes()), connections=self.map_connections()
         )
 
     @classmethod
@@ -39,8 +40,10 @@ class Topology:
             with contextlib.suppress(ValueError):
                 topology.add_node(node_id)
 
-        for source, sink, connection in snapshot.connections:
-            topology.add_connection(source, sink, connection)
+        for source in snapshot.connections:
+            for sink in snapshot.connections[source]:
+                for conn in snapshot.connections[source][sink]:
+                    topology.add_connection(source, sink, conn)
 
         return topology
 
@@ -111,6 +114,20 @@ class Topology:
 
     def list_nodes(self) -> Iterable[NodeId]:
         return self._graph.nodes()
+
+    def map_connections(
+        self,
+    ) -> Mapping[NodeId, Mapping[NodeId, Sequence[SocketConnection | RDMAConnection]]]:
+        base: dict[NodeId, dict[NodeId, list[SocketConnection | RDMAConnection]]] = {}
+        for src_id, sink_id, connection in self._graph.weighted_edge_list():
+            source = self._graph[src_id]
+            sink = self._graph[sink_id]
+            if source not in base:
+                base[source] = {}
+            if sink not in base[source]:
+                base[source][sink] = []
+            base[source][sink].append(connection)
+        return base
 
     def list_connections(
         self,
