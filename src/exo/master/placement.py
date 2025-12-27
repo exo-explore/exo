@@ -61,7 +61,9 @@ def place_instance(
         filter(lambda it: len(it) >= command.min_nodes, cycles + singleton_cycles)
     )
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, command.model_meta.storage_size
+        candidate_cycles,
+        command.model_meta.storage_size,
+        use_total_memory=command.allow_low_memory,
     )
     if not cycles_with_sufficient_memory:
         raise ValueError("No cycles found with sufficient memory")
@@ -87,7 +89,11 @@ def place_instance(
         cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
             (
-                node.node_profile.memory.ram_available
+                (
+                    node.node_profile.memory.ram_total
+                    if command.allow_low_memory
+                    else node.node_profile.memory.ram_available
+                )
                 for node in cycle
                 if node.node_profile is not None
             ),
@@ -96,7 +102,10 @@ def place_instance(
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_meta, selected_cycle, command.sharding
+        command.model_meta,
+        selected_cycle,
+        command.sharding,
+        use_total_memory=command.allow_low_memory,
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle)

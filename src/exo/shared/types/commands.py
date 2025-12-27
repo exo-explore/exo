@@ -25,6 +25,7 @@ class PlaceInstance(BaseCommand):
     sharding: Sharding
     instance_meta: InstanceMeta
     min_nodes: int
+    allow_low_memory: bool = False
 
 
 class CreateInstance(BaseCommand):

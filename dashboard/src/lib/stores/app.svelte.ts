@@ -148,6 +148,7 @@ export interface PlacementPreview {
 	instance: unknown | null;
 	memory_delta_by_node: Record<string, number> | null;
 	error: string | null;
+	is_low_memory: boolean;
 }
 
 export interface PlacementPreviewResponse {

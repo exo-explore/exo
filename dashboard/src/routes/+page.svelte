@@ -204,30 +204,36 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		return estimateMemoryGB(model.id, model.name);
 	}
 	
+	// Calculate total memory in the cluster (in GB)
+	const totalMemoryGB = $derived(() => clusterMemory().total / (1024 * 1024 * 1024));
+
 	// Calculate available memory in the cluster (in GB)
-	const availableMemoryGB = $derived(() => {
-		if (!data) return 0;
-		return Object.values(data.nodes).reduce((acc, n) => {
-			const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
-			const used = n.macmon_info?.memory?.ram_usage ?? 0;
-			return acc + (total - used);
-		}, 0) / (1024 * 1024 * 1024);
-	});
+	const availableMemoryGB = $derived(() => (clusterMemory().total - clusterMemory().used) / (1024 * 1024 * 1024));
 	
-	// Check if a model has enough memory to run
-	function hasEnoughMemory(model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
-		const modelSizeGB = getModelSizeGB(model);
-		return modelSizeGB <= availableMemoryGB();
+	// Check if a model will fit in available memory
+	function modelWillFit(model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
+		return getModelSizeGB(model) <= availableMemoryGB();
+	}
+
+	// Check if a model can fit in total memory
+	function modelCanFit(model: {id: string, name?: string, storage_size_megabytes?: number}): boolean {
+		return getModelSizeGB(model) <= totalMemoryGB();
 	}
 	
 	// Sorted models for dropdown - biggest first, unrunnable at the end
 	const sortedModels = $derived(() => {
 		return [...models].sort((a, b) => {
-			// First: models that have enough memory come before those that don't
-			const aCanFit = hasEnoughMemory(a);
-			const bCanFit = hasEnoughMemory(b);
-			if (aCanFit && !bCanFit) return -1;
-			if (!aCanFit && bCanFit) return 1;
+			// First: models that can fit in total memory come before those that don't
+			const aCan = modelCanFit(a);
+			const bCan = modelCanFit(b);
+			if (aCan && !bCan) return -1;
+			if (!aCan && bCan) return 1;
+
+			// Second: models that will fit in available memory come before those that won't
+			const aWill = modelWillFit(a);
+			const bWill = modelWillFit(b);
+			if (aWill && !bWill) return -1;
+			if (!aWill && bWill) return 1;
 			
 			// Then: sort by size (biggest first)
 			const aSize = getModelSizeGB(a);
@@ -301,6 +307,15 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	async function launchInstance(modelId: string, specificPreview?: PlacementPreview | null) {
 		if (!modelId || launchingModelId) return;
 		
+		const foundModel = models.find(m => m.id === modelId);
+		const isLowMemory = specificPreview?.is_low_memory || (foundModel && !modelWillFit(foundModel) && modelCanFit(foundModel));
+
+		if (isLowMemory) {
+			if (!confirm(`Warning: This model requires more memory than is currently available. It may cause performance issues or fail to load. Do you want to continue?`)) {
+				return;
+			}
+		}
+
 		launchingModelId = modelId;
 		
 		try {
@@ -314,13 +329,16 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				instanceData = preview.instance;
 			} else {
 				// Fallback: GET placement from API
+				// Use min_nodes=1 to allow single-node placement if multi-node fails
+				// Use allow_low_memory=true if we've already confirmed with the user or determined it's low memory
 				const placementResponse = await fetch(
-					`/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}`
+					`/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${selectedSharding}&instance_meta=${selectedInstanceType}&min_nodes=${selectedMinNodes}${isLowMemory ? '&allow_low_memory=true' : ''}`
 				);
 				
 				if (!placementResponse.ok) {
 					const errorText = await placementResponse.text();
 					console.error('Failed to get placement:', errorText);
+					alert(`Failed to create placement: ${errorText}\n\nThe model may require more memory than is currently available. Try closing other applications or instances to free up memory.`);
 					return;
 				}
 				
@@ -814,7 +832,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		const nodeToRunner = (instance.shardAssignments as { nodeToRunner?: Record<string, string> } | undefined)?.nodeToRunner || {};
 		const runnerEntries = Object.entries(runnerToShard).map(([runnerId, shardWrapped]) => {
 			const [tag, shard] = getTagged(shardWrapped);
-			const meta = (shard as { modelMeta?: { worldSize?: number; nLayers?: number; deviceRank?: number } } | undefined);
+			const meta = (shard as { deviceRank?: number; worldSize?: number; nLayers?: number } | undefined);
 			const deviceRank = (meta?.deviceRank as number | undefined) ?? 0;
 			return { runnerId, tag, deviceRank };
 		});
@@ -1402,27 +1420,28 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 											(m.name || m.id).toLowerCase().includes(modelDropdownSearch.toLowerCase())
 										) as model}
 											{@const sizeGB = getModelSizeGB(model)}
-											{@const modelCanFit = hasEnoughMemory(model)}
+											{@const willFit = modelWillFit(model)}
+											{@const canFit = modelCanFit(model)}
 											<button
 												type="button"
 												onclick={() => {
-													if (modelCanFit) {
+													if (canFit) {
 														selectPreviewModel(model.id);
 														isModelDropdownOpen = false;
 														modelDropdownSearch = '';
 													}
 												}}
-												disabled={!modelCanFit}
+												disabled={!canFit}
 												class="w-full px-3 py-2 text-left text-sm font-mono tracking-wide transition-colors duration-100 flex items-center justify-between gap-2 {
 													selectedModelId === model.id 
 														? 'bg-transparent text-exo-yellow cursor-pointer' 
-														: modelCanFit 
+														: canFit 
 															? 'text-white/80 hover:text-exo-yellow cursor-pointer' 
 															: 'text-white/30 cursor-default'
 												}"
 											>
 												<span class="truncate">{model.name || model.id}</span>
-												<span class="flex-shrink-0 text-xs {modelCanFit ? 'text-white/50' : 'text-red-400/60'}">
+												<span class="flex-shrink-0 text-xs {willFit ? 'text-white/50' : canFit ? 'text-exo-yellow' : 'text-red-400/60'}">
 													{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB
 												</span>
 											</button>
@@ -1591,6 +1610,20 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										</div>
 										{/each}
 									</div>
+								{:else if selectedModel && modelCanFit(selectedModel)}
+									{@const downloadStatus = getModelDownloadStatus(selectedModel.id)}
+									{@const tags = modelTags()[selectedModel.id] || []}
+									<ModelCard 
+										model={selectedModel}
+										isLaunching={launchingModelId === selectedModel.id}
+										{downloadStatus}
+										nodes={data?.nodes ?? {}}
+										sharding={selectedSharding}
+										runtime={selectedInstanceType}
+										onLaunch={() => launchInstance(selectedModel.id, null)}
+										{tags}
+										apiPreview={null}
+									/>
 								{:else if selectedModel}
 									<div class="text-center py-4">
 										<div class="text-xs text-white/50 font-mono">No valid configurations for current settings</div>
