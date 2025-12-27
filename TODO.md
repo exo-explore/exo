@@ -19,6 +19,7 @@
 25. Rethink retry logic
 26. Task cancellation. When API http request gets cancelled, it should cancel corresponding task.
 27. Log cleanup - per-module log filters and default to DEBUG log levels
+28. Really need to remove all mlx logic outside of the runner - API has a transitive dependency on engines which imports mlx
 
 Potential refactors:
 

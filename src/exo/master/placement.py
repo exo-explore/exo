@@ -13,6 +13,7 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
+from exo.routing.connection_message import IpAddress
 from exo.shared.topology import Topology
 from exo.shared.types.commands import (
     CreateInstance,
@@ -130,13 +131,13 @@ def place_instance(
                 jaccl_coordinators=mlx_jaccl_coordinators,
             )
         case InstanceMeta.MlxRing:
-            hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
+            hosts: list[IpAddress] = get_hosts_from_subgraph(cycle_digraph)
             target_instances[instance_id] = MlxRingInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 hosts=[
                     Host(
-                        ip=host.ip,
+                        ip=str(host),
                         port=random_ephemeral_port(),
                     )
                     for host in hosts

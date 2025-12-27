@@ -1,8 +1,6 @@
-//! SEE: https://pyo3.rs/v0.26.0/async-await.html#detaching-from-the-interpreter-across-await
-//!
+//! SEE: <https://pyo3.rs/v0.27.1/async-await.html#detaching-from-the-interpreter-across-await>
 
-use pin_project::pin_project;
-use pyo3::marker::Ungil;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::{
     future::Future,
@@ -10,31 +8,36 @@ use std::{
     task::{Context, Poll},
 };
 
-/// SEE: https://pyo3.rs/v0.26.0/async-await.html#detaching-from-the-interpreter-across-await
-#[pin_project]
 #[repr(transparent)]
-pub(crate) struct AllowThreads<F>(#[pin] F);
+pub struct AllowThreads<F>(F);
 
 impl<F> AllowThreads<F>
 where
     Self: Future,
 {
-    pub fn new(f: F) -> Self {
+    pub(crate) const fn new(f: F) -> Self {
         Self(f)
     }
 }
 
 impl<F> Future for AllowThreads<F>
 where
-    F: Future + Ungil,
-    F::Output: Ungil,
+    F: Future + Unpin + Send,
+    F::Output: Send,
 {
-    type Output = F::Output;
+    type Output = Result<F::Output, PyErr>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let waker = cx.waker();
-        Python::with_gil(|py| {
-            py.allow_threads(|| self.project().0.poll(&mut Context::from_waker(waker)))
-        })
+        match Python::try_attach(|py| {
+            py.detach(|| pin!(&mut self.0).poll(&mut Context::from_waker(waker)))
+        }) {
+            Some(Poll::Pending) => Poll::Pending,
+            Some(Poll::Ready(t)) => Poll::Ready(Ok(t)),
+            // TODO: this doesn't actually work - graceful py shutdown handling
+            None => Poll::Ready(Err(PyRuntimeError::new_err(
+                "Python runtime shutdown while awaiting a future",
+            ))),
+        }
     }
 }
