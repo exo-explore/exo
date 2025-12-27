@@ -24,7 +24,7 @@ from pydantic import (
     TypeAdapter,
 )
 
-from exo.shared.constants import EXO_HOME, EXO_MODELS_DIR
+from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadProgressData
 from exo.shared.types.worker.shards import ShardMetadata
@@ -130,25 +130,6 @@ def build_model_path(model_id: str) -> DirectoryPath:
 
 async def resolve_model_path_for_repo(repo_id: str) -> Path:
     return (await ensure_models_dir()) / repo_id.replace("/", "--")
-
-
-async def ensure_exo_home() -> Path:
-    await aios.makedirs(EXO_HOME, exist_ok=True)
-    return EXO_HOME
-
-
-async def has_exo_home_read_access() -> bool:
-    try:
-        return await aios.access(EXO_HOME, os.R_OK)
-    except OSError:
-        return False
-
-
-async def has_exo_home_write_access() -> bool:
-    try:
-        return await aios.access(EXO_HOME, os.W_OK)
-    except OSError:
-        return False
 
 
 async def ensure_models_dir() -> Path:

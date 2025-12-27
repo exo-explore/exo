@@ -1,35 +1,46 @@
 import os
+import sys
 from pathlib import Path
 
-EXO_HOME_RELATIVE_PATH = os.environ.get("EXO_HOME", ".exo")
-EXO_HOME = Path.home() / EXO_HOME_RELATIVE_PATH
+_EXO_HOME_ENV = os.environ.get("EXO_HOME", None)
 
-EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR")
-EXO_MODELS_DIR = Path(EXO_MODELS_DIR_ENV) if EXO_MODELS_DIR_ENV else EXO_HOME / "models"
 
-EXO_GLOBAL_EVENT_DB = EXO_HOME / "global_events.db"
-EXO_WORKER_EVENT_DB = EXO_HOME / "worker_events.db"
-EXO_MASTER_STATE = EXO_HOME / "master_state.json"
-EXO_WORKER_STATE = EXO_HOME / "worker_state.json"
-EXO_MASTER_LOG = EXO_HOME / "master.log"
-EXO_WORKER_LOG = EXO_HOME / "worker.log"
-EXO_LOG = EXO_HOME / "exo.log"
-EXO_TEST_LOG = EXO_HOME / "exo_test.log"
+def _get_xdg_dir(env_var: str, fallback: str) -> Path:
+    """Get XDG directory, prioritising EXO_HOME environment variable if its set. On non-Linux platforms, default to ~/.exo."""
 
-EXO_NODE_ID_KEYPAIR = EXO_HOME / "node_id.keypair"
+    if _EXO_HOME_ENV is not None:
+        return Path.home() / _EXO_HOME_ENV
 
-EXO_WORKER_KEYRING_FILE = EXO_HOME / "worker_keyring"
-EXO_MASTER_KEYRING_FILE = EXO_HOME / "master_keyring"
+    if sys.platform != "linux":
+        return Path.home() / ".exo"
 
-EXO_IPC_DIR = EXO_HOME / "ipc"
+    xdg_value = os.environ.get(env_var, None)
+    if xdg_value is not None:
+        return Path(xdg_value) / "exo"
+    return Path.home() / fallback / "exo"
+
+
+EXO_CONFIG_HOME = _get_xdg_dir("XDG_CONFIG_HOME", ".config")
+EXO_DATA_HOME = _get_xdg_dir("XDG_DATA_HOME", ".local/share")
+EXO_CACHE_HOME = _get_xdg_dir("XDG_CACHE_HOME", ".cache")
+
+# Models directory (data)
+_EXO_MODELS_DIR_ENV = os.environ.get("EXO_MODELS_DIR", None)
+EXO_MODELS_DIR = (
+    EXO_DATA_HOME / "models"
+    if _EXO_MODELS_DIR_ENV is None
+    else Path.home() / _EXO_MODELS_DIR_ENV
+)
+
+# Log files (data/logs or cache)
+EXO_LOG = EXO_CACHE_HOME / "exo.log"
+EXO_TEST_LOG = EXO_CACHE_HOME / "exo_test.log"
+
+# Identity (config)
+EXO_NODE_ID_KEYPAIR = EXO_CONFIG_HOME / "node_id.keypair"
 
 # libp2p topics for event forwarding
 LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"
 LIBP2P_GLOBAL_EVENTS_TOPIC = "global_events"
 LIBP2P_ELECTION_MESSAGES_TOPIC = "election_message"
 LIBP2P_COMMANDS_TOPIC = "commands"
-
-# lower bounds define timeouts for flops and memory bandwidth - these are the values for the M1 chip.
-LB_TFLOPS = 2.3
-LB_MEMBW_GBPS = 68
-LB_DISK_GBPS = 1.5
