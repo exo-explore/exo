@@ -22,7 +22,7 @@ from exo.shared.types.profiling import (
 )
 from exo.shared.types.thunderbolt import TBConnection, TBConnectivity, TBIdentifier
 from exo.utils.channels import Sender
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import TaggedModel
 
 from .macmon import MacmonMetrics
 from .system_info import get_friendly_name, get_model_and_chip, get_network_interfaces
@@ -30,7 +30,7 @@ from .system_info import get_friendly_name, get_model_and_chip, get_network_inte
 IS_DARWIN = sys.platform == "darwin"
 
 
-class StaticNodeInformation(CamelCaseModel):
+class StaticNodeInformation(TaggedModel):
     """Node information that should NEVER change, to be gathered once at startup"""
 
     model: str
@@ -42,11 +42,22 @@ class StaticNodeInformation(CamelCaseModel):
         return cls(model=model, chip=chip)
 
 
-class NodeConfig(CamelCaseModel):
+class NodeNetworkInterfaces(TaggedModel):
+    ifaces: Sequence[NetworkInterfaceInfo]
+
+
+class MacTBIdentifiers(TaggedModel):
+    idents: Sequence[TBIdentifier]
+
+
+class MacTBConnections(TaggedModel):
+    conns: Sequence[TBConnection]
+
+
+class NodeConfig(TaggedModel):
     """Node configuration from EXO_CONFIG_FILE, reloaded from the file only at startup. Other changes should come in through the API and propagate from there"""
 
     # TODO
-
     @classmethod
     async def gather(cls) -> Self | None:
         cfg_file = anyio.Path(EXO_CONFIG_FILE)
@@ -61,8 +72,8 @@ class NodeConfig(CamelCaseModel):
                 return None
 
 
-class MiscData(CamelCaseModel):
-    """Node information that may change that doesn't fall into the other categories"""
+class MiscData(TaggedModel):
+    """Node information that may slowly change that doesn't fall into the other categories"""
 
     friendly_name: str
 
@@ -94,9 +105,9 @@ async def _gather_iface_map() -> dict[str, str] | None:
 GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
-    | Sequence[NetworkInterfaceInfo]
-    | Sequence[TBIdentifier]
-    | Sequence[TBConnection]
+    | NodeNetworkInterfaces
+    | MacTBIdentifiers
+    | MacTBConnections
     | NodeConfig
     | MiscData
     | StaticNodeInformation
@@ -135,8 +146,12 @@ class InfoGatherer:
     async def _monitor_misc(self):
         if self.misc_poll_interval is None:
             return
+        prev = await MiscData.gather()
         while True:
-            await self.info_sender.send(await MiscData.gather())
+            curr = await MiscData.gather()
+            if prev != curr:
+                prev = curr
+                await self.info_sender.send(curr)
             await anyio.sleep(self.misc_poll_interval)
 
     async def _monitor_system_profiler(self):
@@ -153,11 +168,11 @@ class InfoGatherer:
 
             idents = [it for i in data if (it := i.ident(iface_map)) is not None]
             if idents != old_idents:
-                await self.info_sender.send(idents)
+                await self.info_sender.send(MacTBIdentifiers(idents=idents))
             old_idents = idents
 
             conns = [it for i in data if (it := i.conn()) is not None]
-            await self.info_sender.send(conns)
+            await self.info_sender.send(MacTBConnections(conns=conns))
 
             await anyio.sleep(self.system_profiler_interval)
 
@@ -183,8 +198,8 @@ class InfoGatherer:
         while True:
             nics = get_network_interfaces()
             if nics != old_nics:
-                await self.info_sender.send(nics)
-            old_nics = nics
+                old_nics = nics
+                await self.info_sender.send(NodeNetworkInterfaces(ifaces=nics))
             await anyio.sleep(self.interface_watcher_interval)
 
     async def _monitor_macmon(self, macmon_path: str):
