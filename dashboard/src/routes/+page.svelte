@@ -382,6 +382,11 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		return (meta.model_id as string) ?? (meta.modelId as string) ?? null;
 	}
 
+	// Helper to clamp percentage between 0 and 100
+	function clampPercent(value: number): number {
+		return Math.min(100, Math.max(0, value));
+	}
+
 	// Helper to parse download progress from payload
 	function parseDownloadProgress(payload: Record<string, unknown>): DownloadProgress | null {
 		const progress = payload.download_progress ?? payload.downloadProgress;
@@ -408,16 +413,16 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				downloadedBytes: fDownloaded,
 				speed: (fd.speed as number) ?? 0,
 				etaMs: (fd.eta_ms as number) ?? (fd.etaMs as number) ?? 0,
-				percentage: fTotal > 0 ? (fDownloaded / fTotal) * 100 : 0
+				percentage: clampPercent(fTotal > 0 ? (fDownloaded / fTotal) * 100 : 0)
 			});
 		}
-		
+
 		return {
 			totalBytes,
 			downloadedBytes,
 			speed,
 			etaMs: etaMs || (speed > 0 ? ((totalBytes - downloadedBytes) / speed) * 1000 : 0),
-			percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+			percentage: clampPercent(totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0),
 			completedFiles,
 			totalFiles,
 			files
@@ -496,7 +501,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				downloadedBytes,
 				speed: totalSpeed,
 				etaMs: totalSpeed > 0 ? ((totalBytes - downloadedBytes) / totalSpeed) * 1000 : 0,
-				percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+				percentage: clampPercent(totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0),
 				completedFiles,
 				totalFiles,
 				files: allFiles
@@ -603,7 +608,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				downloadedBytes,
 				speed: totalSpeed,
 				etaMs: totalSpeed > 0 ? ((totalBytes - downloadedBytes) / totalSpeed) * 1000 : 0,
-				percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+				percentage: clampPercent(totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0),
 				completedFiles,
 				totalFiles,
 				files: allFiles

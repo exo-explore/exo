@@ -10,11 +10,11 @@ struct DownloadProgressViewModel: Equatable {
 
     var fractionCompleted: Double {
         guard totalBytes > 0 else { return 0 }
-        return Double(downloadedBytes) / Double(totalBytes)
+        return min(1.0, max(0.0, Double(downloadedBytes) / Double(totalBytes)))
     }
 
     var percentCompleted: Double {
-        fractionCompleted * 100
+        min(100.0, fractionCompleted * 100)
     }
 
     var formattedProgress: String {
