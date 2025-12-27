@@ -22,7 +22,6 @@ except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
 import contextlib
 
-
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.utils import load_model
