@@ -3,7 +3,7 @@ from typing import Self
 from pydantic import BaseModel
 
 from exo.shared.types.profiling import MemoryUsage, SystemPerformanceProfile
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import TaggedModel
 
 
 class _TempMetrics(BaseModel, extra="ignore"):
@@ -43,7 +43,7 @@ class RawMacmonMetrics(BaseModel, extra="ignore"):
     sys_power: float
 
 
-class MacmonMetrics(CamelCaseModel):
+class MacmonMetrics(TaggedModel):
     system_profile: SystemPerformanceProfile
     memory: MemoryUsage
 

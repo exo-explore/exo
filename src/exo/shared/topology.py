@@ -20,8 +20,10 @@ class TopologySnapshot(BaseModel):
 @dataclass
 class Topology:
     # the _graph can be used as a int -> NodeId map.
-    _graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection]  = field(init=False, default_factory=rx.PyDiGraph)
-    _vertex_indices: dict[NodeId, int] = field(init=False, default_factory = dict)
+    _graph: rx.PyDiGraph[NodeId, SocketConnection | RDMAConnection] = field(
+        init=False, default_factory=rx.PyDiGraph
+    )
+    _vertex_indices: dict[NodeId, int] = field(init=False, default_factory=dict)
 
     def to_snapshot(self) -> TopologySnapshot:
         return TopologySnapshot(
