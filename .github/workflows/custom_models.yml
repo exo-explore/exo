@@ -1,0 +1,39 @@
+name: Test Custom Models
+
+on:
+  push:
+    branches:
+      - feature/issue-918-custom-mlx-models
+  pull_request:
+    branches:
+      - feature/issue-918-custom-mlx-models
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Hugging Face model id (mlx-community/...)"
+        required: false
+        default: "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+
+jobs:
+  test-custom-model:
+    env:
+      # Keep persistence writes local to the workspace; no server required
+      EXO_HOME: ${{ github.workspace }}/.exo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - name: Set MODEL_ID (with default)
+        run: |
+          echo "MODEL_ID=${{ github.event.inputs.model || 'mlx-community/Qwen3-4B-Instruct-2507-4bit' }}" >> $GITHUB_ENV
+      - name: Register custom model (headless) and persist
+        run: |
+          nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c \
+            uv run python tests/test_custom_model_registration.py --model "$MODEL_ID"
+      - name: Show persisted custom models
+        if: always()
+        run: |
+          echo "EXO_HOME=$EXO_HOME"
+          test -f "$EXO_HOME/custom_models.json" && echo 'Persisted file:' && cat "$EXO_HOME/custom_models.json" || echo 'No persisted file found.'
