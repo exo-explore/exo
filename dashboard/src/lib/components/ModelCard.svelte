@@ -209,8 +209,8 @@ function toggleNodeDetails(nodeId: string): void {
 		// Use API preview data if available
 		const hasApiPreview = apiPreview !== null && apiPreview.error === null && apiPreview.memory_delta_by_node !== null;
 		const canFit = hasApiPreview ? true : (() => {
-			const totalAvailable = nodeArray.reduce((sum, n) => sum + n.availableGB, 0);
-			return totalAvailable >= estimatedMemory;
+			const totalClusterMemory = nodeArray.reduce((sum, n) => sum + n.totalGB, 0);
+			return totalClusterMemory >= estimatedMemory;
 		})();
 		const error = apiPreview?.error ?? null;
 		
@@ -357,9 +357,12 @@ function toggleNodeDetails(nodeId: string): void {
 		return { nodes: placementNodes, canFit: hasApiPreview || canFit, totalAvailable, topoWidth, topoHeight, error };
 	});
 	
-	const canFit = $derived(apiPreview ? apiPreview.error === null : placementPreview().canFit);
-	const placementError = $derived(apiPreview?.error ?? null);
-	const nodeCount = $derived(nodeList().length);
+	const totalClusterMemory = $derived(nodeList().reduce((sum, n) => sum + n.totalGB, 0));
+	const availableClusterMemory = $derived(nodeList().reduce((sum, n) => sum + n.availableGB, 0));
+	const modelCanFit = $derived(totalClusterMemory >= estimatedMemory);
+	const modelWillFit = $derived(availableClusterMemory >= estimatedMemory);
+
+	const canFit = $derived(apiPreview ? (apiPreview.error === null || modelCanFit) : placementPreview().canFit);
 	const filterId = $derived(model.id.replace(/[^a-zA-Z0-9]/g, ''));
 </script>
 
