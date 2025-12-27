@@ -61,10 +61,10 @@ Devices running exo automatically discover each other, without needing any manua
 
 There are two ways to run exo:
 
-### Run from Source (Mac & Linux)
+### Run from Source (macOS)
 
 **Prerequisites:**
-- [brew](https://github.com/Homebrew/brew) (for simple package management on MacOS)
+- [brew](https://github.com/Homebrew/brew) (for simple package management on macOS)
   
   ```bash
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -97,6 +97,62 @@ uv run exo
 ```
 
 This starts the exo dashboard and API at http://localhost:52415/
+
+### Run from Source (Linux)
+
+**Prerequisites:**
+
+- [uv](https://github.com/astral-sh/uv) (for Python dependency management)
+- [node](https://github.com/nodejs/node) (for building the dashboard) - version 18 or higher
+- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+
+**Installation methods:**
+
+**Option 1: Using system package manager (Ubuntu/Debian example):**
+```bash
+# Install Node.js and npm
+sudo apt update
+sudo apt install nodejs npm
+
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install Rust (using rustup)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup toolchain install nightly
+```
+
+**Option 2: Using Homebrew on Linux (if preferred):**
+```bash
+# Install Homebrew on Linux
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install dependencies
+brew install uv node
+
+# Install Rust (using rustup)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup toolchain install nightly
+```
+
+**Note:** The `macmon` package is macOS-only and not required for Linux.
+
+Clone the repo, build the dashboard, and run exo:
+
+```bash
+# Clone exo
+git clone https://github.com/exo-explore/exo
+
+# Build dashboard
+cd exo/dashboard && npm install && npm run build && cd ..
+
+# Run exo
+uv run exo
+```
+
+This starts the exo dashboard and API at http://localhost:52415/
+
+**Important note for Linux users:** Currently, exo runs on CPU on Linux. GPU support for Linux platforms is under development. If you'd like to see support for your specific Linux hardware, please [search for existing feature requests](https://github.com/exo-explore/exo/issues) or create a new one.
 
 ### macOS App
 
