@@ -228,7 +228,7 @@ class Worker:
                             )
                         )
                     else:
-                        self.event_sender.send_nowait(
+                        await self.event_sender.send(
                             TaskStatusUpdated(
                                 task_id=task.task_id, task_status=TaskStatus.Running
                             )

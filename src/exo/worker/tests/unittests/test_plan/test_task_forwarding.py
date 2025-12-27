@@ -5,9 +5,9 @@ from exo.shared.types.api import ChatCompletionTaskParams
 from exo.shared.types.tasks import ChatCompletion, Task, TaskId, TaskStatus
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import (
+    RunnerIdle,
     RunnerReady,
     RunnerRunning,
-    RunnerWaitingForModel,
 )
 from exo.worker.tests.constants import (
     COMMAND_1_ID,
@@ -99,7 +99,7 @@ def test_plan_does_not_forward_chat_completion_if_any_runner_not_ready():
     instances = {INSTANCE_1_ID: instance}
     all_runners = {
         RUNNER_1_ID: RunnerReady(),
-        RUNNER_2_ID: RunnerWaitingForModel(),
+        RUNNER_2_ID: RunnerIdle(),
     }
 
     task = ChatCompletion(

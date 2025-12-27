@@ -24,3 +24,9 @@ TASK_2_ID: Final[TaskId] = TaskId("66666666-6666-4666-8666-666666666666")
 
 COMMAND_1_ID: Final[CommandId] = CommandId("77777777-7777-4777-8777-777777777777")
 COMMAND_2_ID: Final[CommandId] = CommandId("88888888-8888-4888-8888-888888888888")
+
+SHUTDOWN_TASK_ID = TaskId("shutdown")
+CHAT_COMPLETION_TASK_ID = TaskId("chat-completion")
+INITIALIZATION_TASK_ID = TaskId("initialisation")
+LOAD_TASK_ID = TaskId("load")
+WARMUP_TASK_ID = TaskId("warmup")

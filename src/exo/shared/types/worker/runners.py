@@ -21,7 +21,15 @@ class BaseRunnerStatus(TaggedModel):
         return isinstance(self, RunnerRunning)
 
 
-class RunnerWaitingForModel(BaseRunnerStatus):
+class RunnerIdle(BaseRunnerStatus):
+    pass
+
+
+class RunnerConnecting(BaseRunnerStatus):
+    pass
+
+
+class RunnerConnected(BaseRunnerStatus):
     pass
 
 
@@ -54,7 +62,9 @@ class RunnerFailed(BaseRunnerStatus):
 
 
 RunnerStatus = (
-    RunnerWaitingForModel
+    RunnerIdle
+    | RunnerConnecting
+    | RunnerConnected
     | RunnerLoading
     | RunnerLoaded
     | RunnerWarmingUp

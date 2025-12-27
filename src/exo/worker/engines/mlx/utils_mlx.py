@@ -13,7 +13,6 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.worker.engines.mlx.constants import (
     CACHE_GROUP_SIZE,
     KV_CACHE_BITS,
-    TEMPERATURE,
     TRUST_REMOTE_CODE,
 )
 
@@ -50,6 +49,7 @@ from exo.worker.engines.mlx.auto_parallel import (
 )
 from exo.worker.runner.bootstrap import logger
 
+Group = mx.distributed.Group
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
@@ -69,7 +69,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     )
 
 
-def mx_barrier(group: mx.distributed.Group | None = None):
+def mx_barrier(group: Group | None = None):
     mx.eval(
         mx.distributed.all_sum(
             mx.array(1.0),
@@ -79,7 +79,7 @@ def mx_barrier(group: mx.distributed.Group | None = None):
     )
 
 
-def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None):
+def broadcast_from_zero(value: int, group: Group | None = None):
     if group is None:
         return value
 
@@ -101,15 +101,9 @@ class HostList(RootModel[list[str]]):
 
 def mlx_distributed_init(
     bound_instance: BoundInstance,
-) -> mx.distributed.Group:
+) -> Group:
     """
-    Initialize the MLX distributed (runs in thread pool).
-
-    Either hosts or mlx_ibv_devices must be provided:
-    - hosts: traditional host-based connectivity using MLX_HOSTFILE
-    - mlx_ibv_devices: RDMA connectivity matrix using MLX_IBV_DEVICES
-    - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
-    - strict: if True, raise an error if the distributed backend is not available
+    Initialize MLX distributed.
     """
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
@@ -168,36 +162,35 @@ def mlx_distributed_init(
 
 def initialize_mlx(
     bound_instance: BoundInstance,
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
-    """
-    Initialize the MLX model, tokenizer, and sampler. Runs in the MLX thread.
-    """
+) -> Group:
+    # should we unseed it?
+    # TODO: pass in seed from params
     mx.random.seed(42)
 
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+    assert len(bound_instance.instance.shard_assignments.node_to_runner) > 1, (
+        "Tried to initialize mlx for a single node instance"
+    )
+    return mlx_distributed_init(bound_instance)
 
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=TEMPERATURE)
+
+def load_mlx_items(
+    bound_instance: BoundInstance, group: Group | None
+) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
+    # TODO: pass temperature
+    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
     logger.info("Created a sampler")
 
-    if len(bound_instance.instance.shard_assignments.node_to_runner) <= 1:
+    if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
-        if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
-            pass
-            # model, config = quantize_model(
-            #    model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
-            # )
-
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
         logger.info("Starting distributed init")
-        group = mlx_distributed_init(bound_instance)
-
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
         end_time = time.perf_counter()
@@ -207,14 +200,12 @@ def initialize_mlx(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    logger.debug(model)
-
     return cast(Model, model), tokenizer, sampler
 
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
-    group: mx.distributed.Group,
+    group: Group,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 

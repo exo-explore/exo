@@ -2,8 +2,8 @@ import exo.worker.plan as plan_mod
 from exo.shared.types.tasks import StartWarmup
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
+    RunnerIdle,
     RunnerLoaded,
-    RunnerWaitingForModel,
     RunnerWarmingUp,
 )
 from exo.worker.tests.constants import (
@@ -128,7 +128,7 @@ def test_plan_does_not_start_warmup_for_non_zero_rank_until_all_loaded_or_warmin
     runners = {RUNNER_2_ID: local_runner}
     instances = {INSTANCE_1_ID: instance}
     all_runners = {
-        RUNNER_1_ID: RunnerWaitingForModel(),
+        RUNNER_1_ID: RunnerIdle(),
         RUNNER_2_ID: RunnerLoaded(),
     }
 
