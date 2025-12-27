@@ -21,6 +21,8 @@ try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
+import contextlib
+
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.utils import load_model
@@ -117,13 +119,17 @@ def mlx_distributed_init(
         # TODO: singleton instances
         match bound_instance.instance:
             case MlxRingInstance(hosts=hosts):
-                coordination_file = f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                coordination_file = (
+                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                )
                 hosts_json = HostList.from_hosts(hosts).model_dump_json()
 
                 with open(coordination_file, "w") as f:
                     _ = f.write(hosts_json)
 
-                logger.info(f"rank {rank} hostfile: {coordination_file} hosts: {hosts_json}")
+                logger.info(
+                    f"rank {rank} hostfile: {coordination_file} hosts: {hosts_json}"
+                )
 
                 os.environ["MLX_HOSTFILE"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
@@ -134,7 +140,9 @@ def mlx_distributed_init(
                 ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
             ):
                 # Use RDMA connectivity matrix
-                coordination_file = f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                coordination_file = (
+                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                )
                 ibv_devices_json = json.dumps(ibv_devices)
 
                 with open(coordination_file, "w") as f:
@@ -153,11 +161,9 @@ def mlx_distributed_init(
 
         return group
     finally:
-        if coordination_file:
-            try:
+        with contextlib.suppress(FileNotFoundError):
+            if coordination_file:
                 os.remove(coordination_file)
-            except FileNotFoundError:
-                pass
 
 
 def initialize_mlx(
