@@ -204,9 +204,31 @@ class Topology:
                     continue
                 has_tb = False
                 for edge in self._graph.get_all_edge_data(rid, neighbor_rid):
-                    if edge.is_thunderbolt():
+                    if self.is_connection_on_thunderbolt_bridge(edge):
                         has_tb = True
                         break
                 if not has_tb:
                     return False
         return True
+
+    def is_connection_on_thunderbolt_bridge(self, connection: Connection) -> bool:
+        """Check if a connection's IP belongs to a Thunderbolt Bridge interface on the target node.
+
+        This is more reliable than IP-prefix detection because macOS can assign
+        any 169.254.x.x address to link-local interfaces. The Thunderbolt Bridge
+        uses 'bridge0', 'bridge1', etc. interfaces when multiple Macs are connected.
+        """
+        # Get the target node's profile to check its network interfaces
+        node_profile = self.get_node_profile(connection.send_back_node_id)
+        if node_profile is None:
+            # Fallback to IP-based detection if no profile available
+            return connection.is_thunderbolt()
+
+        connection_ip = connection.send_back_multiaddr.ip_address
+
+        # Check if this IP belongs to a bridge interface (Thunderbolt Bridge)
+        for iface in node_profile.network_interfaces:
+            if iface.name.startswith("bridge") and iface.ip_address == connection_ip:
+                return True
+
+        return False

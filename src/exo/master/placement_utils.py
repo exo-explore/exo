@@ -181,7 +181,13 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
                 connection.local_node_id == current_node.node_id
                 and connection.send_back_node_id == next_node.node_id
             ):
-                if get_thunderbolt and not connection.is_thunderbolt():
+                # Use topology method for reliable Thunderbolt Bridge detection
+                if (
+                    get_thunderbolt
+                    and not cycle_digraph.is_connection_on_thunderbolt_bridge(
+                        connection
+                    )
+                ):
                     continue
                 assert connection.send_back_multiaddr is not None
                 host = Host(
