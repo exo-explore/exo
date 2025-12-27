@@ -15,7 +15,7 @@ from mflux.models.flux.model.flux_transformer.joint_transformer_block import (
 from mflux.models.flux.model.flux_transformer.transformer import Transformer
 from mflux.models.flux.variants.txt2img.flux import Flux1
 
-from exo.worker.engines.image.config import BlockType, ImageModelConfig
+from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import BaseModelAdapter
 from exo.worker.engines.image.pipeline.adapter import (
     BlockWrapperMode,
@@ -231,59 +231,6 @@ class FluxModelAdapter(BaseModelAdapter):
             list[SingleBlockInterface],
             list(self._transformer.single_transformer_blocks),
         )
-
-    def get_blocks(
-        self,
-    ) -> list[tuple[JointBlockInterface | SingleBlockInterface, BlockType]]:
-        blocks: list[tuple[JointBlockInterface | SingleBlockInterface, BlockType]] = []
-        for block in self.get_joint_blocks():
-            blocks.append((block, BlockType.JOINT))
-        for block in self.get_single_blocks():
-            blocks.append((block, BlockType.SINGLE))
-        return blocks
-
-    def apply_block(
-        self,
-        block: JointBlockInterface | SingleBlockInterface,
-        block_type: BlockType,
-        hidden_states: mx.array,
-        encoder_hidden_states: mx.array | None,
-        text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
-        kv_cache: ImagePatchKVCache | None,
-        mode: BlockWrapperMode,
-        text_seq_len: int,
-        patch_start: int | None = None,
-        patch_end: int | None = None,
-    ) -> tuple[mx.array, mx.array | None]:
-        if block_type == BlockType.JOINT:
-            assert encoder_hidden_states is not None
-            enc_out, hidden_out = self.apply_joint_block(
-                block=cast(JointBlockInterface, block),
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                text_embeddings=text_embeddings,
-                rotary_embeddings=rotary_embeddings,
-                kv_cache=kv_cache,
-                mode=mode,
-                text_seq_len=text_seq_len,
-                patch_start=patch_start,
-                patch_end=patch_end,
-            )
-            return hidden_out, enc_out
-        else:  # block_type == BlockType.SINGLE
-            hidden_out = self.apply_single_block(
-                block=cast(SingleBlockInterface, block),
-                hidden_states=hidden_states,
-                text_embeddings=text_embeddings,
-                rotary_embeddings=rotary_embeddings,
-                kv_cache=kv_cache,
-                mode=mode,
-                text_seq_len=text_seq_len,
-                patch_start=patch_start,
-                patch_end=patch_end,
-            )
-            return hidden_out, None
 
     def merge_streams(
         self,
