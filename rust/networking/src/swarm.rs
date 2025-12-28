@@ -1,7 +1,7 @@
 use crate::alias;
 use crate::swarm::transport::tcp_transport;
 pub use behaviour::{Behaviour, BehaviourEvent, Config};
-use libp2p::{SwarmBuilder, identity};
+use libp2p::{identity, SwarmBuilder};
 
 pub type Swarm = libp2p::Swarm<Behaviour>;
 
@@ -21,7 +21,10 @@ pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
 }
 
 /// Create and configure a swarm with custom configuration
-pub fn create_swarm_with_config(keypair: identity::Keypair, config: Config) -> alias::AnyResult<Swarm> {
+pub fn create_swarm_with_config(
+    keypair: identity::Keypair,
+    config: Config,
+) -> alias::AnyResult<Swarm> {
     let mut swarm = SwarmBuilder::with_existing_identity(keypair.clone())
         .with_tokio()
         .with_other_transport(tcp_transport)?
@@ -41,7 +44,7 @@ mod transport {
     use libp2p::core::muxing;
     use libp2p::core::transport::Boxed;
     use libp2p::pnet::{PnetError, PnetOutput};
-    use libp2p::{PeerId, Transport, identity, noise, pnet, yamux};
+    use libp2p::{identity, noise, pnet, yamux, PeerId, Transport};
     use std::{env, sync::LazyLock};
 
     /// Key used for networking's private network; parametrized on the [`NETWORK_VERSION`].
@@ -80,7 +83,7 @@ mod transport {
     ) -> alias::AnyResult<Boxed<(PeerId, muxing::StreamMuxerBox)>> {
         use libp2p::{
             core::upgrade::Version,
-            tcp::{Config, tokio},
+            tcp::{tokio, Config},
         };
 
         // `TCP_NODELAY` enabled => avoid latency
@@ -109,7 +112,7 @@ mod transport {
 
 mod behaviour {
     use crate::{alias, discovery, headscale};
-    use libp2p::swarm::{NetworkBehaviour, behaviour::toggle::Toggle};
+    use libp2p::swarm::{behaviour::toggle::Toggle, NetworkBehaviour};
     use libp2p::{gossipsub, identity};
     use std::time::Duration;
 
@@ -155,7 +158,7 @@ mod behaviour {
         /// Create behaviour with custom configuration
         pub fn with_config(keypair: &identity::Keypair, config: Config) -> alias::AnyResult<Self> {
             let peer_id = keypair.public().to_peer_id();
-            
+
             let headscale = config
                 .headscale
                 .map(|cfg| headscale::Behaviour::new(cfg, peer_id))

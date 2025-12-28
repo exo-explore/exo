@@ -47,7 +47,9 @@ class Node:
         # Build Headscale config if API URL and key are provided
         headscale_config = None
         if args.headscale_api_url and args.headscale_api_key:
-            logger.info(f"Headscale discovery enabled with API URL: {args.headscale_api_url}")
+            logger.info(
+                f"Headscale discovery enabled with API URL: {args.headscale_api_url}"
+            )
             headscale_config = HeadscaleConfig(
                 api_base_url=args.headscale_api_url,
                 api_key=args.headscale_api_key,

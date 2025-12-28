@@ -2,7 +2,7 @@ use crate::ext::ResultExt as _;
 use libp2p::Multiaddr;
 use pyo3::prelude::{PyBytesMethods as _, PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
-use pyo3::{Bound, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Bound, PyResult, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::str::FromStr as _;
 

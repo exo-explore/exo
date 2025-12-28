@@ -8,11 +8,11 @@ use libp2p::core::{ConnectedPoint, Endpoint};
 use libp2p::swarm::behaviour::ConnectionEstablished;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{
-    CloseConnection, ConnectionClosed, ConnectionDenied, ConnectionHandler,
+    dummy, CloseConnection, ConnectionClosed, ConnectionDenied, ConnectionHandler,
     ConnectionHandlerSelect, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
-    THandlerOutEvent, ToSwarm, dummy,
+    THandlerOutEvent, ToSwarm,
 };
-use libp2p::{Multiaddr, PeerId, identity, mdns};
+use libp2p::{identity, mdns, Multiaddr, PeerId};
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::io;
@@ -50,7 +50,7 @@ mod managed {
     }
 
     fn mdns_behaviour(keypair: &identity::Keypair) -> io::Result<mdns::tokio::Behaviour> {
-        use mdns::{Config, tokio};
+        use mdns::{tokio, Config};
 
         // mDNS config => enable IPv6
         let mdns_config = Config {

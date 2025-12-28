@@ -11,8 +11,8 @@ use libp2p::core::{ConnectedPoint, Endpoint};
 use libp2p::swarm::behaviour::ConnectionEstablished;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{
-    ConnectionClosed, ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler,
-    THandlerInEvent, THandlerOutEvent, ToSwarm, dummy,
+    dummy, ConnectionClosed, ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler,
+    THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{Multiaddr, PeerId};
 use reqwest::Client;
@@ -135,9 +135,7 @@ pub enum Event {
         addresses: Vec<Multiaddr>,
     },
     /// A previously discovered peer is no longer available
-    Expired {
-        peer_id: PeerId,
-    },
+    Expired { peer_id: PeerId },
     /// A connection to a Headscale-discovered peer was established
     ConnectionEstablished {
         peer_id: PeerId,
@@ -166,22 +164,22 @@ struct DiscoveredPeer {
 pub struct Behaviour {
     config: Config,
     http_client: Client,
-    
+
     /// Our own peer ID (to filter ourselves from discovered nodes)
     local_peer_id: PeerId,
-    
+
     /// Currently discovered peers from Headscale
     discovered_peers: HashMap<PeerId, DiscoveredPeer>,
-    
+
     /// Timer for polling the Headscale API
     poll_timer: Delay,
-    
+
     /// Timer for retrying connections to discovered peers
     retry_timer: Delay,
-    
+
     /// Pending events to emit
     pending_events: WakerDeque<ToSwarm<Event, Infallible>>,
-    
+
     /// Flag to indicate we need to poll the API
     needs_poll: bool,
 }
@@ -245,7 +243,11 @@ impl Behaviour {
             let attrs = ExoNodeAttributes::from_tags(&node.forced_tags);
 
             // Get the peer ID from tags, or skip this node
-            let peer_id = match attrs.peer_id.as_ref().and_then(|s| PeerId::from_str(s).ok()) {
+            let peer_id = match attrs
+                .peer_id
+                .as_ref()
+                .and_then(|s| PeerId::from_str(s).ok())
+            {
                 Some(id) => id,
                 None => {
                     log::debug!(
@@ -492,14 +494,14 @@ impl NetworkBehaviour for Behaviour {
         // Check if we need to poll the Headscale API
         if self.poll_timer.poll_unpin(cx).is_ready() || self.needs_poll {
             self.needs_poll = false;
-            
+
             // Spawn async task to fetch nodes
             // Note: In a real implementation, we'd use a proper async task spawning mechanism
             // For now, we use blocking_in_place or similar
             let client = self.http_client.clone();
             let api_base_url = self.config.api_base_url.clone();
             let api_key = self.config.api_key.clone();
-            
+
             // We need to poll asynchronously - for now we'll use tokio::task::block_in_place
             // This is not ideal but works for the initial implementation
             match tokio::task::block_in_place(|| {
@@ -517,7 +519,7 @@ impl NetworkBehaviour for Behaviour {
                     log::warn!("Failed to fetch nodes from Headscale: {}", e);
                 }
             }
-            
+
             // Reset the poll timer
             self.poll_timer.reset(self.config.poll_interval);
         }

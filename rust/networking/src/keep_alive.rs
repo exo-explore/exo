@@ -1,6 +1,6 @@
 use delegate::delegate;
 use libp2p::swarm::handler::ConnectionEvent;
-use libp2p::swarm::{ConnectionHandlerEvent, SubstreamProtocol, dummy, handler};
+use libp2p::swarm::{dummy, handler, ConnectionHandlerEvent, SubstreamProtocol};
 use std::task::{Context, Poll};
 
 /// An implementation of [`ConnectionHandler`] that doesn't handle any protocols, but it keeps

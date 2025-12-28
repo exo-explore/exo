@@ -12,6 +12,34 @@ class AllQueuesFullError(builtins.Exception):
     def __str__(self) -> builtins.str: ...
 
 @typing.final
+class HeadscaleConfig:
+    r"""
+    Configuration for Headscale-based peer discovery.
+    """
+    @property
+    def api_base_url(self) -> builtins.str:
+        r"""
+        Base URL for the Headscale API (e.g., "https://headscale.example.com")
+        """
+    @property
+    def api_key(self) -> builtins.str:
+        r"""
+        API key for authenticating with the Headscale API
+        """
+    @property
+    def poll_interval_secs(self) -> builtins.int:
+        r"""
+        How often to poll the Headscale API for peer updates (in seconds)
+        """
+    @property
+    def exo_port(self) -> builtins.int:
+        r"""
+        The port that exo is listening on
+        """
+    def __new__(cls, api_base_url: builtins.str, api_key: builtins.str, poll_interval_secs: builtins.int = 5, exo_port: builtins.int = 52415) -> HeadscaleConfig: ...
+    def __repr__(self) -> builtins.str: ...
+
+@typing.final
 class ConnectionUpdate:
     @property
     def update_type(self) -> ConnectionUpdateType:
@@ -130,7 +158,16 @@ class Multiaddr:
 
 @typing.final
 class NetworkingHandle:
-    def __new__(cls, identity: Keypair) -> NetworkingHandle: ...
+    def __new__(cls, identity: Keypair, headscale_config: HeadscaleConfig | None = None) -> NetworkingHandle:
+        r"""
+        Create a new NetworkingHandle.
+
+        Args:
+            identity: The keypair identity for this node
+            headscale_config: Optional Headscale configuration for WAN peer discovery.
+                              If provided, peers will be discovered via the Headscale API
+                              in addition to local mDNS discovery.
+        """
     async def connection_update_recv(self) -> ConnectionUpdate:
         r"""
         Receives the next `ConnectionUpdate` from networking.

@@ -5,28 +5,28 @@
     clippy::needless_pass_by_value
 )]
 
-use crate::r#const::MPSC_CHANNEL_SIZE;
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscReceiverExt as _, TokioMpscSenderExt as _};
 use crate::pyclass;
 use crate::pylibp2p::ident::{PyKeypair, PyPeerId};
+use crate::r#const::MPSC_CHANNEL_SIZE;
 use libp2p::futures::StreamExt as _;
 use libp2p::gossipsub::{IdentTopic, Message, MessageId, PublishError};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{gossipsub, mdns};
-use networking::{discovery, headscale};
 use networking::swarm::{create_swarm, create_swarm_with_config, Config as SwarmConfig};
+use networking::{discovery, headscale};
 use pyo3::prelude::{PyModule, PyModuleMethods as _};
 use pyo3::types::PyBytes;
-use pyo3::{Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python, pymethods};
+use pyo3::{pymethods, Bound, Py, PyErr, PyResult, PyTraverseError, PyVisit, Python};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use std::net::IpAddr;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use util::ext::VecExt as _;
 
 mod exception {
     use pyo3::types::PyTuple;
-    use pyo3::{PyErrArguments, exceptions::PyException, prelude::*};
+    use pyo3::{exceptions::PyException, prelude::*, PyErrArguments};
     use pyo3_stub_gen::derive::*;
 
     #[gen_stub_pyclass]
@@ -206,9 +206,9 @@ async fn networking_task(
     connection_update_tx: mpsc::Sender<PyConnectionUpdate>,
     gossipsub_message_tx: mpsc::Sender<(String, Vec<u8>)>,
 ) {
+    use networking::swarm::BehaviourEvent::*;
     use SwarmEvent::*;
     use ToTask::*;
-    use networking::swarm::BehaviourEvent::*;
 
     log::info!("RUST: networking task started");
 
@@ -451,7 +451,10 @@ impl PyNetworkingHandle {
     ///                       in addition to local mDNS discovery.
     #[new]
     #[pyo3(signature = (identity, headscale_config=None))]
-    fn py_new(identity: Bound<'_, PyKeypair>, headscale_config: Option<PyHeadscaleConfig>) -> PyResult<Self> {
+    fn py_new(
+        identity: Bound<'_, PyKeypair>,
+        headscale_config: Option<PyHeadscaleConfig>,
+    ) -> PyResult<Self> {
         use pyo3_async_runtimes::tokio::get_runtime;
 
         // create communication channels
@@ -464,7 +467,10 @@ impl PyNetworkingHandle {
 
         // build swarm config
         let swarm_config = if let Some(hs_config) = headscale_config {
-            log::info!("RUST: Headscale discovery enabled with API URL: {}", hs_config.api_base_url);
+            log::info!(
+                "RUST: Headscale discovery enabled with API URL: {}",
+                hs_config.api_base_url
+            );
             SwarmConfig::new().with_headscale(hs_config.into())
         } else {
             SwarmConfig::new()
