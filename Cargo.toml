@@ -75,6 +75,10 @@ ahash = "0.8"
 # Tracing/logging
 log = "0.4"
 
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
 # networking
 libp2p = "0.56"
 libp2p-tcp = "0.44"

@@ -14,6 +14,7 @@ import exo.routing.topics as topics
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
 from exo.routing.router import Router, get_node_id_keypair
+from exo_pyo3_bindings import HeadscaleConfig
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
@@ -42,7 +43,19 @@ class Node:
         keypair = get_node_id_keypair()
         node_id = NodeId(keypair.to_peer_id().to_base58())
         session_id = SessionId(master_node_id=node_id, election_clock=0)
-        router = Router.create(keypair)
+
+        # Build Headscale config if API URL and key are provided
+        headscale_config = None
+        if args.headscale_api_url and args.headscale_api_key:
+            logger.info(f"Headscale discovery enabled with API URL: {args.headscale_api_url}")
+            headscale_config = HeadscaleConfig(
+                api_base_url=args.headscale_api_url,
+                api_key=args.headscale_api_key,
+                poll_interval_secs=args.headscale_poll_interval,
+                exo_port=args.api_port,
+            )
+
+        router = Router.create(keypair, headscale_config)
         await router.register_topic(topics.GLOBAL_EVENTS)
         await router.register_topic(topics.LOCAL_EVENTS)
         await router.register_topic(topics.COMMANDS)
@@ -215,6 +228,10 @@ class Args(CamelCaseModel):
     api_port: PositiveInt = 52415
     tb_only: bool = False
     no_worker: bool = False
+    # Headscale configuration for WAN peer discovery
+    headscale_api_url: str | None = None
+    headscale_api_key: str | None = None
+    headscale_poll_interval: PositiveInt = 5
 
     @classmethod
     def parse(cls) -> Self:
@@ -255,6 +272,28 @@ class Args(CamelCaseModel):
         parser.add_argument(
             "--no-worker",
             action="store_true",
+        )
+        # Headscale arguments for WAN peer discovery
+        parser.add_argument(
+            "--headscale-api-url",
+            type=str,
+            dest="headscale_api_url",
+            default=None,
+            help="Headscale API base URL (e.g., https://headscale.example.com) for WAN peer discovery",
+        )
+        parser.add_argument(
+            "--headscale-api-key",
+            type=str,
+            dest="headscale_api_key",
+            default=None,
+            help="Headscale API key for authentication",
+        )
+        parser.add_argument(
+            "--headscale-poll-interval",
+            type=int,
+            dest="headscale_poll_interval",
+            default=5,
+            help="How often to poll Headscale API for peer updates (seconds)",
         )
 
         args = parser.parse_args()

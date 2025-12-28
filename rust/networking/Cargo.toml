@@ -42,3 +42,8 @@ log = { workspace = true }
 
 # networking
 libp2p = { workspace = true, features = ["full"] }
+
+# HTTP client for Headscale API
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

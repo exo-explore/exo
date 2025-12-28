@@ -14,6 +14,7 @@ from anyio import (
 from anyio.abc import TaskGroup
 from exo_pyo3_bindings import (
     AllQueuesFullError,
+    HeadscaleConfig,
     Keypair,
     NetworkingHandle,
     NoPeersSubscribedToTopicError,
@@ -100,8 +101,12 @@ class TopicRouter[T: CamelCaseModel]:
 
 class Router:
     @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    def create(
+        cls,
+        identity: Keypair,
+        headscale_config: HeadscaleConfig | None = None,
+    ) -> "Router":
+        return cls(handle=NetworkingHandle(identity, headscale_config))
 
     def __init__(self, handle: NetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}

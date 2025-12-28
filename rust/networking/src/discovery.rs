@@ -1,5 +1,4 @@
 use crate::ext::MultiaddrExt;
-use crate::keep_alive;
 use delegate::delegate;
 use either::Either;
 use futures::FutureExt;
