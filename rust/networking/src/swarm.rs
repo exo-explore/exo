@@ -1,6 +1,6 @@
 use crate::alias;
 use crate::swarm::transport::tcp_transport;
-pub use behaviour::{Behaviour, BehaviourEvent};
+pub use behaviour::{Behaviour, BehaviourEvent, Config};
 use libp2p::{SwarmBuilder, identity};
 
 pub type Swarm = libp2p::Swarm<Behaviour>;
@@ -15,12 +15,17 @@ pub type Swarm = libp2p::Swarm<Behaviour>;
 pub const NETWORK_VERSION: &[u8] = b"v0.0.1";
 pub const OVERRIDE_VERSION_ENV_VAR: &str = "EXO_LIBP2P_NAMESPACE";
 
-/// Create and configure a swarm which listens to all ports on OS
+/// Create and configure a swarm which listens to all ports on OS (local mDNS discovery only)
 pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
-    let mut swarm = SwarmBuilder::with_existing_identity(keypair)
+    create_swarm_with_config(keypair, Config::default())
+}
+
+/// Create and configure a swarm with custom configuration
+pub fn create_swarm_with_config(keypair: identity::Keypair, config: Config) -> alias::AnyResult<Swarm> {
+    let mut swarm = SwarmBuilder::with_existing_identity(keypair.clone())
         .with_tokio()
         .with_other_transport(tcp_transport)?
-        .with_behaviour(Behaviour::new)?
+        .with_behaviour(|_| Behaviour::with_config(&keypair, config))?
         .build();
 
     // Listen on all interfaces and whatever port the OS assigns
@@ -103,23 +108,62 @@ mod transport {
 }
 
 mod behaviour {
-    use crate::{alias, discovery};
-    use libp2p::swarm::NetworkBehaviour;
+    use crate::{alias, discovery, headscale};
+    use libp2p::swarm::{NetworkBehaviour, behaviour::toggle::Toggle};
     use libp2p::{gossipsub, identity};
     use std::time::Duration;
 
+    /// Configuration for swarm behaviour creation
+    #[derive(Debug, Clone, Default)]
+    pub struct Config {
+        /// Optional Headscale configuration for WAN peer discovery
+        pub headscale: Option<headscale::Config>,
+    }
+
+    impl Config {
+        /// Create a new config with default settings (local mDNS only)
+        #[inline]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Enable Headscale discovery with the given configuration
+        #[inline]
+        pub fn with_headscale(mut self, config: headscale::Config) -> Self {
+            self.headscale = Some(config);
+            self
+        }
+    }
+
     /// Behavior of the Swarm which composes all desired behaviors:
-    /// Right now its just [`discovery::Behaviour`] and [`gossipsub::Behaviour`].
+    /// - `discovery`: Local mDNS-based peer discovery
+    /// - `headscale`: Optional Headscale API-based WAN peer discovery
+    /// - `gossipsub`: Pub/sub messaging between peers
     #[derive(NetworkBehaviour)]
     pub struct Behaviour {
         pub discovery: discovery::Behaviour,
+        pub headscale: Toggle<headscale::Behaviour>,
         pub gossipsub: gossipsub::Behaviour,
     }
 
     impl Behaviour {
+        /// Create behaviour with default config (local mDNS only)
         pub fn new(keypair: &identity::Keypair) -> alias::AnyResult<Self> {
+            Self::with_config(keypair, Config::default())
+        }
+
+        /// Create behaviour with custom configuration
+        pub fn with_config(keypair: &identity::Keypair, config: Config) -> alias::AnyResult<Self> {
+            let peer_id = keypair.public().to_peer_id();
+            
+            let headscale = config
+                .headscale
+                .map(|cfg| headscale::Behaviour::new(cfg, peer_id))
+                .transpose()?;
+
             Ok(Self {
                 discovery: discovery::Behaviour::new(keypair)?,
+                headscale: Toggle::from(headscale),
                 gossipsub: gossipsub_behaviour(keypair),
             })
         }
