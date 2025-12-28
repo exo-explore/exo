@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { DownloadProgress, NodeInfo, PlacementPreview } from '$lib/stores/app.svelte';
+	import type { DownloadProgress, NodeInfo, PlacementPreview, TopologyEdge } from '$lib/stores/app.svelte';
+	import { debugMode, topologyData } from '$lib/stores/app.svelte';
 
 interface Props {
 		model: { id: string; name?: string; storage_size_megabytes?: number };
@@ -206,12 +207,8 @@ function toggleNodeDetails(nodeId: string): void {
 		const centerY = topoHeight / 2;
 		const radius = numNodes === 1 ? 0 : numNodes === 2 ? 45 : Math.min(topoWidth, topoHeight) * 0.32;
 		
-		// Use API preview data if available
+		// Only use API preview data - no local estimation
 		const hasApiPreview = apiPreview !== null && apiPreview.error === null && apiPreview.memory_delta_by_node !== null;
-		const canFit = hasApiPreview ? true : (() => {
-			const totalAvailable = nodeArray.reduce((sum, n) => sum + n.availableGB, 0);
-			return totalAvailable >= estimatedMemory;
-		})();
 		const error = apiPreview?.error ?? null;
 		
 		let placementNodes: Array<{ 
@@ -232,135 +229,140 @@ function toggleNodeDetails(nodeId: string): void {
 			modelFillHeight: number;
 		}> = [];
 		
-		if (hasApiPreview && apiPreview.memory_delta_by_node) {
-			// Use API placement data
-			const memoryDelta = apiPreview.memory_delta_by_node;
-			placementNodes = nodeArray.map((n, i) => {
-				const deltaBytes = memoryDelta[n.id] ?? 0;
-				const modelUsageGB = deltaBytes / (1024 * 1024 * 1024);
-				const isUsed = deltaBytes > 0;
-				const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-				const safeTotal = Math.max(n.totalGB, 0.001);
-				const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-				const newPercent = clampPercent(((n.usedGB + modelUsageGB) / safeTotal) * 100);
-				const screenHeight = iconSize * 0.58;
-				
-				return {
-					id: n.id,
-					deviceName: n.deviceName,
-					deviceType: n.deviceType,
-					totalGB: n.totalGB,
-					currentUsedGB: n.usedGB,
-					modelUsageGB,
-					currentPercent,
-					newPercent,
-					isUsed,
-					x: centerX + Math.cos(angle) * radius,
-					y: centerY + Math.sin(angle) * radius,
-					iconSize,
-					screenHeight,
-					currentFillHeight: screenHeight * (currentPercent / 100),
-					modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
-				};
-			});
-		} else if (apiPreview?.error) {
-			// API returned an error - model can't fit, show all nodes as unused
-			placementNodes = nodeArray.map((n, i) => {
-				const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-				const safeTotal = Math.max(n.totalGB, 0.001);
-				const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-				const screenHeight = iconSize * 0.58;
-				
-				return {
-					id: n.id,
-					deviceName: n.deviceName,
-					deviceType: n.deviceType,
-					totalGB: n.totalGB,
-					currentUsedGB: n.usedGB,
-					modelUsageGB: 0,
-					currentPercent,
-					newPercent: currentPercent,
-					isUsed: false,
-					x: centerX + Math.cos(angle) * radius,
-					y: centerY + Math.sin(angle) * radius,
-					iconSize,
-					screenHeight,
-					currentFillHeight: screenHeight * (currentPercent / 100),
-					modelFillHeight: 0
-				};
-			});
-		} else {
-			// Fallback: local estimation based on sharding strategy
-			const memoryNeeded = estimatedMemory;
+		// Use API placement data directly
+		const memoryDelta = apiPreview?.memory_delta_by_node ?? {};
+		placementNodes = nodeArray.map((n, i) => {
+			const deltaBytes = memoryDelta[n.id] ?? 0;
+			const modelUsageGB = deltaBytes / (1024 * 1024 * 1024);
+			const isUsed = deltaBytes > 0;
+			const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
+			const safeTotal = Math.max(n.totalGB, 0.001);
+			const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
+			const newPercent = clampPercent(((n.usedGB + modelUsageGB) / safeTotal) * 100);
+			const screenHeight = iconSize * 0.58;
 			
-			if (sharding === 'Pipeline') {
-				const memoryPerNode = memoryNeeded / numNodes;
-				placementNodes = nodeArray.map((n, i) => {
-					const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-					const safeTotal = Math.max(n.totalGB, 0.001);
-					const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-					const newPercent = clampPercent(((n.usedGB + memoryPerNode) / safeTotal) * 100);
-					const screenHeight = iconSize * 0.58;
-					
-					return {
-						id: n.id,
-						deviceName: n.deviceName,
-						deviceType: n.deviceType,
-						totalGB: n.totalGB,
-						currentUsedGB: n.usedGB,
-						modelUsageGB: memoryPerNode,
-						currentPercent,
-						newPercent,
-						isUsed: true,
-						x: centerX + Math.cos(angle) * radius,
-						y: centerY + Math.sin(angle) * radius,
-						iconSize,
-						screenHeight,
-						currentFillHeight: screenHeight * (currentPercent / 100),
-						modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
-					};
-				});
-			} else {
-				let remaining = memoryNeeded;
-				placementNodes = nodeArray.map((n, i) => {
-					const allocated = Math.min(remaining, n.availableGB);
-					remaining -= allocated;
-					const isUsed = allocated > 0;
-					const angle = numNodes === 1 ? 0 : (i / numNodes) * Math.PI * 2 - Math.PI / 2;
-					const safeTotal = Math.max(n.totalGB, 0.001);
-					const currentPercent = clampPercent((n.usedGB / safeTotal) * 100);
-					const newPercent = clampPercent(((n.usedGB + allocated) / safeTotal) * 100);
-					const screenHeight = iconSize * 0.58;
-					
-					return {
-						id: n.id,
-						deviceName: n.deviceName,
-						deviceType: n.deviceType,
-						totalGB: n.totalGB,
-						currentUsedGB: n.usedGB,
-						modelUsageGB: allocated,
-						currentPercent,
-						newPercent,
-						isUsed,
-						x: centerX + Math.cos(angle) * radius,
-						y: centerY + Math.sin(angle) * radius,
-						iconSize,
-						screenHeight,
-						currentFillHeight: screenHeight * (currentPercent / 100),
-						modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
-					};
-				});
-			}
-		}
+			return {
+				id: n.id,
+				deviceName: n.deviceName,
+				deviceType: n.deviceType,
+				totalGB: n.totalGB,
+				currentUsedGB: n.usedGB,
+				modelUsageGB,
+				currentPercent,
+				newPercent,
+				isUsed,
+				x: centerX + Math.cos(angle) * radius,
+				y: centerY + Math.sin(angle) * radius,
+				iconSize,
+				screenHeight,
+				currentFillHeight: screenHeight * (currentPercent / 100),
+				modelFillHeight: screenHeight * ((newPercent - currentPercent) / 100)
+			};
+		});
 		
 		const totalAvailable = nodeArray.reduce((sum, n) => sum + n.availableGB, 0);
-		return { nodes: placementNodes, canFit: hasApiPreview || canFit, totalAvailable, topoWidth, topoHeight, error };
+		return { nodes: placementNodes, canFit: hasApiPreview, totalAvailable, topoWidth, topoHeight, error };
 	});
 	
 	const canFit = $derived(apiPreview ? apiPreview.error === null : placementPreview().canFit);
 	const placementError = $derived(apiPreview?.error ?? null);
 	const nodeCount = $derived(nodeList().length);
 	const filterId = $derived(model.id.replace(/[^a-zA-Z0-9]/g, ''));
+	
+	// Debug mode state
+	const isDebugMode = $derived(debugMode());
+	const topology = $derived(topologyData());
+	const isRdma = $derived(runtime === 'MlxIbv' || runtime === 'MlxJaccl');
+	
+	// Get interface name for an IP from node data
+	function getInterfaceForIp(nodeId: string, ip?: string): string | null {
+		if (!ip || !topology?.nodes) return null;
+		
+		// Strip port if present
+		const cleanIp = ip.includes(':') && !ip.includes('[') ? ip.split(':')[0] : ip;
+		
+		// Check specified node first
+		const node = topology.nodes[nodeId];
+		if (node) {
+			const match = node.network_interfaces?.find((iface) =>
+				(iface.addresses || []).some((addr) => addr === cleanIp || addr === ip)
+			);
+			if (match?.name) return match.name;
+			
+			const mapped = node.ip_to_interface?.[cleanIp] || node.ip_to_interface?.[ip];
+			if (mapped) return mapped;
+		}
+		
+		// Fallback: check all nodes
+		for (const [, otherNode] of Object.entries(topology.nodes)) {
+			if (!otherNode) continue;
+			const match = otherNode.network_interfaces?.find((iface) =>
+				(iface.addresses || []).some((addr) => addr === cleanIp || addr === ip)
+			);
+			if (match?.name) return match.name;
+			
+			const mapped = otherNode.ip_to_interface?.[cleanIp] || otherNode.ip_to_interface?.[ip];
+			if (mapped) return mapped;
+		}
+		
+		return null;
+	}
+	
+	// Get directional arrow based on node positions
+	function getArrow(fromNode: { x: number; y: number }, toNode: { x: number; y: number }): string {
+		const dx = toNode.x - fromNode.x;
+		const dy = toNode.y - fromNode.y;
+		const absX = Math.abs(dx);
+		const absY = Math.abs(dy);
+		
+		if (absX > absY * 2) {
+			return dx > 0 ? '→' : '←';
+		} else if (absY > absX * 2) {
+			return dy > 0 ? '↓' : '↑';
+		} else {
+			if (dx > 0 && dy > 0) return '↘';
+			if (dx > 0 && dy < 0) return '↗';
+			if (dx < 0 && dy > 0) return '↙';
+			return '↖';
+		}
+	}
+
+	// Get connection info for edges between two nodes
+	// Returns exactly one connection per direction (A→B and B→A), preferring non-loopback
+	function getConnectionInfo(nodeId1: string, nodeId2: string): Array<{ ip: string; iface: string | null; from: string; to: string }> {
+		if (!topology?.edges) return [];
+		
+		// Collect candidates for each direction
+		const aToBCandidates: Array<{ ip: string; iface: string | null }> = [];
+		const bToACandidates: Array<{ ip: string; iface: string | null }> = [];
+		
+		for (const edge of topology.edges) {
+			const ip = edge.sendBackIp || '?';
+			const iface = edge.sendBackInterface || getInterfaceForIp(edge.source, ip);
+			
+			if (edge.source === nodeId1 && edge.target === nodeId2) {
+				aToBCandidates.push({ ip, iface });
+			} else if (edge.source === nodeId2 && edge.target === nodeId1) {
+				bToACandidates.push({ ip, iface });
+			}
+		}
+		
+		// Pick best (prefer non-loopback)
+		const pickBest = (candidates: Array<{ ip: string; iface: string | null }>) => {
+			if (candidates.length === 0) return null;
+			return candidates.find(c => !c.ip.startsWith('127.')) || candidates[0];
+		};
+		
+		const result: Array<{ ip: string; iface: string | null; from: string; to: string }> = [];
+		
+		const bestAtoB = pickBest(aToBCandidates);
+		if (bestAtoB) result.push({ ...bestAtoB, from: nodeId1, to: nodeId2 });
+		
+		const bestBtoA = pickBest(bToACandidates);
+		if (bestBtoA) result.push({ ...bestBtoA, from: nodeId2, to: nodeId1 });
+		
+		return result;
+	}
 </script>
 
 <div class="relative group">
@@ -453,6 +455,26 @@ function toggleNodeDetails(nodeId: string): void {
 					
 					<!-- Connection lines between nodes (if multiple) -->
 					{#if preview.nodes.length > 1}
+						{@const usedNodes = preview.nodes.filter(n => n.isUsed)}
+						{@const nodePositions = Object.fromEntries(preview.nodes.map(n => [n.id, { x: n.x, y: n.y }]))}
+						{@const allConnections = isDebugMode && usedNodes.length > 1 ? (() => {
+							const conns: Array<{ ip: string; iface: string | null; from: string; to: string; midX: number; midY: number; arrow: string }> = [];
+							for (let i = 0; i < usedNodes.length; i++) {
+								for (let j = i + 1; j < usedNodes.length; j++) {
+									const n1 = usedNodes[i];
+									const n2 = usedNodes[j];
+									const midX = (n1.x + n2.x) / 2;
+									const midY = (n1.y + n2.y) / 2;
+									for (const c of getConnectionInfo(n1.id, n2.id)) {
+										const fromPos = nodePositions[c.from];
+										const toPos = nodePositions[c.to];
+										const arrow = fromPos && toPos ? getArrow(fromPos, toPos) : '→';
+										conns.push({ ...c, midX, midY, arrow });
+									}
+								}
+							}
+							return conns;
+						})() : []}
 						{#each preview.nodes as node, i}
 							{#each preview.nodes.slice(i + 1) as node2}
 								<line 
@@ -464,6 +486,43 @@ function toggleNodeDetails(nodeId: string): void {
 								/>
 							{/each}
 						{/each}
+						<!-- Debug: Show connection IPs/interfaces in corners -->
+						{#if isDebugMode && allConnections.length > 0}
+							{@const centerX = preview.topoWidth / 2}
+							{@const centerY = preview.topoHeight / 2}
+							{@const quadrants = {
+								topLeft: allConnections.filter(c => c.midX < centerX && c.midY < centerY),
+								topRight: allConnections.filter(c => c.midX >= centerX && c.midY < centerY),
+								bottomLeft: allConnections.filter(c => c.midX < centerX && c.midY >= centerY),
+								bottomRight: allConnections.filter(c => c.midX >= centerX && c.midY >= centerY)
+							}}
+							{@const padding = 4}
+							{@const lineHeight = 8}
+							<!-- Top Left -->
+							{#each quadrants.topLeft as conn, idx}
+								<text x={padding} y={padding + idx * lineHeight} text-anchor="start" dominant-baseline="hanging" font-size="6" font-family="SF Mono, Monaco, monospace" fill={conn.iface ? 'rgba(255,255,255,0.85)' : 'rgba(248,113,113,0.85)'}>
+									{conn.arrow} {isRdma ? (conn.iface || '?') : `${conn.ip}${conn.iface ? ` (${conn.iface})` : ''}`}
+								</text>
+							{/each}
+							<!-- Top Right -->
+							{#each quadrants.topRight as conn, idx}
+								<text x={preview.topoWidth - padding} y={padding + idx * lineHeight} text-anchor="end" dominant-baseline="hanging" font-size="6" font-family="SF Mono, Monaco, monospace" fill={conn.iface ? 'rgba(255,255,255,0.85)' : 'rgba(248,113,113,0.85)'}>
+									{conn.arrow} {isRdma ? (conn.iface || '?') : `${conn.ip}${conn.iface ? ` (${conn.iface})` : ''}`}
+								</text>
+							{/each}
+							<!-- Bottom Left -->
+							{#each quadrants.bottomLeft as conn, idx}
+								<text x={padding} y={preview.topoHeight - padding - (quadrants.bottomLeft.length - 1 - idx) * lineHeight} text-anchor="start" dominant-baseline="auto" font-size="6" font-family="SF Mono, Monaco, monospace" fill={conn.iface ? 'rgba(255,255,255,0.85)' : 'rgba(248,113,113,0.85)'}>
+									{conn.arrow} {isRdma ? (conn.iface || '?') : `${conn.ip}${conn.iface ? ` (${conn.iface})` : ''}`}
+								</text>
+							{/each}
+							<!-- Bottom Right -->
+							{#each quadrants.bottomRight as conn, idx}
+								<text x={preview.topoWidth - padding} y={preview.topoHeight - padding - (quadrants.bottomRight.length - 1 - idx) * lineHeight} text-anchor="end" dominant-baseline="auto" font-size="6" font-family="SF Mono, Monaco, monospace" fill={conn.iface ? 'rgba(255,255,255,0.85)' : 'rgba(248,113,113,0.85)'}>
+									{conn.arrow} {isRdma ? (conn.iface || '?') : `${conn.ip}${conn.iface ? ` (${conn.iface})` : ''}`}
+								</text>
+							{/each}
+						{/if}
 					{/if}
 					
 					{#each preview.nodes as node}
