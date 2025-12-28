@@ -168,6 +168,29 @@ The app will ask for permission to modify system settings and install a new Netw
 
 ---
 
+### Enabling RDMA on macOS
+
+RDMA is a new capability added to macOS 26.2. It works on any Mac with Thunderbolt 5 (M4 Pro Mac Mini, M4 Max Mac Studio, M4 Max MacBook Pro, M3 Ultra Mac Studio).
+
+Note that on Mac Studio, you cannot use the Thunderbolt 5 port next to the Ethernet port.
+
+To enable RDMA on macOS, follow these steps:
+
+1. Shut down your Mac.
+2. Hold down the power button for 10 seconds until the boot menu appears.
+3. Select "Options" to enter Recovery mode.
+4. When the Recovery UI appears, open the Terminal from the Utilities menu.
+5. In the Terminal, type:
+   ```
+   rdma_ctl enable
+   ```
+   and press Enter.
+6. Reboot your Mac.
+
+After that, RDMA will be enabled in macOS and exo will take care of the rest.
+
+---
+
 ### Using the API
 
 If you prefer to interact with exo via the API, here is an example creating an instance of a small model (`mlx-community/Llama-3.2-1B-Instruct-4bit`), sending a chat completions request and deleting the instance.
