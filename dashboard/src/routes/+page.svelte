@@ -51,6 +51,52 @@ const sidebarVisible = $derived(chatSidebarVisible());
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
 	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
 	
+	// Launch defaults persistence
+	const LAUNCH_DEFAULTS_KEY = 'exo-launch-defaults';
+	interface LaunchDefaults {
+		modelId: string | null;
+		sharding: 'Pipeline' | 'Tensor';
+		instanceType: InstanceMeta;
+	}
+	
+	function saveLaunchDefaults(modelId: string): void {
+		const defaults: LaunchDefaults = {
+			modelId,
+			sharding: selectedSharding,
+			instanceType: selectedInstanceType,
+		};
+		try {
+			localStorage.setItem(LAUNCH_DEFAULTS_KEY, JSON.stringify(defaults));
+		} catch (e) {
+			console.warn('Failed to save launch defaults:', e);
+		}
+	}
+	
+	function loadLaunchDefaults(): LaunchDefaults | null {
+		try {
+			const stored = localStorage.getItem(LAUNCH_DEFAULTS_KEY);
+			if (!stored) return null;
+			return JSON.parse(stored) as LaunchDefaults;
+		} catch (e) {
+			console.warn('Failed to load launch defaults:', e);
+			return null;
+		}
+	}
+	
+	function applyLaunchDefaults(availableModels: Array<{id: string}>): void {
+		const defaults = loadLaunchDefaults();
+		if (!defaults) return;
+		
+		// Apply sharding and instance type unconditionally
+		selectedSharding = defaults.sharding;
+		selectedInstanceType = defaults.instanceType;
+		
+		// Only apply model if it exists in the available models
+		if (defaults.modelId && availableModels.some(m => m.id === defaults.modelId)) {
+			selectPreviewModel(defaults.modelId);
+		}
+	}
+	
 	let selectedInstanceType = $state<InstanceMeta>('MlxRing');
 	let selectedMinNodes = $state<number>(1);
 	let minNodesInitialized = $state(false);
@@ -298,6 +344,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const data = await response.json();
 				// API returns { data: [{ id, name }] } format
 				models = data.data || [];
+				// Restore last launch defaults if available
+				applyLaunchDefaults(models);
 			}
 		} catch (error) {
 			console.error('Failed to fetch models:', error);
@@ -344,6 +392,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const errorText = await response.text();
 				console.error('Failed to launch instance:', errorText);
 			} else {
+				// Save launch defaults for next time
+				saveLaunchDefaults(modelId);
+				
 				// Auto-select the launched model only if no model is currently selected
 				if (!selectedChatModel()) {
 					setSelectedChatModel(modelId);
