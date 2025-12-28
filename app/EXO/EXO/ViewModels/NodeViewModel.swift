@@ -85,7 +85,7 @@ struct TopologyViewModel {
 }
 
 extension ClusterState {
-    func topologyViewModel() -> TopologyViewModel? {
+    func topologyViewModel(localNodeId: String?) -> TopologyViewModel? {
         let topologyNodeIds = Set(topology?.nodes.map(\.nodeId) ?? [])
         let allNodes = nodeViewModels().filter { topologyNodeIds.isEmpty || topologyNodeIds.contains($0.id) }
         guard !allNodes.isEmpty else { return nil }
@@ -105,6 +105,11 @@ extension ClusterState {
             orderedNodes = allNodes
         }
 
+        // Rotate so the local node (from /node_id API) is first
+        if let localId = localNodeId, let index = orderedNodes.firstIndex(where: { $0.id == localId }) {
+            orderedNodes = Array(orderedNodes[index...]) + Array(orderedNodes[..<index])
+        }
+
         let nodeIds = Set(orderedNodes.map(\.id))
         let edgesArray: [TopologyEdgeViewModel] = topology?.connections?.compactMap { connection in
             guard nodeIds.contains(connection.localNodeId), nodeIds.contains(connection.sendBackNodeId) else { return nil }
@@ -112,10 +117,7 @@ extension ClusterState {
         } ?? []
         let edges = Set(edgesArray)
 
-        let topologyRootId = topology?.nodes.first?.nodeId
-        let currentId = orderedNodes.first(where: { $0.id == topologyRootId })?.id ?? orderedNodes.first?.id
-
-        return TopologyViewModel(nodes: orderedNodes, edges: Array(edges), currentNodeId: currentId)
+        return TopologyViewModel(nodes: orderedNodes, edges: Array(edges), currentNodeId: localNodeId)
     }
 }
 

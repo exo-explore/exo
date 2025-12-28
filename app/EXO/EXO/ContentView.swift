@@ -49,7 +49,7 @@ struct ContentView: View {
 
     private var topologySection: some View {
         Group {
-            if let topology = stateService.latestSnapshot?.topologyViewModel(), !topology.nodes.isEmpty {
+            if let topology = stateService.latestSnapshot?.topologyViewModel(localNodeId: stateService.localNodeId), !topology.nodes.isEmpty {
                 TopologyMiniView(topology: topology)
             }
         }

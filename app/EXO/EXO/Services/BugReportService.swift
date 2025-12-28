@@ -82,7 +82,6 @@ struct BugReportService {
     }
 
     private func loadCredentials() throws -> AWSConfig {
-        // These credentials are write-only and necessary to receive bug reports from users
         return AWSConfig(
             accessKey: "AKIAYEKP5EMXTOBYDGHX",
             secretKey: "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",
