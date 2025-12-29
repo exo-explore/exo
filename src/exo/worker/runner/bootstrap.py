@@ -3,7 +3,7 @@ import os
 import loguru
 
 from exo.shared.types.events import Event
-from exo.shared.types.tasks import Task
+from exo.shared.types.tasks import CancelGeneration, Task
 from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
 from exo.utils.channels import MpReceiver, MpSender
 
@@ -18,6 +18,7 @@ def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[CancelGeneration],
     _logger: "loguru.Logger",
 ) -> None:
     if (
@@ -32,4 +33,4 @@ def entrypoint(
     # Import main after setting global logger - this lets us just import logger from this module
     from exo.worker.runner.runner import main
 
-    main(bound_instance, event_sender, task_receiver)
+    main(bound_instance, event_sender, task_receiver, cancel_receiver)
