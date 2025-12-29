@@ -198,14 +198,34 @@
 	stroke: oklch(0.85 0.18 85 / 0.4);
 	stroke-width: 1.5px;
 	stroke-dasharray: 8, 8;
-	animation: flowAnimation 1s linear infinite;
+	animation: flowAnimation 1.5s linear infinite;
 	filter: drop-shadow(0 0 3px oklch(0.85 0.18 85 / 0.5));
+	/* GPU optimization - hint to browser this element will animate */
+	will-change: stroke-dashoffset;
 }
 
 .graph-link-active {
 	stroke: oklch(0.85 0.18 85 / 0.8);
 	stroke-width: 2px;
 	filter: drop-shadow(0 0 6px oklch(0.85 0.18 85 / 0.8));
+}
+
+/* Reduce motion for users who prefer it - also saves GPU */
+@media (prefers-reduced-motion: reduce) {
+	.graph-link {
+		animation: none;
+	}
+	
+	.shooting-star {
+		animation: none;
+		display: none;
+	}
+	
+	.status-pulse,
+	.cursor-blink,
+	.animate-pulse {
+		animation: none;
+	}
 }
 
 /* CRT Screen effect for topology */
@@ -266,13 +286,15 @@ input:focus, textarea:focus {
 	box-shadow: none;
 }
 
-/* Shooting Stars Animation */
+/* Shooting Stars Animation - GPU optimized */
 .shooting-stars {
 	position: fixed;
 	inset: 0;
 	overflow: hidden;
 	pointer-events: none;
 	z-index: 0;
+	/* Only render when visible */
+	content-visibility: auto;
 }
 
 .shooting-star {
@@ -285,6 +307,9 @@ input:focus, textarea:focus {
 	animation: shootingStar var(--duration, 3s) linear infinite;
 	animation-delay: var(--delay, 0s);
 	opacity: 0;
+	/* GPU optimization */
+	will-change: transform, opacity;
+	transform: translateZ(0);
 }
 
 .shooting-star::before {
@@ -318,5 +343,15 @@ input:focus, textarea:focus {
 	100% {
 		opacity: 0;
 		transform: translate(400px, 400px);
+	}
+}
+
+/* Pause animations when page is hidden to save resources */
+:root:has(body[data-page-hidden="true"]) {
+	.shooting-star,
+	.graph-link,
+	.status-pulse,
+	.cursor-blink {
+		animation-play-state: paused;
 	}
 }

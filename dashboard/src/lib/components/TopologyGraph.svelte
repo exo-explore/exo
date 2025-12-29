@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import * as d3 from 'd3';
 import { topologyData, isTopologyMinimized, debugMode } from '$lib/stores/app.svelte';
 
@@ -12,10 +12,34 @@ import { topologyData, isTopologyMinimized, debugMode } from '$lib/stores/app.sv
 
 	let svgContainer: SVGSVGElement | undefined = $state();
 	let resizeObserver: ResizeObserver | undefined;
+	
+	// Optimization: Track last render state to avoid unnecessary re-renders
+	let lastRenderHash = '';
+	let lastHighlightedNodesHash = '';
+	let lastDimensions = { width: 0, height: 0 };
+	let isRendering = false;
+	let pendingRender = false;
 
 const isMinimized = $derived(isTopologyMinimized());
 const data = $derived(topologyData());
 const debugEnabled = $derived(debugMode());
+
+	// Generate a hash of relevant data to detect actual changes
+	function generateDataHash(topologyData: typeof data, minimized: boolean, debug: boolean): string {
+		if (!topologyData) return 'null';
+		const nodes = topologyData.nodes || {};
+		const edges = topologyData.edges || [];
+		
+		// Create a lightweight hash from key properties only
+		const nodeHashes = Object.entries(nodes).map(([id, n]) => {
+			const macmon = n.macmon_info;
+			return `${id}:${n.friendly_name || ''}:${macmon?.memory?.ram_usage || 0}:${macmon?.memory?.ram_total || 0}:${macmon?.temp?.gpu_temp_avg || 0}:${macmon?.gpu_usage?.[1] || 0}:${macmon?.sys_power || 0}`;
+		}).sort().join('|');
+		
+		const edgeHash = edges.map(e => `${e.source}-${e.target}`).sort().join(',');
+		
+		return `${nodeHashes}::${edgeHash}::${minimized}::${debug}`;
+	}
 
 function getNodeLabel(nodeId: string): string {
 	const node = data?.nodes?.[nodeId];
@@ -932,16 +956,59 @@ function wrapLine(text: string, maxLen: number): string[] {
 
 	}
 
-	$effect(() => {
-		if (data) {
+	// Throttled render function to prevent too-frequent updates
+	function scheduleRender() {
+		if (isRendering) {
+			pendingRender = true;
+			return;
+		}
+		
+		isRendering = true;
+		requestAnimationFrame(() => {
 			renderGraph();
+			isRendering = false;
+			
+			if (pendingRender) {
+				pendingRender = false;
+				scheduleRender();
+			}
+		});
+	}
+
+	$effect(() => {
+		if (!data || !svgContainer) return;
+		
+		// Generate hash of current state
+		const currentHash = generateDataHash(data, isMinimized, debugEnabled);
+		const highlightHash = Array.from(highlightedNodes).sort().join(',');
+		
+		// Get current dimensions
+		const rect = svgContainer.getBoundingClientRect();
+		const dimensionsChanged = rect.width !== lastDimensions.width || rect.height !== lastDimensions.height;
+		
+		// Only re-render if something actually changed
+		if (currentHash !== lastRenderHash || highlightHash !== lastHighlightedNodesHash || dimensionsChanged) {
+			lastRenderHash = currentHash;
+			lastHighlightedNodesHash = highlightHash;
+			lastDimensions = { width: rect.width, height: rect.height };
+			scheduleRender();
 		}
 	});
 
 	onMount(() => {
 		if (svgContainer) {
+			// Use a debounced resize observer to prevent rapid re-renders
+			let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+			
 			resizeObserver = new ResizeObserver(() => {
-				renderGraph();
+				if (resizeTimeout) clearTimeout(resizeTimeout);
+				resizeTimeout = setTimeout(() => {
+					const rect = svgContainer!.getBoundingClientRect();
+					if (rect.width !== lastDimensions.width || rect.height !== lastDimensions.height) {
+						lastDimensions = { width: rect.width, height: rect.height };
+						scheduleRender();
+					}
+				}, 100);
 			});
 			resizeObserver.observe(svgContainer);
 		}
@@ -969,11 +1036,20 @@ function wrapLine(text: string, maxLen: number): string[] {
 		stroke-width: 1px;
 		stroke-dasharray: 4, 4;
 		opacity: 0.8;
-		animation: flowAnimation 0.75s linear infinite;
+		/* Slower animation = less GPU usage */
+		animation: flowAnimation 2s linear infinite;
+		/* GPU optimization */
+		will-change: stroke-dashoffset;
 	}
 	@keyframes flowAnimation {
 		from { stroke-dashoffset: 0; }
 		to { stroke-dashoffset: -10; }
 	}
-
+	
+	/* Respect reduced motion preference */
+	@media (prefers-reduced-motion: reduce) {
+		:global(.graph-link) {
+			animation: none;
+		}
+	}
 </style>

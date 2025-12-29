@@ -297,6 +297,35 @@ function extractIpFromMultiaddr(ma?: string): string | undefined {
 	return undefined;
 }
 
+// Deep comparison utility for preventing unnecessary state updates
+function shallowEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (a === null || b === null) return false;
+	if (typeof a !== 'object' || typeof b !== 'object') return false;
+	
+	const aObj = a as Record<string, unknown>;
+	const bObj = b as Record<string, unknown>;
+	const aKeys = Object.keys(aObj);
+	const bKeys = Object.keys(bObj);
+	
+	if (aKeys.length !== bKeys.length) return false;
+	
+	for (const key of aKeys) {
+		if (aObj[key] !== bObj[key]) return false;
+	}
+	return true;
+}
+
+// Faster JSON comparison for complex nested objects
+function jsonEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	try {
+		return JSON.stringify(a) === JSON.stringify(b);
+	} catch {
+		return false;
+	}
+}
+
 class AppStore {
 	// Conversation state
 	conversations = $state<Conversation[]>([]);
@@ -330,9 +359,18 @@ class AppStore {
 	topologyOnlyMode = $state(false);
 	chatSidebarVisible = $state(true); // Shown by default
 	
+	// Visibility state - used to pause polling when tab is hidden
+	private isPageVisible = true;
+	
 	private fetchInterval: ReturnType<typeof setInterval> | null = null;
 	private previewsInterval: ReturnType<typeof setInterval> | null = null;
 	private lastConversationPersistTs = 0;
+	
+	// Cache for comparison - prevents unnecessary reactivity
+	private lastTopologyJson = '';
+	private lastInstancesJson = '';
+	private lastRunnersJson = '';
+	private lastDownloadsJson = '';
 
 	constructor() {
 		if (browser) {
@@ -341,7 +379,24 @@ class AppStore {
 			this.loadDebugModeFromStorage();
 			this.loadTopologyOnlyModeFromStorage();
 			this.loadChatSidebarVisibleFromStorage();
+			this.setupVisibilityListener();
 		}
+	}
+
+	/**
+	 * Listen for page visibility changes to pause polling when hidden
+	 */
+	private setupVisibilityListener() {
+		if (typeof document === 'undefined') return;
+		
+		document.addEventListener('visibilitychange', () => {
+			this.isPageVisible = document.visibilityState === 'visible';
+			
+			if (this.isPageVisible) {
+				// Resume polling when page becomes visible
+				this.fetchState();
+			}
+		});
 	}
 
 	/**
@@ -770,7 +825,9 @@ class AppStore {
 
 	startPolling() {
 		this.fetchState();
-		this.fetchInterval = setInterval(() => this.fetchState(), 1000);
+		// Poll every 2 seconds instead of 1 second - reduces CPU/GPU load by 50%
+		// Data comparison ensures we only update when something actually changes
+		this.fetchInterval = setInterval(() => this.fetchState(), 2000);
 	}
 
 	stopPolling() {
@@ -782,6 +839,9 @@ class AppStore {
 	}
 
 	async fetchState() {
+		// Skip polling when page is hidden to save resources
+		if (!this.isPageVisible) return;
+		
 		try {
 			const response = await fetch('/state');
 			if (!response.ok) {
@@ -789,19 +849,44 @@ class AppStore {
 			}
 			const data: RawStateResponse = await response.json();
 			
+			// Only update topology if it actually changed (prevents unnecessary D3 re-renders)
 			if (data.topology) {
-				this.topologyData = transformTopology(data.topology, data.nodeProfiles);
+				const newTopology = transformTopology(data.topology, data.nodeProfiles);
+				const newTopologyJson = JSON.stringify(newTopology);
+				if (newTopologyJson !== this.lastTopologyJson) {
+					this.lastTopologyJson = newTopologyJson;
+					this.topologyData = newTopology;
+				}
 			}
+			
+			// Only update instances if changed
 			if (data.instances) {
-				this.instances = data.instances;
-				this.refreshConversationModelFromInstances();
+				const newInstancesJson = JSON.stringify(data.instances);
+				if (newInstancesJson !== this.lastInstancesJson) {
+					this.lastInstancesJson = newInstancesJson;
+					this.instances = data.instances;
+					this.refreshConversationModelFromInstances();
+				}
 			}
+			
+			// Only update runners if changed
 			if (data.runners) {
-				this.runners = data.runners;
+				const newRunnersJson = JSON.stringify(data.runners);
+				if (newRunnersJson !== this.lastRunnersJson) {
+					this.lastRunnersJson = newRunnersJson;
+					this.runners = data.runners;
+				}
 			}
+			
+			// Only update downloads if changed
 			if (data.downloads) {
-				this.downloads = data.downloads;
+				const newDownloadsJson = JSON.stringify(data.downloads);
+				if (newDownloadsJson !== this.lastDownloadsJson) {
+					this.lastDownloadsJson = newDownloadsJson;
+					this.downloads = data.downloads;
+				}
 			}
+			
 			this.lastUpdate = Date.now();
 		} catch (error) {
 			console.error('Error fetching state:', error);

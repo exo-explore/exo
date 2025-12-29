@@ -99,17 +99,35 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 }
 	
 	// Compute highlighted nodes from hovered instance or hovered preview
+	// Memoized to avoid creating new Sets on every render
+	let lastHighlightedNodesKey = '';
+	let cachedHighlightedNodes: Set<string> = new Set();
+	
 	const highlightedNodes = $derived(() => {
+		// Create a key for the current state to enable memoization
+		const previewKey = Array.from(hoveredPreviewNodes).sort().join(',');
+		const currentKey = `${hoveredInstanceId || 'null'}:${previewKey}`;
+		
+		// Return cached value if nothing changed
+		if (currentKey === lastHighlightedNodesKey) {
+			return cachedHighlightedNodes;
+		}
+		
+		lastHighlightedNodesKey = currentKey;
+		
 		// First check instance hover
 		if (hoveredInstanceId) {
 			const instanceWrapped = instanceData[hoveredInstanceId];
-			return unwrapInstanceNodes(instanceWrapped);
+			cachedHighlightedNodes = unwrapInstanceNodes(instanceWrapped);
+			return cachedHighlightedNodes;
 		}
 		// Then check preview hover
 		if (hoveredPreviewNodes.size > 0) {
-			return hoveredPreviewNodes;
+			cachedHighlightedNodes = hoveredPreviewNodes;
+			return cachedHighlightedNodes;
 		}
-		return new Set<string>();
+		cachedHighlightedNodes = new Set<string>();
+		return cachedHighlightedNodes;
 	});
 	
 	// Helper to estimate memory from model ID (mirrors ModelCard logic)
@@ -516,12 +534,13 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		};
 	}
 
-	// Debug: Log downloads data when it changes
-	$effect(() => {
-		if (downloadsData && Object.keys(downloadsData).length > 0) {
-			console.log('[Download Debug] Current downloads:', downloadsData);
-		}
-	});
+	// Debug: Log downloads data when it changes (disabled in production for performance)
+	// Uncomment for debugging:
+	// $effect(() => {
+	// 	if (downloadsData && Object.keys(downloadsData).length > 0) {
+	// 		console.log('[Download Debug] Current downloads:', downloadsData);
+	// 	}
+	// });
 
 	// Helper to get download status for an instance
 	function getInstanceDownloadStatus(instanceId: string, instanceWrapped: unknown): { 
