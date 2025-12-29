@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 from typing import cast
 
 import anyio
-from anyio import BrokenResourceError, create_task_group
+from anyio import BrokenResourceError, ClosedResourceError, create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -433,8 +433,8 @@ class API:
             # Client disconnected - send cancellation to stop generation
             logger.info(f"Client disconnected, cancelling command {command_id}")
             cancel_command = TaskCancelled(cancelled_command_id=command_id)
-            # Shield from cancellation so the send actually completes
-            with anyio.CancelScope(shield=True):
+            # Shield from cancellation with timeout so we don't hang forever
+            with anyio.fail_after(1.0, shield=True):
                 await self._send(cancel_command)
             # Don't send TaskFinished - TaskCancelled will handle cleanup
             del self._chat_completion_queues[command_id]
@@ -669,7 +669,7 @@ class API:
                             await self._chat_completion_queues[event.command_id].send(
                                 event.chunk
                             )
-                        except BrokenResourceError:
+                        except (BrokenResourceError, ClosedResourceError):
                             # Client disconnected, queue was closed - ignore late chunks
                             logger.debug(
                                 f"Dropping chunk for disconnected client {event.command_id}"

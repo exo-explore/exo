@@ -8,7 +8,12 @@ from loguru import logger
 
 from exo.routing.connection_message import ConnectionMessage, ConnectionMessageType
 from exo.shared.apply import apply
-from exo.shared.types.commands import ForwarderCommand, RequestEventLog
+from exo.shared.types.commands import (
+    CancelGenerationCommand,
+    ForwarderCommand,
+    ForwarderWorkerCommand,
+    RequestEventLog,
+)
 from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.events import (
     Event,
@@ -18,7 +23,6 @@ from exo.shared.types.events import (
     NodeDownloadProgress,
     NodeMemoryMeasured,
     NodePerformanceMeasured,
-    TaskCancellationRequested,
     TaskCreated,
     TaskStatusUpdated,
     TopologyEdgeCreated,
@@ -70,6 +74,8 @@ class Worker:
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
         command_sender: Sender[ForwarderCommand],
+        # Receive direct commands from master (bypasses event log)
+        worker_command_receiver: Receiver[ForwarderWorkerCommand],
     ):
         self.node_id: NodeId = node_id
         self.session_id: SessionId = session_id
@@ -81,6 +87,7 @@ class Worker:
         self.local_event_sender = local_event_sender
         self.local_event_index = 0
         self.command_sender = command_sender
+        self.worker_command_receiver = worker_command_receiver
         self.connection_message_receiver = connection_message_receiver
         self.event_buffer = OrderedBuffer[Event]()
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
@@ -137,6 +144,7 @@ class Worker:
             tg.start_soon(self._event_applier)
             tg.start_soon(self._forward_events)
             tg.start_soon(self._poll_connection_updates)
+            tg.start_soon(self._worker_command_processor)
 
         # Actual shutdown code - waits for all tasks to complete before executing.
         self.local_event_sender.close()
@@ -175,21 +183,25 @@ class Worker:
                 for idx, event in indexed_events:
                     self.state = apply(self.state, IndexedEvent(idx=idx, event=event))
 
-                    # Handle cancellation requests immediately
-                    if isinstance(event, TaskCancellationRequested):
-                        self._handle_cancellation_request(event)
+    async def _worker_command_processor(self):
+        """Process direct commands from master (bypasses event log)."""
+        async for forwarder_cmd in self.worker_command_receiver:
+            cmd = forwarder_cmd.command
+            match cmd:
+                case CancelGenerationCommand():
+                    self._handle_cancel_generation_command(cmd)
 
-    def _handle_cancellation_request(self, event: TaskCancellationRequested):
+    def _handle_cancel_generation_command(self, cmd: CancelGenerationCommand):
+        """Handle a direct cancellation command from master."""
         for runner in self.runners.values():
             # Send cancellation to all runners. The runner will check command_id
             cancel_task = CancelGeneration(
-                task_id=event.task_id,
-                command_id=event.command_id,
+                command_id=cmd.command_id_to_cancel,
                 instance_id=runner.bound_instance.instance.instance_id,
             )
             runner.send_task_nowait(cancel_task)
             logger.info(
-                f"Sent CancelGeneration for command {event.command_id} to runner"
+                f"Sent CancelGeneration for command {cmd.command_id_to_cancel} to runner"
             )
 
     async def plan_step(self):

@@ -117,7 +117,6 @@ def mlx_generate(
     tokenizer: TokenizerWrapper,
     sampler: Callable[[mx.array], mx.array],
     task: ChatCompletionTaskParams,
-    is_cancelled: Callable[[], bool] | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -153,10 +152,6 @@ def mlx_generate(
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
-        if is_cancelled is not None and is_cancelled():
-            logger.info("Generation cancelled by client")
-            out.finish_reason = "stop"
-
         logger.info(out.text)
 
         stats: GenerationStats | None = None

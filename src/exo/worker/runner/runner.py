@@ -52,6 +52,7 @@ def main(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[CancelGeneration],
 ):
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
@@ -162,34 +163,36 @@ def main(
                         assert task_params.messages[0].content is not None
                         _check_for_debug_prompts(task_params.messages[0].content)
 
-                        # Track if client cancelled the request
-                        generation_cancelled = False
-
-                        def check_cancelled() -> bool:
-                            nonlocal generation_cancelled
-                            if generation_cancelled:
-                                return True
-                            # Non-blocking check for CancelGeneration task
-                            try:
-                                pending_task = task_receiver.receive_nowait()
-                                if isinstance(pending_task, CancelGeneration):
-                                    logger.info(
-                                        "Received CancelGeneration during generation"
-                                    )
-                                    generation_cancelled = True
-                                    return True
-                            except WouldBlock:
-                                pass
-                            return False
-
                         # Generate responses using the actual MLX generation
+                        # Cancellation is checked on dedicated channel after each chunk
                         for response in mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
                             sampler=sampler,
                             task=task_params,
-                            is_cancelled=check_cancelled,
                         ):
+                            # Check dedicated cancel channel for cancellation
+                            # Drain all pending cancellations to handle stale ones
+                            generation_cancelled = False
+                            while True:
+                                try:
+                                    cancel_task = cancel_receiver.receive_nowait()
+                                    if cancel_task.command_id == command_id:
+                                        logger.info(
+                                            "Generation cancelled mid-stream by client disconnect"
+                                        )
+                                        generation_cancelled = True
+                                        break
+                                    else:
+                                        # Stale cancellation for a different command - ignore
+                                        logger.debug(
+                                            f"Ignoring stale CancelGeneration for {cancel_task.command_id}"
+                                        )
+                                except WouldBlock:
+                                    break
+                            if generation_cancelled:
+                                break
+
                             match response:
                                 case GenerationResponse():
                                     if shard_metadata.device_rank == 0:
@@ -211,17 +214,6 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
-                    case CancelGeneration():
-                        # Cancellation handled in the check_cancelled callback during generation
-                        # If we receive it here, the generation already finished
-                        logger.info(
-                            "Received CancelGeneration but generation already complete"
-                        )
                     case Shutdown():
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")

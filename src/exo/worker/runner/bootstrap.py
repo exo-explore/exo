@@ -3,7 +3,7 @@ import os
 import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
-from exo.shared.types.tasks import Task
+from exo.shared.types.tasks import CancelGeneration, Task
 from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import MpReceiver, MpSender
@@ -15,6 +15,7 @@ def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[CancelGeneration],
     _logger: "loguru.Logger",
 ) -> None:
     if (
@@ -30,7 +31,7 @@ def entrypoint(
     try:
         from exo.worker.runner.runner import main
 
-        main(bound_instance, event_sender, task_receiver)
+        main(bound_instance, event_sender, task_receiver, cancel_receiver)
     except Exception as e:
         logger.opt(exception=e).warning(
             f"Runner {bound_instance.bound_runner_id} crashed with critical exception {e}"
@@ -44,6 +45,8 @@ def entrypoint(
     finally:
         event_sender.close()
         task_receiver.close()
+        cancel_receiver.close()
         event_sender.join()
         task_receiver.join()
+        cancel_receiver.join()
         logger.info("bye from the runner")
