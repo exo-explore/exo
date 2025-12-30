@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import NodeId
+from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -43,7 +44,7 @@ def plan(
     # Runners is expected to be FRESH and so should not come from state
     runners: Mapping[RunnerId, RunnerSupervisor],
     # DL_status is expected to be FRESH and so should not come from state
-    download_status: Mapping[ShardMetadata, DownloadProgress],
+    download_status: Mapping[ModelId, DownloadProgress],
     # gdls is not expected to be fresh
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     instances: Mapping[InstanceId, Instance],
@@ -111,14 +112,13 @@ def _create_runner(
 
 def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
-    download_status: Mapping[ShardMetadata, DownloadProgress],
+    download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
     for runner in runners.values():
+        model_id = runner.bound_instance.bound_shard.model_meta.model_id
         if isinstance(runner.status, RunnerIdle) and (
-            not isinstance(
-                download_status.get(runner.bound_instance.bound_shard, None),
-                (DownloadOngoing, DownloadCompleted),
-            )
+            model_id not in download_status or
+            not isinstance(download_status[model_id], (DownloadOngoing, DownloadCompleted))
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
