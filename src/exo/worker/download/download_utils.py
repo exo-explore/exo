@@ -450,6 +450,11 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]
 
 
 async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
+    # TODO: 'Smart' downloads are disabled because:
+    #  (i) We don't handle all kinds of files;
+    # (ii) We don't have sticky sessions.
+    # (iii) Tensor parallel requires all files.
+    return ["*"]
     try:
         weight_map = await get_weight_map(str(shard.model_meta.model_id))
         return get_allow_patterns(weight_map, shard)
