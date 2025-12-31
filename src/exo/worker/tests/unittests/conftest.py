@@ -1,11 +1,9 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
-from exo.shared.types.tasks import BaseTask
+from exo.shared.types.tasks import BaseTask, TaskId
 from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
@@ -21,6 +19,7 @@ from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 class FakeRunnerSupervisor:
     bound_instance: BoundInstance
     status: RunnerStatus
+    completed: set[TaskId] = field(default_factory=set)
 
 
 class OtherTask(BaseTask):
