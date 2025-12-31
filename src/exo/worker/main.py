@@ -448,8 +448,8 @@ class Worker:
             await anyio.sleep(10)
 
     async def _emit_existing_download_progress(self) -> None:
-        while True:
-            try:
+        try:
+            while True:
                 logger.info("Fetching and emitting existing download progress...")
                 async for (
                     _,
@@ -480,7 +480,6 @@ class Worker:
                         NodeDownloadProgress(download_progress=status)
                     )
                 logger.info("Done emitting existing download progress.")
-            except Exception as e:
-                logger.error(f"Error emitting existing download progress: {e}")
-            finally:
                 await anyio.sleep(5 * 60)  # 5 minutes
+        except Exception as e:
+            logger.error(f"Error emitting existing download progress: {e}")
