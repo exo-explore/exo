@@ -451,7 +451,10 @@ class Worker:
         while True:
             try:
                 logger.info("Fetching and emitting existing download progress...")
-                async for _, progress in self.shard_downloader.get_shard_download_status():
+                async for (
+                    _,
+                    progress,
+                ) in self.shard_downloader.get_shard_download_status():
                     if progress.status == "complete":
                         status = DownloadCompleted(
                             node_id=self.node_id, shard_metadata=progress.shard
@@ -480,4 +483,4 @@ class Worker:
             except Exception as e:
                 logger.error(f"Error emitting existing download progress: {e}")
             finally:
-                await anyio.sleep(5 * 60) # 5 minutes
+                await anyio.sleep(5 * 60)  # 5 minutes
