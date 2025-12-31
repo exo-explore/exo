@@ -135,7 +135,7 @@ final class SparkleUpdater: NSObject, ObservableObject {
         let proxy = ExoUpdaterDelegate(processController: processController)
         delegateProxy = proxy
         controller = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: false,
             updaterDelegate: proxy,
             userDriverDelegate: nil
         )
@@ -146,13 +146,23 @@ final class SparkleUpdater: NSObject, ObservableObject {
         controller.updater.automaticallyChecksForUpdates = true
         controller.updater.automaticallyDownloadsUpdates = false
         controller.updater.updateCheckInterval = 900 // 15 minutes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak controller] in
-            controller?.updater.checkForUpdatesInBackground()
-        }
+        startUpdaterInBackground()
+    }
+
+    private func startUpdaterInBackground() {
+        let controllerRef = controller
         let updater = controller.updater
-        let intervalSeconds = max(60.0, controller.updater.updateCheckInterval)
+        let intervalSeconds = max(60.0, updater.updateCheckInterval)
         let intervalNanos = UInt64(intervalSeconds * 1_000_000_000)
-        periodicCheckTask = Task {
+        periodicCheckTask = Task.detached(priority: .background) {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run {
+                controllerRef.startUpdater()
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run {
+                updater.checkForUpdatesInBackground()
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: intervalNanos)
                 await MainActor.run {
