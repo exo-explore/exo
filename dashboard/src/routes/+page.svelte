@@ -57,13 +57,15 @@ const sidebarVisible = $derived(chatSidebarVisible());
 		modelId: string | null;
 		sharding: 'Pipeline' | 'Tensor';
 		instanceType: InstanceMeta;
+		minNodes: number;
 	}
 	
-	function saveLaunchDefaults(modelId: string): void {
+	function saveLaunchDefaults(): void {
 		const defaults: LaunchDefaults = {
-			modelId,
+			modelId: selectedPreviewModelId(),
 			sharding: selectedSharding,
 			instanceType: selectedInstanceType,
+			minNodes: selectedMinNodes,
 		};
 		try {
 			localStorage.setItem(LAUNCH_DEFAULTS_KEY, JSON.stringify(defaults));
@@ -83,13 +85,18 @@ const sidebarVisible = $derived(chatSidebarVisible());
 		}
 	}
 	
-	function applyLaunchDefaults(availableModels: Array<{id: string}>): void {
+	function applyLaunchDefaults(availableModels: Array<{id: string}>, maxNodes: number): void {
 		const defaults = loadLaunchDefaults();
 		if (!defaults) return;
 		
 		// Apply sharding and instance type unconditionally
 		selectedSharding = defaults.sharding;
 		selectedInstanceType = defaults.instanceType;
+		
+		// Apply minNodes if valid (between 1 and maxNodes)
+		if (defaults.minNodes && defaults.minNodes >= 1 && defaults.minNodes <= maxNodes) {
+			selectedMinNodes = defaults.minNodes;
+		}
 		
 		// Only apply model if it exists in the available models
 		if (defaults.modelId && availableModels.some(m => m.id === defaults.modelId)) {
@@ -345,7 +352,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				// API returns { data: [{ id, name }] } format
 				models = data.data || [];
 				// Restore last launch defaults if available
-				applyLaunchDefaults(models);
+				const currentNodeCount = topologyData() ? Object.keys(topologyData()!.nodes).length : 1;
+				applyLaunchDefaults(models, currentNodeCount);
 			}
 		} catch (error) {
 			console.error('Failed to fetch models:', error);
@@ -392,9 +400,6 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 				const errorText = await response.text();
 				console.error('Failed to launch instance:', errorText);
 			} else {
-				// Save launch defaults for next time
-				saveLaunchDefaults(modelId);
-				
 				// Auto-select the launched model only if no model is currently selected
 				if (!selectedChatModel()) {
 					setSelectedChatModel(modelId);
@@ -1039,6 +1044,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	function handleSliderMouseUp() {
 		isDraggingSlider = false;
+		saveLaunchDefaults();
 	}
 
 	// Handle touch events for mobile
@@ -1058,6 +1064,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 	function handleSliderTouchEnd() {
 		isDraggingSlider = false;
+		saveLaunchDefaults();
 	}
 
 	const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
@@ -1515,6 +1522,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 												onclick={() => {
 													if (modelCanFit) {
 														selectPreviewModel(model.id);
+														saveLaunchDefaults();
 														isModelDropdownOpen = false;
 														modelDropdownSearch = '';
 													}
@@ -1548,7 +1556,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								<div class="text-xs text-white/70 font-mono mb-2">Sharding:</div>
 								<div class="flex gap-2">
 									<button 
-										onclick={() => selectedSharding = 'Pipeline'}
+										onclick={() => { selectedSharding = 'Pipeline'; saveLaunchDefaults(); }}
 										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Pipeline' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Pipeline' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
@@ -1559,7 +1567,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										Pipeline
 									</button>
 									<button 
-										onclick={() => selectedSharding = 'Tensor'}
+										onclick={() => { selectedSharding = 'Tensor'; saveLaunchDefaults(); }}
 										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding === 'Tensor' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedSharding === 'Tensor' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
@@ -1577,7 +1585,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								<div class="text-xs text-white/70 font-mono mb-2">Instance Type:</div>
 								<div class="flex gap-2">
 									<button 
-										onclick={() => selectedInstanceType = 'MlxRing'}
+										onclick={() => { selectedInstanceType = 'MlxRing'; saveLaunchDefaults(); }}
 										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxRing' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxRing' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
@@ -1588,7 +1596,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										MLX Ring
 									</button>
 									<button 
-										onclick={() => selectedInstanceType = 'MlxIbv'}
+										onclick={() => { selectedInstanceType = 'MlxIbv'; saveLaunchDefaults(); }}
 										class="flex items-center gap-2 py-2 px-4 text-sm font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType === 'MlxIbv' ? 'bg-transparent text-exo-yellow border-exo-yellow' : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
 									>
 										<span class="w-4 h-4 rounded-full border-2 flex items-center justify-center {selectedInstanceType === 'MlxIbv' ? 'border-exo-yellow' : 'border-exo-medium-gray'}">
