@@ -21,6 +21,7 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId
 from exo.shared.types.topology import NodeInfo
 from exo.shared.types.worker.instances import (
     Instance,
@@ -29,6 +30,7 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.shards import Sharding
 
 
 def random_ephemeral_port() -> int:
@@ -64,6 +66,28 @@ def place_instance(
     )
     if not cycles_with_sufficient_memory:
         raise ValueError("No cycles found with sufficient memory")
+
+    if command.sharding == Sharding.Tensor:
+        if not command.model_meta.supports_tensor:
+            raise ValueError(
+                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_meta.model_id}"
+            )
+        # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
+        cycles_with_sufficient_memory = [
+            cycle
+            for cycle in cycles_with_sufficient_memory
+            if command.model_meta.hidden_size % len(cycle) == 0
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                f"No tensor sharding found for model with hidden_size {command.model_meta.hidden_size} candidate cycles"
+            )
+    if command.sharding == Sharding.Pipeline and command.model_meta.model_id == ModelId(
+        "mlx-community/DeepSeek-V3.1-8bit"
+    ):
+        raise ValueError(
+            "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
+        )
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 

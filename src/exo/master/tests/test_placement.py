@@ -50,7 +50,7 @@ def model_meta() -> ModelMetadata:
         storage_size=Memory.from_kb(1000),
         pretty_name="Test Model",
         n_layers=10,
-        hidden_size=10,
+        hidden_size=30,
         supports_tensor=True,
     )
 

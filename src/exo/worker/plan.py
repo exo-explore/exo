@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 
 from exo.shared.types.common import NodeId
+from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
@@ -34,7 +35,6 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.shared.types.worker.shards import ShardMetadata
 from exo.worker.runner.runner_supervisor import RunnerSupervisor
 
 
@@ -43,7 +43,7 @@ def plan(
     # Runners is expected to be FRESH and so should not come from state
     runners: Mapping[RunnerId, RunnerSupervisor],
     # DL_status is expected to be FRESH and so should not come from state
-    download_status: Mapping[ShardMetadata, DownloadProgress],
+    download_status: Mapping[ModelId, DownloadProgress],
     # gdls is not expected to be fresh
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     instances: Mapping[InstanceId, Instance],
@@ -111,13 +111,14 @@ def _create_runner(
 
 def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
-    download_status: Mapping[ShardMetadata, DownloadProgress],
+    download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
     for runner in runners.values():
+        model_id = runner.bound_instance.bound_shard.model_meta.model_id
         if isinstance(runner.status, RunnerIdle) and (
-            not isinstance(
-                download_status.get(runner.bound_instance.bound_shard, None),
-                (DownloadOngoing, DownloadCompleted),
+            model_id not in download_status
+            or not isinstance(
+                download_status[model_id], (DownloadOngoing, DownloadCompleted)
             )
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
@@ -235,9 +236,8 @@ def _ready_to_warmup(
         assert device_rank < world_size
         assert device_rank >= 0
 
-        # TODO: Ensure these align with MLX distributeds expectations.
-        # Rank < n-1
-        accepting_ranks_ready = device_rank < world_size - 1 and all(
+        # Rank != 0
+        accepting_ranks_ready = device_rank > 0 and all(
             isinstance(
                 all_runners.get(global_runner_id, None),
                 (RunnerLoaded, RunnerWarmingUp),
@@ -245,8 +245,8 @@ def _ready_to_warmup(
             for global_runner_id in shard_assignments.runner_to_shard
         )
 
-        # Rank = n-1
-        connecting_rank_ready = device_rank == world_size - 1 and all(
+        # Rank = 0
+        connecting_rank_ready = device_rank == 0 and all(
             isinstance(all_runners.get(global_runner_id, None), RunnerWarmingUp)
             for global_runner_id in shard_assignments.runner_to_shard
             if global_runner_id != runner_id

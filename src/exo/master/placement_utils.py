@@ -385,13 +385,14 @@ def get_mlx_jaccl_coordinators(
     address in format "X.X.X.X:PORT" per node.
     """
     rank_0_node = selected_cycle[0]
-    logger.info(f"Selecting coordinator from rank 0 node: {rank_0_node.node_id}")
+    logger.debug(f"Selecting coordinator from rank 0 node: {rank_0_node.node_id}")
 
     def get_ip_for_node(n: NodeInfo) -> str:
         if n.node_id == rank_0_node.node_id:
             return "0.0.0.0"
 
-        for ip, _ in _find_connection_ip(n, rank_0_node, cycle_digraph):
+        ip = _find_ip_prioritised(n, rank_0_node, cycle_digraph)
+        if ip:
             return ip
 
         logger.warning(
