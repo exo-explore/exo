@@ -139,6 +139,11 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		// Prevent form submission during IME composition (e.g., Chinese, Japanese, Korean input)
+		if (event.isComposing || event.keyCode === 229) {
+			return;
+		}
+		
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();
 			handleSubmit();
