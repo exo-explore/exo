@@ -53,6 +53,10 @@ class RunnerRunning(BaseRunnerStatus):
     pass
 
 
+class RunnerShuttingDown(BaseRunnerStatus):
+    pass
+
+
 class RunnerShutdown(BaseRunnerStatus):
     pass
 
@@ -70,6 +74,7 @@ RunnerStatus = (
     | RunnerWarmingUp
     | RunnerReady
     | RunnerRunning
+    | RunnerShuttingDown
     | RunnerShutdown
     | RunnerFailed
 )
