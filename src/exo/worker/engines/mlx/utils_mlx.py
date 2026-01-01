@@ -181,16 +181,45 @@ def load_mlx_items(
     sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
     logger.info("Created a sampler")
 
+    # Check if this is a vision model
+    model_id = str(bound_instance.bound_shard.model_meta.model_id)
+    is_vision_model = (
+        "vl" in model_id.lower() 
+        or "vision" in model_id.lower()
+        or getattr(bound_instance.bound_shard.model_meta, 'supports_vision', False)
+    )
+
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, strict=True)
-        end_time = time.perf_counter()
-        logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
-        tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
+        
+        if is_vision_model:
+            logger.info(f"Loading vision model from {model_path}")
+            try:
+                from mlx_vlm import load as load_vlm
+                model, processor = load_vlm(model_path)
+                end_time = time.perf_counter()
+                logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
+                # For vision models, the processor acts as the tokenizer
+                tokenizer = processor
+            except Exception as e:
+                logger.error(f"Failed to load vision model: {e}")
+                raise
+        else:
+            logger.info(f"Loading text model from {model_path}")
+            model, _ = load_model(model_path, strict=True)
+            end_time = time.perf_counter()
+            logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
+            tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
+        if is_vision_model:
+            raise NotImplementedError(
+                "Vision models with distributed inference (multi-device) are not yet supported."
+                "Please use a single device for vision models."
+            )
+        
         logger.info("Starting distributed init")
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
@@ -282,37 +311,58 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
 
 
 def apply_chat_template(
-    tokenizer: TokenizerWrapper,
+    tokenizer: Any,
     chat_task_data: ChatCompletionTaskParams,
 ) -> str:
+    # Check if this is a vision model processor
+    is_vision_processor = not hasattr(tokenizer, "eos_token_id") and hasattr(tokenizer, "tokenizer")
+    actual_tokenizer = tokenizer.tokenizer if is_vision_processor else tokenizer
+
     # Now we can properly access the messages
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
     for _, message in enumerate(messages):
-        if isinstance(message.content, ChatCompletionMessageText):
-            message.content = message.content.text
-        if isinstance(message.content, list):
-            if len(message.content) != 1:
-                logger.warning("Received malformed prompt")
-                continue
+        # Handle content being a list (multimodal) or string
+        content = message.content
+        
+        # If it's a list (multimodal), we need to ensure each part is a dictionary
+        if isinstance(content, list):
+            new_content = []
+            for item in content:
+                if hasattr(item, "model_dump"):
+                    new_content.append(item.model_dump())
+                else:
+                    new_content.append(item)
+            content = new_content
+        elif hasattr(content, "model_dump"):
+            # Single object like ChatCompletionMessageText
+            content = content.model_dump()
+        elif isinstance(content, str):
+            # Normal string content stays as is
+            pass
 
-            message.content = message.content[0].text
-        if message.content is None and message.thinking is None:
+        if content is None and message.thinking is None:
             continue
 
-        # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+        # Construct the message dict carefully
+        msg_dict = {"role": message.role}
+        if content is not None:
+            msg_dict["content"] = content
+        if message.name:
+            msg_dict["name"] = message.name
+            
+        formatted_messages.append(msg_dict)
 
-    prompt: str = tokenizer.apply_chat_template(  # type: ignore
+    logger.debug(f"Formatted messages for template: {formatted_messages}")
+    prompt: str = actual_tokenizer.apply_chat_template(  # type: ignore
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
     )
+    logger.debug(f"Generated prompt string: {prompt}")
 
-    return prompt  # type: ignore
+    return prompt
 
 
 class NullKVCache(KVCache):

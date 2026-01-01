@@ -18,6 +18,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     make_kv_cache,
     mx_barrier,
 )
+from exo.worker.engines.mlx.generator.generate_vlm import mlx_vlm_generate, extract_images_from_messages
 from exo.worker.runner.bootstrap import logger
 
 generation_stream = mx.new_stream(mx.default_device())
@@ -40,9 +41,13 @@ def maybe_quantize_kv_cache(
 
 def warmup_inference(
     model: Model,
-    tokenizer: TokenizerWrapper,
+    tokenizer: Any,
     sampler: Callable[[mx.array], mx.array],
 ) -> int:
+    # Check if this is a vision model processor
+    is_vision_processor = not hasattr(tokenizer, "eos_token_id") and hasattr(tokenizer, "tokenizer")
+    actual_tokenizer = tokenizer.tokenizer if is_vision_processor else tokenizer
+
     content = "Prompt to warm up the inference engine. Repeat this."
 
     warmup_prompt = apply_chat_template(
@@ -65,19 +70,23 @@ def warmup_inference(
     )
 
     logger.info("Generating warmup tokens")
-    for _r in stream_generate(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=warmup_prompt,
-        max_tokens=50,
-        sampler=sampler,
-        prompt_cache=cache,
-        prefill_step_size=65536,
-        kv_group_size=KV_GROUP_SIZE,
-        kv_bits=KV_BITS,
-    ):
-        logger.info("Generated warmup token: " + str(_r.text))
-        tokens_generated += 1
+    try:
+        # If it's a vision model, we might want to skip text-only warmup or handle it specially
+        # For now, we try text-only warmup with the actual tokenizer
+        for _r in stream_generate(
+            model=model,
+            tokenizer=actual_tokenizer,
+            prompt=warmup_prompt,
+            max_tokens=50,
+            sampler=sampler,
+            prompt_cache=cache,
+            prefill_step_size=65536,
+            kv_group_size=KV_GROUP_SIZE,
+            kv_bits=KV_BITS,
+        ):
+            tokens_generated += 1
+    except Exception as e:
+        logger.warning(f"Warmup failed (this is usually non-fatal): {e}")
 
     logger.info("Generated ALL warmup tokens")
     mx_barrier()
@@ -93,7 +102,22 @@ def mlx_generate(
 ) -> Generator[GenerationResponse]:
     # Currently we support chat-completion tasks only.
     logger.info(f"task_params: {task}")
+    
+    # Check if this is a vision model processor
+    is_vision_processor = not hasattr(tokenizer, "eos_token_id") and hasattr(tokenizer, "tokenizer")
+    actual_tokenizer = tokenizer.tokenizer if is_vision_processor else tokenizer
 
+    # Route to vision generator if it's a vision model processor
+    if is_vision_processor:
+        logger.info(f"Routing to vision generator for model {task.model}")
+        yield from mlx_vlm_generate(
+            model=model,  # Pass pre-loaded model
+            processor=tokenizer,  # For vision models, tokenizer is the processor
+            task=task,
+        )
+        return
+    
+    # Standard text-only generation for non-vision models
     prompt = apply_chat_template(
         tokenizer=tokenizer,
         chat_task_data=task,
@@ -104,7 +128,7 @@ def mlx_generate(
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
         model=model,
-        tokenizer=tokenizer,
+        tokenizer=actual_tokenizer,
         prompt=prompt,
         max_tokens=max_tokens,
         sampler=sampler,

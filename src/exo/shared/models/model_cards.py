@@ -115,7 +115,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     # ),
     # "deepseek-r1-0528": ModelCard(
     #     short_id="deepseek-r1-0528",
-    #     model_id="mlx-community/DeepSeek-R1-0528-8bit",
+    #     model_id=ModelId("mlx-community/DeepSeek-R1-0528-8bit"),
     #     name="DeepSeek-R1-0528 (8-bit)",
     #     description="""DeepSeek R1 is a large language model trained on the DeepSeek R1 dataset.""",
     #     tags=[],
@@ -124,7 +124,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     #         pretty_name="DeepSeek R1 671B (8-bit)",
     #         storage_size=Memory.from_bytes(754998771712),
     #         n_layers=61,
-    # .       hidden_size=7168,
+    #         hidden_size=7168,
     #     ),
     # ),
     # kimi k2
@@ -569,4 +569,43 @@ MODEL_CARDS: dict[str, ModelCard] = {
     #         supports_tensor=True,
     #     ),
     # ),
+    # qwen2-vl
+    "qwen2-vl-2b": ModelCard(
+        short_id="qwen2-vl-2b",
+        model_id=ModelId("mlx-community/Qwen2-VL-2B-Instruct-4bit"),
+        name="Qwen2-VL 2B (4-bit)",
+        description="""Qwen2-VL is a vision-language model capable of understanding images and text.""",
+        tags=["vision", "multimodal"],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/Qwen2-VL-2B-Instruct-4bit"),
+            pretty_name="Qwen2-VL 2B (4-bit)",
+            storage_size=Memory.from_mb(1500),
+            n_layers=28,
+            hidden_size=1536,
+            supports_tensor=False,
+            supports_vision=True,
+        ),
+    ),
+    # smolvlm
+    # smolvlm2
+# qwen3-vl-2b-thinking-8bit
+    # qwen3-vl-2b-instruct-4bit
+    "qwen3-vl-2b-instruct-4bit": ModelCard(
+        short_id="qwen3-vl-2b-instruct-4bit",
+        model_id=ModelId("mlx-community/Qwen3-VL-2B-Instruct-4bit"),
+        name="Qwen3‑VL 2B Instruct (4‑bit)",
+        description="""Qwen3‑VL 2B Instruct (4‑bit) is a multimodal vision‑language model in MLX format, quantized to 4‑bit to reduce memory usage while retaining strong visual and language understanding. It supports instruction‑guided image‑to‑text and multimodal conversational tasks, enabling capabilities such as image captioning, visual question answering, and general vision‑grounded instruction following. This model was converted to MLX from Qwen’s official Qwen3‑VL‑2B‑Instruct checkpoint, optimized for efficient inference with mlx‑vlm toolkits on supported platforms.""",
+        tags=["vision", "multimodal", "instruct", "4bit", "mlx"],
+        metadata=ModelMetadata(
+            model_id=ModelId("mlx-community/Qwen3-VL-2B-Instruct-4bit"),
+            pretty_name="Qwen3‑VL 2B Instruct (4‑bit)",
+            storage_size=Memory.from_mb(900),
+            n_layers=28,
+            hidden_size=2048,
+            supports_tensor=False,
+            supports_vision=True,
+        ),
+    ),
+
+
 }
