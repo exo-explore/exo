@@ -28,6 +28,7 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
 )
+from exo.shared.types.models import ModelId
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import MemoryPerformanceProfile, NodePerformanceProfile
 from exo.shared.types.state import State
@@ -92,7 +93,7 @@ class Worker:
         self.out_for_delivery: dict[EventId, ForwarderEvent] = {}
 
         self.state: State = State()
-        self.download_status: dict[ShardMetadata, DownloadProgress] = {}
+        self.download_status: dict[ModelId, DownloadProgress] = {}
         self.runners: dict[RunnerId, RunnerSupervisor] = {}
         self._tg: TaskGroup | None = None
 
@@ -137,6 +138,7 @@ class Worker:
             tg.start_soon(start_polling_node_metrics, resource_monitor_callback)
 
             tg.start_soon(start_polling_memory_metrics, memory_monitor_callback)
+            tg.start_soon(self._emit_existing_download_progress)
             tg.start_soon(self._connection_message_event_writer)
             tg.start_soon(self._resend_out_for_delivery)
             tg.start_soon(self._event_applier)
@@ -231,11 +233,11 @@ class Worker:
                         )
                     )
                 case DownloadModel(shard_metadata=shard):
-                    if shard not in self.download_status:
+                    if shard.model_meta.model_id not in self.download_status:
                         progress = DownloadPending(
                             shard_metadata=shard, node_id=self.node_id
                         )
-                        self.download_status[shard] = progress
+                        self.download_status[shard.model_meta.model_id] = progress
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
@@ -248,7 +250,7 @@ class Worker:
                         progress = DownloadCompleted(
                             shard_metadata=shard, node_id=self.node_id
                         )
-                        self.download_status[shard] = progress
+                        self.download_status[shard.model_meta.model_id] = progress
                         await self.event_sender.send(
                             NodeDownloadProgress(download_progress=progress)
                         )
@@ -380,7 +382,7 @@ class Worker:
                 initial_progress
             ),
         )
-        self.download_status[task.shard_metadata] = status
+        self.download_status[task.shard_metadata.model_meta.model_id] = status
         self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
 
         last_progress_time = 0.0
@@ -394,7 +396,7 @@ class Worker:
             nonlocal last_progress_time
             if progress.status == "complete":
                 status = DownloadCompleted(shard_metadata=shard, node_id=self.node_id)
-                self.download_status[shard] = status
+                self.download_status[shard.model_meta.model_id] = status
                 # Footgun!
                 self.event_sender.send_nowait(
                     NodeDownloadProgress(download_progress=status)
@@ -415,7 +417,7 @@ class Worker:
                         progress
                     ),
                 )
-                self.download_status[shard] = status
+                self.download_status[shard.model_meta.model_id] = status
                 self.event_sender.send_nowait(
                     NodeDownloadProgress(download_progress=status)
                 )
@@ -445,9 +447,14 @@ class Worker:
         while True:
             # TODO: EdgeDeleted
             edges = set(self.state.topology.list_connections())
-            conns = await check_reachable(self.state.topology)
+            conns = await check_reachable(self.state.topology, self.node_id)
             for nid in conns:
                 for ip in conns[nid]:
+                    if "127.0.0.1" in ip or "localhost" in ip:
+                        logger.warning(
+                            f"Loopback connection should not happen: {ip=} for {nid=}"
+                        )
+
                     edge = Connection(
                         local_node_id=self.node_id,
                         send_back_node_id=nid,
@@ -470,3 +477,40 @@ class Worker:
                     await self.event_sender.send(TopologyEdgeDeleted(edge=conn))
 
             await anyio.sleep(10)
+
+    async def _emit_existing_download_progress(self) -> None:
+        try:
+            while True:
+                logger.info("Fetching and emitting existing download progress...")
+                async for (
+                    _,
+                    progress,
+                ) in self.shard_downloader.get_shard_download_status():
+                    if progress.status == "complete":
+                        status = DownloadCompleted(
+                            node_id=self.node_id, shard_metadata=progress.shard
+                        )
+                    elif progress.status in ["in_progress", "not_started"]:
+                        if progress.downloaded_bytes_this_session.in_bytes == 0:
+                            status = DownloadPending(
+                                node_id=self.node_id, shard_metadata=progress.shard
+                            )
+                        else:
+                            status = DownloadOngoing(
+                                node_id=self.node_id,
+                                shard_metadata=progress.shard,
+                                download_progress=map_repo_download_progress_to_download_progress_data(
+                                    progress
+                                ),
+                            )
+                    else:
+                        continue
+
+                    self.download_status[progress.shard.model_meta.model_id] = status
+                    await self.event_sender.send(
+                        NodeDownloadProgress(download_progress=status)
+                    )
+                logger.info("Done emitting existing download progress.")
+                await anyio.sleep(5 * 60)  # 5 minutes
+        except Exception as e:
+            logger.error(f"Error emitting existing download progress: {e}")

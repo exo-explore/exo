@@ -38,8 +38,8 @@ def get_pipeline_shard_metadata(
             pretty_name=str(model_id),
             storage_size=Memory.from_mb(100000),
             n_layers=32,
-            # hidden_size=2048,
-            # supports_tensor=False,
+            hidden_size=2048,
+            supports_tensor=False,
         ),
         device_rank=device_rank,
         world_size=world_size,
@@ -72,7 +72,8 @@ def get_mlx_ring_instance(
         shard_assignments=get_shard_assignments(
             model_id, node_to_runner, runner_to_shard
         ),
-        hosts=[],
+        hosts_by_node={},
+        ephemeral_port=50000,
     )
 
 
