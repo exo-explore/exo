@@ -123,6 +123,8 @@ async def test_master():
                             pretty_name="Llama 3.2 1B",
                             n_layers=16,
                             storage_size=Memory.from_bytes(678948),
+                            hidden_size=7168,
+                            supports_tensor=True,
                         ),
                         sharding=Sharding.Pipeline,
                         instance_meta=InstanceMeta.MlxRing,
@@ -163,32 +165,38 @@ async def test_master():
         assert events[2].idx == 2
         assert isinstance(events[0].event, NodePerformanceMeasured)
         assert isinstance(events[1].event, InstanceCreated)
-        runner_id = list(
-            events[1].event.instance.shard_assignments.runner_to_shard.keys()
-        )[0]
-        assert events[1].event.instance == MlxRingInstance(
-            instance_id=events[1].event.instance.instance_id,
-            shard_assignments=ShardAssignments(
-                model_id=ModelId("llama-3.2-1b"),
-                runner_to_shard={
-                    (runner_id): PipelineShardMetadata(
-                        start_layer=0,
-                        end_layer=16,
+        created_instance = events[1].event.instance
+        assert isinstance(created_instance, MlxRingInstance)
+        runner_id = list(created_instance.shard_assignments.runner_to_shard.keys())[0]
+        # Validate the shard assignments
+        expected_shard_assignments = ShardAssignments(
+            model_id=ModelId("llama-3.2-1b"),
+            runner_to_shard={
+                (runner_id): PipelineShardMetadata(
+                    start_layer=0,
+                    end_layer=16,
+                    n_layers=16,
+                    model_meta=ModelMetadata(
+                        model_id=ModelId("llama-3.2-1b"),
+                        pretty_name="Llama 3.2 1B",
                         n_layers=16,
-                        model_meta=ModelMetadata(
-                            model_id=ModelId("llama-3.2-1b"),
-                            pretty_name="Llama 3.2 1B",
-                            n_layers=16,
-                            storage_size=Memory.from_bytes(678948),
-                        ),
-                        device_rank=0,
-                        world_size=1,
-                    )
-                },
-                node_to_runner={node_id: runner_id},
-            ),
-            hosts=[],
+                        storage_size=Memory.from_bytes(678948),
+                        hidden_size=7168,
+                        supports_tensor=True,
+                    ),
+                    device_rank=0,
+                    world_size=1,
+                )
+            },
+            node_to_runner={node_id: runner_id},
         )
+        assert created_instance.shard_assignments == expected_shard_assignments
+        # For single-node, hosts_by_node should have one entry with self-binding
+        assert len(created_instance.hosts_by_node) == 1
+        assert node_id in created_instance.hosts_by_node
+        assert len(created_instance.hosts_by_node[node_id]) == 1
+        assert created_instance.hosts_by_node[node_id][0].ip == "0.0.0.0"
+        assert created_instance.ephemeral_port > 0
         assert isinstance(events[2].event, TaskCreated)
         assert events[2].event.task.task_status == TaskStatus.Pending
         assert isinstance(events[2].event.task, ChatCompletionTask)

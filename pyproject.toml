@@ -34,6 +34,7 @@ dependencies = [
     "mlx-lm>=0.28.3",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
+    "openai-harmony>=0.0.8",
 ]
 
 [project.scripts]

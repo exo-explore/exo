@@ -1,5 +1,6 @@
 import argparse
 import multiprocessing as mp
+import os
 import signal
 from dataclasses import dataclass, field
 from typing import Self
@@ -194,6 +195,7 @@ def main():
     # TODO: Refactor the current verbosity system
     logger_setup(EXO_LOG, args.verbosity)
     logger.info("Starting EXO")
+    logger.info(f"EXO_LIBP2P_NAMESPACE: {os.getenv('EXO_LIBP2P_NAMESPACE')}")
 
     node = anyio.run(Node.create, args)
     anyio.run(node.run)
