@@ -60,11 +60,18 @@
 		return models;
 	});
 
-	// Auto-select the first available model if none is selected
+	// Auto-select the first available model if none is selected OR if current selection is stale
 	$effect(() => {
 		const models = availableModels();
-		if (models.length > 0 && !currentModel) {
-			setSelectedChatModel(models[0].id);
+		if (models.length > 0) {
+			// If no model selected, select the first available
+			if (!currentModel) {
+				setSelectedChatModel(models[0].id);
+			} 
+			// If current model is stale (no longer has a running instance), reset to first available
+			else if (!models.some(m => m.id === currentModel)) {
+				setSelectedChatModel(models[0].id);
+			}
 		}
 	});
 
