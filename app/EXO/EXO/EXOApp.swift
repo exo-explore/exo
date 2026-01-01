@@ -125,6 +125,22 @@ struct EXOApp: App {
     }
 }
 
+/// Helper for managing EXO's launch-at-login registration
+enum LaunchAtLoginHelper {
+    private static let logger = Logger(subsystem: "io.exo.EXO", category: "LaunchAtLogin")
+
+    /// Unregisters EXO from launching at login
+    static func disable() {
+        guard SMAppService.mainApp.status == .enabled else { return }
+        do {
+            try SMAppService.mainApp.unregister()
+            logger.info("Unregistered EXO from launch at login")
+        } catch {
+            logger.error("Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
 final class SparkleUpdater: NSObject, ObservableObject {
     private let controller: SPUStandardUpdaterController
     private let delegateProxy: ExoUpdaterDelegate

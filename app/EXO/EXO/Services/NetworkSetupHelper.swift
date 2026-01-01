@@ -62,7 +62,8 @@ networksetup -listnetworkservices | grep -q "Thunderbolt Bridge" && {
 """
 
     static func ensureLaunchDaemonInstalled() {
-        Task.detached {
+        // Use .utility priority to match NSAppleScript's internal QoS and avoid priority inversion
+        Task.detached(priority: .utility) {
             do {
                 if daemonAlreadyInstalled() {
                     return
@@ -73,6 +74,63 @@ networksetup -listnetworkservices | grep -q "Thunderbolt Bridge" && {
                 logger.error("Network setup launch daemon failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    /// Removes all EXO network setup components from the system.
+    /// This includes the LaunchDaemon, scripts, logs, and network location.
+    /// Requires admin privileges.
+    static func uninstall() throws {
+        let uninstallScript = makeUninstallScript()
+        try runShellAsAdmin(uninstallScript)
+        logger.info("EXO network setup components removed successfully")
+    }
+
+    /// Checks if there are any EXO network components installed that need cleanup
+    static func hasInstalledComponents() -> Bool {
+        let manager = FileManager.default
+        let scriptExists = manager.fileExists(atPath: scriptDestination)
+        let plistExists = manager.fileExists(atPath: plistDestination)
+        return scriptExists || plistExists
+    }
+
+    private static func makeUninstallScript() -> String {
+        """
+set -euo pipefail
+
+LABEL="\(daemonLabel)"
+SCRIPT_DEST="\(scriptDestination)"
+PLIST_DEST="\(plistDestination)"
+LOG_OUT="/var/log/\(daemonLabel).log"
+LOG_ERR="/var/log/\(daemonLabel).err.log"
+
+# Unload the LaunchDaemon if running
+launchctl bootout system/"$LABEL" 2>/dev/null || true
+
+# Remove LaunchDaemon plist
+rm -f "$PLIST_DEST"
+
+# Remove the script and parent directory if empty
+rm -f "$SCRIPT_DEST"
+rmdir "$(dirname "$SCRIPT_DEST")" 2>/dev/null || true
+
+# Remove log files
+rm -f "$LOG_OUT" "$LOG_ERR"
+
+# Switch back to Automatic network location
+networksetup -switchtolocation Automatic 2>/dev/null || true
+
+# Delete the exo network location if it exists
+networksetup -listlocations | grep -q '^exo$' && {
+  networksetup -deletelocation exo 2>/dev/null || true
+} || true
+
+# Re-enable Thunderbolt Bridge if it exists
+networksetup -listnetworkservices | grep -q "Thunderbolt Bridge" && {
+  networksetup -setnetworkserviceenabled "Thunderbolt Bridge" on 2>/dev/null || true
+} || true
+
+echo "EXO network components removed successfully"
+"""
     }
 
     private static func daemonAlreadyInstalled() -> Bool {

@@ -17,9 +17,11 @@ struct ContentView: View {
     @State private var deletingInstanceIDs: Set<String> = []
     @State private var showAllNodes = false
     @State private var showAllInstances = false
+    @State private var showAdvanced = false
     @State private var showDebugInfo = false
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
+    @State private var uninstallInProgress = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -193,17 +195,40 @@ struct ContentView: View {
                 Divider()
                     .padding(.vertical, 4)
             }
-            controlButton(title: "Check for Updates") {
-                updater.checkForUpdates()
-            }
-            .padding(.bottom, 8)
-            debugSection
+            advancedSection
                 .padding(.bottom, 8)
             controlButton(title: "Quit", tint: .secondary) {
                 controller.stop()
                 NSApplication.shared.terminate(nil)
             }
         }
+    }
+
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Advanced")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                collapseButton(isExpanded: $showAdvanced)
+            }
+            .animation(nil, value: showAdvanced)
+            if showAdvanced {
+                VStack(alignment: .leading, spacing: 2) {
+                    HoverButton(title: "Check for Updates", small: true) {
+                        updater.checkForUpdates()
+                    }
+                    debugSection
+                    HoverButton(title: "Uninstall", tint: .red, small: true) {
+                        showUninstallConfirmationAlert()
+                    }
+                    .disabled(uninstallInProgress)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showAdvanced)
     }
 
     private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
@@ -328,15 +353,15 @@ struct ContentView: View {
     }
 
     private var debugSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Debug Info")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                collapseButton(isExpanded: $showDebugInfo)
+        VStack(alignment: .leading, spacing: 4) {
+            HoverButton(
+                title: "Debug Info",
+                tint: .primary,
+                trailingSystemImage: showDebugInfo ? "chevron.up" : "chevron.down",
+                small: true
+            ) {
+                showDebugInfo.toggle()
             }
-            .animation(nil, value: showDebugInfo)
             if showDebugInfo {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Version: \(buildTag)")
@@ -352,6 +377,7 @@ struct ContentView: View {
                     sendBugReportButton
                         .padding(.top, 6)
                 }
+                .padding(.leading, 8)
                 .transition(.opacity)
             }
         }
@@ -447,6 +473,88 @@ struct ContentView: View {
         bugReportInFlight = false
     }
 
+    private func showUninstallConfirmationAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall EXO"
+        alert.informativeText = """
+            This will remove EXO and all its system components:
+
+            • Network configuration daemon
+            • Launch at login registration
+            • EXO network location
+
+            The app will be moved to Trash.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+
+        // Style the Uninstall button as destructive
+        if let uninstallButton = alert.buttons.first {
+            uninstallButton.hasDestructiveAction = true
+        }
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            performUninstall()
+        }
+    }
+
+    private func performUninstall() {
+        uninstallInProgress = true
+
+        // Stop EXO process first
+        controller.cancelPendingLaunch()
+        controller.stop()
+        stateService.stopPolling()
+
+        // Run the privileged uninstall on a background thread
+        // Using .utility QoS to avoid priority inversion with NSAppleScript's subprocess
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                // Remove network setup daemon and components (requires admin privileges)
+                try NetworkSetupHelper.uninstall()
+
+                DispatchQueue.main.async {
+                    // Unregister from launch at login
+                    LaunchAtLoginHelper.disable()
+
+                    // Move app to trash
+                    self.moveAppToTrash()
+
+                    // Quit the app
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.showErrorAlert(message: error.localizedDescription)
+                    self.uninstallInProgress = false
+                }
+            }
+        }
+    }
+
+    private func showErrorAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall Failed"
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func moveAppToTrash() {
+        guard let appURL = Bundle.main.bundleURL as URL? else { return }
+        do {
+            try FileManager.default.trashItem(at: appURL, resultingItemURL: nil)
+        } catch {
+            // If we can't trash the app, that's OK - user can do it manually
+            // The important system components have already been cleaned up
+        }
+    }
+
     private var buildTag: String {
         Bundle.main.infoDictionary?["EXOBuildTag"] as? String ?? "unknown"
     }
@@ -460,7 +568,16 @@ private struct HoverButton: View {
     let title: String
     let tint: Color
     let trailingSystemImage: String?
+    let small: Bool
     let action: () -> Void
+
+    init(title: String, tint: Color = .primary, trailingSystemImage: String? = nil, small: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.tint = tint
+        self.trailingSystemImage = trailingSystemImage
+        self.small = small
+        self.action = action
+    }
 
     @State private var isHovering = false
 
@@ -468,6 +585,7 @@ private struct HoverButton: View {
         Button(action: action) {
             HStack {
                 Text(title)
+                    .font(small ? .caption : nil)
                 Spacer()
                 if let systemName = trailingSystemImage {
                     Image(systemName: systemName)
@@ -475,8 +593,8 @@ private struct HoverButton: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
+            .padding(.vertical, small ? 4 : 6)
+            .padding(.horizontal, small ? 6 : 8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(
