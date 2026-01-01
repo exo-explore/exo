@@ -16,3 +16,4 @@ class ModelMetadata(CamelCaseModel):
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
+    supports_vision: bool = False
