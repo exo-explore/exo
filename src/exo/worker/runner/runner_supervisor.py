@@ -15,7 +15,7 @@ from anyio.abc import TaskGroup
 from loguru import logger
 
 from exo.shared.types.events import Event, RunnerStatusUpdated, TaskAcknowledged
-from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.tasks import CancelGeneration, Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
     RunnerFailed,
@@ -38,6 +38,7 @@ class RunnerSupervisor:
     initialize_timeout: float
     _ev_recv: MpReceiver[Event]
     _task_sender: MpSender[Task]
+    _cancel_sender: MpSender[CancelGeneration]
     _event_sender: Sender[Event]
     # err_path: str
     _tg: TaskGroup | None = field(default=None, init=False)
@@ -55,6 +56,8 @@ class RunnerSupervisor:
         ev_send, ev_recv = mp_channel[Event]()
         # A task is kind of a runner command
         task_sender, task_recv = mp_channel[Task]()
+        # Separate channel for cancellations to avoid blocking/swallowing tasks
+        cancel_sender, cancel_recv = mp_channel[CancelGeneration]()
 
         runner_process = Process(
             target=entrypoint,
@@ -62,6 +65,7 @@ class RunnerSupervisor:
                 bound_instance,
                 ev_send,
                 task_recv,
+                cancel_recv,
                 logger,
             ),
             daemon=True,
@@ -76,6 +80,7 @@ class RunnerSupervisor:
             initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
+            _cancel_sender=cancel_sender,
             _event_sender=event_sender,
             # err_path=err_path,
         )
@@ -90,6 +95,7 @@ class RunnerSupervisor:
 
         self._ev_recv.close()
         self._task_sender.close()
+        self._cancel_sender.close()
         self._event_sender.close()
         await to_thread.run_sync(self.runner_process.join, 30)
         if not self.runner_process.is_alive():
@@ -116,6 +122,21 @@ class RunnerSupervisor:
     def shutdown(self):
         assert self._tg
         self._tg.cancel_scope.cancel()
+
+    def send_task_nowait(self, task: Task):
+        """Send a task to the runner without waiting for completion.
+
+        Used for cancellation tasks that need to interrupt ongoing work.
+        CancelGeneration tasks go through a dedicated channel to avoid blocking.
+        """
+        logger.info(f"Sending task (nowait) {task}")
+        try:
+            if isinstance(task, CancelGeneration):
+                self._cancel_sender.send(task)
+            else:
+                self._task_sender.send(task)
+        except ClosedResourceError:
+            logger.warning(f"Task {task} dropped, runner closed communication.")
 
     async def start_task(self, task: Task):
         logger.info(f"Starting task {task}")
