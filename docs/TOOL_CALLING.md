@@ -18,9 +18,10 @@ Tool calling is supported by models that include function calling in their train
 
 Different models use different formats for tool invocations:
 - **Qwen**: `<tool_call>{json}</tool_call>`
-- **Llama/Mistral**: `<function=name>{args}</function>`
+- **Llama 3.1** (single/few tools): `<|python_tag|>{"name": "...", "parameters": {...}}<|eom_id|>`
+- **Llama 3.1** (many tools): Raw JSON `{ "name": "...", "parameters": {...} }`
 
-The implementation automatically detects and parses the correct format.
+The implementation automatically detects and parses all formats.
 
 ## How It Works
 
