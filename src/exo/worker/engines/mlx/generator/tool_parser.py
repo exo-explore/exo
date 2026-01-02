@@ -56,7 +56,53 @@ def parse_tool_calls(
     # Find all tool call blocks
     tool_calls: list[dict[str, Any]] = []
 
-    # Use regex to find tool call blocks
+    # First, try to find raw JSON tool calls (for parallel tool calling)
+    # Pattern: { "name": "func_name", "parameters": {...} }
+    # Use a simple approach: find all { "name": strings and try to parse from there
+    idx = 0
+    search_pos = 0
+    while True:
+        # Find the start of a potential tool call
+        start = text.find('{ "name":', search_pos)
+        if start == -1:
+            break
+
+        # Try to find the matching closing brace by counting braces
+        brace_count = 0
+        end = start
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                brace_count += 1
+            elif text[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end = i + 1
+                    break
+
+        if end > start:
+            potential_json = text[start:end]
+            try:
+                tool_data = json.loads(potential_json)
+                if "name" in tool_data and "parameters" in tool_data:
+                    tool_calls.append({
+                        "id": f"call_{idx}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_data["name"],
+                            "arguments": json.dumps(tool_data["parameters"]),
+                        }
+                    })
+                    idx += 1
+            except json.JSONDecodeError:
+                pass
+
+        search_pos = start + 1
+
+    # If we found raw JSON tool calls, return them
+    if tool_calls:
+        return tool_calls
+
+    # Otherwise, use regex to find tool call blocks with tags
     if "<|python_tag|>" in tool_open:
         # Llama 3.1+ format: <|python_tag|>{"name": "func", "parameters": {...}}<|eom_id|>
         pattern = r"<\|python_tag\|>(.*?)<\|eom_id\|>"
