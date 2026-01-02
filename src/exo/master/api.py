@@ -75,7 +75,11 @@ def chunk_to_response(
 
     # Include tool_calls in the delta if present
     if chunk.tool_calls:
-        delta.tool_calls = chunk.tool_calls
+        # Add index field to each tool call for streaming format
+        delta.tool_calls = [
+            {"index": idx, **tool_call}
+            for idx, tool_call in enumerate(chunk.tool_calls)
+        ]
 
     return ChatCompletionResponse(
         id=command_id,
