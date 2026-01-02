@@ -31,7 +31,7 @@ jobs:
       - name: Register custom model (headless) and persist
         run: |
           nix --extra-experimental-features nix-command --extra-experimental-features flakes develop -c \
-            uv run python tests/test_custom_model_registration.py --model "$MODEL_ID"
+            uv run pytest tests/test_custom_model_registration.py
       - name: Show persisted custom models
         if: always()
         run: |
