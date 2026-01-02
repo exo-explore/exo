@@ -133,14 +133,21 @@ def mlx_generate(
         logger.info(out.text)
         accumulated_text += out.text
 
-        # Check if we're starting a tool call
-        if not tool_call_in_progress and tool_open in accumulated_text:
-            tool_call_in_progress = True
-            logger.info("Tool call detected in generation")
+        # Check if we're starting a tool call (either tagged or raw JSON)
+        if not tool_call_in_progress:
+            # Check for tag-based markers
+            if tool_open in accumulated_text:
+                tool_call_in_progress = True
+                logger.info("Tool call detected in generation (tagged format)")
+            # Also check for raw JSON format: { "name":
+            elif '{ "name":' in accumulated_text:
+                tool_call_in_progress = True
+                logger.info("Tool call detected in generation (raw JSON format)")
 
         # Check if we've completed a tool call
-        if tool_call_in_progress and tool_close in accumulated_text:
+        if tool_call_in_progress:
             # Try to parse tool calls from accumulated text
+            # This will handle both tagged and raw JSON formats
             parsed_calls = parse_tool_calls(accumulated_text, model_id)
             if parsed_calls:
                 tool_calls_detected = parsed_calls
