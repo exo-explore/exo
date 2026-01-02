@@ -18,6 +18,7 @@ def detect_tool_call_format(model_id: str) -> tuple[str, str]:
 
     Different models use different formats:
     - Qwen models: <tool_call>...</tool_call>
+    - Llama 3.1+: <|python_tag|>...<|eom_id|>
     - Other models may use different patterns
 
     Returns:
@@ -28,8 +29,8 @@ def detect_tool_call_format(model_id: str) -> tuple[str, str]:
     if "qwen" in model_id_lower:
         return "<tool_call>", "</tool_call>"
     elif "llama" in model_id_lower or "mistral" in model_id_lower:
-        # Llama 3.1+ and Mistral use function tags
-        return "<function=", "</function>"
+        # Llama 3.1+ uses python_tag format
+        return "<|python_tag|>", "<|eom_id|>"
     else:
         # Default to Qwen-style tags
         return "<tool_call>", "</tool_call>"
@@ -56,29 +57,29 @@ def parse_tool_calls(
     tool_calls: list[dict[str, Any]] = []
 
     # Use regex to find tool call blocks
-    if "<function=" in tool_open:
-        # Llama/Mistral format: <function=name>{"arg": "value"}</function>
-        pattern = r"<function=([^>]+)>(.*?)</function>"
+    if "<|python_tag|>" in tool_open:
+        # Llama 3.1+ format: <|python_tag|>{"name": "func", "parameters": {...}}<|eom_id|>
+        pattern = r"<\|python_tag\|>(.*?)<\|eom_id\|>"
         matches = re.finditer(pattern, text, re.DOTALL)
 
         for idx, match in enumerate(matches):
-            function_name = match.group(1)
-            arguments_json = match.group(2).strip()
+            tool_call_json = match.group(1).strip()
 
             try:
-                arguments = json.loads(arguments_json)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse tool call arguments: {e}")
-                continue
+                tool_call_data = json.loads(tool_call_json)
 
-            tool_calls.append({
-                "id": f"call_{idx}",
-                "type": "function",
-                "function": {
-                    "name": function_name,
-                    "arguments": json.dumps(arguments),
-                }
-            })
+                # Llama format uses "parameters" instead of "arguments"
+                tool_calls.append({
+                    "id": f"call_{idx}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_call_data.get("name", ""),
+                        "arguments": json.dumps(tool_call_data.get("parameters", tool_call_data.get("arguments", {}))),
+                    }
+                })
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse tool call JSON: {e}")
+                continue
     else:
         # Qwen format: <tool_call>{"name": "func", "arguments": {...}}</tool_call>
         start_idx = 0
@@ -129,9 +130,9 @@ def extract_text_without_tool_calls(
     """
     tool_open, tool_close = detect_tool_call_format(model_id)
 
-    if "<function=" in tool_open:
-        # Remove Llama/Mistral style function calls
-        pattern = r"<function=[^>]+>.*?</function>"
+    if "<|python_tag|>" in tool_open:
+        # Remove Llama 3.1+ style python_tag calls
+        pattern = r"<\|python_tag\|>.*?<\|eom_id\|>"
         return re.sub(pattern, "", text, flags=re.DOTALL).strip()
     else:
         # Remove Qwen style tool calls
