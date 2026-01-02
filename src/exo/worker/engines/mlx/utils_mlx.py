@@ -284,6 +284,7 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     chat_task_data: ChatCompletionTaskParams,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     # Now we can properly access the messages
     messages = chat_task_data.messages
@@ -306,11 +307,21 @@ def apply_chat_template(
             {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
         )
 
-    prompt: str = tokenizer.apply_chat_template(  # type: ignore
-        formatted_messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
+    # Pass tools to the tokenizer if provided
+    if tools is not None and len(tools) > 0:
+        logger.info(f"Applying chat template with {len(tools)} tools")
+        prompt: str = tokenizer.apply_chat_template(  # type: ignore
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=tools,
+        )
+    else:
+        prompt: str = tokenizer.apply_chat_template(  # type: ignore
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     return prompt  # type: ignore
 

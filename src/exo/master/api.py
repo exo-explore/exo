@@ -70,6 +70,13 @@ encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 def chunk_to_response(
     chunk: TokenChunk, command_id: CommandId
 ) -> ChatCompletionResponse:
+    # Build the delta message
+    delta = ChatCompletionMessage(role="assistant", content=chunk.text)
+
+    # Include tool_calls in the delta if present
+    if chunk.tool_calls:
+        delta.tool_calls = chunk.tool_calls
+
     return ChatCompletionResponse(
         id=command_id,
         created=int(time.time()),
@@ -77,7 +84,7 @@ def chunk_to_response(
         choices=[
             StreamingChoiceResponse(
                 index=0,
-                delta=ChatCompletionMessage(role="assistant", content=chunk.text),
+                delta=delta,
                 finish_reason=chunk.finish_reason,
             )
         ],
@@ -461,6 +468,7 @@ class API:
         text_parts: list[str] = []
         model: str | None = None
         finish_reason: FinishReason | None = None
+        tool_calls = None
 
         async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
             if model is None:
@@ -471,8 +479,20 @@ class API:
             if chunk.finish_reason is not None:
                 finish_reason = chunk.finish_reason
 
+            # Capture tool_calls from the final chunk
+            if chunk.tool_calls:
+                tool_calls = chunk.tool_calls
+
         combined_text = "".join(text_parts)
         assert model is not None
+
+        # Build the message with tool_calls if present
+        message = ChatCompletionMessage(
+            role="assistant",
+            content=combined_text,
+        )
+        if tool_calls:
+            message.tool_calls = tool_calls
 
         return ChatCompletionResponse(
             id=command_id,
@@ -481,10 +501,7 @@ class API:
             choices=[
                 ChatCompletionChoice(
                     index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant",
-                        content=combined_text,
-                    ),
+                    message=message,
                     finish_reason=finish_reason,
                 )
             ],

@@ -13,6 +13,10 @@ from exo.shared.types.worker.runner_response import (
 )
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
+from exo.worker.engines.mlx.generator.tool_parser import (
+    detect_tool_call_format,
+    parse_tool_calls,
+)
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     make_kv_cache,
@@ -94,12 +98,25 @@ def mlx_generate(
     # Currently we support chat-completion tasks only.
     logger.info(f"task_params: {task}")
 
+    # Extract tools from task if provided
+    tools = task.tools if task.tools else None
+    model_id = task.model
+
     prompt = apply_chat_template(
         tokenizer=tokenizer,
         chat_task_data=task,
+        tools=tools,
     )
 
     caches = make_kv_cache(model=model)
+
+    # Accumulate text for tool call detection
+    accumulated_text = ""
+    tool_calls_detected: list[dict[str, Any]] | None = None
+    tool_call_in_progress = False
+
+    # Detect tool call markers for this model
+    tool_open, tool_close = detect_tool_call_format(model_id)
 
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
@@ -114,19 +131,42 @@ def mlx_generate(
         kv_bits=KV_BITS,
     ):
         logger.info(out.text)
-        if out.finish_reason is not None and out.finish_reason not in get_args(
+        accumulated_text += out.text
+
+        # Check if we're starting a tool call
+        if not tool_call_in_progress and tool_open in accumulated_text:
+            tool_call_in_progress = True
+            logger.info("Tool call detected in generation")
+
+        # Check if we've completed a tool call
+        if tool_call_in_progress and tool_close in accumulated_text:
+            # Try to parse tool calls from accumulated text
+            parsed_calls = parse_tool_calls(accumulated_text, model_id)
+            if parsed_calls:
+                tool_calls_detected = parsed_calls
+                logger.info(f"Parsed {len(parsed_calls)} tool calls")
+
+        # Determine finish reason
+        finish_reason = out.finish_reason
+        if finish_reason is not None:
+            # If we detected complete tool calls, override finish reason
+            if tool_calls_detected:
+                finish_reason = "tool_calls"
+
+        if finish_reason is not None and finish_reason not in get_args(
             FinishReason
         ):
             # We don't throw here as this failure case is really not all that bad
             # Just log the error and move on
             logger.warning(
-                f"Model generated unexpected finish_reason: {out.finish_reason}"
+                f"Model generated unexpected finish_reason: {finish_reason}"
             )
 
         yield GenerationResponse(
             text=out.text,
             token=out.token,
-            finish_reason=cast(FinishReason | None, out.finish_reason),
+            finish_reason=cast(FinishReason | None, finish_reason),
+            tool_calls=tool_calls_detected if finish_reason is not None else None,
         )
 
         if out.finish_reason is not None:

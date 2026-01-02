@@ -178,6 +178,7 @@ def main(
                                                     text=response.text,
                                                     token_id=response.token,
                                                     finish_reason=response.finish_reason,
+                                                    tool_calls=response.tool_calls,
                                                 ),
                                             )
                                         )

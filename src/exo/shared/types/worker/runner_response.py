@@ -1,3 +1,5 @@
+from typing import Any
+
 from exo.shared.types.api import FinishReason
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -15,6 +17,7 @@ class GenerationResponse(BaseRunnerResponse):
     token: int
     # logprobs: list[float] | None = None # too big. we can change to be top-k
     finish_reason: FinishReason | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class FinishedResponse(BaseRunnerResponse):

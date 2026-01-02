@@ -40,4 +40,5 @@ class TokenizerWrapper:
         messages_dicts: list[dict[str, Any]],
         tokenize: bool = False,
         add_generation_prompt: bool = True,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str: ...

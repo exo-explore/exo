@@ -26,7 +26,7 @@ dependencies = [
     "psutil>=7.0.0",
     "loguru>=0.7.3",
     "textual>=5.3.0",
-    "exo_pyo3_bindings", # rust bindings
+    # "exo_pyo3_bindings", # rust bindings - commented out for testing
     "anyio==4.11.0",
     "bidict>=0.23.1",
     "mlx>=0.30.1; sys_platform == 'darwin'",
@@ -62,13 +62,13 @@ dev = [
 # workspace configuration
 ###
 
-[tool.uv.workspace]
-members = [
-    "rust/exo_pyo3_bindings",
-]
+# [tool.uv.workspace]
+# members = [
+#     "rust/exo_pyo3_bindings",
+# ]
 
-[tool.uv.sources]
-exo_pyo3_bindings = { workspace = true }
+# [tool.uv.sources]
+# exo_pyo3_bindings = { workspace = true }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
 # mlx-lm = { path = "/Users/Shared/mlx-lm", editable=true }
