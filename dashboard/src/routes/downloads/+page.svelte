@@ -385,23 +385,11 @@
 	}
 
 	let customModelId = $state("");
-	let regexMlxId = $state(new RegExp("^mlx-community/"));
-	let showInputError = $state(false);
 	let isPlacing = $state(false);
-
-	$effect(() => {
-		// Clear error when user types
-		if (customModelId) showInputError = false;
-	});
 
 	async function handleDownload() {
 		if (!customModelId.trim()) return;
 		isPlacing = true;
-		if (!regexMlxId.test(customModelId.trim())) {
-			showInputError = true;
-			isPlacing = false;
-			return;
-		}
 		try {
 			await placeInstance(customModelId.trim());
 			customModelId = "";
@@ -471,7 +459,7 @@
 						<input
 							type="text"
 							bind:value={customModelId}
-							placeholder="ENTER HUGGINGFACE full model ID (E.G. mlx-community/custom-model-id)"
+							placeholder="ENTER HUGGINGFACE MODEL ID (E.G. mlx-community/custom-model-id)"
 							class="w-full bg-exo-dark-gray border border-exo-medium-gray/40 rounded px-4 py-2.5 text-sm font-mono focus:border-exo-yellow/50 focus:ring-1 focus:ring-exo-yellow/20 outline-none transition-all placeholder:text-exo-light-gray/30"
 							onkeydown={(e: KeyboardEvent) =>
 								e.key === "Enter" && handleDownload()}
@@ -485,7 +473,7 @@
 						disabled={!customModelId.trim() || isPlacing}
 						class="px-6 py-2.5 bg-exo-yellow hover:bg-white text-exo-black font-mono text-xs font-bold uppercase tracking-wider rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
 					>
-						{isPlacing ? "Placing..." : "Download"}
+						{isPlacing ? "Placing..." : "Download and Run"}
 					</button>
 				</div>
 				<div
@@ -505,26 +493,6 @@
 					Note: Downloading a custom model will automatically place it
 					on available nodes.
 				</div>
-				{#if showInputError}
-					<div
-						class="mt-2 text-[10px] font-mono text-exo-light-gray/50 flex items-center gap-2"
-					>
-						<svg
-							class="w-3 h-3"
-							viewBox="0 0 20 20"
-							fill="currentColor"
-						>
-							<path
-								fill-rule="evenodd"
-								d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-								clip-rule="evenodd"
-							></path>
-						</svg>
-						<span class="text-exo-yellow/50"
-							>Model ID must start with mlx-community/</span
-						>
-					</div>
-				{/if}
 			</div>
 		</div>
 
