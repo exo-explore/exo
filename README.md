@@ -25,6 +25,7 @@ exo connects all your devices into an AI cluster. Not only does exo enable runni
 - **RDMA over Thunderbolt**: exo ships with [day-0 support for RDMA over Thunderbolt 5](https://x.com/exolabs/status/2001817749744476256?s=20), enabling 99% reduction in latency between devices.
 - **Topology-Aware Auto Parallel**: exo figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
 - **Tensor Parallelism**: exo supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
+- **OpenAI-Compatible Tool Calling**: Full function calling support for Llama 3.1, Qwen, and Mistral models with automatic error handling and schema-aware normalization. See [Tool Calling Guide](docs/TOOL_CALLING.md).
 - **MLX Support**: exo uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
 
 ## Benchmarks
