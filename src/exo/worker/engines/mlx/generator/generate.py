@@ -15,6 +15,7 @@ from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.generator.tool_parser import (
     detect_tool_call_format,
+    normalize_tool_call_arguments,
     parse_tool_calls,
 )
 from exo.worker.engines.mlx.utils_mlx import (
@@ -150,6 +151,9 @@ def mlx_generate(
             # This will handle both tagged and raw JSON formats
             parsed_calls = parse_tool_calls(accumulated_text, model_id)
             if parsed_calls:
+                # Normalize to fix common LLM mistakes (missing fields, type mismatches)
+                # Pass tool definitions to enable schema-aware normalization
+                parsed_calls = normalize_tool_call_arguments(parsed_calls, tools)
                 tool_calls_detected = parsed_calls
                 logger.info(f"Parsed {len(parsed_calls)} tool calls")
 
