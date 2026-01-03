@@ -284,12 +284,15 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     chat_task_data: ChatCompletionTaskParams,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     # Now we can properly access the messages
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
+    tool_results_buffer: list[str] = []
+
+    for message in messages:
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
@@ -302,15 +305,60 @@ def apply_chat_template(
             continue
 
         # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+        msg_dict = {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
 
-    prompt: str = tokenizer.apply_chat_template(  # type: ignore
-        formatted_messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
+        # Llama 3.1 doesn't support parallel tool calling - remove tool_calls from history
+        # Tool results are sent as separate tool messages, so we don't need them here
+        if msg_dict.get("role") == "assistant" and "tool_calls" in msg_dict:
+            tool_calls = cast(list[Any], msg_dict.get("tool_calls"))
+            if len(tool_calls) > 1:
+                # Multiple tool calls - remove them entirely to avoid template error
+                logger.info(f"Removing {len(tool_calls)} parallel tool_calls from assistant message (Llama 3.1 limitation)")
+                msg_dict.pop("tool_calls", None)
+                # If content is None, skip this message entirely
+                if msg_dict.get("content") is None:
+                    continue
+
+        # Handle tool messages: Llama template only supports single tool-calls
+        # Collect consecutive tool results and combine them into one user message
+        if msg_dict.get("role") == "tool":
+            tool_name = cast(str, msg_dict.get("name")) if "name" in msg_dict else "unknown"
+            tool_result = cast(str, msg_dict.get("content")) if "content" in msg_dict else ""
+            tool_results_buffer.append(f"Tool '{tool_name}' returned: {tool_result}")
+            continue  # Don't append yet, collect all consecutive tool results
+
+        # If we have buffered tool results, flush them as a single user message
+        if tool_results_buffer:
+            formatted_messages.append({
+                "role": "user",
+                "content": "\n".join(tool_results_buffer)
+            })
+            tool_results_buffer = []
+
+        formatted_messages.append(msg_dict)
+
+    # Flush any remaining tool results at the end
+    if tool_results_buffer:
+        formatted_messages.append({
+            "role": "user",
+            "content": "\n".join(tool_results_buffer)
+        })
+
+    # Pass tools to the tokenizer if provided
+    if tools is not None and len(tools) > 0:
+        logger.info(f"Applying chat template with {len(tools)} tools")
+        prompt: str = tokenizer.apply_chat_template(  # type: ignore
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=tools,
+        )
+    else:
+        prompt: str = tokenizer.apply_chat_template(  # type: ignore
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     return prompt  # type: ignore
 

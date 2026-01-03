@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.13"
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -8,12 +8,6 @@ resolution-markers = [
 supported-markers = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
-]
-
-[manifest]
-members = [
-    "exo",
-    "exo-pyo3-bindings",
 ]
 
 [[package]]
@@ -326,7 +320,6 @@ dependencies = [
     { name = "base58", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "bidict", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "exo-pyo3-bindings", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "filelock", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "greenlet", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -369,7 +362,6 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "bidict", specifier = ">=0.23.1" },
     { name = "cryptography", specifier = ">=45.0.5" },
-    { name = "exo-pyo3-bindings", editable = "rust/exo_pyo3_bindings" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "filelock", specifier = ">=3.18.0" },
     { name = "greenlet", specifier = ">=3.2.4" },
@@ -401,27 +393,6 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "pytest-env" },
     { name = "ruff", specifier = ">=0.11.13" },
-]
-
-[[package]]
-name = "exo-pyo3-bindings"
-version = "0.1.0"
-source = { editable = "rust/exo_pyo3_bindings" }
-
-[package.dev-dependencies]
-dev = [
-    { name = "exo-pyo3-bindings", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "exo-pyo3-bindings", editable = "rust/exo_pyo3_bindings" },
-    { name = "pytest", specifier = ">=8.4.0" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
