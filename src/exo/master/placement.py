@@ -163,13 +163,8 @@ def place_instance(
             target_instances[instance_id] = MlxRingInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
-                hosts=[
-                    Host(
-                        ip=host.ip,
-                        port=random_ephemeral_port(),
-                    )
-                    for host in hosts
-                ],
+                hosts_by_node=hosts_by_node,
+                ephemeral_port=ephemeral_port,
                 download_only=command.download_only,
             )
 

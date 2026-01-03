@@ -53,8 +53,8 @@ def plan(
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _kill_runner(runners, all_runners, instances)
-        or _create_runner(node_id, runners, instances)
-        or _model_needs_download(runners, download_status)
+        or _create_runner(node_id, runners, instances, tasks)
+        or _model_needs_download(node_id, runners, instances, download_status)
         or _init_distributed_backend(runners, all_runners)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
@@ -89,10 +89,19 @@ def _create_runner(
     node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
     instances: Mapping[InstanceId, Instance],
+    tasks: Mapping[TaskId, Task],
 ) -> CreateRunner | None:
     for instance in instances.values():
         if instance.download_only:
-            continue
+            # If download_only is True, we only create a runner if there is a pending task for this instance.
+            # This allows for "lazy loading" of models.
+            has_pending_task = any(
+                task.instance_id == instance.instance_id
+                and task.task_status in (TaskStatus.Pending, TaskStatus.Running)
+                for task in tasks.values()
+            )
+            if not has_pending_task:
+                continue
 
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
         if runner_id is None:
@@ -113,11 +122,14 @@ def _create_runner(
 
 
 def _model_needs_download(
+    node_id: NodeId,
     runners: Mapping[RunnerId, RunnerSupervisor],
+    instances: Mapping[InstanceId, Instance],
     download_status: Mapping[ModelId, DownloadProgress],
 ) -> DownloadModel | None:
     for runner in runners.values():
-        model_id = runner.bound_instance.bound_shard.model_meta.model_id
+        shard = runner.bound_instance.bound_shard
+        model_id = shard.model_meta.model_id
         if isinstance(runner.status, RunnerIdle) and (
             model_id not in download_status
             or not isinstance(
@@ -125,6 +137,26 @@ def _model_needs_download(
             )
         ):
             # We don't invalidate download_status randomly in case a file gets deleted on disk
+            return DownloadModel(
+                instance_id=runner.bound_instance.instance.instance_id,
+                shard_metadata=shard,
+            )
+
+    for instance in instances.values():
+        if not instance.download_only:
+            continue
+
+        runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
+        if runner_id is None:
+            continue
+
+        shard = instance.shard(runner_id)
+        assert shard is not None
+
+        if shard.model_meta.model_id not in download_status or not isinstance(
+            download_status[shard.model_meta.model_id],
+            (DownloadOngoing, DownloadCompleted),
+        ):
             return DownloadModel(
                 instance_id=instance.instance_id,
                 shard_metadata=shard,
