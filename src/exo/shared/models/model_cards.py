@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any, cast
 from loguru import logger
@@ -437,9 +438,55 @@ MODEL_CARDS: dict[str, ModelCard] = {
     #         supports_tensor=True,
     #     ),
     # ),
-    # 
+    #
     #
 }
+
+
+def get_pretty_name_from_model_id(model_id: str) -> str:
+    """Generates a pretty name from a model ID."""
+    # Strip namespace
+    if "/" in model_id:
+        name = model_id.split("/")[-1]
+    else:
+        name = model_id
+
+    # Handle common replacements
+    name = name.replace("-", " ").replace("_", " ")
+
+    # Handle quantization formats like "4bit", "8bit", "Q4_K_M"
+    # format "model 4bit" -> model (4-bit)"
+    def quant_replacer(match: re.Match[str]) -> str:
+        bits = match.group(1)
+        return f"({bits}-bit)"
+
+    name = re.sub(r"\b(\d+)\s*-?bit\b", quant_replacer, name, flags=re.IGNORECASE)
+
+    # Remove extra spaces
+    name = " ".join(name.split())
+
+    # Handle GGUF if present (usually at end)
+    if "GGUF" in name.upper():
+        # Case insensitive replacement for GGUF
+        name = re.sub(r"\bgguf\b", "(GGUF)", name, flags=re.IGNORECASE)
+
+    # Capitalize words
+    words = name.split()
+    capitalized_words: list[str] = []
+    for word in words:
+        # If it's already mixed case or all caps (and not just one letter), keep it
+        # Also keep if it starts with ( and ends with ) like (4-bit) or (GGUF)
+        if (any(c.isupper() for c in word) and len(word) > 1) or (word.startswith("(") and word.endswith(")")):
+            capitalized_words.append(word)
+        else:
+            # Capitalize the first letter, keep the rest as is
+            capitalized_words.append(word[0].upper() + word[1:] if word else "")
+
+    name = " ".join(capitalized_words)
+    name = name.replace(" (", "(").replace("(", " (").strip() # Ensure single space before (
+
+    return name
+
 
 # Persistent storage for custom models - use EXO_HOME for consistency
 def _get_custom_models_path() -> Path:
@@ -456,7 +503,7 @@ PERSISTENT_FILE_PATH = _get_custom_models_path()
 custom_models_loaded = False
 
 def load_custom_models_once() -> None:
-    """Loads custom models from persistent storage (called once on first access)."""
+    """Loads custom models from persistent storage (called once)"""
     global custom_models_loaded
     if custom_models_loaded:
         return
@@ -474,9 +521,17 @@ def load_custom_models_once() -> None:
             logger.debug(f"Loaded {len(data)} entries from custom_models.json")
             
             loaded_count = 0
+            any_changes = False
             for key, card_data in data.items():
                 try:
                     card = ModelCard.model_validate(card_data)
+                    # prettify the model_id name
+                    if card.name == str(card.model_id) or card.name == key:
+                        card.name = get_pretty_name_from_model_id(str(card.model_id))
+                        if card.metadata.pretty_name == str(card.model_id):
+                             card.metadata.pretty_name = card.name
+                        any_changes = True
+
                     if key not in MODEL_CARDS:
                         MODEL_CARDS[key] = card
                         loaded_count += 1
@@ -485,6 +540,10 @@ def load_custom_models_once() -> None:
                         logger.debug(f"Skipping {key} - already in MODEL_CARDS")
                 except Exception as e:
                     logger.warning(f"Failed to load model card for {key}: {e}")
+            
+            if any_changes:
+                logger.info("Custom model names were prettified. Saving changes.")
+                save_custom_models()
             
             logger.info(f"✓ Loaded {loaded_count} custom models from {PERSISTENT_FILE_PATH}")
     except Exception as e:

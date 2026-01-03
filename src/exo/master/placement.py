@@ -128,6 +128,7 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 ibv_devices=mlx_ibv_devices,
                 ibv_coordinators=mlx_ibv_coordinators,
+                download_only=command.download_only,
             )
         case InstanceMeta.MlxRing:
             hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
@@ -141,6 +142,7 @@ def place_instance(
                     )
                     for host in hosts
                 ],
+                download_only=command.download_only,
             )
 
     return target_instances

@@ -392,20 +392,51 @@
 		//Trim whitespace
 		customModelId = customModelId.trim();
 		if (!customModelId) return;
+
+		// Basic validation for Hugging Face model ID format
+		const modelIdRegex = /^([a-zA-Z0-9._-]+\/)?([a-zA-Z0-9._-]+)$/;
+		if (!modelIdRegex.test(customModelId)) {
+			alert(
+				`Invalid model ID format: ${customModelId}. Expected 'username/repo-name' or 'mlx-community/repo-name'.`,
+			);
+			return;
+		}
+
+		// Check if model exists on Hugging Face
+		try {
+			const resp = await fetch(
+				`https://huggingface.co/api/models/${customModelId}`,
+			);
+			if (resp.status === 404) {
+				alert(`Model '${customModelId}' not found on Hugging Face.`);
+				return;
+			}
+			if (!resp.ok) {
+				alert(
+					`Cannot access model '${customModelId}' on Hugging Face (Status: ${resp.status}). It might be private or require authentication.`,
+				);
+				return;
+			}
+		} catch (err) {
+			console.error("Failed to check HF API:", err);
+			alert(
+				`Failed to connect to Hugging Face to verify model. Please check your internet connection.`,
+			);
+			return;
+		}
+
 		isPlacing = true;
 		//Register and Download the model
 		try {
 			await registerCustomModel(customModelId);
-			try {
-				// Try to download and run (default)
-				await placeInstance(customModelId, false);
-			} catch (err: any) {
+			// Try to download the model only
+			placeInstance(customModelId, true).catch((err) => {
 				alert(err instanceof Error ? err.message : "Download failed");
-			}
+			});
 			customModelId = "";
 			refreshState();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : "Download failed");
+			alert(err instanceof Error ? err.message : "Registration failed");
 		} finally {
 			isPlacing = false;
 		}
@@ -483,7 +514,7 @@
 						disabled={!customModelId.trim() || isPlacing}
 						class="px-6 py-2.5 bg-exo-yellow hover:bg-white text-exo-black font-mono text-xs font-bold uppercase tracking-wider rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
 					>
-						{isPlacing ? "Placing..." : "Download and Run"}
+						{isPlacing ? "Placing..." : "Download Model"}
 					</button>
 				</div>
 				<div
