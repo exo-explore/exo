@@ -397,3 +397,106 @@ def test_get_mlx_jaccl_coordinators(
     assert coordinators[node_c_id] == (
         f"{conn_c_a.send_back_multiaddr.ip_address}:5000"
     ), "node_c should use the IP from conn_c_a"
+
+
+def test_get_shard_assignments_bandwidth_aware(
+    topology: Topology,
+    create_node: Callable[[int, NodeId | None], NodeInfo],
+    create_connection: Callable[[NodeId, NodeId], Connection],
+):
+    # arrange
+    node_a_id = NodeId()
+    node_b_id = NodeId()
+    node_c_id = NodeId()
+
+    # Create nodes with identical RAM (plenty of it)
+    # Using 1GB to ensure no RAM constraints (model is small)
+    node_a = create_node(1024 * 1024 * 1024, node_a_id)
+    node_b = create_node(1024 * 1024 * 1024, node_b_id)
+    node_c = create_node(1024 * 1024 * 1024, node_c_id)
+
+    # Set Bandwidths: A=400 (Fastest), B=200, C=100 (Slowest)
+    assert node_a.node_profile is not None
+    assert node_b.node_profile is not None
+    assert node_c.node_profile is not None
+
+    node_a.node_profile.memory_bandwidth = 400_000_000_000
+    node_b.node_profile.memory_bandwidth = 200_000_000_000
+    node_c.node_profile.memory_bandwidth = 100_000_000_000
+
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    topology.add_node(node_c)
+
+    topology.add_connection(create_connection(node_a_id, node_b_id))
+    topology.add_connection(create_connection(node_b_id, node_c_id))
+    topology.add_connection(create_connection(node_c_id, node_a_id))
+
+    # Needs full cycle edges for get_cycles/get_shard_assignments if strict?
+    # Actually get_cycles just looks for cycles.
+    # But let's follow the pattern of other tests if they add bidirectional.
+    # checking test_filter_cycles_by_memory, it adds both directions.
+    topology.add_connection(create_connection(node_b_id, node_a_id))
+    topology.add_connection(create_connection(node_c_id, node_b_id))
+    topology.add_connection(create_connection(node_a_id, node_c_id))
+
+    model_meta = ModelMetadata(
+        model_id=ModelId("test-model"),
+        pretty_name="Test Model",
+        n_layers=30,  # 30 layers
+        storage_size=Memory.from_kb(
+            300
+        ),  # 10KB per layer. Nodes have 100MB RAM (100*1024 in create_node usually means KB? other tests use 1000*1024).
+        # create_node arg is likely KB or Bytes.
+        # test_filter_cycles_by_memory: create_node(1000 * 1024, ...) -> Memory.from_bytes(1) passes.
+        # Let's assume create_node takes Bytes or KB consistently.
+        # If I give 100*1024*1024 bytes = 100MB.
+        # Model storage = 300KB.
+        # So capacity is definitely not an issue.
+        hidden_size=1000,
+        supports_tensor=True,
+    )
+
+    cycles = topology.get_cycles()
+    # Depending on how get_cycles works and order of addition, we might get multiple cycles.
+    # filtering by memory usually done in master.
+    # Here we just pick one.
+    selected_cycle = cycles[0]
+
+    # act
+    shard_assignments = get_shard_assignments(
+        model_meta, selected_cycle, Sharding.Pipeline
+    )
+
+    # assert
+    runner_id_a = shard_assignments.node_to_runner[node_a_id]
+    runner_id_b = shard_assignments.node_to_runner[node_b_id]
+    runner_id_c = shard_assignments.node_to_runner[node_c_id]
+
+    # Get layer counts
+    layers_a = (
+        shard_assignments.runner_to_shard[runner_id_a].end_layer
+        - shard_assignments.runner_to_shard[runner_id_a].start_layer
+    )
+    layers_b = (
+        shard_assignments.runner_to_shard[runner_id_b].end_layer
+        - shard_assignments.runner_to_shard[runner_id_b].start_layer
+    )
+    layers_c = (
+        shard_assignments.runner_to_shard[runner_id_c].end_layer
+        - shard_assignments.runner_to_shard[runner_id_c].start_layer
+    )
+
+    # Check total
+    assert layers_a + layers_b + layers_c == 30
+
+    # Check that the fastest node (A with 400GB/s) gets saturated first.
+    # With strict greedy assignment and plenty of RAM:
+    # 1. Reserve: A=1, B=1, C=1. Remaining=27.
+    # 2. Sort: [A, B, C]
+    # 3. A takes min(remaining=27, capacity=huge) = 27.
+    # 4. A=28, B=1, C=1.
+
+    assert layers_a == 28
+    assert layers_b == 1
+    assert layers_c == 1

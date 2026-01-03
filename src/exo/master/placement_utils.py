@@ -53,43 +53,147 @@ def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
     selected_cycle: list[NodeWithProfile],
 ):
-    cycle_memory = sum(
-        (node.node_profile.memory.ram_available for node in selected_cycle),
-        start=Memory(),
-    )
     total_layers = model_meta.n_layers
     world_size = len(selected_cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    layers_assigned = 0
-    for i, node in enumerate(selected_cycle):
-        if i == len(selected_cycle) - 1:
-            node_layers = total_layers - layers_assigned
-        else:
-            node_layers = round(
-                total_layers
-                * (
-                    node.node_profile.memory.ram_available.in_bytes
-                    / cycle_memory.in_bytes
+    # 1. Bandwidth check: if any node lacks bandwidth data, fall back to RAM-proportional
+    has_bandwidth = all(
+        node.node_profile.memory_bandwidth is not None for node in selected_cycle
+    )
+
+    if not has_bandwidth:
+        logger.info(
+            "Bandwidth data missing for some nodes, falling back to RAM-proportional assignment"
+        )
+        # Legacy RAM-proportional logic
+        cycle_memory = sum(
+            (node.node_profile.memory.ram_available for node in selected_cycle),
+            start=Memory(),
+        )
+        layers_assigned = 0
+        for i, node in enumerate(selected_cycle):
+            if i == len(selected_cycle) - 1:
+                node_layers = total_layers - layers_assigned
+            else:
+                node_layers = round(
+                    total_layers
+                    * (
+                        node.node_profile.memory.ram_available.in_bytes
+                        / cycle_memory.in_bytes
+                    )
                 )
+                node_layers = max(1, node_layers)
+
+            # Map assignment (common logic can be extracted, but keeping inline for now)
+            runner_id = RunnerId()
+            shard = PipelineShardMetadata(
+                model_meta=model_meta,
+                device_rank=i,
+                world_size=world_size,
+                start_layer=layers_assigned,
+                end_layer=layers_assigned + node_layers,
+                n_layers=total_layers,
             )
-            node_layers = max(1, node_layers)
+            runner_to_shard[runner_id] = shard
+            node_to_runner[node.node_id] = runner_id
+            layers_assigned += node_layers
 
+        return ShardAssignments(
+            model_id=model_meta.model_id,
+            runner_to_shard=runner_to_shard,
+            node_to_runner=node_to_runner,
+        )
+
+    # 2. Bandwidth-aware logic
+    logger.info("Using bandwidth-aware shard assignment")
+
+    # Store temporary assignments: node_index -> layer_count
+    assignments = {i: 0 for i in range(world_size)}
+
+    # Reserve 1 layer per node to ensure connectivity
+    remaining_layers = total_layers
+    for i in range(world_size):
+        assignments[i] = 1
+        remaining_layers -= 1
+
+    if remaining_layers < 0:
+        # Edge case: fewer layers than nodes.
+        # This shouldn't happen with valid cycles, but let's handle gracefully or let it fail?
+        # Existing logic implies total_layers >= world_size is expected for pipeline parallel.
+        # For now, let's assume total_layers >= world_size.
+        # If not, the reservation itself would take all layers and we'd have negative remaining,
+        # which is handled by just clamping or erroring.
+        # Let's reset and do simple distribution if this happens.
+        logger.warning(
+            "Fewer layers than nodes! Reducing to 1 layer per node where possible."
+        )
+        assignments = {i: 1 if i < total_layers else 0 for i in range(world_size)}
+        remaining_layers = 0
+
+    if remaining_layers > 0:
+        # Sort nodes by bandwidth (descending)
+        # We need to track original indices to map back
+        indexed_nodes = list(enumerate(selected_cycle))
+        sorted_nodes = sorted(
+            indexed_nodes,
+            key=lambda x: x[1].node_profile.memory_bandwidth or 0,
+            reverse=True,
+        )  # type: ignore (profile checked above)
+
+        for original_idx, node in sorted_nodes:
+            if remaining_layers <= 0:
+                break
+
+            # Calculate max capacity for this node
+            # We must account for the 1 layer already reserved
+            # Actually model_meta has storage_size.
+            # layer_size ~ storage_size / n_layers (approx)
+            layer_size_bytes = model_meta.storage_size.in_bytes / model_meta.n_layers
+
+            max_layers_by_ram = int(
+                node.node_profile.memory.ram_available.in_bytes // layer_size_bytes
+            )
+
+            # How many MORE can we take?
+            can_take = max(0, max_layers_by_ram - assignments[original_idx])
+
+            take = min(can_take, remaining_layers)
+            assignments[original_idx] += take
+            remaining_layers -= take
+
+        # Distribute any leftovers (if RAM constrained everywhere) to highest bandwidth nodes again (or round robin)
+        # Assuming we just dump onto the fastest node even if it OOMs?
+        # Or better -> round robin among sorted nodes?
+        # The prompt says "saturate the fastest nodes...".
+        # If all full, we likely will OOM anyway. Let's just put remaining on fastest.
+        if remaining_layers > 0:
+            logger.warning(
+                "All nodes maxed out on RAM estimation, dumping remaining layers on fastest nodes."
+            )
+            for original_idx, _ in sorted_nodes:
+                assignments[original_idx] += 1
+                remaining_layers -= 1
+                if remaining_layers == 0:
+                    break
+
+    # 3. Finalize: Convert counts to Shards
+    current_start = 0
+    for i, node in enumerate(selected_cycle):
+        count = assignments[i]
         runner_id = RunnerId()
-
         shard = PipelineShardMetadata(
             model_meta=model_meta,
             device_rank=i,
             world_size=world_size,
-            start_layer=layers_assigned,
-            end_layer=layers_assigned + node_layers,
+            start_layer=current_start,
+            end_layer=current_start + count,
             n_layers=total_layers,
         )
-
         runner_to_shard[runner_id] = shard
         node_to_runner[node.node_id] = runner_id
-        layers_assigned += node_layers
+        current_start += count
 
     shard_assignments = ShardAssignments(
         model_id=model_meta.model_id,
