@@ -307,6 +307,18 @@ def apply_chat_template(
         # Null values are not valid when applying templates in tokenizer
         msg_dict = {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
 
+        # Llama 3.1 doesn't support parallel tool calling - remove tool_calls from history
+        # Tool results are sent as separate tool messages, so we don't need them here
+        if msg_dict.get("role") == "assistant" and "tool_calls" in msg_dict:
+            tool_calls = cast(list[Any], msg_dict.get("tool_calls"))
+            if len(tool_calls) > 1:
+                # Multiple tool calls - remove them entirely to avoid template error
+                logger.info(f"Removing {len(tool_calls)} parallel tool_calls from assistant message (Llama 3.1 limitation)")
+                msg_dict.pop("tool_calls", None)
+                # If content is None, skip this message entirely
+                if msg_dict.get("content") is None:
+                    continue
+
         # Handle tool messages: Llama template only supports single tool-calls
         # Collect consecutive tool results and combine them into one user message
         if msg_dict.get("role") == "tool":
