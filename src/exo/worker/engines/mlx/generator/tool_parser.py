@@ -7,7 +7,7 @@ https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/examples/tool_use.py
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 from exo.worker.runner.bootstrap import logger
 
@@ -82,14 +82,14 @@ def parse_tool_calls(
         if end > start:
             potential_json = text[start:end]
             try:
-                tool_data = json.loads(potential_json)
+                tool_data = cast(dict[str, Any], json.loads(potential_json))
                 if "name" in tool_data and "parameters" in tool_data:
                     tool_calls.append({
                         "id": f"call_{idx}",
                         "type": "function",
                         "function": {
-                            "name": tool_data["name"],
-                            "arguments": json.dumps(tool_data["parameters"]),
+                            "name": cast(str, tool_data["name"]),
+                            "arguments": json.dumps(cast(dict[str, Any], tool_data["parameters"])),
                         }
                     })
                     idx += 1
@@ -112,15 +112,18 @@ def parse_tool_calls(
             tool_call_json = match.group(1).strip()
 
             try:
-                tool_call_data = json.loads(tool_call_json)
+                tool_call_data = cast(dict[str, Any], json.loads(tool_call_json))
 
                 # Llama format uses "parameters" instead of "arguments"
+                name = cast(str, tool_call_data.get("name", ""))
+                default_params = cast(dict[str, Any], tool_call_data.get("arguments", {}))
+                parameters = cast(dict[str, Any], tool_call_data.get("parameters", default_params))
                 tool_calls.append({
                     "id": f"call_{idx}",
                     "type": "function",
                     "function": {
-                        "name": tool_call_data.get("name", ""),
-                        "arguments": json.dumps(tool_call_data.get("parameters", tool_call_data.get("arguments", {}))),
+                        "name": name,
+                        "arguments": json.dumps(parameters),
                     }
                 })
             except json.JSONDecodeError as e:
@@ -141,15 +144,17 @@ def parse_tool_calls(
             tool_call_json = text[start + len(tool_open):end].strip()
 
             try:
-                tool_call_data = json.loads(tool_call_json)
+                tool_call_data = cast(dict[str, Any], json.loads(tool_call_json))
 
                 # Convert to OpenAI format
+                name = cast(str, tool_call_data.get("name", ""))
+                arguments = cast(dict[str, Any], tool_call_data.get("arguments", {}))
                 tool_calls.append({
                     "id": f"call_{len(tool_calls)}",
                     "type": "function",
                     "function": {
-                        "name": tool_call_data.get("name", ""),
-                        "arguments": json.dumps(tool_call_data.get("arguments", {})),
+                        "name": name,
+                        "arguments": json.dumps(arguments),
                     }
                 })
             except json.JSONDecodeError as e:

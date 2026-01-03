@@ -116,7 +116,7 @@ def mlx_generate(
     tool_call_in_progress = False
 
     # Detect tool call markers for this model
-    tool_open, tool_close = detect_tool_call_format(model_id)
+    tool_open, _ = detect_tool_call_format(model_id)
 
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
