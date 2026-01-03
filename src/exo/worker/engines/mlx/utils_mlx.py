@@ -303,9 +303,20 @@ def apply_chat_template(
             continue
 
         # Null values are not valid when applying templates in tokenizer
-        formatted_messages.append(
-            {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
-        )
+        msg_dict = {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
+
+        # Handle tool messages: some templates don't support role='tool'
+        # Convert tool results to user messages with special formatting
+        if msg_dict.get("role") == "tool":
+            msg_dict["role"] = "user"
+            tool_name = cast(str, msg_dict.get("name")) if "name" in msg_dict else "unknown"
+            tool_result = cast(str, msg_dict.get("content")) if "content" in msg_dict else ""
+            msg_dict["content"] = f"Tool '{tool_name}' returned: {tool_result}"
+            # Remove tool-specific fields that user role doesn't have
+            msg_dict.pop("tool_call_id", None)
+            msg_dict.pop("name", None)
+
+        formatted_messages.append(msg_dict)
 
     # Pass tools to the tokenizer if provided
     if tools is not None and len(tools) > 0:
