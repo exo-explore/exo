@@ -521,7 +521,6 @@ def load_custom_models_once() -> None:
             logger.debug(f"Loaded {len(data)} entries from custom_models.json")
             
             loaded_count = 0
-            any_changes = False
             for key, card_data in data.items():
                 try:
                     card = ModelCard.model_validate(card_data)
@@ -530,7 +529,6 @@ def load_custom_models_once() -> None:
                         card.name = get_pretty_name_from_model_id(str(card.model_id))
                         if card.metadata.pretty_name == str(card.model_id):
                              card.metadata.pretty_name = card.name
-                        any_changes = True
 
                     if key not in MODEL_CARDS:
                         MODEL_CARDS[key] = card
@@ -540,10 +538,6 @@ def load_custom_models_once() -> None:
                         logger.debug(f"Skipping {key} - already in MODEL_CARDS")
                 except Exception as e:
                     logger.warning(f"Failed to load model card for {key}: {e}")
-            
-            if any_changes:
-                logger.info("Custom model names were prettified. Saving changes.")
-                save_custom_models()
             
             logger.info(f"✓ Loaded {loaded_count} custom models from {PERSISTENT_FILE_PATH}")
     except Exception as e:

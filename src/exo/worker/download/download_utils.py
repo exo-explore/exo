@@ -332,6 +332,9 @@ async def download_file_with_retry(
                 repo_id, revision, path, target_dir, on_progress
             )
         except Exception as e:
+            # Don't retry on client errors (404, 401, 403)
+            if "404" in str(e) or "401" in str(e) or "403" in str(e):
+                raise e
             if isinstance(e, FileNotFoundError) or attempt == n_attempts - 1:
                 raise e
             logger.error(

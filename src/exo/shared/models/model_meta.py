@@ -103,6 +103,13 @@ async def get_model_meta(model_id: str) -> ModelMetadata:
 
 async def _get_model_meta(model_id: str) -> ModelMetadata:
     """Fetches storage size and number of layers for a Hugging Face model, returns Pydantic ModelMeta."""
+    # Validate model existence before doing anything else
+    try:
+        model_info(model_id)
+    except Exception as e:
+        logger.error(f"Model {model_id} does not exist or is inaccessible: {e}")
+        raise ValueError(f"Model {model_id} does not exist or is inaccessible: {e}") from e
+
     config_data = await get_config_data(model_id)
     num_layers = config_data.layer_count
     mem_size_bytes = await get_safetensors_size(model_id)
