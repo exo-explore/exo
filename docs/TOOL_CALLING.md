@@ -6,6 +6,37 @@ This document describes how to use tool calling (function calling) with EXO's di
 
 As of the feature implementation in this branch, EXO supports OpenAI-compatible tool calling for models that have been trained with function calling capabilities. This enables models to invoke external functions, APIs, and tools during generation.
 
+## Recent Updates (January 2026)
+
+### ✅ Llama 3.1 Parallel Tool Calling Fix
+**Problem**: Llama 3.1's chat template enforced "This model only supports single tool-calls at once!", causing subprocess crashes when clients sent multiple tool results.
+
+**Solution**:
+- Automatically removes parallel `tool_calls` arrays from conversation history
+- Buffers consecutive `role='tool'` result messages
+- Combines all tool results into a single `role='user'` message
+- Fully transparent to client applications
+
+**Impact**: opencode and other clients can now use parallel tool calls with Llama 3.1 models without crashes.
+
+### ✅ Schema-Aware Parameter Normalization
+**Problem**: Models sometimes generate tool calls with missing required fields or wrong types, causing validation errors in strict client tools.
+
+**Solution**:
+- Intelligent normalization based on tool schemas
+- Auto-adds missing required fields (e.g., `description` for bash commands)
+- Auto-fixes type mismatches (e.g., string `"true"` → boolean `true`)
+- Non-destructive field name handling (keeps both `file` and `filePath`)
+
+**Impact**: Improved reliability and compatibility across different tools and models. Works with opencode, OpenAI SDK, and third-party clients.
+
+### ✅ Universal Compatibility
+**Design Principle**: All normalizations are designed to be **additive** and **non-destructive**:
+- Original field names are preserved
+- Only adds required fields based on schema
+- Type fixes are safe and standard-compliant
+- No breaking changes to existing clients
+
 ## Supported Models
 
 Tool calling is supported by models that include function calling in their training:
@@ -22,6 +53,20 @@ Different models use different formats for tool invocations:
 - **Llama 3.1** (many tools): Raw JSON `{ "name": "...", "parameters": {...} }`
 
 The implementation automatically detects and parses all formats.
+
+### Model-Specific Limitations
+
+**Llama 3.1 and Earlier:**
+- ⚠️ **No Parallel Tool Calling**: Llama 3.1's chat template enforces "This model only supports single tool-calls at once!"
+- Only one tool can be invoked per turn
+- EXO automatically handles this by buffering tool results and removing parallel tool_calls from history
+- Tool results from parallel calls are combined into a single user message
+- For parallel tool calling, use Llama 4+ or Qwen models
+
+**Qwen Models:**
+- ✅ Full parallel tool calling support
+- Multiple tools can be invoked simultaneously
+- No template restrictions
 
 ## How It Works
 
@@ -44,6 +89,12 @@ The implementation automatically detects and parses all formats.
    - Model-specific format detection
    - JSON extraction and validation
    - Conversion to OpenAI format
+
+5. **Normalization** (`src/exo/worker/engines/mlx/generator/tool_parser.py`)
+   - Schema-aware parameter normalization
+   - Auto-fixes common LLM mistakes (missing fields, type mismatches)
+   - Adds sensible defaults for required parameters
+   - Ensures compatibility across different client tools
 
 ## Usage Examples
 
@@ -329,6 +380,76 @@ data: {"choices":[{"delta":{"tool_calls":[{"id":"call_0","type":"function","func
 data: [DONE]
 ```
 
+## Parameter Normalization
+
+EXO includes intelligent parameter normalization to handle common LLM mistakes and ensure compatibility across different tools and clients.
+
+### What Gets Normalized
+
+**1. Missing Required Fields**
+```json
+// Model generates:
+{"name": "bash", "arguments": {"command": "ls"}}
+
+// EXO normalizes to (if schema marks 'description' as required):
+{"name": "bash", "arguments": {"command": "ls", "description": "Execute: ls"}}
+```
+
+**2. Type Mismatches**
+```json
+// Model generates:
+{"name": "edit", "arguments": {"replaceAll": "true"}}
+
+// EXO normalizes to:
+{"name": "edit", "arguments": {"replaceAll": true}}
+```
+
+**3. Field Name Variations**
+```json
+// Model generates:
+{"name": "write", "arguments": {"file": "test.txt"}}
+
+// EXO normalizes to (keeps both for compatibility):
+{"name": "write", "arguments": {"file": "test.txt", "filePath": "test.txt"}}
+```
+
+### How It Works
+
+Normalization is **schema-aware** and **safe by default**:
+
+1. **With Tool Definitions**: Only adds/fixes fields that are marked as required in the tool schema
+2. **Without Tool Definitions**: Uses conservative normalizations to avoid disrupting third-party tools
+3. **Non-Destructive**: Adds fields without removing original ones (ensures backward compatibility)
+
+### Supported Normalizations
+
+| Function | Normalization | Condition |
+|----------|--------------|-----------|
+| `bash` | Adds `description` field | Only if schema marks it required |
+| `edit` | Converts `replaceAll` string → boolean | Always (safe type fix) |
+| `write` | Adds `filePath` from `file` | Always (keeps both fields) |
+| `read` | Adds `filePath` from `file` | Always (keeps both fields) |
+
+### Compatibility
+
+The normalization feature is designed to be **universally compatible**:
+
+- ✅ **OpenAI-compatible clients**: Ignore extra fields per spec
+- ✅ **opencode**: Gets required fields auto-filled
+- ✅ **Third-party tools**: Original fields preserved
+- ✅ **All models**: Works with any model format
+
+### Disabling Normalization
+
+If you need to disable normalization entirely:
+
+```bash
+# Future enhancement - not yet implemented
+EXO_DISABLE_NORMALIZATION=1 exo --force-master
+```
+
+Currently, normalization is always active but designed to be safe and non-disruptive.
+
 ## Implementation Details
 
 ### Tool Call Detection
@@ -388,6 +509,80 @@ Tool calling works seamlessly with EXO's distributed inference:
 - Look for errors in EXO logs
 - Test with a known working model (e.g., Qwen2.5-32B-Instruct)
 
+### "This model only supports single tool-calls at once!" Error
+
+**Issue**: Llama 3.1 template validation error when using parallel tool calls
+
+**Status**: ✅ **Automatically Handled by EXO**
+
+EXO automatically handles this Llama 3.1 limitation:
+
+1. **Detection**: Recognizes when multiple tool_calls are in conversation history
+2. **Removal**: Strips parallel tool_calls from assistant messages before template application
+3. **Buffering**: Collects consecutive `role='tool'` result messages
+4. **Combination**: Merges all tool results into a single `role='user'` message
+
+**What This Means**:
+- You can send parallel tool results - EXO will combine them automatically
+- The model sees: "Tool 'bash' returned: ...\nTool 'write' returned: ..." as user message
+- No code changes needed in your client
+- Full backward compatibility maintained
+
+**Logs to Expect**:
+```
+[INFO] Removing 6 parallel tool_calls from assistant message (Llama 3.1 limitation)
+[INFO] Buffering tool result from 'write'
+[INFO] Flushed 6 tool results as single user message
+```
+
+### Missing Required Parameters (e.g., description for bash)
+
+**Issue**: Tool calls fail validation because model didn't include required fields
+
+**Status**: ✅ **Automatically Fixed by Normalization**
+
+EXO's normalization feature automatically adds missing required fields:
+
+```python
+# Model generates:
+{"name": "bash", "arguments": {"command": "ls -la"}}
+
+# EXO auto-adds description:
+{"name": "bash", "arguments": {"command": "ls -la", "description": "Execute: ls -la"}}
+```
+
+**Logs to Expect**:
+```
+[INFO] [NORMALIZATION] Added default description for bash command: ls -la
+```
+
+**What This Means**:
+- Models don't need perfect tool calling accuracy
+- Required fields are intelligently filled
+- Based on tool schema when available
+- Fallback to sensible defaults otherwise
+
+### Type Mismatch Errors (e.g., replaceAll="true" instead of true)
+
+**Issue**: Model generates string `"true"` but tool expects boolean `true`
+
+**Status**: ✅ **Automatically Fixed by Normalization**
+
+EXO automatically converts common type mismatches:
+
+```python
+# Model generates:
+{"name": "edit", "arguments": {"replaceAll": "true"}}
+
+# EXO auto-converts:
+{"name": "edit", "arguments": {"replaceAll": true}}
+```
+
+**Logs to Expect**:
+```
+[INFO] [NORMALIZATION] Fixed replaceAll type: "true" -> true
+```
+
 ## Testing
 
 Run the tool calling tests:
@@ -408,12 +603,14 @@ pytest src/exo/worker/tests/test_tool_calling.py
 
 Potential improvements for future versions:
 
-- [ ] Parallel tool calling support
+- [ ] ~~Parallel tool calling support~~ ✅ Implemented with automatic Llama 3.1 limitation handling
 - [ ] Tool call caching
 - [ ] Automatic tool result formatting
 - [ ] Built-in common tools (calculator, search, etc.)
 - [ ] Tool calling metrics and analytics
 - [ ] Support for more model formats
+- [ ] Optional environment variable to disable normalization (`EXO_DISABLE_NORMALIZATION`)
+- [ ] Extend normalization to support custom tool schemas
 
 ## Related Documentation
 
