@@ -41,6 +41,7 @@ from exo.shared.types.api import (
     PlacementPreview,
     PlacementPreviewResponse,
     StreamingChoiceResponse,
+    FinishReason,
 )
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.commands import (
@@ -191,8 +192,9 @@ class API:
 
     async def place_instance(self, payload: PlaceInstanceParams):
         try:
+            model_meta = await resolve_model_meta(payload.model_id)
             command = PlaceInstance(
-                model_meta=await resolve_model_meta(payload.model_id),
+                model_meta=model_meta,
                 sharding=payload.sharding,
                 instance_meta=payload.instance_meta,
                 min_nodes=payload.min_nodes,
@@ -203,6 +205,7 @@ class API:
             return CreateInstanceResponse(
                 message="Command received.",
                 command_id=command.command_id,
+                model_meta=model_meta,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

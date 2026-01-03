@@ -6,7 +6,7 @@ from huggingface_hub import model_info
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from exo.shared.models.model_cards import MODEL_CARDS
+from exo.shared.models.model_cards import get_pretty_name_from_model_id, MODEL_CARDS
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.worker.download.download_utils import (
@@ -122,7 +122,7 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
 
     return ModelMetadata(
         model_id=ModelId(model_id),
-        pretty_name=model_card.name if model_card is not None else model_id,
+        pretty_name=model_card.name if model_card is not None else get_pretty_name_from_model_id(model_id),
         storage_size=mem_size_bytes,
         n_layers=num_layers,
         hidden_size=config_data.hidden_size or 0,
