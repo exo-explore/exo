@@ -139,8 +139,8 @@ def mlx_generate(
             if tool_open in accumulated_text:
                 tool_call_in_progress = True
                 logger.info("Tool call detected in generation (tagged format)")
-            # Also check for raw JSON format: { "name":
-            elif '{ "name":' in accumulated_text:
+            # Also check for raw JSON format: {"name": or { "name":
+            elif '{"name":' in accumulated_text or '{ "name":' in accumulated_text:
                 tool_call_in_progress = True
                 logger.info("Tool call detected in generation (raw JSON format)")
 

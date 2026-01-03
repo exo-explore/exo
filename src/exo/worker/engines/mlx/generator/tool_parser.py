@@ -57,15 +57,24 @@ def parse_tool_calls(
     tool_calls: list[dict[str, Any]] = []
 
     # First, try to find raw JSON tool calls (for parallel tool calling)
-    # Pattern: { "name": "func_name", "parameters": {...} }
-    # Use a simple approach: find all { "name": strings and try to parse from there
+    # Pattern: {"name": "func_name", "parameters": {...} } or { "name": ... }
+    # Use a simple approach: find all {"name": or { "name": strings and try to parse from there
     idx = 0
     search_pos = 0
     while True:
-        # Find the start of a potential tool call
-        start = text.find('{ "name":', search_pos)
-        if start == -1:
+        # Find the start of a potential tool call (try both with and without space)
+        start1 = text.find('{"name":', search_pos)
+        start2 = text.find('{ "name":', search_pos)
+
+        # Use whichever appears first (or -1 if neither found)
+        if start1 == -1 and start2 == -1:
             break
+        elif start1 == -1:
+            start = start2
+        elif start2 == -1:
+            start = start1
+        else:
+            start = min(start1, start2)
 
         # Try to find the matching closing brace by counting braces
         brace_count = 0
