@@ -290,7 +290,9 @@ def apply_chat_template(
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
+    tool_results_buffer: list[str] = []
+
+    for message in messages:
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
@@ -305,18 +307,30 @@ def apply_chat_template(
         # Null values are not valid when applying templates in tokenizer
         msg_dict = {k: v for k, v in message.model_dump().items() if v is not None}  # type: ignore
 
-        # Handle tool messages: some templates don't support role='tool'
-        # Convert tool results to user messages with special formatting
+        # Handle tool messages: Llama template only supports single tool-calls
+        # Collect consecutive tool results and combine them into one user message
         if msg_dict.get("role") == "tool":
-            msg_dict["role"] = "user"
             tool_name = cast(str, msg_dict.get("name")) if "name" in msg_dict else "unknown"
             tool_result = cast(str, msg_dict.get("content")) if "content" in msg_dict else ""
-            msg_dict["content"] = f"Tool '{tool_name}' returned: {tool_result}"
-            # Remove tool-specific fields that user role doesn't have
-            msg_dict.pop("tool_call_id", None)
-            msg_dict.pop("name", None)
+            tool_results_buffer.append(f"Tool '{tool_name}' returned: {tool_result}")
+            continue  # Don't append yet, collect all consecutive tool results
+
+        # If we have buffered tool results, flush them as a single user message
+        if tool_results_buffer:
+            formatted_messages.append({
+                "role": "user",
+                "content": "\n".join(tool_results_buffer)
+            })
+            tool_results_buffer = []
 
         formatted_messages.append(msg_dict)
+
+    # Flush any remaining tool results at the end
+    if tool_results_buffer:
+        formatted_messages.append({
+            "role": "user",
+            "content": "\n".join(tool_results_buffer)
+        })
 
     # Pass tools to the tokenizer if provided
     if tools is not None and len(tools) > 0:
