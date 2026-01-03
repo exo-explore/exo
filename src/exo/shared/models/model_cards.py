@@ -496,17 +496,12 @@ def save_custom_models() -> None:
     
     try:
         PERSISTENT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"Ensured directory exists: {PERSISTENT_FILE_PATH.parent}")
         
         custom_models = {
             key: card.model_dump(mode="json") 
             for key, card in MODEL_CARDS.items() 
             if "custom" in card.tags
         }
-        
-        logger.debug(f"Found {len(custom_models)} custom models to save")
-        for key in custom_models.keys():
-            logger.debug(f"  - {key}")
         
         with open(PERSISTENT_FILE_PATH, "w") as f:
             json.dump(custom_models, f, indent=4)

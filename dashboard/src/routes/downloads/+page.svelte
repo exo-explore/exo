@@ -3,10 +3,11 @@
 	import {
 		downloads,
 		lastUpdate as lastUpdateStore,
-		placeInstance,
+		registerCustomModel,
 		refreshState,
 		topologyData,
 		type DownloadProgress,
+		placeInstance,
 	} from "$lib/stores/app.svelte";
 	import { onMount } from "svelte";
 
@@ -388,10 +389,19 @@
 	let isPlacing = $state(false);
 
 	async function handleDownload() {
-		if (!customModelId.trim()) return;
+		//Trim whitespace
+		customModelId = customModelId.trim();
+		if (!customModelId) return;
 		isPlacing = true;
+		//Register and Download the model
 		try {
-			await placeInstance(customModelId.trim());
+			await registerCustomModel(customModelId);
+			try {
+				// Try to download and run (default)
+				await placeInstance(customModelId, false);
+			} catch (err: any) {
+				alert(err instanceof Error ? err.message : "Download failed");
+			}
 			customModelId = "";
 			refreshState();
 		} catch (err) {
@@ -490,8 +500,7 @@
 							clip-rule="evenodd"
 						></path>
 					</svg>
-					Note: Downloading a custom model will automatically place it
-					on available nodes.
+					Note: Only models from HuggingFace can be downloaded.
 				</div>
 			</div>
 		</div>

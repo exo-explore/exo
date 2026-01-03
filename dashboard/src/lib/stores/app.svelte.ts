@@ -1342,7 +1342,7 @@ class AppStore {
 		return this.conversations.find(c => c.id === this.activeConversationId) || null;
 	}
 	/* Place an instance on the topology to run the model */
-	async placeInstance(modelId: string) {
+	async placeInstance(modelId: string, downloadOnly: boolean = false) {
 		try {
 			const resp = await fetch('/place_instance', {
 				method: 'POST',
@@ -1350,7 +1350,8 @@ class AppStore {
 				body: JSON.stringify({
 					model_id: modelId,
 					sharding: 'Pipeline', // Default
-					instance_meta: 'MlxRing' // Default
+					instance_meta: 'MlxRing', // Default
+					download_only: downloadOnly
 				})
 			});
 			if (!resp.ok) {
@@ -1360,6 +1361,30 @@ class AppStore {
 			return await resp.json();
 		} catch (err) {
 			console.error('Place instance error:', err);
+			throw err;
+		}
+	}
+	/* Register a custom model from huggingace via master API */
+	async registerCustomModel(repoId: string) {
+		try {
+			const resp = await fetch('/custom_models', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					repo_id: repoId,
+					sharding: 'Pipeline', // Default
+					instance_meta: 'MlxRing' // Default
+				})
+			});
+			if (!resp.ok) {
+				const error = await resp.json();
+				if (resp.status === 400 && error.detail.includes('already exists'))
+					return;//Proceed if the model already exists
+				throw new Error(error.detail || 'Failed to register custom model');
+			}
+			return await resp.json();
+		} catch (err) {
+			console.error('Register custom model error:', err);
 			throw err;
 		}
 	}
@@ -1397,6 +1422,7 @@ export const deleteMessage = (messageId: string) => appStore.deleteMessage(messa
 export const editMessage = (messageId: string, newContent: string) => appStore.editMessage(messageId, newContent);
 export const editAndRegenerate = (messageId: string, newContent: string) => appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
+export const registerCustomModel = (repoId: string) => appStore.registerCustomModel(repoId);
 
 // Conversation actions
 export const conversations = () => appStore.conversations;
@@ -1414,5 +1440,5 @@ export const toggleSidebar = () => appStore.toggleSidebar();
 export const toggleDebugMode = () => appStore.toggleDebugMode();
 export const setDebugMode = (enabled: boolean) => appStore.setDebugMode(enabled);
 export const refreshState = () => appStore.fetchState();
-export const placeInstance = (modelId: string) => appStore.placeInstance(modelId);
+export const placeInstance = (modelId: string, downloadOnly: boolean) => appStore.placeInstance(modelId, downloadOnly);
 

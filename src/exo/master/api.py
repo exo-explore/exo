@@ -18,6 +18,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
+from exo.shared.models.model_cards import get_model_cards
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     ChatCompletionMessage,
@@ -25,6 +26,8 @@ from exo.shared.types.api import (
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteInstanceResponse,
+    CreateModelRequest,
+    CreateModelResponse,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -166,6 +169,7 @@ class API:
         self.app.get("/node_id")(lambda: self.node_id)
         self.app.post("/instance")(self.create_instance)
         self.app.post("/place_instance")(self.place_instance)
+        self.app.post("/custom_models")(self.create_model)
         self.app.get("/instance/placement")(self.get_placement)
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
@@ -177,18 +181,22 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
 
     async def place_instance(self, payload: PlaceInstanceParams):
-        command = PlaceInstance(
-            model_meta=await resolve_model_meta(payload.model_id),
-            sharding=payload.sharding,
-            instance_meta=payload.instance_meta,
-            min_nodes=payload.min_nodes,
-        )
-        await self._send(command)
+        try:
+            command = PlaceInstance(
+                model_meta=await resolve_model_meta(payload.model_id),
+                sharding=payload.sharding,
+                instance_meta=payload.instance_meta,
+                min_nodes=payload.min_nodes,
+                download_only=payload.download_only,
+            )
+            await self._send(command)
 
-        return CreateInstanceResponse(
-            message="Command received.",
-            command_id=command.command_id,
-        )
+            return CreateInstanceResponse(
+                message="Command received.",
+                command_id=command.command_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     async def create_instance(
         self, payload: CreateInstanceParams
@@ -448,7 +456,7 @@ class API:
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""
-        from exo.shared.models.model_cards import get_model_cards
+        
         
         # Load custom models from persistent storage if not already loaded
         model_cards = get_model_cards()
@@ -465,6 +473,47 @@ class API:
                 )
                 for card in model_cards.values()
             ]
+        )
+
+    async def create_model(self, payload: CreateModelRequest):
+        """Load custom models from persistent storage if not already loaded"""
+        model_cards = get_model_cards()
+        
+        if payload.repo_id in model_cards:
+            raise HTTPException(status_code=400, detail="Model already exists")
+        
+        try:
+            model_meta = await get_model_meta(payload.repo_id)
+        except Exception as e:
+            msg = f"Failed to fetch metadata for {payload.repo_id}: {e}"
+            logger.error(msg)
+            raise HTTPException(status_code=400, detail=msg) from e
+        
+        from exo.shared.models.model_cards import ModelCard, save_custom_models
+
+        model_card = ModelCard(
+            short_id=payload.repo_id,
+            model_id=ModelId(payload.repo_id),
+            name=payload.name or model_meta.pretty_name or payload.repo_id,
+            description=payload.description or "Custom model",
+            tags=["custom"],
+            metadata=model_meta,
+        )
+        
+        # Save the model card to persistent storage
+        model_cards[payload.repo_id] = model_card
+        save_custom_models()
+        
+        return CreateModelResponse(
+            id=payload.repo_id,
+            model_id=ModelListModel(
+                id=model_card.short_id,
+                hugging_face_id=model_card.model_id,
+                name=model_card.name,
+                description=model_card.description,
+                tags=model_card.tags,
+                storage_size_megabytes=int(model_card.metadata.storage_size.in_mb),
+            )
         )
 
     async def run(self):

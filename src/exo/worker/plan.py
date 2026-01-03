@@ -47,7 +47,7 @@ def plan(
     return (
         _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, instances)
-        or _model_needs_download(runners, download_status)
+        or _model_needs_download(node_id, instances, download_status)
         or _load_model(runners, all_runners, global_download_status)
         or _ready_to_warmup(runners, all_runners)
         or _pending_tasks(runners, tasks, all_runners)
@@ -83,6 +83,9 @@ def _create_runner(
     instances: Mapping[InstanceId, Instance],
 ) -> CreateRunner | None:
     for instance in instances.values():
+        if instance.download_only:
+            continue
+
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
         if runner_id is None:
             continue
@@ -102,18 +105,21 @@ def _create_runner(
 
 
 def _model_needs_download(
-    runners: Mapping[RunnerId, RunnerSupervisor],
+    node_id: NodeId,
+    instances: Mapping[InstanceId, Instance],
     download_status: Mapping[ShardMetadata, DownloadProgress],
 ) -> DownloadModel | None:
-    for runner in runners.values():
-        if (
-            isinstance(runner.status, RunnerWaitingForModel)
-            and runner.bound_instance.bound_shard not in download_status
-        ):
+    for instance in instances.values():
+        runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
+        if runner_id is None:
+            continue
+
+        shard = instance.shard(runner_id)
+        if shard and shard not in download_status:
             # We don't invalidate download_status randomly in case a file gets deleted on disk
             return DownloadModel(
-                instance_id=runner.bound_instance.instance.instance_id,
-                shard_metadata=runner.bound_instance.bound_shard,
+                instance_id=instance.instance_id,
+                shard_metadata=shard,
             )
 
 
