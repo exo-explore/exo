@@ -1,9 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
-from exo.shared.types.tasks import BaseTask
+from exo.shared.types.tasks import BaseTask, TaskId
 from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
@@ -14,10 +14,12 @@ from exo.shared.types.worker.runners import RunnerId, RunnerStatus, ShardAssignm
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 
 
+# Runner supervisor without multiprocessing logic.
 @dataclass(frozen=True)
 class FakeRunnerSupervisor:
     bound_instance: BoundInstance
     status: RunnerStatus
+    completed: set[TaskId] = field(default_factory=set)
 
 
 class OtherTask(BaseTask):
@@ -35,6 +37,8 @@ def get_pipeline_shard_metadata(
             pretty_name=str(model_id),
             storage_size=Memory.from_mb(100000),
             n_layers=32,
+            hidden_size=2048,
+            supports_tensor=False,
         ),
         device_rank=device_rank,
         world_size=world_size,
@@ -67,5 +71,27 @@ def get_mlx_ring_instance(
         shard_assignments=get_shard_assignments(
             model_id, node_to_runner, runner_to_shard
         ),
-        hosts=[],
+        hosts_by_node={},
+        ephemeral_port=50000,
+    )
+
+
+def get_bound_mlx_ring_instance(
+    instance_id: InstanceId, model_id: ModelId, runner_id: RunnerId, node_id: NodeId
+) -> BoundInstance:
+    shard = get_pipeline_shard_metadata(model_id=model_id, device_rank=0, world_size=2)
+    other_shard = get_pipeline_shard_metadata(
+        model_id=model_id, device_rank=1, world_size=2
+    )
+    instance = get_mlx_ring_instance(
+        instance_id=instance_id,
+        model_id=model_id,
+        node_to_runner={
+            node_id: runner_id,
+            NodeId("other_node"): RunnerId("other_runner"),
+        },
+        runner_to_shard={runner_id: shard, RunnerId("other_runner"): other_shard},
+    )
+    return BoundInstance(
+        instance=instance, bound_runner_id=runner_id, bound_node_id=node_id
     )

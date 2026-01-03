@@ -16,7 +16,6 @@ dependencies = [
     "filelock>=3.18.0",
     "aiosqlite>=0.21.0",
     "networkx>=3.5",
-    "pathlib>=1.0.1",
     "protobuf>=6.32.0",
     "rich>=14.1.0",
     "rustworkx>=0.17.1",
@@ -30,10 +29,12 @@ dependencies = [
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
     "bidict>=0.23.1",
-    "mlx>=0.29.3",
+    "mlx>=0.30.1; sys_platform == 'darwin'",
+    "mlx[cpu]>=0.30.1; sys_platform == 'linux'",
     "mlx-lm>=0.28.3",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
+    "openai-harmony>=0.0.8",
 ]
 
 [project.scripts]
@@ -44,6 +45,7 @@ exo = "exo.main:main"
 # dependencies only required for development
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.17.0",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
     "pytest-env",

@@ -13,6 +13,12 @@ from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType
 from hypercorn.config import Config
 from hypercorn.typing import ASGIFramework
 from loguru import logger
+from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
+    HarmonyEncodingName,
+    Role,
+    StreamableParser,
+    load_harmony_encoding,
+)
 
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
@@ -21,6 +27,7 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import get_model_cards
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
+    ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionResponse,
     CreateInstanceParams,
@@ -58,7 +65,7 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
 from exo.utils.event_buffer import OrderedBuffer
 
-HIDE_THINKING = False
+encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
 
 def chunk_to_response(
@@ -176,7 +183,9 @@ class API:
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
-        self.app.post("/v1/chat/completions")(self.chat_completions)
+        self.app.post("/v1/chat/completions", response_model=None)(
+            self.chat_completions
+        )
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -201,12 +210,26 @@ class API:
     async def create_instance(
         self, payload: CreateInstanceParams
     ) -> CreateInstanceResponse:
-        command = CreateInstance(instance=payload.instance)
+        instance = payload.instance
+        model_meta = await resolve_model_meta(instance.shard_assignments.model_id)
+        required_memory = model_meta.storage_size
+        available_memory = self._calculate_total_available_memory()
+
+        if required_memory > available_memory:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient memory to create instance. Required: {required_memory.in_gb:.1f}GB, Available: {available_memory.in_gb:.1f}GB",
+            )
+
+        command = CreateInstance(
+            instance=instance,
+        )
         await self._send(command)
 
         return CreateInstanceResponse(
             message="Command received.",
             command_id=command.command_id,
+            model_meta=model_meta,
         )
 
     async def get_placement(
@@ -374,32 +397,52 @@ class API:
             instance_id=instance_id,
         )
 
-    async def _generate_chat_stream(
-        self, command_id: CommandId
-    ) -> AsyncGenerator[str, None]:
-        """Generate chat completion stream as JSON strings."""
+    async def _process_gpt_oss(self, token_chunks: Receiver[TokenChunk]):
+        stream = StreamableParser(encoding, role=Role.ASSISTANT)
+        thinking = False
+
+        async for chunk in token_chunks:
+            stream.process(chunk.token_id)
+
+            delta = stream.last_content_delta
+            ch = stream.current_channel
+
+            if ch == "analysis" and not thinking:
+                thinking = True
+                yield chunk.model_copy(update={"text": "<think>"})
+
+            if ch != "analysis" and thinking:
+                thinking = False
+                yield chunk.model_copy(update={"text": "</think>"})
+
+            if delta:
+                yield chunk.model_copy(update={"text": delta})
+
+            if chunk.finish_reason is not None:
+                if thinking:
+                    yield chunk.model_copy(update={"text": "</think>"})
+                yield chunk
+                break
+
+    async def _chat_chunk_stream(
+        self, command_id: CommandId, parse_gpt_oss: bool
+    ) -> AsyncGenerator[TokenChunk, None]:
+        """Yield `TokenChunk`s for a given command until completion."""
 
         try:
             self._chat_completion_queues[command_id], recv = channel[TokenChunk]()
 
-            is_thinking = False
             with recv as token_chunks:
-                async for chunk in token_chunks:
-                    if HIDE_THINKING:
-                        if chunk.text == "<think>":
-                            is_thinking = True
-                        if chunk.text == "</think>":
-                            is_thinking = False
-                    chunk_response: ChatCompletionResponse = chunk_to_response(
-                        chunk, command_id
-                    )
-                    if not (is_thinking and HIDE_THINKING):
-                        logger.debug(f"chunk_response: {chunk_response}")
-                        yield f"data: {chunk_response.model_dump_json()}\n\n"
-
-                    if chunk.finish_reason is not None:
-                        yield "data: [DONE]\n\n"
-                        break
+                if parse_gpt_oss:
+                    async for chunk in self._process_gpt_oss(token_chunks):
+                        yield chunk
+                        if chunk.finish_reason is not None:
+                            break
+                else:
+                    async for chunk in token_chunks:
+                        yield chunk
+                        if chunk.finish_reason is not None:
+                            break
 
         except anyio.get_cancelled_exc_class():
             # TODO: TaskCancelled
@@ -414,6 +457,59 @@ class API:
             await self._send(command)
             del self._chat_completion_queues[command_id]
 
+    async def _generate_chat_stream(
+        self, command_id: CommandId, parse_gpt_oss: bool
+    ) -> AsyncGenerator[str, None]:
+        """Generate chat completion stream as JSON strings."""
+
+        async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
+            chunk_response: ChatCompletionResponse = chunk_to_response(
+                chunk, command_id
+            )
+            logger.debug(f"chunk_response: {chunk_response}")
+
+            yield f"data: {chunk_response.model_dump_json()}\n\n"
+
+            if chunk.finish_reason is not None:
+                yield "data: [DONE]\n\n"
+
+    async def _collect_chat_completion(
+        self, command_id: CommandId, parse_gpt_oss: bool
+    ) -> ChatCompletionResponse:
+        """Collect all token chunks for a chat completion and return a single response."""
+
+        text_parts: list[str] = []
+        model: str | None = None
+        finish_reason: FinishReason | None = None
+
+        async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
+            if model is None:
+                model = chunk.model
+
+            text_parts.append(chunk.text)
+
+            if chunk.finish_reason is not None:
+                finish_reason = chunk.finish_reason
+
+        combined_text = "".join(text_parts)
+        assert model is not None
+
+        return ChatCompletionResponse(
+            id=command_id,
+            created=int(time.time()),
+            model=model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content=combined_text,
+                    ),
+                    finish_reason=finish_reason,
+                )
+            ],
+        )
+
     async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
         logger.warning(
             "TODO: we should send a notification to the user to download the model"
@@ -421,10 +517,12 @@ class API:
 
     async def chat_completions(
         self, payload: ChatCompletionTaskParams
-    ) -> StreamingResponse:
-        """Handle chat completions with proper streaming response."""
+    ) -> ChatCompletionResponse | StreamingResponse:
+        """Handle chat completions, supporting both streaming and non-streaming responses."""
         model_meta = await resolve_model_meta(payload.model)
         payload.model = model_meta.model_id
+        parse_gpt_oss = "gpt-oss" in model_meta.model_id.lower()
+        logger.info(f"{parse_gpt_oss=}")
 
         if not any(
             instance.shard_assignments.model_id == payload.model
@@ -439,10 +537,13 @@ class API:
             request_params=payload,
         )
         await self._send(command)
-        return StreamingResponse(
-            self._generate_chat_stream(command.command_id),
-            media_type="text/event-stream",
-        )
+        if payload.stream:
+            return StreamingResponse(
+                self._generate_chat_stream(command.command_id, parse_gpt_oss),
+                media_type="text/event-stream",
+            )
+
+        return await self._collect_chat_completion(command.command_id, parse_gpt_oss)
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
@@ -527,7 +628,7 @@ class API:
         async with create_task_group() as tg:
             self._tg = tg
             logger.info("Starting API")
-            tg.start_soon(self._applystate)
+            tg.start_soon(self._apply_state)
             tg.start_soon(self._pause_on_new_election)
             print_startup_banner(self.port)
             await serve(
@@ -539,7 +640,7 @@ class API:
         self.command_sender.close()
         self.global_event_receiver.close()
 
-    async def _applystate(self):
+    async def _apply_state(self):
         with self.global_event_receiver as events:
             async for f_event in events:
                 if f_event.origin != self.session_id.master_node_id:

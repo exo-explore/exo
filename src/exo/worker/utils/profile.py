@@ -109,5 +109,6 @@ async def start_polling_node_metrics(
             )
         except MacMonError as e:
             logger.opt(exception=e).error("Resource Monitor encountered error")
+            return
         finally:
             await anyio.sleep(poll_interval_s)

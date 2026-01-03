@@ -327,7 +327,9 @@ class AppStore {
 	isTopologyMinimized = $state(false);
 	isSidebarOpen = $state(false); // Hidden by default, shown when in chat mode
 	debugMode = $state(false);
-
+	topologyOnlyMode = $state(false);
+	chatSidebarVisible = $state(true); // Shown by default
+	
 	private fetchInterval: ReturnType<typeof setInterval> | null = null;
 	private previewsInterval: ReturnType<typeof setInterval> | null = null;
 	private lastConversationPersistTs = 0;
@@ -337,6 +339,8 @@ class AppStore {
 			this.startPolling();
 			this.loadConversationsFromStorage();
 			this.loadDebugModeFromStorage();
+			this.loadTopologyOnlyModeFromStorage();
+			this.loadChatSidebarVisibleFromStorage();
 		}
 	}
 
@@ -391,6 +395,44 @@ class AppStore {
 			localStorage.setItem('exo-debug-mode', this.debugMode ? 'true' : 'false');
 		} catch (error) {
 			console.error('Failed to save debug mode:', error);
+		}
+	}
+
+	private loadTopologyOnlyModeFromStorage() {
+		try {
+			const stored = localStorage.getItem('exo-topology-only-mode');
+			if (stored !== null) {
+				this.topologyOnlyMode = stored === 'true';
+			}
+		} catch (error) {
+			console.error('Failed to load topology only mode:', error);
+		}
+	}
+
+	private saveTopologyOnlyModeToStorage() {
+		try {
+			localStorage.setItem('exo-topology-only-mode', this.topologyOnlyMode ? 'true' : 'false');
+		} catch (error) {
+			console.error('Failed to save topology only mode:', error);
+		}
+	}
+
+	private loadChatSidebarVisibleFromStorage() {
+		try {
+			const stored = localStorage.getItem('exo-chat-sidebar-visible');
+			if (stored !== null) {
+				this.chatSidebarVisible = stored === 'true';
+			}
+		} catch (error) {
+			console.error('Failed to load chat sidebar visibility:', error);
+		}
+	}
+
+	private saveChatSidebarVisibleToStorage() {
+		try {
+			localStorage.setItem('exo-chat-sidebar-visible', this.chatSidebarVisible ? 'true' : 'false');
+		} catch (error) {
+			console.error('Failed to save chat sidebar visibility:', error);
 		}
 	}
 
@@ -698,6 +740,34 @@ class AppStore {
 		this.saveDebugModeToStorage();
 	}
 
+	getTopologyOnlyMode(): boolean {
+		return this.topologyOnlyMode;
+	}
+
+	setTopologyOnlyMode(enabled: boolean) {
+		this.topologyOnlyMode = enabled;
+		this.saveTopologyOnlyModeToStorage();
+	}
+
+	toggleTopologyOnlyMode() {
+		this.topologyOnlyMode = !this.topologyOnlyMode;
+		this.saveTopologyOnlyModeToStorage();
+	}
+
+	getChatSidebarVisible(): boolean {
+		return this.chatSidebarVisible;
+	}
+
+	setChatSidebarVisible(visible: boolean) {
+		this.chatSidebarVisible = visible;
+		this.saveChatSidebarVisibleToStorage();
+	}
+
+	toggleChatSidebarVisible() {
+		this.chatSidebarVisible = !this.chatSidebarVisible;
+		this.saveChatSidebarVisibleToStorage();
+	}
+
 	startPolling() {
 		this.fetchState();
 		this.fetchInterval = setInterval(() => this.fetchState(), 1000);
@@ -887,9 +957,7 @@ class AppStore {
 		}
 
 		if (lastUserIndex === -1) return;
-
-		const lastUserMessage = this.messages[lastUserIndex];
-
+		
 		// Remove any messages after the user message
 		this.messages = this.messages.slice(0, lastUserIndex + 1);
 
@@ -930,7 +998,10 @@ class AppStore {
 			}
 
 			if (!modelToUse) {
-				assistantMessage.content = 'Error: No model available. Please launch an instance first.';
+				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+				if (idx !== -1) {
+					this.messages[idx].content = 'Error: No model available. Please launch an instance first.';
+				}
 				this.isLoading = false;
 				this.updateActiveConversation();
 				return;
@@ -948,7 +1019,10 @@ class AppStore {
 
 			if (!response.ok) {
 				const errorText = await response.text();
-				assistantMessage.content = `Error: ${response.status} - ${errorText}`;
+				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+				if (idx !== -1) {
+					this.messages[idx].content = `Error: ${response.status} - ${errorText}`;
+				}
 				this.isLoading = false;
 				this.updateActiveConversation();
 				return;
@@ -956,7 +1030,10 @@ class AppStore {
 
 			const reader = response.body?.getReader();
 			if (!reader) {
-				assistantMessage.content = 'Error: No response stream available';
+				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+				if (idx !== -1) {
+					this.messages[idx].content = 'Error: No response stream available';
+				}
 				this.isLoading = false;
 				this.updateActiveConversation();
 				return;
@@ -984,9 +1061,16 @@ class AppStore {
 							const delta = json.choices?.[0]?.delta?.content;
 							if (delta) {
 								fullContent += delta;
-								const { displayContent } = this.stripThinkingTags(fullContent);
+								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
-								assistantMessage.content = displayContent;
+								
+								// Update the assistant message in place (triggers Svelte reactivity)
+								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+								if (idx !== -1) {
+									this.messages[idx].content = displayContent;
+									this.messages[idx].thinking = thinkingContent || undefined;
+								}
+								this.persistActiveConversation();
 							}
 						} catch {
 							// Skip malformed JSON
@@ -994,17 +1078,26 @@ class AppStore {
 					}
 				}
 			}
-
-			const { displayContent } = this.stripThinkingTags(fullContent);
-			assistantMessage.content = displayContent;
-			this.currentResponse = '';
-			this.updateActiveConversation();
-
+			
+			// Final cleanup of the message
+			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			if (idx !== -1) {
+				this.messages[idx].content = displayContent;
+				this.messages[idx].thinking = thinkingContent || undefined;
+			}
+			this.persistActiveConversation();
+			
 		} catch (error) {
-			assistantMessage.content = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
-			this.updateActiveConversation();
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			if (idx !== -1) {
+				this.messages[idx].content = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+			}
+			this.persistActiveConversation();
 		} finally {
 			this.isLoading = false;
+			this.currentResponse = '';
+			this.updateActiveConversation();
 		}
 	}
 
@@ -1411,6 +1504,8 @@ export const lastUpdate = () => appStore.lastUpdate;
 export const isTopologyMinimized = () => appStore.isTopologyMinimized;
 export const selectedChatModel = () => appStore.selectedChatModel;
 export const debugMode = () => appStore.getDebugMode();
+export const topologyOnlyMode = () => appStore.getTopologyOnlyMode();
+export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
 
 // Actions
 export const startChat = () => appStore.startChat();
@@ -1439,6 +1534,10 @@ export const isSidebarOpen = () => appStore.isSidebarOpen;
 export const toggleSidebar = () => appStore.toggleSidebar();
 export const toggleDebugMode = () => appStore.toggleDebugMode();
 export const setDebugMode = (enabled: boolean) => appStore.setDebugMode(enabled);
+export const toggleTopologyOnlyMode = () => appStore.toggleTopologyOnlyMode();
+export const setTopologyOnlyMode = (enabled: boolean) => appStore.setTopologyOnlyMode(enabled);
+export const toggleChatSidebarVisible = () => appStore.toggleChatSidebarVisible();
+export const setChatSidebarVisible = (visible: boolean) => appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 export const placeInstance = (modelId: string, downloadOnly: boolean) => appStore.placeInstance(modelId, downloadOnly);
 

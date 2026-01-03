@@ -38,7 +38,8 @@ def instance() -> Instance:
         shard_assignments=ShardAssignments(
             model_id=ModelId("test-model"), runner_to_shard={}, node_to_runner={}
         ),
-        hosts=[],
+        hosts_by_node={},
+        ephemeral_port=50000,
     )
 
 
@@ -49,6 +50,8 @@ def model_meta() -> ModelMetadata:
         storage_size=Memory.from_kb(1000),
         pretty_name="Test Model",
         n_layers=10,
+        hidden_size=30,
+        supports_tensor=True,
     )
 
 
@@ -92,9 +95,13 @@ def test_get_instance_placements_create_instance(
     topology.add_node(create_node(available_memory[0], node_id_a))
     topology.add_node(create_node(available_memory[1], node_id_b))
     topology.add_node(create_node(available_memory[2], node_id_c))
+    # Add bidirectional connections for ring topology
     topology.add_connection(create_connection(node_id_a, node_id_b))
+    topology.add_connection(create_connection(node_id_b, node_id_a))
     topology.add_connection(create_connection(node_id_b, node_id_c))
+    topology.add_connection(create_connection(node_id_c, node_id_b))
     topology.add_connection(create_connection(node_id_c, node_id_a))
+    topology.add_connection(create_connection(node_id_a, node_id_c))
 
     # act
     placements = place_instance(cic, topology, {})
@@ -135,6 +142,8 @@ def test_get_instance_placements_one_node_exact_fit(
             storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
     )
     placements = place_instance(cic, topology, {})
@@ -160,6 +169,8 @@ def test_get_instance_placements_one_node_fits_with_extra_memory(
             storage_size=Memory.from_kb(1000),
             pretty_name="Test Model",
             n_layers=10,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
     )
     placements = place_instance(cic, topology, {})
@@ -185,6 +196,8 @@ def test_get_instance_placements_one_node_not_fit(
             storage_size=Memory.from_kb(1001),
             pretty_name="Test Model",
             n_layers=10,
+            hidden_size=1000,
+            supports_tensor=True,
         ),
     )
 
@@ -234,17 +247,15 @@ def test_get_transition_events_delete_instance(instance: Instance):
     assert events[0].instance_id == instance_id
 
 
-def test_placement_prioritizes_leaf_cycle_with_less_memory(
+def test_placement_selects_cycle_with_most_memory(
     topology: Topology,
     model_meta: ModelMetadata,
     create_node: Callable[[int, NodeId | None], NodeInfo],
     create_connection: Callable[[NodeId, NodeId], Connection],
 ):
-    # Arrange two 3-node cycles. The A-B-C cycle has a leaf node (only one outgoing
-    # neighbor per node). The D-E-F cycle has extra outgoing edges making its nodes
-    # non-leaves. Ensure both cycles have sufficient total memory, with the A-B-C
-    # cycle having LESS total memory than D-E-F. The algorithm should still choose
-    # the cycle that contains a leaf node.
+    # Arrange two 3-node cycles with different total memory.
+    # With bidirectional connections for ring topology, both cycles have non-leaf nodes.
+    # The algorithm should select the cycle with the most available memory.
 
     # Model requires more than any single node but fits within a 3-node cycle
     model_meta.storage_size.in_bytes = 1500
@@ -258,11 +269,6 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     node_id_e = NodeId()
     node_id_f = NodeId()
 
-    # Extra sink nodes to make D/E/F non-leaf via additional outgoing edges
-    node_id_x = NodeId()
-    node_id_y = NodeId()
-    node_id_z = NodeId()
-
     # A-B-C cycle total memory = 1600 (< D-E-F total)
     topology.add_node(create_node(400, node_id_a))
     topology.add_node(create_node(400, node_id_b))
@@ -273,24 +279,20 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     topology.add_node(create_node(600, node_id_e))
     topology.add_node(create_node(600, node_id_f))
 
-    # Extra nodes with tiny memory so they can't form singleton placements
-    topology.add_node(create_node(10, node_id_x))
-    topology.add_node(create_node(10, node_id_y))
-    topology.add_node(create_node(10, node_id_z))
-
-    # Build directed cycles
+    # Build bidirectional cycles for ring topology
     topology.add_connection(create_connection(node_id_a, node_id_b))
+    topology.add_connection(create_connection(node_id_b, node_id_a))
     topology.add_connection(create_connection(node_id_b, node_id_c))
+    topology.add_connection(create_connection(node_id_c, node_id_b))
     topology.add_connection(create_connection(node_id_c, node_id_a))
+    topology.add_connection(create_connection(node_id_a, node_id_c))
 
     topology.add_connection(create_connection(node_id_d, node_id_e))
+    topology.add_connection(create_connection(node_id_e, node_id_d))
     topology.add_connection(create_connection(node_id_e, node_id_f))
+    topology.add_connection(create_connection(node_id_f, node_id_e))
     topology.add_connection(create_connection(node_id_f, node_id_d))
-
-    # Add extra outgoing edges from D/E/F so none of them are leaves
-    topology.add_connection(create_connection(node_id_d, node_id_x))
-    topology.add_connection(create_connection(node_id_e, node_id_y))
-    topology.add_connection(create_connection(node_id_f, node_id_z))
+    topology.add_connection(create_connection(node_id_d, node_id_f))
 
     cic = place_instance_command(
         model_meta=model_meta,
@@ -299,18 +301,17 @@ def test_placement_prioritizes_leaf_cycle_with_less_memory(
     # Act
     placements = place_instance(cic, topology, {})
 
-    # Assert the chosen cycle is A-B-C (contains at least one leaf node), even though
-    # D-E-F has more total memory.
+    # Assert: D-E-F cycle should be selected as it has more total memory
     assert len(placements) == 1
     instance_id = list(placements.keys())[0]
     instance = placements[instance_id]
 
     assigned_nodes = set(instance.shard_assignments.node_to_runner.keys())
-    expected_leaf_cycle_nodes = {node_id_a, node_id_b, node_id_c}
-    non_leaf_cycle_nodes = {node_id_d, node_id_e, node_id_f}
+    less_memory_cycle_nodes = {node_id_a, node_id_b, node_id_c}
+    more_memory_cycle_nodes = {node_id_d, node_id_e, node_id_f}
 
-    assert expected_leaf_cycle_nodes.issubset(assigned_nodes)
-    assert assigned_nodes.isdisjoint(non_leaf_cycle_nodes)
+    assert more_memory_cycle_nodes.issubset(assigned_nodes)
+    assert assigned_nodes.isdisjoint(less_memory_cycle_nodes)
 
 
 def test_tensor_rdma_backend_connectivity_matrix(
@@ -437,7 +438,7 @@ def test_tensor_rdma_backend_connectivity_matrix(
     assert isinstance(instance, MlxJacclInstance)
 
     assert instance.ibv_devices is not None
-    assert instance.ibv_coordinators is not None
+    assert instance.jaccl_coordinators is not None
 
     matrix = instance.ibv_devices
     assert len(matrix) == 3
@@ -459,10 +460,10 @@ def test_tensor_rdma_backend_connectivity_matrix(
     assert matrix[idx_c][idx_a] == "rdma_en3"
 
     # Verify coordinators are set for all nodes
-    assert len(instance.ibv_coordinators) == 3
+    assert len(instance.jaccl_coordinators) == 3
     for node_id in assigned_nodes:
-        assert node_id in instance.ibv_coordinators
-        coordinator = instance.ibv_coordinators[node_id]
+        assert node_id in instance.jaccl_coordinators
+        coordinator = instance.jaccl_coordinators[node_id]
         assert ":" in coordinator
         # Rank 0 node should use 0.0.0.0, others should use connection-specific IPs
         if node_id == assigned_nodes[0]:

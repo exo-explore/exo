@@ -24,19 +24,36 @@ function getNodeLabel(nodeId: string): string {
 
 function getInterfaceLabel(nodeId: string, ip?: string): { label: string; missing: boolean } {
 	if (!ip) return { label: '?', missing: true };
-	const node = data?.nodes?.[nodeId];
-	if (!node) return { label: '?', missing: true };
+	
+	// Strip port if present (e.g., "192.168.1.1:8080" -> "192.168.1.1")
+	const cleanIp = ip.includes(':') && !ip.includes('[') ? ip.split(':')[0] : ip;
+	
+	// Helper to check a node's interfaces
+	function checkNode(node: typeof data.nodes[string]): string | null {
+		if (!node) return null;
+		
+		const matchFromInterfaces = node.network_interfaces?.find((iface) =>
+			(iface.addresses || []).some((addr) => addr === cleanIp || addr === ip)
+		);
+		if (matchFromInterfaces?.name) {
+			return matchFromInterfaces.name;
+		}
 
-	const matchFromInterfaces = node.network_interfaces?.find((iface) =>
-		(iface.addresses || []).some((addr) => addr === ip)
-	);
-	if (matchFromInterfaces?.name) {
-		return { label: matchFromInterfaces.name, missing: false };
+		const mapped = node.ip_to_interface?.[cleanIp] || node.ip_to_interface?.[ip];
+		if (mapped && mapped.trim().length > 0) {
+			return mapped;
+		}
+		return null;
 	}
-
-	const mapped = node.ip_to_interface?.[ip];
-	if (mapped && mapped.trim().length > 0) {
-		return { label: mapped, missing: false };
+	
+	// Try specified node first
+	const result = checkNode(data?.nodes?.[nodeId]);
+	if (result) return { label: result, missing: false };
+	
+	// Fallback: search all nodes for this IP
+	for (const [, otherNode] of Object.entries(data?.nodes || {})) {
+		const otherResult = checkNode(otherNode);
+		if (otherResult) return { label: otherResult, missing: false };
 	}
 
 	return { label: '?', missing: true };
@@ -66,6 +83,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 	if (current) lines.push(current);
 	return lines;
 }
+
 
 	// Apple logo path for MacBook Pro screen
 	const APPLE_LOGO_PATH = "M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z";
@@ -238,6 +256,7 @@ function wrapLine(text: string, maxLen: number): string[] {
 		const debugLabelsGroup = svg.append('g').attr('class', 'debug-edge-labels');
 
 		const pairMap = new Map<string, { a: string; b: string; aToB: boolean; bToA: boolean; connections: Array<{ from: string; to: string; ip: string; ifaceLabel: string; missingIface: boolean }> }>();
+		let debugEdgeLabels: Array<{ connections: typeof pairMap extends Map<string, infer V> ? V['connections'] : never; isLeft: boolean; isTop: boolean; mx: number; my: number }> | null = null;
 		edges.forEach(edge => {
 			if (!edge.source || !edge.target || edge.source === edge.target) return;
 			if (!positionById[edge.source] || !positionById[edge.target]) return;
@@ -314,109 +333,97 @@ function wrapLine(text: string, maxLen: number): string[] {
 					.attr('marker-end', 'url(#arrowhead)');
 			}
 
+			// Collect debug labels for later positioning at edges
 			if (debugEnabled && entry.connections.length > 0) {
-				const maxBoxes = 6;
-				const fontSize = isMinimized ? 8 : 9;
-				const lineGap = 2;
-				const labelOffsetOut = Math.max(140, minDimension * 0.38);
-				const labelOffsetSide = isMinimized ? 16 : 20;
-				const boxWidth = 170;
-				const maxLineLen = 26;
-
-				const connections = entry.connections.slice(0, maxBoxes);
-				if (entry.connections.length > maxBoxes) {
-					const remaining = entry.connections.length - maxBoxes;
-					connections.push({
-						from: '',
-						to: '',
-						ip: `(+${remaining} more)`,
-						ifaceLabel: '',
-						missingIface: false
-					});
-				}
-
-				let dirX = mx - centerX;
-				let dirY = my - centerY;
-				const dirLen = Math.hypot(dirX, dirY);
-				if (dirLen < 1) {
-					dirX = -uy;
-					dirY = ux;
-				} else {
-					dirX /= dirLen;
-					dirY /= dirLen;
-				}
-
-				const nx = -dirY;
-				const ny = dirX;
-
-				const labelXRaw = mx + dirX * labelOffsetOut + nx * labelOffsetSide;
-				const labelYRaw = my + dirY * labelOffsetOut + ny * labelOffsetSide;
-				const clampPad = Math.min(120, minDimension * 0.12);
-				const labelX = Math.max(clampPad, Math.min(width - clampPad, labelXRaw));
-				const labelY = Math.max(clampPad, Math.min(height - clampPad, labelYRaw));
-
-				const labelGroup = debugLabelsGroup.append('g')
-					.attr('transform', `translate(${labelX}, ${labelY})`);
-
-				const textGroup = labelGroup.append('g');
-
-				connections.forEach((conn, idx) => {
-					const rawLines = conn.from && conn.to
-						? [
-							`${getNodeLabel(conn.from)}→${getNodeLabel(conn.to)}`,
-							`${conn.ip}`,
-							`${conn.ifaceLabel}`
-						]
-						: [conn.ip];
-
-					const wrapped = rawLines.flatMap(line => wrapLine(line, maxLineLen));
-
-					wrapped.forEach((line, lineIdx) => {
-						textGroup.append('text')
-							.attr('x', 0)
-							.attr('y', (idx * (wrapped.length * (fontSize + lineGap))) + lineIdx * (fontSize + lineGap))
-							.attr('text-anchor', 'middle')
-							.attr('dominant-baseline', 'hanging')
-							.attr('font-size', fontSize)
-							.attr('font-family', 'SF Mono, monospace')
-							.attr('fill', conn.missingIface ? 'rgba(248,113,113,0.9)' : 'rgba(255,255,255,0.9)')
-							.text(line);
-					});
+				// Determine which side of viewport based on edge midpoint
+				const isLeft = mx < centerX;
+				const isTop = my < safeCenterY;
+				
+				// Store for batch rendering after all edges processed
+				if (!debugEdgeLabels) debugEdgeLabels = [];
+				debugEdgeLabels.push({
+					connections: entry.connections,
+					isLeft,
+					isTop,
+					mx,
+					my
 				});
-
-				const bbox = textGroup.node()?.getBBox();
-				if (bbox) {
-					const paddedWidth = Math.max(boxWidth, bbox.width + 14);
-					const boxHeight = bbox.height + 8;
-					const boxMinX = labelX - paddedWidth / 2;
-					const boxMaxX = labelX + paddedWidth / 2;
-					const boxMinY = labelY + bbox.y - 4;
-					const boxMaxY = boxMinY + boxHeight;
-
-					const clampPadDynamic = Math.min(140, minDimension * 0.18);
-					let shiftX = 0;
-					let shiftY = 0;
-					if (boxMinX < clampPadDynamic) shiftX = clampPadDynamic - boxMinX;
-					if (boxMaxX > width - clampPadDynamic) shiftX = (width - clampPadDynamic) - boxMaxX;
-					if (boxMinY < clampPadDynamic) shiftY = clampPadDynamic - boxMinY;
-					if (boxMaxY > height - clampPadDynamic) shiftY = (height - clampPadDynamic) - boxMaxY;
-
-					const finalX = labelX + shiftX;
-					const finalY = labelY + shiftY;
-					labelGroup.attr('transform', `translate(${finalX}, ${finalY})`);
-
-					labelGroup.insert('rect', 'g')
-						.attr('x', -paddedWidth / 2)
-						.attr('y', bbox.y - 4)
-						.attr('width', paddedWidth)
-						.attr('height', boxHeight)
-						.attr('rx', 4)
-						.attr('fill', 'rgba(0,0,0,0.75)')
-						.attr('stroke', 'rgba(255,255,255,0.12)')
-						.attr('stroke-width', 0.6);
-				}
 			}
 		});
+
+		// Render debug labels at viewport edges/corners
+		if (debugEdgeLabels && debugEdgeLabels.length > 0) {
+			const fontSize = isMinimized ? 10 : 12;
+			const lineHeight = fontSize + 4;
+			const padding = 10;
+			
+			// Helper to get arrow based on direction vector
+			function getArrow(fromId: string, toId: string): string {
+				const fromPos = positionById[fromId];
+				const toPos = positionById[toId];
+				if (!fromPos || !toPos) return '→';
+				
+				const dirX = toPos.x - fromPos.x;
+				const dirY = toPos.y - fromPos.y;
+				const absX = Math.abs(dirX);
+				const absY = Math.abs(dirY);
+				
+				if (absX > absY * 2) {
+					return dirX > 0 ? '→' : '←';
+				} else if (absY > absX * 2) {
+					return dirY > 0 ? '↓' : '↑';
+				} else {
+					if (dirX > 0 && dirY > 0) return '↘';
+					if (dirX > 0 && dirY < 0) return '↗';
+					if (dirX < 0 && dirY > 0) return '↙';
+					return '↖';
+				}
+			}
+			
+			// Group by quadrant: topLeft, topRight, bottomLeft, bottomRight
+			const quadrants: Record<string, typeof debugEdgeLabels> = {
+				topLeft: [],
+				topRight: [],
+				bottomLeft: [],
+				bottomRight: []
+			};
+			
+			debugEdgeLabels.forEach(edge => {
+				const key = (edge.isTop ? 'top' : 'bottom') + (edge.isLeft ? 'Left' : 'Right');
+				quadrants[key].push(edge);
+			});
+			
+			// Render each quadrant
+			Object.entries(quadrants).forEach(([quadrant, edges]) => {
+				if (edges.length === 0) return;
+				
+				const isLeft = quadrant.includes('Left');
+				const isTop = quadrant.includes('top');
+				
+				let baseX = isLeft ? padding : width - padding;
+				let baseY = isTop ? padding : height - padding;
+				const textAnchor = isLeft ? 'start' : 'end';
+				
+				let currentY = baseY;
+				
+				edges.forEach(edge => {
+					edge.connections.forEach(conn => {
+						const arrow = getArrow(conn.from, conn.to);
+						const label = `${arrow} ${conn.ip} ${conn.ifaceLabel}`;
+						debugLabelsGroup.append('text')
+							.attr('x', baseX)
+							.attr('y', currentY)
+							.attr('text-anchor', textAnchor)
+							.attr('dominant-baseline', isTop ? 'hanging' : 'auto')
+							.attr('font-size', fontSize)
+							.attr('font-family', 'SF Mono, monospace')
+							.attr('fill', conn.missingIface ? 'rgba(248,113,113,0.9)' : 'rgba(255,255,255,0.85)')
+							.text(label);
+						currentY += isTop ? lineHeight : -lineHeight;
+					});
+				});
+			});
+		}
 
 		// Draw nodes
 		const nodesGroup = svg.append('g').attr('class', 'nodes-group');
@@ -968,4 +975,5 @@ function wrapLine(text: string, maxLen: number): string[] {
 		from { stroke-dashoffset: 0; }
 		to { stroke-dashoffset: -10; }
 	}
+
 </style>

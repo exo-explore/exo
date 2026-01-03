@@ -3,6 +3,9 @@
 
 	export let showHome = true;
 	export let onHome: (() => void) | null = null;
+	export let showSidebarToggle = false;
+	export let sidebarVisible = true;
+	export let onToggleSidebar: (() => void) | null = null;
 
 	function handleHome(): void {
 		if (onHome) {
@@ -14,13 +17,38 @@
 			window.location.hash = '/';
 		}
 	}
+
+	function handleToggleSidebar(): void {
+		if (onToggleSidebar) {
+			onToggleSidebar();
+		}
+	}
 </script>
 
 <header class="relative z-20 flex items-center justify-center px-6 pt-8 pb-4 bg-exo-dark-gray">
+	<!-- Left: Sidebar Toggle -->
+	{#if showSidebarToggle}
+	<div class="absolute left-6 top-1/2 -translate-y-1/2">
+		<button
+			onclick={handleToggleSidebar}
+			class="p-2 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+			title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+		>
+			<svg class="w-5 h-5 {sidebarVisible ? 'text-exo-yellow' : 'text-exo-medium-gray'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				{#if sidebarVisible}
+					<path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+				{:else}
+					<path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+				{/if}
+			</svg>
+		</button>
+	</div>
+	{/if}
+
 	<!-- Center: Logo (clickable to go home) -->
 	<button
 		onclick={handleHome}
-		class="hover:opacity-80 transition-opacity {showHome ? 'cursor-pointer' : 'cursor-default'}"
+		class="bg-transparent border-none outline-none focus:outline-none transition-opacity duration-200 hover:opacity-90 {showHome ? 'cursor-pointer' : 'cursor-default'}"
 		title={showHome ? 'Go to home' : ''}
 		disabled={!showHome}
 	>

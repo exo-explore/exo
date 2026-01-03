@@ -10,7 +10,9 @@ import {
 		clearChat,
 		instances,
 		debugMode,
-		toggleDebugMode
+		toggleDebugMode,
+		topologyOnlyMode,
+		toggleTopologyOnlyMode
 	} from '$lib/stores/app.svelte';
 
 	interface Props {
@@ -23,6 +25,7 @@ import {
 	const activeId = $derived(activeConversationId());
 const instanceData = $derived(instances());
 const debugEnabled = $derived(debugMode());
+const topologyOnlyEnabled = $derived(topologyOnlyMode());
 
 	let searchQuery = $state('');
 	let editingId = $state<string | null>(null);
@@ -424,6 +427,19 @@ const debugEnabled = $derived(debugMode());
 		<div class="text-xs text-white/60 font-mono tracking-wider text-center">
 			{conversationList.length} CONVERSATION{conversationList.length !== 1 ? 'S' : ''}
 		</div>
+		<button
+			type="button"
+			onclick={toggleTopologyOnlyMode}
+			class="p-1.5 rounded border border-exo-medium-gray/40 hover:border-exo-yellow/50 transition-colors cursor-pointer"
+			title="Toggle topology only mode"
+		>
+			<svg class="w-4 h-4 {topologyOnlyEnabled ? 'text-exo-yellow' : 'text-exo-medium-gray'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<circle cx="12" cy="5" r="2" fill="currentColor" />
+				<circle cx="5" cy="19" r="2" fill="currentColor" />
+				<circle cx="19" cy="19" r="2" fill="currentColor" />
+				<path stroke-linecap="round" d="M12 7v5m0 0l-5 5m5-5l5 5" />
+			</svg>
+		</button>
 	</div>
 	</div>
 </aside>

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 import shutil
+import ssl
 import time
 import traceback
 from datetime import timedelta
@@ -12,6 +13,7 @@ from urllib.parse import urljoin
 import aiofiles
 import aiofiles.os as aios
 import aiohttp
+import certifi
 from loguru import logger
 from pydantic import (
     BaseModel,
@@ -22,7 +24,7 @@ from pydantic import (
     TypeAdapter,
 )
 
-from exo.shared.constants import EXO_HOME, EXO_MODELS_DIR
+from exo.shared.constants import EXO_MODELS_DIR
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import DownloadProgressData
 from exo.shared.types.worker.shards import ShardMetadata
@@ -128,25 +130,6 @@ def build_model_path(model_id: str) -> DirectoryPath:
 
 async def resolve_model_path_for_repo(repo_id: str) -> Path:
     return (await ensure_models_dir()) / repo_id.replace("/", "--")
-
-
-async def ensure_exo_home() -> Path:
-    await aios.makedirs(EXO_HOME, exist_ok=True)
-    return EXO_HOME
-
-
-async def has_exo_home_read_access() -> bool:
-    try:
-        return await aios.access(EXO_HOME, os.R_OK)
-    except OSError:
-        return False
-
-
-async def has_exo_home_write_access() -> bool:
-    try:
-        return await aios.access(EXO_HOME, os.W_OK)
-    except OSError:
-        return False
 
 
 async def ensure_models_dir() -> Path:
@@ -262,8 +245,12 @@ def create_http_session(
         sock_read_timeout = 1800
         sock_connect_timeout = 60
 
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+
     return aiohttp.ClientSession(
         auto_decompress=auto_decompress,
+        connector=connector,
         timeout=aiohttp.ClientTimeout(
             total=total_timeout,
             connect=connect_timeout,
@@ -466,6 +453,11 @@ async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]
 
 
 async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
+    # TODO: 'Smart' downloads are disabled because:
+    #  (i) We don't handle all kinds of files;
+    # (ii) We don't have sticky sessions.
+    # (iii) Tensor parallel requires all files.
+    return ["*"]
     try:
         weight_map = await get_weight_map(str(shard.model_meta.model_id))
         return get_allow_patterns(weight_map, shard)

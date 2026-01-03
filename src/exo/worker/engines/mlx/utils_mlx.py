@@ -13,7 +13,6 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.worker.engines.mlx.constants import (
     CACHE_GROUP_SIZE,
     KV_CACHE_BITS,
-    TEMPERATURE,
     TRUST_REMOTE_CODE,
 )
 
@@ -21,6 +20,8 @@ try:
     from mlx_lm.tokenizer_utils import load_tokenizer
 except ImportError:
     from mlx_lm.tokenizer_utils import load as load_tokenizer  # type: ignore
+import contextlib
+
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.utils import load_model
@@ -48,6 +49,7 @@ from exo.worker.engines.mlx.auto_parallel import (
 )
 from exo.worker.runner.bootstrap import logger
 
+Group = mx.distributed.Group
 # Needed for 8 bit model
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 4096))
 
@@ -67,7 +69,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     )
 
 
-def mx_barrier(group: mx.distributed.Group | None = None):
+def mx_barrier(group: Group | None = None):
     mx.eval(
         mx.distributed.all_sum(
             mx.array(1.0),
@@ -77,7 +79,7 @@ def mx_barrier(group: mx.distributed.Group | None = None):
     )
 
 
-def broadcast_from_zero(value: int, group: mx.distributed.Group | None = None):
+def broadcast_from_zero(value: int, group: Group | None = None):
     if group is None:
         return value
 
@@ -99,91 +101,97 @@ class HostList(RootModel[list[str]]):
 
 def mlx_distributed_init(
     bound_instance: BoundInstance,
-) -> mx.distributed.Group:
+) -> Group:
     """
-    Initialize the MLX distributed (runs in thread pool).
-
-    Either hosts or mlx_ibv_devices must be provided:
-    - hosts: traditional host-based connectivity using MLX_HOSTFILE
-    - mlx_ibv_devices: RDMA connectivity matrix using MLX_IBV_DEVICES
-    - mlx_ibv_coordinator: coordinator address (IP:PORT) for RDMA setup
-    - strict: if True, raise an error if the distributed backend is not available
+    Initialize MLX distributed.
     """
     rank = bound_instance.bound_shard.device_rank
     logger.info(f"Starting initialization for rank {rank}")
 
-    # TODO: singleton instances
-    match bound_instance.instance:
-        case MlxRingInstance(hosts=hosts):
-            hostfile = f"./hosts_{rank}.json"
-            hosts_json = HostList.from_hosts(hosts).model_dump_json()
+    coordination_file = None
+    try:
+        # TODO: singleton instances
+        match bound_instance.instance:
+            case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
+                coordination_file = (
+                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                )
+                hosts_for_node = hosts_by_node[bound_instance.bound_node_id]
+                hosts_json = HostList.from_hosts(hosts_for_node).model_dump_json()
 
-            with open(hostfile, "w") as f:
-                _ = f.write(hosts_json)
+                with open(coordination_file, "w") as f:
+                    _ = f.write(hosts_json)
 
-            logger.info(f"rank {rank} hostfile: {hostfile} hosts: {hosts_json}")
+                logger.info(
+                    f"rank {rank} hostfile: {coordination_file} hosts: {hosts_json}"
+                )
 
-            os.environ["MLX_HOSTFILE"] = hostfile
-            os.environ["MLX_RANK"] = str(rank)
-            os.environ["MLX_RING_VERBOSE"] = "1"
-            group = mx.distributed.init(backend="ring", strict=True)
+                os.environ["MLX_HOSTFILE"] = coordination_file
+                os.environ["MLX_RANK"] = str(rank)
+                os.environ["MLX_RING_VERBOSE"] = "1"
+                group = mx.distributed.init(backend="ring", strict=True)
 
-        case MlxJacclInstance(
-            ibv_devices=ibv_devices, ibv_coordinators=ibv_coordinators
-        ):
-            # Use RDMA connectivity matrix
-            devices_file = f"./hosts_{rank}.json"
-            ibv_devices_json = json.dumps(ibv_devices)
+            case MlxJacclInstance(
+                ibv_devices=ibv_devices, jaccl_coordinators=jaccl_coordinators
+            ):
+                # Use RDMA connectivity matrix
+                coordination_file = (
+                    f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
+                )
+                ibv_devices_json = json.dumps(ibv_devices)
 
-            with open(devices_file, "w") as f:
-                _ = f.write(ibv_devices_json)
+                with open(coordination_file, "w") as f:
+                    _ = f.write(ibv_devices_json)
 
-            ibv_coordinator = ibv_coordinators[bound_instance.bound_node_id]
+                jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-            logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
-            logger.info(f"rank {rank} MLX_IBV_COORDINATOR: {ibv_coordinator}")
-            os.environ["MLX_IBV_DEVICES"] = devices_file
-            os.environ["MLX_RANK"] = str(rank)
-            os.environ["MLX_IBV_COORDINATOR"] = ibv_coordinator
-            group = mx.distributed.init(backend="jaccl", strict=True)
+                logger.info(f"rank {rank} MLX_IBV_DEVICES: {ibv_devices_json}")
+                logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
+                os.environ["MLX_IBV_DEVICES"] = coordination_file
+                os.environ["MLX_RANK"] = str(rank)
+                os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
+                group = mx.distributed.init(backend="jaccl", strict=True)
 
-    logger.info(f"Rank {rank} mlx distributed initialization complete")
+        logger.info(f"Rank {rank} mlx distributed initialization complete")
 
-    return group
+        return group
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            if coordination_file:
+                os.remove(coordination_file)
 
 
 def initialize_mlx(
     bound_instance: BoundInstance,
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
-    """
-    Initialize the MLX model, tokenizer, and sampler. Runs in the MLX thread.
-    """
+) -> Group:
+    # should we unseed it?
+    # TODO: pass in seed from params
     mx.random.seed(42)
 
-    set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+    assert len(bound_instance.instance.shard_assignments.node_to_runner) > 1, (
+        "Tried to initialize mlx for a single node instance"
+    )
+    return mlx_distributed_init(bound_instance)
 
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=TEMPERATURE)
+
+def load_mlx_items(
+    bound_instance: BoundInstance, group: Group | None
+) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
+    # TODO: pass temperature
+    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
     logger.info("Created a sampler")
 
-    if len(bound_instance.instance.shard_assignments.node_to_runner) <= 1:
+    if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, strict=True)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
-        if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
-            pass
-            # model, config = quantize_model(
-            #    model, config, group_size=KV_GROUP_SIZE, bits=ATTENTION_KV_BITS, quant_predicate=quant_predicate, mode=QUANTIZE_MODEL_MODE
-            # )
-
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
         logger.info("Starting distributed init")
-        group = mlx_distributed_init(bound_instance)
-
         start_time = time.perf_counter()
         model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
         end_time = time.perf_counter()
@@ -193,14 +201,12 @@ def initialize_mlx(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    logger.debug(model)
-
     return cast(Model, model), tokenizer, sampler
 
 
 def shard_and_load(
     shard_metadata: ShardMetadata,
-    group: mx.distributed.Group,
+    group: Group,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
 
@@ -252,15 +258,22 @@ def shard_and_load(
 
 
 def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
+    # TODO: Let's move away from this custom logic to mlx_lm.load()
+    if "kimi-k2" in shard_metadata.model_meta.model_id.lower():
+        eos_token_ids = [163586]
+
+    elif "glm" in shard_metadata.model_meta.model_id.lower():
+        eos_token_ids = [151336, 151329, 151338]
+
+    else:
+        eos_token_ids = None
+
     tokenizer = cast(
         TokenizerWrapper,
         load_tokenizer(
             model_path,
             tokenizer_config_extra={"trust_remote_code": TRUST_REMOTE_CODE},
-            # TODO: HACK for Kimi K2 wrong eos token id
-            eos_token_ids=[163586]
-            if "kimi-k2" in shard_metadata.model_meta.model_id.lower()
-            else None,
+            eos_token_ids=eos_token_ids,
         ),
     )
     assert isinstance(tokenizer, TokenizerWrapper)
@@ -382,11 +395,5 @@ def set_wired_limit_for_model(model_size: Memory):
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-lm/tree/main#large-models"
         )
-    kv_bytes = int(0.02 * model_bytes)
-    target_cache = int(1.10 * (model_bytes + kv_bytes))
-    target_cache = min(target_cache, max_rec_size)
-    mx.set_cache_limit(target_cache)
     mx.set_wired_limit(max_rec_size)
-    logger.info(
-        f"Wired limit set to {max_rec_size}. Cache limit set to {target_cache}."
-    )
+    logger.info(f"Wired limit set to {max_rec_size}.")

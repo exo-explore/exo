@@ -11,6 +11,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     ChatCompletion,
+    ConnectToGroup,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -22,20 +23,24 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.shared.types.worker.runners import (
+    RunnerConnected,
+    RunnerConnecting,
     RunnerFailed,
+    RunnerIdle,
     RunnerLoaded,
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
+    RunnerShuttingDown,
     RunnerStatus,
-    RunnerWaitingForModel,
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
+    load_mlx_items,
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
@@ -63,9 +68,10 @@ def main(
         model = None
         tokenizer = None
         sampler = None
+        group = None
 
-        current_status: RunnerStatus = RunnerWaitingForModel()
-        logger.info("runner waiting for model")
+        current_status: RunnerStatus = RunnerIdle()
+        logger.info("runner created")
         event_sender.send(
             RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
         )
@@ -78,9 +84,26 @@ def main(
                 )
                 event_sender.send(TaskAcknowledged(task_id=task.task_id))
                 match task:
-                    case LoadModel() if isinstance(
-                        current_status, (RunnerWaitingForModel, RunnerFailed)
+                    case ConnectToGroup() if isinstance(
+                        current_status, (RunnerIdle, RunnerFailed)
                     ):
+                        logger.info("runner connecting")
+                        current_status = RunnerConnecting()
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+                        group = initialize_mlx(bound_instance)
+
+                        logger.info("runner connected")
+                        current_status = RunnerConnected()
+
+                    # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
+                    case LoadModel() if (
+                        isinstance(current_status, RunnerConnected)
+                        and group is not None
+                    ) or (isinstance(current_status, RunnerIdle) and group is None):
                         current_status = RunnerLoading()
                         logger.info("runner loading")
                         event_sender.send(
@@ -89,15 +112,12 @@ def main(
                             )
                         )
 
-                        model, tokenizer, sampler = initialize_mlx(bound_instance)
+                        model, tokenizer, sampler = load_mlx_items(
+                            bound_instance, group
+                        )
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
                     case StartWarmup() if isinstance(current_status, RunnerLoaded):
                         assert model
                         assert tokenizer
@@ -123,11 +143,6 @@ def main(
                         )
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case ChatCompletion(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
@@ -172,29 +187,31 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case Shutdown():
+                        current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
                         event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.Complete
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
                             )
                         )
-                        break
+                        current_status = RunnerShutdown()
                     case _:
-                        raise ValueError("Received task outside of state machine")
+                        raise ValueError(
+                            f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
+                        )
                 event_sender.send(
                     TaskStatusUpdated(
                         task_id=task.task_id, task_status=TaskStatus.Complete
                     )
                 )
-        event_sender.send(
-            RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerShutdown())
-        )
+                event_sender.send(
+                    RunnerStatusUpdated(
+                        runner_id=runner_id, runner_status=current_status
+                    )
+                )
+                if isinstance(current_status, RunnerShutdown):
+                    break
     except ClosedResourceError:
         logger.warning("runner communication closed unexpectedly")
     except Exception as e:

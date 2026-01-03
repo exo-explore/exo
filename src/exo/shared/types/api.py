@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
 from exo.shared.types.common import CommandId
-from exo.shared.types.models import ModelId
+from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
 
@@ -175,6 +175,7 @@ class DeleteInstanceTaskParams(BaseModel):
 class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
+    model_meta: ModelMetadata
 
 
 class DeleteInstanceResponse(BaseModel):

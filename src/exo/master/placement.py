@@ -7,9 +7,9 @@ from loguru import logger
 
 from exo.master.placement_utils import (
     filter_cycles_by_memory,
-    get_hosts_from_subgraph,
-    get_mlx_ibv_coordinators,
     get_mlx_ibv_devices_matrix,
+    get_mlx_jaccl_coordinators,
+    get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
 )
@@ -19,9 +19,9 @@ from exo.shared.types.commands import (
     DeleteInstance,
     PlaceInstance,
 )
-from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
+from exo.shared.types.models import ModelId
 from exo.shared.types.topology import NodeInfo
 from exo.shared.types.worker.instances import (
     Instance,
@@ -30,6 +30,7 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
+from exo.shared.types.worker.shards import Sharding
 
 
 def random_ephemeral_port() -> int:
@@ -65,6 +66,28 @@ def place_instance(
     )
     if not cycles_with_sufficient_memory:
         raise ValueError("No cycles found with sufficient memory")
+
+    if command.sharding == Sharding.Tensor:
+        if not command.model_meta.supports_tensor:
+            raise ValueError(
+                f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_meta.model_id}"
+            )
+        # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
+        cycles_with_sufficient_memory = [
+            cycle
+            for cycle in cycles_with_sufficient_memory
+            if command.model_meta.hidden_size % len(cycle) == 0
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                f"No tensor sharding found for model with hidden_size {command.model_meta.hidden_size} candidate cycles"
+            )
+    if command.sharding == Sharding.Pipeline and command.model_meta.model_id == ModelId(
+        "mlx-community/DeepSeek-V3.1-8bit"
+    ):
+        raise ValueError(
+            "Pipeline parallelism is not supported for DeepSeek V3.1 (8-bit)"
+        )
 
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
@@ -118,7 +141,7 @@ def place_instance(
                 selected_cycle,
                 cycle_digraph,
             )
-            mlx_ibv_coordinators = get_mlx_ibv_coordinators(
+            mlx_jaccl_coordinators = get_mlx_jaccl_coordinators(
                 selected_cycle,
                 coordinator_port=random_ephemeral_port(),
                 cycle_digraph=cycle_digraph,
@@ -131,7 +154,12 @@ def place_instance(
                 download_only=command.download_only,
             )
         case InstanceMeta.MlxRing:
-            hosts: list[Host] = get_hosts_from_subgraph(cycle_digraph)
+            ephemeral_port = random_ephemeral_port()
+            hosts_by_node = get_mlx_ring_hosts_by_node(
+                selected_cycle=selected_cycle,
+                cycle_digraph=cycle_digraph,
+                ephemeral_port=ephemeral_port,
+            )
             target_instances[instance_id] = MlxRingInstance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,

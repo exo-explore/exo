@@ -7,6 +7,7 @@ final class ClusterStateService: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var lastActionMessage: String?
     @Published private(set) var modelOptions: [ModelOption] = []
+    @Published private(set) var localNodeId: String?
 
     private var timer: Timer?
     private let decoder: JSONDecoder
@@ -15,7 +16,7 @@ final class ClusterStateService: ObservableObject {
     private let endpoint: URL
 
     init(
-        baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
+        baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
@@ -29,6 +30,7 @@ final class ClusterStateService: ObservableObject {
     func startPolling(interval: TimeInterval = 0.5) {
         stopPolling()
         Task {
+            await fetchLocalNodeId()
             await fetchModels()
             await fetchSnapshot()
         }
@@ -46,9 +48,31 @@ final class ClusterStateService: ObservableObject {
         latestSnapshot = nil
         lastError = nil
         lastActionMessage = nil
+        localNodeId = nil
+    }
+
+    private func fetchLocalNodeId() async {
+        do {
+            let url = baseURL.appendingPathComponent("node_id")
+            var request = URLRequest(url: url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
+                return
+            }
+            if let nodeId = try? decoder.decode(String.self, from: data) {
+                localNodeId = nodeId
+            }
+        } catch {
+            // Silently ignore - localNodeId will remain nil and retry on next poll
+        }
     }
 
     private func fetchSnapshot() async {
+        // Retry fetching local node ID if not yet set
+        if localNodeId == nil {
+            await fetchLocalNodeId()
+        }
         do {
             var request = URLRequest(url: endpoint)
             request.cachePolicy = .reloadIgnoringLocalCacheData
