@@ -81,3 +81,35 @@ async def get_model_and_chip() -> tuple[str, str]:
     chip = chip_line.split(": ")[1] if chip_line else "Unknown Chip"
 
     return (model, chip)
+
+
+# Data from: https://en.wikipedia.org/wiki/Apple_silicon
+# Bandwidth in bytes/second
+APPLE_SILICON_BANDWIDTH = {
+    # M1 Series
+    "Apple M1": 68_250_000_000,
+    "Apple M1 Pro": 200_000_000_000,
+    "Apple M1 Max": 400_000_000_000,
+    "Apple M1 Ultra": 800_000_000_000,
+    # M2 Series
+    "Apple M2": 100_000_000_000,
+    "Apple M2 Pro": 200_000_000_000,
+    "Apple M2 Max": 400_000_000_000,
+    "Apple M2 Ultra": 800_000_000_000,
+    # M3 Series
+    "Apple M3": 100_000_000_000,
+    "Apple M3 Pro": 150_000_000_000,
+    "Apple M3 Max": 400_000_000_000,
+    # M4 Series
+    "Apple M4": 120_000_000_000,
+    "Apple M4 Pro": 273_000_000_000,
+    "Apple M4 Max": 546_000_000_000,
+}
+
+
+def get_memory_bandwidth(chip_id: str) -> int | None:
+    """
+    Returns the theoretical memory bandwidth in bytes/second for a given chip ID.
+    Currently only supports Apple Silicon.
+    """
+    return APPLE_SILICON_BANDWIDTH.get(chip_id)

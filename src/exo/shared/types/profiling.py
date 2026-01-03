@@ -57,6 +57,7 @@ class NodePerformanceProfile(CamelCaseModel):
     chip_id: str
     friendly_name: str
     memory: MemoryPerformanceProfile
+    memory_bandwidth: int | None = None
     network_interfaces: list[NetworkInterfaceInfo] = []
     system: SystemPerformanceProfile
 
