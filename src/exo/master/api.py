@@ -61,6 +61,7 @@ from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
+from exo.shared.models.model_cards import register_custom_model
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
@@ -593,20 +594,13 @@ class API:
             logger.error(msg)
             raise HTTPException(status_code=400, detail=msg) from e
         
-        from exo.shared.models.model_cards import ModelCard, save_custom_models
-
-        model_card = ModelCard(
-            short_id=payload.repo_id,
-            model_id=ModelId(payload.repo_id),
-            name=payload.name or model_meta.pretty_name or payload.repo_id,
-            description=payload.description or "Custom model",
-            tags=["custom"],
-            metadata=model_meta,
-        )
         
-        # Save the model card to persistent storage
-        model_cards[payload.repo_id] = model_card
-        save_custom_models()
+        model_card = register_custom_model(
+            model_id=ModelId(payload.repo_id),
+            metadata=model_meta,
+            name=payload.name,
+            description=payload.description
+        )
         
         return CreateModelResponse(
             id=payload.repo_id,

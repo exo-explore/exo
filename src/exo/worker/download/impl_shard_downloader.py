@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import AsyncIterator, Callable
 from loguru import logger
-from exo.shared.models.model_cards import MODEL_CARDS, ModelCard, save_custom_models, load_custom_models_once
+from exo.shared.models.model_cards import register_custom_model, MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -10,33 +10,6 @@ from exo.shared.types.worker.shards import (
 )
 from exo.worker.download.download_utils import RepoDownloadProgress, download_shard
 from exo.worker.download.shard_downloader import ShardDownloader
-
-def register_custom_model(shard: ShardMetadata) -> None:
-    """Registers a custom model in MODEL_CARDS and persists it."""
-    load_custom_models_once()
-    
-    model_id = shard.model_meta.model_id
-    
-    # Check if model is already registered
-    if any(c.model_id == model_id for c in MODEL_CARDS.values()):
-        return
-    
-    short_id: str = str(model_id).split("/")[-1]
-    logger.debug(f"Registering new model with short_id: {short_id}")
-    
-    custom_card = ModelCard(
-        short_id=short_id,
-        model_id=model_id,
-        name=short_id,
-        description=f"Custom model from {str(model_id).split('/')[0]}",
-        tags=["custom"],
-        metadata=shard.model_meta,
-    )
-    MODEL_CARDS[short_id] = custom_card
-    logger.info(f"✓ Registered custom model: {short_id} ({model_id})")
-    
-    # Persist to storage
-    save_custom_models()
 
 def exo_shard_downloader(max_parallel_downloads: int = 8) -> ShardDownloader:
     return SingletonShardDownloader(
@@ -56,7 +29,8 @@ async def build_base_shard(model_id: str) -> ShardMetadata:
         n_layers=model_meta.n_layers,
     )
     # Register as custom model if not in built-in MODEL_CARDS
-    register_custom_model(shard)
+    if model_meta.model_id not in MODEL_CARDS:
+        register_custom_model(model_meta.model_id, model_meta)
     return shard
 
 
@@ -168,7 +142,7 @@ class ResumableShardDownloader(ShardDownloader):
         self, shard: ShardMetadata, config_only: bool = False
     ) -> Path:
         # Register custom model before download
-        register_custom_model(shard)
+        register_custom_model(shard.model_meta.model_id, shard.model_meta)
 
         allow_patterns = ["config.json"] if config_only else None
 
@@ -192,8 +166,6 @@ class ResumableShardDownloader(ShardDownloader):
                 shard, self.on_progress_wrapper, skip_download=True
             )
 
-        # Kick off download status coroutines concurrently
-        # MODEL_CARDS now contains both built-in and custom models, so we only iterate once
         tasks = [
             asyncio.create_task(_status_for_model(model_card.model_id))
             for model_card in MODEL_CARDS.values()

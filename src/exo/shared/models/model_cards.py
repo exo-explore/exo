@@ -1,8 +1,8 @@
 import json
 import re
-from pathlib import Path
 from typing import Any, cast
 from loguru import logger
+from exo.shared.constants import EXO_CONFIG_HOME
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -577,24 +577,19 @@ def get_pretty_name_from_model_id(model_id: str) -> str:
     def quant_replacer(match: re.Match[str]) -> str:
         bits = match.group(1)
         return f"({bits}-bit)"
-
+    
     name = re.sub(r"\b(\d+)\s*-?bit\b", quant_replacer, name, flags=re.IGNORECASE)
 
     # Remove extra spaces
     name = " ".join(name.split())
 
-    # Handle GGUF if present (usually at end)
-    if "GGUF" in name.upper():
-        # Case insensitive replacement for GGUF
-        name = re.sub(r"\bgguf\b", "(GGUF)", name, flags=re.IGNORECASE)
 
     # Capitalize words
     words = name.split()
     capitalized_words: list[str] = []
     for word in words:
         # If it's already mixed case or all caps (and not just one letter), keep it
-        # Also keep if it starts with ( and ends with ) like (4-bit) or (GGUF)
-        if (any(c.isupper() for c in word) and len(word) > 1) or (word.startswith("(") and word.endswith(")")):
+        if (any(c.isupper() for c in word) and len(word) > 1):
             capitalized_words.append(word)
         else:
             # Capitalize the first letter, keep the rest as is
@@ -606,18 +601,7 @@ def get_pretty_name_from_model_id(model_id: str) -> str:
     return name
 
 
-# Persistent storage for custom models - use EXO_HOME for consistency
-def _get_custom_models_path() -> Path:
-    """Get the path to custom models JSON, using EXO_HOME if set."""
-    import os
-    exo_home = os.environ.get("EXO_HOME")
-    if exo_home:
-        base_path = Path(exo_home)
-    else:
-        base_path = Path.home() / ".exo"
-    return base_path / "custom_models.json"
-
-PERSISTENT_FILE_PATH = _get_custom_models_path()
+PERSISTENT_FILE_PATH = EXO_CONFIG_HOME / "custom_models.json"
 custom_models_loaded = False
 
 def load_custom_models_once() -> None:
@@ -686,6 +670,35 @@ def save_custom_models() -> None:
         logger.info(f"✓ Saved {len(custom_models)} custom models to {PERSISTENT_FILE_PATH}")
     except Exception as e:
         logger.error(f"Failed to save custom models to {PERSISTENT_FILE_PATH}: {e}")
+
+def register_custom_model(model_id: ModelId, metadata: ModelMetadata, name: str | None = None, description: str | None = None) -> ModelCard:
+    """Registers a custom model in MODEL_CARDS and persists it."""
+    load_custom_models_once()
+    
+    short_id = str(model_id)
+    if "/" in short_id:
+        short_id = short_id.split("/")[-1]
+    
+    # Check if model is already registered
+    if short_id in MODEL_CARDS:
+        return MODEL_CARDS[short_id]
+    
+    logger.debug(f"Registering new model with short_id: {short_id}")
+    
+    card = ModelCard(
+        short_id=short_id,
+        model_id=model_id,
+        name=name or get_pretty_name_from_model_id(str(model_id)),
+        description=description or f"Custom model from {str(model_id).split('/')[0] if '/' in str(model_id) else 'Hugging Face'}",
+        tags=["custom"],
+        metadata=metadata,
+    )
+    MODEL_CARDS[short_id] = card
+    logger.info(f"✓ Registered custom model: {short_id} ({model_id})")
+    
+    # Persist to storage
+    save_custom_models()
+    return card
 
 def get_model_cards() -> dict[str, ModelCard]:
     """Returns MODEL_CARDS, loading custom models on first access."""
