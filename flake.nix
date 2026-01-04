@@ -97,8 +97,8 @@
               openssl
             ])
             ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
-              # MACMON
-              macmon
+              # MACTOP
+              mactop
             ]);
 
           shellHook = ''

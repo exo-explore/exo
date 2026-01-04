@@ -13,16 +13,15 @@ from exo.shared.types.profiling import (
     SystemPerformanceProfile,
 )
 
-from .macmon import (
-    MacMonError,
+from .mactop import (
+    MactopError,
     Metrics,
 )
-from .macmon import (
-    get_metrics_async as macmon_get_metrics_async,
+from .mactop import (
+    get_metrics_async as mactop_get_metrics_async,
 )
 from .system_info import (
     get_friendly_name,
-    get_model_and_chip,
     get_network_interfaces,
 )
 
@@ -31,7 +30,7 @@ async def get_metrics_async() -> Metrics | None:
     """Return detailed Metrics on macOS or a minimal fallback elsewhere."""
 
     if platform.system().lower() == "darwin":
-        return await macmon_get_metrics_async()
+        return await mactop_get_metrics_async()
 
 
 def get_memory_profile() -> MemoryPerformanceProfile:
@@ -61,7 +60,7 @@ async def start_polling_memory_metrics(
         try:
             mem = get_memory_profile()
             await callback(mem)
-        except MacMonError as e:
+        except MactopError as e:
             logger.opt(exception=e).error("Memory Monitor encountered error")
         finally:
             await anyio.sleep(poll_interval_s)
@@ -78,26 +77,24 @@ async def start_polling_node_metrics(
                 return
 
             network_interfaces = get_network_interfaces()
-            # these awaits could be joined but realistically they should be cached
-            model_id, chip_id = await get_model_and_chip()
             friendly_name = await get_friendly_name()
 
-            # do the memory profile last to get a fresh reading to not conflict with the other memory profiling loop
             memory_profile = get_memory_profile()
 
             await callback(
                 NodePerformanceProfile(
-                    model_id=model_id,
-                    chip_id=chip_id,
+                    model_id=metrics.system_info.name,
+                    chip_id=metrics.system_info.name,
                     friendly_name=friendly_name,
                     network_interfaces=network_interfaces,
                     memory=memory_profile,
                     system=SystemPerformanceProfile(
-                        gpu_usage=metrics.gpu_usage[1],
-                        temp=metrics.temp.gpu_temp_avg,
+                        gpu_usage=metrics.gpu_usage,
+                        temp=metrics.gpu_temp,
                         sys_power=metrics.sys_power,
-                        pcpu_usage=metrics.pcpu_usage[1],
-                        ecpu_usage=metrics.ecpu_usage[1],
+                        total_power=metrics.total_power,
+                        pcpu_usage=metrics.pcpu_usage_percent,
+                        ecpu_usage=metrics.ecpu_usage_percent,
                         ane_power=metrics.ane_power,
                     ),
                 )
@@ -107,7 +104,7 @@ async def start_polling_node_metrics(
             logger.warning(
                 "[resource_monitor] Operation timed out after 30s, skipping this cycle."
             )
-        except MacMonError as e:
+        except MactopError as e:
             logger.opt(exception=e).error("Resource Monitor encountered error")
             return
         finally:

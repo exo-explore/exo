@@ -70,11 +70,11 @@ There are two ways to run exo:
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
-- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+- [mactop](https://github.com/metaspartan/mactop) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
   
   ```bash
-  brew install uv macmon node
+  brew install uv mactop node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
 
@@ -135,7 +135,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup toolchain install nightly
 ```
 
-**Note:** The `macmon` package is macOS-only and not required for Linux.
+**Note:** The `mactop` package is macOS-only and not required for Linux.
 
 Clone the repo, build the dashboard, and run exo:
 

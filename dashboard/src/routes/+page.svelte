@@ -214,8 +214,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	const availableMemoryGB = $derived(() => {
 		if (!data) return 0;
 		return Object.values(data.nodes).reduce((acc, n) => {
-			const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
-			const used = n.macmon_info?.memory?.ram_usage ?? 0;
+			const total = n.mactop_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+			const used = n.mactop_info?.memory?.ram_usage ?? 0;
 			return acc + (total - used);
 		}, 0) / (1024 * 1024 * 1024);
 	});
@@ -1104,8 +1104,8 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	const clusterMemory = $derived(() => {
 		if (!data) return { used: 0, total: 0 };
 		return Object.values(data.nodes).reduce((acc, n) => {
-			const total = n.macmon_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
-			const used = n.macmon_info?.memory?.ram_usage ?? 0;
+			const total = n.mactop_info?.memory?.ram_total ?? n.system_info?.memory ?? 0;
+			const used = n.mactop_info?.memory?.ram_usage ?? 0;
 			return { used: acc.used + used, total: acc.total + total };
 		}, { used: 0, total: 0 });
 	});

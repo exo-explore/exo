@@ -247,6 +247,7 @@ def apply_node_memory_measured(event: NodeMemoryMeasured, state: State) -> State
                 gpu_usage=0.0,
                 temp=0.0,
                 sys_power=0.0,
+                total_power=0.0,
                 pcpu_usage=0.0,
                 ecpu_usage=0.0,
                 ane_power=0.0,

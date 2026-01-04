@@ -151,8 +151,8 @@ function toggleNodeDetails(nodeId: string): void {
 	const nodeList = $derived(() => {
 		const nodesFromTopology = Object.keys(nodes).map((id) => {
 			const info = nodes[id];
-			const totalBytes = info.macmon_info?.memory?.ram_total ?? info.system_info?.memory ?? 0;
-			const usedBytes = info.macmon_info?.memory?.ram_usage ?? 0;
+			const totalBytes = info.mactop_info?.memory?.ram_total ?? info.system_info?.memory ?? 0;
+			const usedBytes = info.mactop_info?.memory?.ram_usage ?? 0;
 			const availableBytes = Math.max(totalBytes - usedBytes, 0);
 			const totalGB = totalBytes / (1024 * 1024 * 1024);
 			const availableGB = availableBytes / (1024 * 1024 * 1024);

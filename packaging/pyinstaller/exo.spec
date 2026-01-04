@@ -62,15 +62,15 @@ DATAS: list[tuple[str, str]] = [
     (str(EXO_SHARED_MODELS_DIR), "exo/shared/models"),
 ]
 
-MACMON_PATH = shutil.which("macmon")
-if MACMON_PATH is None:
+MACTOP_PATH = shutil.which("mactop")
+if MACTOP_PATH is None:
     raise SystemExit(
-        "macmon binary not found in PATH. "
-        "Install it via: brew install macmon"
+        "mactop binary not found in PATH. "
+        "Install it via: brew install mactop"
     )
 
 BINARIES: list[tuple[str, str]] = [
-    (MACMON_PATH, "."),
+    (MACTOP_PATH, "."),
 ]
 
 a = Analysis(

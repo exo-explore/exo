@@ -42,6 +42,7 @@ class SystemPerformanceProfile(CamelCaseModel):
     gpu_usage: float = 0.0
     temp: float = 0.0
     sys_power: float = 0.0
+    total_power: float = 0.0
     pcpu_usage: float = 0.0
     ecpu_usage: float = 0.0
     ane_power: float = 0.0
