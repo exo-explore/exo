@@ -103,13 +103,15 @@ class ModelAdapter(Protocol):
         t: int,
         pooled_prompt_embeds: mx.array,
         runtime_config: RuntimeConfig,
+        hidden_states: mx.array | None = None,
     ) -> mx.array:
         """Compute time/text embeddings for conditioning.
 
         Args:
             t: Current timestep
-            pooled_prompt_embeds: Pooled text embeddings
+            pooled_prompt_embeds: Pooled text embeddings (used by Flux)
             runtime_config: Runtime configuration
+            hidden_states: Image hidden states
 
         Returns:
             Text embeddings tensor
@@ -121,15 +123,17 @@ class ModelAdapter(Protocol):
         prompt_embeds: mx.array,
         runtime_config: RuntimeConfig,
         **kwargs: Any,
-    ) -> mx.array:
+    ) -> Any:
         """Compute rotary position embeddings.
 
         Args:
             prompt_embeds: Text embeddings
             runtime_config: Runtime configuration
+            **kwargs: Model-specific arguments (e.g., encoder_hidden_states_mask for Qwen)
 
         Returns:
-            Rotary embeddings tensor
+            Flux: mx.array
+            Qwen: tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]]
         """
         ...
 
@@ -139,12 +143,13 @@ class ModelAdapter(Protocol):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
+        rotary_embeddings: Any,  # Format varies: mx.array (Flux) or nested tuple (Qwen)
         kv_cache: ImagePatchKVCache | None,
         mode: "BlockWrapperMode",
         text_seq_len: int,
         patch_start: int | None = None,
         patch_end: int | None = None,
+        **kwargs: Any,
     ) -> tuple[mx.array, mx.array]:
         """Apply a joint transformer block.
 
@@ -153,12 +158,14 @@ class ModelAdapter(Protocol):
             hidden_states: Image hidden states
             encoder_hidden_states: Text hidden states
             text_embeddings: Conditioning embeddings
-            rotary_embeddings: Rotary position embeddings
+            rotary_embeddings: Rotary position embeddings (format varies by model)
             kv_cache: KV cache (None if not using cache)
             mode: CACHING or PATCHED mode
             text_seq_len: Text sequence length
             patch_start: Start index for patched mode
             patch_end: End index for patched mode
+            **kwargs: Additional model-specific arguments (e.g., encoder_hidden_states_mask,
+                block_idx for Qwen)
 
         Returns:
             Tuple of (encoder_hidden_states, hidden_states)
