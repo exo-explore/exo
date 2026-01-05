@@ -698,4 +698,44 @@ MODEL_CARDS: dict[str, ModelCard] = {
             ],
         ),
     ),
+    "qwen-image": ModelCard(
+        short_id="qwen-image",
+        model_id="Qwen/Qwen-Image",
+        name="Qwen Image",
+        description="""an image generation foundation model in the Qwen series that achieves significant advances in complex text rendering and precise image editing""",
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen-Image"),
+            pretty_name="Qwen Image",
+            storage_size=Memory.from_bytes(237823571),
+            n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(16584333312),  # TODO: ?
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(40860802176),
+                    n_layers=60,
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    n_layers=None,  # TODO: ?
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
+        ),
+    ),
 }
