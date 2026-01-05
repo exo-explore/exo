@@ -21,7 +21,7 @@ QWEN_IMAGE_CONFIG = ImageModelConfig(
     ),
     patch_size=2,
     vae_scale_factor=16,
-    default_steps={"low": 25, "medium": 50, "high": 100},
+    default_steps={"low": 10, "medium": 25, "high": 50},
     num_sync_steps_factor=0.1,  # ~3 sync steps for medium (30 steps)
     uses_attention_mask=True,  # Qwen uses encoder_hidden_states_mask
     guidance_scale=None,  # Set to None or < 1.0 to disable CFG
