@@ -101,16 +101,16 @@ class ModelAdapter(Protocol):
     def compute_text_embeddings(
         self,
         t: int,
-        pooled_prompt_embeds: mx.array,
         runtime_config: RuntimeConfig,
+        pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,
     ) -> mx.array:
         """Compute time/text embeddings for conditioning.
 
         Args:
             t: Current timestep
-            pooled_prompt_embeds: Pooled text embeddings (used by Flux)
             runtime_config: Runtime configuration
+            pooled_prompt_embeds: Pooled text embeddings (used by Flux)
             hidden_states: Image hidden states
 
         Returns:
