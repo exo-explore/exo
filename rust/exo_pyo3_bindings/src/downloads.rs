@@ -173,6 +173,22 @@ fn get_embedded_torrents(
         .collect())
 }
 
+/// Get file list from torrent data
+///
+/// Args:
+///     torrent_data: Raw .torrent file contents
+///
+/// Returns:
+///     List of (index, path, size_bytes) tuples for each file in the torrent
+#[pyfunction]
+fn get_torrent_file_list(torrent_data: Vec<u8>) -> PyResult<Vec<(usize, String, u64)>> {
+    let files = downloads::get_torrent_file_list(&torrent_data).pyerr()?;
+    Ok(files
+        .into_iter()
+        .map(|f| (f.index, f.path, f.size))
+        .collect())
+}
+
 /// Python wrapper for TorrentSession
 #[pyclass]
 struct TorrentSessionHandle {
@@ -312,6 +328,7 @@ impl TorrentSessionHandle {
 pub(crate) fn downloads_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(handle_tracker_announce, m)?)?;
     m.add_function(wrap_pyfunction!(get_embedded_torrents, m)?)?;
+    m.add_function(wrap_pyfunction!(get_torrent_file_list, m)?)?;
     m.add_class::<TorrentSessionHandle>()?;
     Ok(())
 }
