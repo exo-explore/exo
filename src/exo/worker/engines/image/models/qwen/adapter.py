@@ -140,7 +140,8 @@ class QwenModelAdapter(BaseModelAdapter):
 
     @property
     def needs_cfg(self) -> bool:
-        return True
+        gs = self._config.guidance_scale
+        return gs is not None and gs > 1.0
 
     def apply_guidance(
         self,
