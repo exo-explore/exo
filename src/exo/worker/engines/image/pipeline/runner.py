@@ -3,13 +3,18 @@ from typing import Any, Optional
 
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
+from mflux.config.config import Config
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.utils.exceptions import StopImageGenerationException
 from tqdm import tqdm
 
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.image.config import ImageModelConfig
-from exo.worker.engines.image.pipeline.adapter import BlockWrapperMode, ModelAdapter
+from exo.worker.engines.image.pipeline.adapter import (
+    BlockWrapperMode,
+    ModelAdapter,
+    PromptData,
+)
 from exo.worker.engines.image.pipeline.block_wrapper import (
     JointBlockWrapper,
     SingleBlockWrapper,
@@ -175,21 +180,56 @@ class DiffusionRunner:
     def is_distributed(self) -> bool:
         return self.group is not None
 
-    def run(
+    def generate_image(
+        self,
+        settings: Config,
+        prompt: str,
+        seed: int,
+    ) -> Any:
+        """Primary entry point for image generation.
+
+        Orchestrates the full generation flow:
+        1. Create runtime config
+        2. Create initial latents
+        3. Encode prompt
+        4. Run diffusion loop
+        5. Decode to image
+
+        Args:
+            settings: Generation config (steps, height, width)
+            prompt: Text prompt
+            seed: Random seed
+
+        Returns:
+            GeneratedImage result
+        """
+        runtime_config = RuntimeConfig(settings, self.adapter.model.model_config)
+        latents = self.adapter.create_latents(seed, runtime_config)
+        prompt_data = self.adapter.encode_prompt(prompt)
+
+        latents = self._run_diffusion_loop(
+            latents=latents,
+            prompt_data=prompt_data,
+            runtime_config=runtime_config,
+            seed=seed,
+            prompt=prompt,
+        )
+
+        return self.adapter.decode_latents(latents, runtime_config, seed, prompt)
+
+    def _run_diffusion_loop(
         self,
         latents: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
+        prompt_data: PromptData,
         runtime_config: RuntimeConfig,
         seed: int,
         prompt: str,
     ) -> mx.array:
-        """Execute the full diffusion loop.
+        """Execute the diffusion loop.
 
         Args:
             latents: Initial noise latents
-            prompt_embeds: T5 text embeddings
-            pooled_prompt_embeds: CLIP pooled embeddings
+            prompt_data: Encoded prompt data
             runtime_config: RuntimeConfig with scheduler, steps, dimensions
             seed: Random seed (for callbacks)
             prompt: Text prompt (for callbacks)
@@ -215,8 +255,7 @@ class DiffusionRunner:
                     t=t,
                     config=runtime_config,
                     latents=latents,
-                    prompt_embeds=prompt_embeds,
-                    pooled_prompt_embeds=pooled_prompt_embeds,
+                    prompt_data=prompt_data,
                 )
 
                 # Call subscribers in-loop
@@ -254,31 +293,31 @@ class DiffusionRunner:
 
         return latents
 
-    def single_forward_pass(
+    def _forward_pass(
         self,
-        t: int,
-        config: RuntimeConfig,
         latents: mx.array,
         prompt_embeds: mx.array,
         pooled_prompt_embeds: mx.array,
-        **kwargs: Any,
+        kwargs: dict[str, Any],
     ) -> mx.array:
         """Run a single forward pass through the transformer.
 
+        This is the internal method called by adapters via compute_step_noise.
         Returns noise prediction without applying scheduler step.
-        Used by adapters that need multiple forward passes (e.g., CFG).
 
         Args:
-            t: Current timestep
-            config: Runtime configuration
-            latents: Input latents (will be scaled internally)
+            latents: Input latents (already scaled by caller)
             prompt_embeds: Text embeddings
             pooled_prompt_embeds: Pooled text embeddings (Flux) or placeholder (Qwen)
-            **kwargs: Model-specific arguments (e.g., encoder_hidden_states_mask)
+            kwargs: Model-specific arguments (e.g., encoder_hidden_states_mask, t)
 
         Returns:
             Noise prediction tensor
         """
+        t = kwargs.get("t", 0)
+        config = kwargs.get("config")
+        if config is None:
+            raise ValueError("config must be provided in kwargs")
         scaled_latents = config.scheduler.scale_model_input(latents, t)
 
         hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
@@ -333,8 +372,7 @@ class DiffusionRunner:
         t: int,
         config: RuntimeConfig,
         latents: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
+        prompt_data: PromptData,
     ) -> mx.array:
         """Execute a single diffusion step.
 
@@ -342,16 +380,22 @@ class DiffusionRunner:
         configuration and current timestep.
         """
         if self.group is None:
-            return self._single_node_step(
-                t, config, latents, prompt_embeds, pooled_prompt_embeds
-            )
+            return self._single_node_step(t, config, latents, prompt_data)
         elif t < self.num_sync_steps:
             return self._sync_pipeline(
-                t, config, latents, prompt_embeds, pooled_prompt_embeds
+                t,
+                config,
+                latents,
+                prompt_data.prompt_embeds,
+                prompt_data.pooled_prompt_embeds,
             )
         else:
             return self._async_pipeline_step(
-                t, config, latents, prompt_embeds, pooled_prompt_embeds
+                t,
+                config,
+                latents,
+                prompt_data.prompt_embeds,
+                prompt_data.pooled_prompt_embeds,
             )
 
     def _single_node_step(
@@ -359,17 +403,48 @@ class DiffusionRunner:
         t: int,
         config: RuntimeConfig,
         latents: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
+        prompt_data: PromptData,
     ) -> mx.array:
         """Execute a single diffusion step on a single node (no distribution)."""
-        noise = self.single_forward_pass(
-            t=t,
-            config=config,
-            latents=latents,
-            prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-        )
+        base_kwargs = {"t": t, "config": config}
+
+        if self.adapter.needs_cfg:
+            # Two forward passes + guidance for CFG models (e.g., Qwen)
+            pos_kwargs = {
+                **base_kwargs,
+                **prompt_data.get_extra_forward_kwargs(positive=True),
+            }
+            noise_pos = self._forward_pass(
+                latents,
+                prompt_data.prompt_embeds,
+                prompt_data.pooled_prompt_embeds,
+                pos_kwargs,
+            )
+
+            neg_kwargs = {
+                **base_kwargs,
+                **prompt_data.get_extra_forward_kwargs(positive=False),
+            }
+            noise_neg = self._forward_pass(
+                latents,
+                prompt_data.negative_prompt_embeds,
+                prompt_data.negative_pooled_prompt_embeds,
+                neg_kwargs,
+            )
+
+            noise = self.adapter.apply_guidance(
+                noise_pos, noise_neg, guidance_scale=3.5
+            )
+        else:
+            # Single forward pass for non-CFG models (e.g., Flux)
+            kwargs = {**base_kwargs, **prompt_data.get_extra_forward_kwargs()}
+            noise = self._forward_pass(
+                latents,
+                prompt_data.prompt_embeds,
+                prompt_data.pooled_prompt_embeds,
+                kwargs,
+            )
+
         return config.scheduler.step(model_output=noise, timestep=t, sample=latents)
 
     def _initialize_kv_caches(

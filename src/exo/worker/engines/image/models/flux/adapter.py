@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import mlx.core as mx
 from mflux.config.model_config import ModelConfig
@@ -24,8 +24,35 @@ from exo.worker.engines.image.pipeline.adapter import (
 )
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
-if TYPE_CHECKING:
-    from exo.worker.engines.image.pipeline.runner import DiffusionRunner
+
+class FluxPromptData:
+    """Container for Flux prompt encoding results."""
+
+    def __init__(self, prompt_embeds: mx.array, pooled_prompt_embeds: mx.array):
+        self._prompt_embeds = prompt_embeds
+        self._pooled_prompt_embeds = pooled_prompt_embeds
+
+    @property
+    def prompt_embeds(self) -> mx.array:
+        return self._prompt_embeds
+
+    @property
+    def pooled_prompt_embeds(self) -> mx.array:
+        return self._pooled_prompt_embeds
+
+    @property
+    def negative_prompt_embeds(self) -> mx.array | None:
+        """Flux does not use CFG."""
+        return None
+
+    @property
+    def negative_pooled_prompt_embeds(self) -> mx.array | None:
+        """Flux does not use CFG."""
+        return None
+
+    def get_extra_forward_kwargs(self, positive: bool = True) -> dict[str, Any]:
+        """Flux has no extra forward kwargs."""
+        return {}
 
 
 class FluxModelAdapter(BaseModelAdapter):
@@ -63,8 +90,9 @@ class FluxModelAdapter(BaseModelAdapter):
     def _get_latent_creator(self) -> type:
         return FluxLatentCreator
 
-    def _encode_prompt(self, prompt: str) -> tuple[mx.array, mx.array]:
-        return PromptEncoder.encode_prompt(
+    def encode_prompt(self, prompt: str) -> FluxPromptData:
+        """Encode prompt into FluxPromptData."""
+        prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
             prompt=prompt,
             prompt_cache=self._model.prompt_cache,
             t5_tokenizer=self._model.t5_tokenizer,
@@ -72,29 +100,22 @@ class FluxModelAdapter(BaseModelAdapter):
             t5_text_encoder=self._model.t5_text_encoder,
             clip_text_encoder=self._model.clip_text_encoder,
         )
+        return FluxPromptData(
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+        )
 
-    def _run_denoising(
+    @property
+    def needs_cfg(self) -> bool:
+        return False
+
+    def apply_guidance(
         self,
-        latents: mx.array,
-        prompt_data: tuple[mx.array, mx.array],
-        runtime_config: RuntimeConfig,
-        runner: "DiffusionRunner | None",
+        noise_positive: mx.array,
+        noise_negative: mx.array,
+        guidance_scale: float,
     ) -> mx.array:
-        prompt_embeds, pooled_prompt_embeds = prompt_data
-        if runner:
-            # Distributed mode - use DiffusionRunner
-            return runner.run(
-                latents=latents,
-                prompt_embeds=prompt_embeds,
-                pooled_prompt_embeds=pooled_prompt_embeds,
-                runtime_config=runtime_config,
-                seed=0,
-                prompt="",
-            )
-        else:
-            raise NotImplementedError(
-                "Single-node FLUX generation requires a DiffusionRunner"
-            )
+        raise NotImplementedError("Flux does not use classifier-free guidance")
 
     def compute_embeddings(
         self,

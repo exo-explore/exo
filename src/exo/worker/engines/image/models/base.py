@@ -1,58 +1,21 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import mlx.core as mx
-from mflux.config.config import Config
 from mflux.config.runtime_config import RuntimeConfig
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
 from mflux.utils.array_util import ArrayUtil
 from mflux.utils.image_util import ImageUtil
 
-if TYPE_CHECKING:
-    from exo.worker.engines.image.pipeline.runner import DiffusionRunner
-
 
 class BaseModelAdapter(ABC):
-    """Base class for model adapters with shared generation logic.
+    """Base class for model adapters with shared utilities.
 
-    Uses the template method pattern to share common generation flow
-    while allowing subclasses to implement model-specific steps.
+    Provides common implementations for latent creation and decoding.
+    Subclasses implement model-specific prompt encoding and noise computation.
     """
 
-    def generate_image(
-        self,
-        settings: Config,
-        prompt: str,
-        seed: int,
-        runner: "DiffusionRunner | None" = None,
-    ) -> Any:
-        """Generate an image using the template method pattern.
-
-        Args:
-            settings: Generation config (steps, height, width)
-            prompt: Text prompt
-            seed: Random seed
-            runner: Optional DiffusionRunner for distributed mode
-
-        Returns:
-            GeneratedImage result
-        """
-        # 1. Create runtime config (shared)
-        runtime_config = RuntimeConfig(settings, self.model.model_config)
-
-        # 2. Create initial latents (uses model-specific latent creator)
-        latents = self._create_latents(seed, runtime_config)
-
-        # 3. Encode prompt (model-specific)
-        prompt_data = self._encode_prompt(prompt)
-
-        # 4. Run denoising loop (model-specific)
-        latents = self._run_denoising(latents, prompt_data, runtime_config, runner)
-
-        # 5. Decode and return (shared)
-        return self._decode_latents(latents, runtime_config, seed, prompt)
-
-    def _create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
+    def create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
         """Create initial latents. Uses model-specific latent creator."""
         return LatentCreator.create_for_txt2img_or_img2img(
             seed=seed,
@@ -67,7 +30,7 @@ class BaseModelAdapter(ABC):
             ),
         )
 
-    def _decode_latents(
+    def decode_latents(
         self,
         latents: mx.array,
         runtime_config: RuntimeConfig,
@@ -105,20 +68,4 @@ class BaseModelAdapter(ABC):
     @abstractmethod
     def _get_latent_creator(self) -> type:
         """Return the latent creator class for this model."""
-        ...
-
-    @abstractmethod
-    def _encode_prompt(self, prompt: str) -> Any:
-        """Encode the prompt. Returns model-specific prompt data."""
-        ...
-
-    @abstractmethod
-    def _run_denoising(
-        self,
-        latents: mx.array,
-        prompt_data: Any,
-        runtime_config: RuntimeConfig,
-        runner: "DiffusionRunner | None",
-    ) -> mx.array:
-        """Run the denoising loop. Model-specific implementation."""
         ...
