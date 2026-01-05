@@ -209,7 +209,8 @@ class DiffusionRunner:
             prompt=prompt,
         )
 
-        return self.adapter.decode_latents(latents, runtime_config, seed, prompt)
+        if self.is_last_stage:
+            return self.adapter.decode_latents(latents, runtime_config, seed, prompt)
 
     def _run_diffusion_loop(
         self,

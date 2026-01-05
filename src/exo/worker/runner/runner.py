@@ -263,7 +263,10 @@ def main(
                         ):
                             match response:
                                 case ImageGenerationResponse():
-                                    if shard_metadata.device_rank == 0:
+                                    if (
+                                        shard_metadata.device_rank
+                                        == shard_metadata.world_size - 1
+                                    ):
                                         encoded_data = base64.b64encode(
                                             response.image_data
                                         ).decode("utf-8")

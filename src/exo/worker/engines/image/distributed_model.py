@@ -184,7 +184,7 @@ class DistributedImageModel:
         image = self._generate_image(settings=config, prompt=prompt, seed=seed)
         logger.info("generated image")
 
-        # Only rank 0 returns the actual image
+        # Only final rank returns the actual image
         if self.is_last_stage:
             return image.image
 
