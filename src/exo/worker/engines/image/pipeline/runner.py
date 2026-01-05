@@ -583,8 +583,8 @@ class DiffusionRunner:
                 hidden_states, encoder_hidden_states
             )
 
-            if self.has_single_blocks:
-                # We continue with single blocks on this stage
+            if self.has_single_blocks or self.is_last_stage:
+                # Keep locally: either for single blocks or final projection
                 hidden_states = concatenated
             else:
                 # Send concatenated state to next stage (which has single blocks)
@@ -773,7 +773,8 @@ class DiffusionRunner:
             if self.owns_concat_stage:
                 patch_concat = self.adapter.merge_streams(patch, encoder_hidden_states)
 
-                if self.has_single_blocks:
+                if self.has_single_blocks or self.is_last_stage:
+                    # Keep locally: either for single blocks or final projection
                     patch = patch_concat
                 else:
                     mx.eval(
