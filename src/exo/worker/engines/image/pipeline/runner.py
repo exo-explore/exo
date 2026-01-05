@@ -432,8 +432,9 @@ class DiffusionRunner:
                 neg_kwargs,
             )
 
+            assert self.config.guidance_scale is not None
             noise = self.adapter.apply_guidance(
-                noise_pos, noise_neg, guidance_scale=3.5
+                noise_pos, noise_neg, guidance_scale=self.config.guidance_scale
             )
         else:
             # Single forward pass for non-CFG models (e.g., Flux)

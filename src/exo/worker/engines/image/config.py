@@ -43,6 +43,9 @@ class ImageModelConfig(BaseModel):
     # Feature flags
     uses_attention_mask: bool  # True for Fibo
 
+    # CFG (Classifier-Free Guidance) parameters
+    guidance_scale: float | None = None  # None or <= 1.0 disables CFG
+
     @property
     def total_blocks(self) -> int:
         """Total number of transformer blocks."""
