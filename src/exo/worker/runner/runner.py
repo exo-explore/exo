@@ -67,7 +67,6 @@ def main(
 
         model = None
         tokenizer = None
-        sampler = None
         group = None
 
         current_status: RunnerStatus = RunnerIdle()
@@ -112,16 +111,13 @@ def main(
                             )
                         )
 
-                        model, tokenizer, sampler = load_mlx_items(
-                            bound_instance, group
-                        )
+                        model, tokenizer = load_mlx_items(bound_instance, group)
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
                     case StartWarmup() if isinstance(current_status, RunnerLoaded):
                         assert model
                         assert tokenizer
-                        assert sampler
                         current_status = RunnerWarmingUp()
                         logger.info("runner warming up")
                         event_sender.send(
@@ -134,7 +130,6 @@ def main(
                         toks = warmup_inference(
                             model=model,
                             tokenizer=tokenizer,
-                            sampler=sampler,
                             # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
                         )
                         logger.info(f"warmed up by generating {toks} tokens")
@@ -148,7 +143,6 @@ def main(
                     ) if isinstance(current_status, RunnerReady):
                         assert model
                         assert tokenizer
-                        assert sampler
                         logger.info(f"received chat request: {str(task)[:500]}")
                         current_status = RunnerRunning()
                         logger.info("runner running")
@@ -164,7 +158,6 @@ def main(
                         for response in mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
-                            sampler=sampler,
                             task=task_params,
                         ):
                             match response:
