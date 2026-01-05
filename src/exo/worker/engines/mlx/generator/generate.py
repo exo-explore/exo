@@ -96,6 +96,9 @@ def mlx_generate(
     # Currently we support chat-completion tasks only.
     logger.info(f"task_params: {task}")
 
+    if task.seed is not None:
+        mx.random.seed(task.seed)
+
     prompt = apply_chat_template(
         tokenizer=tokenizer,
         chat_task_data=task,
