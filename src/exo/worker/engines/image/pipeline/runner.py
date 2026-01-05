@@ -386,16 +386,14 @@ class DiffusionRunner:
                 t,
                 config,
                 latents,
-                prompt_data.prompt_embeds,
-                prompt_data.pooled_prompt_embeds,
+                prompt_data,
             )
         else:
             return self._async_pipeline_step(
                 t,
                 config,
                 latents,
-                prompt_data.prompt_embeds,
-                prompt_data.pooled_prompt_embeds,
+                prompt_data,
             )
 
     def _single_node_step(
@@ -505,11 +503,15 @@ class DiffusionRunner:
         t: int,
         config: RuntimeConfig,
         hidden_states: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
+        prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         prev_latents = hidden_states
+
+        # Extract embeddings and extra kwargs (e.g., encoder_hidden_states_mask for Qwen)
+        prompt_embeds = prompt_data.prompt_embeds
+        pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
+        extra_kwargs = prompt_data.get_extra_forward_kwargs()
 
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
@@ -527,6 +529,7 @@ class DiffusionRunner:
             prompt_embeds,
             config,
             kontext_image_ids=kontext_image_ids,
+            **extra_kwargs,
         )
 
         # === Initialize KV caches to populate during sync for async warmstart ===
@@ -570,6 +573,7 @@ class DiffusionRunner:
                     text_seq_len=text_seq_len,
                     kv_cache=self.joint_kv_caches[block_idx],
                     mode=BlockWrapperMode.CACHING,
+                    **extra_kwargs,
                 )
 
         # === PHASE 3: Joint→Single Transition ===
@@ -663,8 +667,7 @@ class DiffusionRunner:
         t: int,
         config: RuntimeConfig,
         latents: mx.array,
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
+        prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
     ) -> mx.array:
         patch_latents, token_indices = self._create_patches(latents, config)
@@ -674,8 +677,7 @@ class DiffusionRunner:
             config,
             patch_latents,
             token_indices,
-            prompt_embeds,
-            pooled_prompt_embeds,
+            prompt_data,
             kontext_image_ids,
         )
 
@@ -699,13 +701,17 @@ class DiffusionRunner:
         config: RuntimeConfig,
         patch_latents: list[mx.array],
         token_indices: list[tuple[int, int]],
-        prompt_embeds: mx.array,
-        pooled_prompt_embeds: mx.array,
+        prompt_data: PromptData,
         kontext_image_ids: mx.array | None = None,
     ) -> list[mx.array]:
         """Execute async pipeline for all patches."""
         assert self.joint_kv_caches is not None
         assert self.single_kv_caches is not None
+
+        # Extract embeddings and extra kwargs (e.g., encoder_hidden_states_mask for Qwen)
+        prompt_embeds = prompt_data.prompt_embeds
+        pooled_prompt_embeds = prompt_data.pooled_prompt_embeds
+        extra_kwargs = prompt_data.get_extra_forward_kwargs()
 
         text_embeddings = self.adapter.compute_text_embeddings(
             t, config, pooled_prompt_embeds
@@ -714,6 +720,7 @@ class DiffusionRunner:
             prompt_embeds,
             config,
             kontext_image_ids=kontext_image_ids,
+            **extra_kwargs,
         )
 
         batch_size = patch_latents[0].shape[0]
@@ -760,6 +767,7 @@ class DiffusionRunner:
                         mode=BlockWrapperMode.PATCHED,
                         patch_start=start_token,
                         patch_end=end_token,
+                        **extra_kwargs,
                     )
 
             if self.owns_concat_stage:

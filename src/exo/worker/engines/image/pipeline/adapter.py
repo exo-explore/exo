@@ -282,10 +282,6 @@ class ModelAdapter(Protocol):
         """
         ...
 
-    # -------------------------------------------------------------------------
-    # High-level generation methods (used by DiffusionRunner)
-    # -------------------------------------------------------------------------
-
     def create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
         """Create initial noise latents for generation.
 
