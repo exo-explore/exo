@@ -285,7 +285,7 @@ class DiffusionRunner:
             scaled_latents, prompt_embeds
         )
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, config, hidden_states=hidden_states
+            t, config, pooled_prompt_embeds, hidden_states=hidden_states
         )
         rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds, config, **kwargs
@@ -445,7 +445,7 @@ class DiffusionRunner:
 
         # All stages need these for their blocks
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, config
+            t, config, pooled_prompt_embeds
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,
@@ -632,7 +632,7 @@ class DiffusionRunner:
         assert self.single_kv_caches is not None
 
         text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, config
+            t, config, pooled_prompt_embeds
         )
         image_rotary_embeddings = self.adapter.compute_rotary_embeddings(
             prompt_embeds,

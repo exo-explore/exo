@@ -42,7 +42,6 @@ class FluxModelAdapter(BaseModelAdapter):
             local_path=str(local_path),
             quantize=quantize,
         )
-        # Store original transformer reference BEFORE it may be replaced by DistributedDenoising
         self._transformer = self._model.transformer
 
     @property
@@ -60,10 +59,6 @@ class FluxModelAdapter(BaseModelAdapter):
     @property
     def hidden_dim(self) -> int:
         return self._transformer.x_embedder.weight.shape[0]
-
-    # -------------------------------------------------------------------------
-    # BaseModelAdapter abstract method implementations
-    # -------------------------------------------------------------------------
 
     def _get_latent_creator(self) -> type:
         return FluxLatentCreator
@@ -93,19 +88,13 @@ class FluxModelAdapter(BaseModelAdapter):
                 prompt_embeds=prompt_embeds,
                 pooled_prompt_embeds=pooled_prompt_embeds,
                 runtime_config=runtime_config,
-                seed=0,  # Not used by runner
-                prompt="",  # Not used by runner
+                seed=0,
+                prompt="",
             )
         else:
-            # Single-node mode - use DiffusionRunner with no distribution
-            # This path shouldn't be hit in practice since we always have a runner
             raise NotImplementedError(
                 "Single-node FLUX generation requires a DiffusionRunner"
             )
-
-    # -------------------------------------------------------------------------
-    # ModelAdapter protocol implementations (for distributed inference)
-    # -------------------------------------------------------------------------
 
     def compute_embeddings(
         self,
@@ -119,10 +108,15 @@ class FluxModelAdapter(BaseModelAdapter):
     def compute_text_embeddings(
         self,
         t: int,
-        pooled_prompt_embeds: mx.array,
         runtime_config: RuntimeConfig,
+        pooled_prompt_embeds: mx.array | None = None,
         hidden_states: mx.array | None = None,  # Ignored by Flux
     ) -> mx.array:
+        if pooled_prompt_embeds is None:
+            raise ValueError(
+                "pooled_prompt_embeds is required for Flux text embeddings"
+            )
+
         # hidden_states is ignored - Flux uses pooled_prompt_embeds instead
         return Transformer.compute_text_embeddings(
             t, pooled_prompt_embeds, self._transformer.time_text_embed, runtime_config
@@ -241,10 +235,6 @@ class FluxModelAdapter(BaseModelAdapter):
         encoder_hidden_states: mx.array,
     ) -> mx.array:
         return mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
-
-    # -------------------------------------------------------------------------
-    # Joint block implementations
-    # -------------------------------------------------------------------------
 
     def _apply_joint_block_caching(
         self,
@@ -482,10 +472,6 @@ class FluxModelAdapter(BaseModelAdapter):
         )
 
         return encoder_hidden_states, patch_hidden
-
-    # -------------------------------------------------------------------------
-    # Single block implementations
-    # -------------------------------------------------------------------------
 
     def _apply_single_block_caching(
         self,
