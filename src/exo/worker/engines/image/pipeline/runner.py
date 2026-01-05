@@ -673,18 +673,6 @@ class DiffusionRunner:
             kontext_image_ids,
         )
 
-        # Receive final patches from last rank
-        if (
-            t == config.num_inference_steps - 1
-            and self.is_first_stage
-            and not self.is_last_stage
-        ):
-            for patch_idx in range(len(patch_latents)):
-                patch_latents[patch_idx] = mx.distributed.recv_like(
-                    patch_latents[patch_idx], src=self.prev_rank, group=self.group
-                )
-                mx.eval(patch_latents[patch_idx])
-
         return mx.concatenate(patch_latents, axis=1)
 
     def _async_pipeline(
@@ -843,7 +831,7 @@ class DiffusionRunner:
                     sample=patch_prev,
                 )
 
-                if not self.is_first_stage:
+                if not self.is_first_stage and t != config.num_inference_steps - 1:
                     mx.eval(
                         mx.distributed.send(patch, self.next_rank, group=self.group)
                     )
