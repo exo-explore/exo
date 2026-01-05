@@ -185,7 +185,7 @@ class DistributedImageModel:
         logger.info("generated image")
 
         # Only rank 0 returns the actual image
-        if self.is_first_stage:
+        if self.is_last_stage:
             return image.image
 
     def _generate_image(self, settings: Config, prompt: str, seed: int) -> Any:
