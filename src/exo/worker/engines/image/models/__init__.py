@@ -7,6 +7,10 @@ from exo.worker.engines.image.models.flux import (
     FLUX_SCHNELL_CONFIG,
     FluxModelAdapter,
 )
+from exo.worker.engines.image.models.qwen import (
+    QWEN_IMAGE_CONFIG,
+    QwenModelAdapter,
+)
 from exo.worker.engines.image.pipeline.adapter import ModelAdapter
 
 __all__: list[str] = []
@@ -18,12 +22,14 @@ AdapterFactory = Callable[[ImageModelConfig, str, Path, int | None], ModelAdapte
 # Registry maps model_family string to adapter factory
 _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
     "flux": FluxModelAdapter,
+    "qwen": QwenModelAdapter,
 }
 
 # Config registry: maps model ID patterns to configs
 _CONFIG_REGISTRY: dict[str, ImageModelConfig] = {
     "flux.1-schnell": FLUX_SCHNELL_CONFIG,
     "flux.1-dev": FLUX_DEV_CONFIG,
+    "qwen-image": QWEN_IMAGE_CONFIG,
 }
 
 
