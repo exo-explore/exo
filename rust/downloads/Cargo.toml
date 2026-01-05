@@ -31,7 +31,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 
 # BitTorrent library
-librqbit = "8.1.1"
+librqbit = { git = "https://github.com/JakeHillion/rqbit", rev = "c4e2ecf81d03bd8acd96a0803d06a70b34d5da19" }
 
 # Embed torrent files
 include_dir = "0.7"

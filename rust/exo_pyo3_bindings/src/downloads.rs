@@ -208,7 +208,7 @@ impl TorrentSessionHandle {
     ///     Info hash as hex string
     fn add_torrent(
         &self,
-        py: Python<'_>,
+        _py: Python<'_>,
         torrent_data: Vec<u8>,
         save_path: String,
         file_indices: Option<Vec<usize>>,
@@ -216,18 +216,16 @@ impl TorrentSessionHandle {
         let session = Arc::clone(&self.session);
         let save_path = PathBuf::from(save_path);
 
-        py.allow_threads(|| {
-            tokio::runtime::Runtime::new()
-                .pyerr()?
-                .block_on(async {
-                    session
-                        .lock()
-                        .await
-                        .add_torrent(torrent_data, save_path, file_indices)
-                        .await
-                })
-                .pyerr()
-        })
+        tokio::runtime::Runtime::new()
+            .pyerr()?
+            .block_on(async {
+                session
+                    .lock()
+                    .await
+                    .add_torrent(torrent_data, save_path, file_indices)
+                    .await
+            })
+            .pyerr()
     }
 
     /// Get download progress for a torrent
@@ -240,12 +238,10 @@ impl TorrentSessionHandle {
     fn get_progress(&self, py: Python<'_>, info_hash: String) -> PyResult<Py<PyDict>> {
         let session = Arc::clone(&self.session);
 
-        let progress: DownloadProgress = py.allow_threads(|| {
-            tokio::runtime::Runtime::new()
-                .pyerr()?
-                .block_on(async { session.lock().await.get_progress(&info_hash).await })
-                .pyerr()
-        })?;
+        let progress: DownloadProgress = tokio::runtime::Runtime::new()
+            .pyerr()?
+            .block_on(async { session.lock().await.get_progress(&info_hash).await })
+            .pyerr()?;
 
         let dict = PyDict::new(py);
         dict.set_item("downloaded_bytes", progress.downloaded_bytes)?;
@@ -262,59 +258,51 @@ impl TorrentSessionHandle {
     ///
     /// Args:
     ///     info_hash: Torrent info hash
-    fn wait_until_completed(&self, py: Python<'_>, info_hash: String) -> PyResult<()> {
+    fn wait_until_completed(&self, _py: Python<'_>, info_hash: String) -> PyResult<()> {
         let session = Arc::clone(&self.session);
 
-        py.allow_threads(|| {
-            tokio::runtime::Runtime::new()
-                .pyerr()?
-                .block_on(async { session.lock().await.wait_until_completed(&info_hash).await })
-                .pyerr()
-        })
+        tokio::runtime::Runtime::new()
+            .pyerr()?
+            .block_on(async { session.lock().await.wait_until_completed(&info_hash).await })
+            .pyerr()
     }
 
     /// Enable seeding for a torrent
     ///
     /// Args:
     ///     info_hash: Torrent info hash
-    fn enable_seeding(&self, py: Python<'_>, info_hash: String) -> PyResult<()> {
+    fn enable_seeding(&self, _py: Python<'_>, info_hash: String) -> PyResult<()> {
         let session = Arc::clone(&self.session);
 
-        py.allow_threads(|| {
-            tokio::runtime::Runtime::new()
-                .pyerr()?
-                .block_on(async { session.lock().await.enable_seeding(&info_hash).await })
-                .pyerr()
-        })
+        tokio::runtime::Runtime::new()
+            .pyerr()?
+            .block_on(async { session.lock().await.enable_seeding(&info_hash).await })
+            .pyerr()
     }
 
     /// Remove a torrent from the session
     ///
     /// Args:
     ///     info_hash: Torrent info hash
-    fn remove_torrent(&self, py: Python<'_>, info_hash: String) -> PyResult<()> {
+    fn remove_torrent(&self, _py: Python<'_>, info_hash: String) -> PyResult<()> {
         let session = Arc::clone(&self.session);
 
-        py.allow_threads(|| {
-            tokio::runtime::Runtime::new()
-                .pyerr()?
-                .block_on(async { session.lock().await.remove_torrent(&info_hash).await })
-                .pyerr()
-        })
+        tokio::runtime::Runtime::new()
+            .pyerr()?
+            .block_on(async { session.lock().await.remove_torrent(&info_hash).await })
+            .pyerr()
     }
 
     /// List all torrents in the session
     ///
     /// Returns:
     ///     List of info hashes
-    fn list_torrents(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+    fn list_torrents(&self, _py: Python<'_>) -> PyResult<Vec<String>> {
         let session = Arc::clone(&self.session);
 
-        py.allow_threads(|| {
-            tokio::runtime::Runtime::new()
-                .pyerr()?
-                .block_on(async { Ok(session.lock().await.list_torrents().await) })
-        })
+        tokio::runtime::Runtime::new()
+            .pyerr()?
+            .block_on(async { Ok(session.lock().await.list_torrents().await) })
     }
 }
 

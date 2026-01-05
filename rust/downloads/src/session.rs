@@ -4,7 +4,7 @@
 //! with persistent seeding and selective file downloads.
 
 use anyhow::{Context, Result};
-use librqbit::{AddTorrent, AddTorrentOptions, Api, ManagedTorrentHandle, Session, SessionOptions};
+use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ pub struct TorrentSession {
     session: Arc<Session>,
     api: Arc<Api>,
     session_dir: PathBuf,
-    torrents: Arc<RwLock<HashMap<String, ManagedTorrentHandle>>>,
+    torrents: Arc<RwLock<HashMap<String, Arc<ManagedTorrent>>>>,
 }
 
 impl TorrentSession {
@@ -42,7 +42,7 @@ impl TorrentSession {
             disable_dht: false,
             disable_dht_persistence: false,
             dht_config: None,
-            persistence: true,
+            persistence: Some(SessionPersistenceConfig::Json { folder: None }),
             fastresume: true,
             ..Default::default()
         };
@@ -54,7 +54,7 @@ impl TorrentSession {
         let api = Api::new(Arc::clone(&session), None);
 
         Ok(Self {
-            session: Arc::new(session),
+            session,
             api: Arc::new(api),
             session_dir,
             torrents: Arc::new(RwLock::new(HashMap::new())),
@@ -79,19 +79,24 @@ impl TorrentSession {
         let opts = AddTorrentOptions {
             overwrite: false,
             only_files_regex: None,
-            only_files: file_indices
-                .map(|indices| librqbit::AddTorrentOptions::only_files_from_vec(indices)),
+            only_files: file_indices,
             output_folder: Some(save_path.to_string_lossy().to_string()),
             ..Default::default()
         };
 
         let add_torrent = AddTorrent::from_bytes(torrent_data);
 
-        let handle = self
+        let response = self
             .session
             .add_torrent(add_torrent, Some(opts))
             .await
             .context("Failed to add torrent")?;
+
+        let handle = match response {
+            AddTorrentResponse::Added(_, handle) => handle,
+            AddTorrentResponse::AlreadyManaged(_, handle) => handle,
+            AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was list-only, not added"),
+        };
 
         let info_hash = handle.info_hash().as_string();
 
@@ -109,15 +114,14 @@ impl TorrentSession {
         let handle = torrents.get(info_hash).context("Torrent not found")?;
 
         let stats = handle.stats();
-        let state = handle.state();
 
         Ok(DownloadProgress {
-            downloaded_bytes: stats.downloaded_bytes,
+            downloaded_bytes: stats.progress_bytes,
             total_bytes: stats.total_bytes,
-            download_speed: stats.download_speed,
-            upload_speed: stats.upload_speed,
-            peers_connected: stats.peers_connected,
-            is_finished: state.is_finished(),
+            download_speed: stats.live.as_ref().map_or(0.0, |l| l.download_speed.mbps * 1024.0 * 1024.0),
+            upload_speed: stats.live.as_ref().map_or(0.0, |l| l.upload_speed.mbps * 1024.0 * 1024.0),
+            peers_connected: stats.live.as_ref().map_or(0, |l| l.snapshot.peer_stats.live as usize),
+            is_finished: stats.finished,
         })
     }
 
