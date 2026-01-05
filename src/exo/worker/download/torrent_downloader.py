@@ -135,15 +135,28 @@ class TorrentShardDownloader(ShardDownloader):
                 # Update aggregate progress
                 variant_downloaded = progress_dict["downloaded_bytes"]
                 variant_total = progress_dict["total_bytes"]
+                download_speed = progress_dict["download_speed"]  # bytes/sec from rqbit
+
+                # Calculate ETA based on remaining bytes and current speed
+                current_downloaded = total_downloaded + variant_downloaded
+                current_total = total_size + variant_total
+                remaining_bytes = current_total - current_downloaded
+                eta = (
+                    timedelta(seconds=remaining_bytes / download_speed)
+                    if download_speed > 0
+                    else timedelta(0)
+                )
 
                 # Report combined progress
                 progress = self._make_progress(
                     shard=shard,
                     model_id=model_id,
                     revision=revision,
-                    downloaded=total_downloaded + variant_downloaded,
-                    total=total_size + variant_total,
+                    downloaded=current_downloaded,
+                    total=current_total,
                     status="in_progress",
+                    speed=download_speed,
+                    eta=eta,
                 )
                 self._report_progress(shard, progress)
 
@@ -310,6 +323,8 @@ class TorrentShardDownloader(ShardDownloader):
         downloaded: int,
         total: int,
         status: str,
+        speed: float = 0.0,
+        eta: timedelta | None = None,
     ) -> RepoDownloadProgress:
         """Create a RepoDownloadProgress object with proper fields.
 
@@ -320,6 +335,8 @@ class TorrentShardDownloader(ShardDownloader):
             downloaded: Downloaded bytes
             total: Total bytes
             status: Download status ("not_started", "in_progress", "complete")
+            speed: Download speed in bytes/second
+            eta: Estimated time remaining
 
         Returns:
             RepoDownloadProgress object
@@ -333,8 +350,8 @@ class TorrentShardDownloader(ShardDownloader):
             downloaded_bytes=Memory.from_bytes(downloaded),
             downloaded_bytes_this_session=Memory.from_bytes(downloaded),
             total_bytes=Memory.from_bytes(total),
-            overall_speed=0.0,  # Not tracked for torrents yet
-            overall_eta=timedelta(0),
+            overall_speed=speed,
+            overall_eta=eta if eta is not None else timedelta(0),
             status=status,  # type: ignore
         )
 
