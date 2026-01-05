@@ -734,8 +734,18 @@ class DiffusionRunner:
 
             if self.has_joint_blocks:
                 if not self.is_first_stage or t != self.num_sync_steps:
+                    if self.is_first_stage:
+                        # First stage receives latent-space from last stage (scheduler output)
+                        recv_template = patch
+                    else:
+                        # Other stages receive hidden-space from previous stage
+                        patch_len = patch.shape[1]
+                        recv_template = mx.zeros(
+                            (batch_size, patch_len, hidden_dim),
+                            dtype=patch.dtype,
+                        )
                     patch = mx.distributed.recv_like(
-                        patch, src=self.prev_rank, group=self.group
+                        recv_template, src=self.prev_rank, group=self.group
                     )
                     mx.eval(patch)
                     patch_latents[patch_idx] = patch
