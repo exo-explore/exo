@@ -15,6 +15,6 @@ pub mod session;
 pub mod tracker;
 
 pub use bencode::AnnounceParams;
-pub use embedded::get_embedded_torrent;
+pub use embedded::get_embedded_torrents;
 pub use session::{DownloadProgress, TorrentSession};
 pub use tracker::{handle_announce, PeerInfo, TopologyData};

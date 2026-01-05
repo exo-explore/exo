@@ -151,24 +151,26 @@ fn handle_tracker_announce(
     Ok(PyBytes::new(py, &response_bytes).unbind())
 }
 
-/// Get an embedded torrent file
+/// Get all embedded torrent variants for a model
 ///
 /// Args:
 ///     model_id: Model identifier (e.g., "mlx-community/Qwen3-30B-A3B-4bit")
 ///     revision: Git commit hash
 ///
 /// Returns:
-///     Torrent file contents as bytes, or None if not found
+///     List of (variant_name, torrent_data) tuples, e.g., [("small", bytes), ("large", bytes)]
+///     Returns empty list if no torrents found.
 #[pyfunction]
-fn get_embedded_torrent(
+fn get_embedded_torrents(
     py: Python<'_>,
     model_id: String,
     revision: String,
-) -> PyResult<Option<Py<PyBytes>>> {
-    match downloads::get_embedded_torrent(&model_id, &revision) {
-        Some(data) => Ok(Some(PyBytes::new(py, &data).unbind())),
-        None => Ok(None),
-    }
+) -> PyResult<Vec<(String, Py<PyBytes>)>> {
+    let torrents = downloads::get_embedded_torrents(&model_id, &revision);
+    Ok(torrents
+        .into_iter()
+        .map(|(variant, data)| (variant, PyBytes::new(py, &data).unbind()))
+        .collect())
 }
 
 /// Python wrapper for TorrentSession
@@ -309,7 +311,7 @@ impl TorrentSessionHandle {
 /// Downloads submodule
 pub(crate) fn downloads_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(handle_tracker_announce, m)?)?;
-    m.add_function(wrap_pyfunction!(get_embedded_torrent, m)?)?;
+    m.add_function(wrap_pyfunction!(get_embedded_torrents, m)?)?;
     m.add_class::<TorrentSessionHandle>()?;
     Ok(())
 }
