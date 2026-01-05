@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import mlx.core as mx
 from mflux.config.model_config import ModelConfig
@@ -10,7 +10,6 @@ from mflux.models.qwen.model.qwen_text_encoder.qwen_prompt_encoder import (
 )
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransformer
 from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
-from tqdm import tqdm
 
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.models.base import BaseModelAdapter
@@ -21,12 +20,12 @@ from exo.worker.engines.image.pipeline.adapter import (
 )
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
-if TYPE_CHECKING:
-    from exo.worker.engines.image.pipeline.runner import DiffusionRunner
-
 
 class QwenPromptData:
-    """Container for Qwen prompt encoding results."""
+    """Container for Qwen prompt encoding results.
+
+    Implements PromptData protocol with additional Qwen-specific attributes.
+    """
 
     def __init__(
         self,
@@ -35,10 +34,37 @@ class QwenPromptData:
         negative_prompt_embeds: mx.array,
         negative_prompt_mask: mx.array,
     ):
-        self.prompt_embeds = prompt_embeds
+        self._prompt_embeds = prompt_embeds
         self.prompt_mask = prompt_mask
-        self.negative_prompt_embeds = negative_prompt_embeds
+        self._negative_prompt_embeds = negative_prompt_embeds
         self.negative_prompt_mask = negative_prompt_mask
+
+    @property
+    def prompt_embeds(self) -> mx.array:
+        """Text embeddings from encoder."""
+        return self._prompt_embeds
+
+    @property
+    def pooled_prompt_embeds(self) -> mx.array:
+        """Placeholder for protocol compliance - Qwen doesn't use pooled embeds."""
+        return self._prompt_embeds  # Use prompt_embeds as placeholder
+
+    @property
+    def negative_prompt_embeds(self) -> mx.array:
+        """Negative prompt embeddings for CFG."""
+        return self._negative_prompt_embeds
+
+    @property
+    def negative_pooled_prompt_embeds(self) -> mx.array:
+        """Placeholder - Qwen doesn't use pooled embeds."""
+        return self._negative_prompt_embeds
+
+    def get_extra_forward_kwargs(self, positive: bool = True) -> dict[str, Any]:
+        """Return encoder_hidden_states_mask for the appropriate prompt."""
+        if positive:
+            return {"encoder_hidden_states_mask": self.prompt_mask}
+        else:
+            return {"encoder_hidden_states_mask": self.negative_prompt_mask}
 
 
 class QwenModelAdapter(BaseModelAdapter):
@@ -86,8 +112,8 @@ class QwenModelAdapter(BaseModelAdapter):
     def _get_latent_creator(self) -> type:
         return QwenLatentCreator
 
-    def _encode_prompt(self, prompt: str) -> QwenPromptData:
-        """Encode prompt and negative prompt.
+    def encode_prompt(self, prompt: str) -> QwenPromptData:
+        """Encode prompt into QwenPromptData.
 
         Qwen uses classifier-free guidance with explicit negative prompts.
         Returns a QwenPromptData container with all 4 tensors.
@@ -112,65 +138,21 @@ class QwenModelAdapter(BaseModelAdapter):
             negative_prompt_mask=neg_mask,
         )
 
-    def _run_denoising(
+    @property
+    def needs_cfg(self) -> bool:
+        return True
+
+    def apply_guidance(
         self,
-        latents: mx.array,
-        prompt_data: QwenPromptData,
-        runtime_config: RuntimeConfig,
-        runner: "DiffusionRunner | None",
+        noise_positive: mx.array,
+        noise_negative: mx.array,
+        guidance_scale: float,
     ) -> mx.array:
-        """Run the denoising loop with norm-preserving CFG.
-
-        Qwen uses classifier-free guidance with explicit negative prompts.
-        This runs the transformer twice per step and applies norm-preserving
-        guidance to maintain image quality at higher guidance scales.
-        """
-        if runner is None:
-            raise NotImplementedError(
-                "Single-node Qwen generation requires a DiffusionRunner"
-            )
-
-        guidance = 3.5  # Could be made configurable via runtime_config
-
-        time_steps = tqdm(
-            range(runtime_config.init_time_step, runtime_config.num_inference_steps)
+        return self._model.compute_guided_noise(
+            noise=noise_positive,
+            noise_negative=noise_negative,
+            guidance=guidance_scale,
         )
-
-        for t in time_steps:
-            # Positive prompt pass
-            noise_positive = runner.single_forward_pass(
-                t=t,
-                config=runtime_config,
-                latents=latents,
-                prompt_embeds=prompt_data.prompt_embeds,
-                pooled_prompt_embeds=prompt_data.prompt_embeds,  # placeholder
-                encoder_hidden_states_mask=prompt_data.prompt_mask,
-            )
-
-            # Negative prompt pass
-            noise_negative = runner.single_forward_pass(
-                t=t,
-                config=runtime_config,
-                latents=latents,
-                prompt_embeds=prompt_data.negative_prompt_embeds,
-                pooled_prompt_embeds=prompt_data.negative_prompt_embeds,  # placeholder
-                encoder_hidden_states_mask=prompt_data.negative_prompt_mask,
-            )
-
-            # Apply norm-preserving CFG
-            guided_noise = self._model.compute_guided_noise(
-                noise=noise_positive,
-                noise_negative=noise_negative,
-                guidance=guidance,
-            )
-
-            # Scheduler step
-            latents = runtime_config.scheduler.step(
-                model_output=guided_noise, timestep=t, sample=latents
-            )
-            mx.eval(latents)
-
-        return latents
 
     def compute_embeddings(
         self,
@@ -193,11 +175,7 @@ class QwenModelAdapter(BaseModelAdapter):
         | None = None,  # Not used by Qwen, but required by protocol
         hidden_states: mx.array | None = None,
     ) -> mx.array:
-        """Compute time/text embeddings.
-
-        Qwen's time_text_embed takes timestep and hidden_states,
-        not pooled embeddings like Flux.
-        """
+        """Compute time/text embeddings."""
         if hidden_states is None:
             raise ValueError("hidden_states is required for Qwen text embeddings")
 

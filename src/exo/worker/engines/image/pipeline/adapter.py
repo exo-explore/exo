@@ -1,16 +1,11 @@
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 import mlx.core as mx
 from mflux.config.runtime_config import RuntimeConfig
 
 from exo.worker.engines.image.config import ImageModelConfig
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
-
-if TYPE_CHECKING:
-    from mflux.config.config import Config
-
-    from exo.worker.engines.image.pipeline.runner import DiffusionRunner
 
 
 class AttentionInterface(Protocol):
@@ -59,6 +54,47 @@ class SingleBlockInterface(Protocol):
 class BlockWrapperMode(Enum):
     CACHING = "caching"  # Sync mode: compute full attention, populate cache
     PATCHED = "patched"  # Async mode: compute patch attention, use cached KV
+
+
+class PromptData(Protocol):
+    """Protocol for encoded prompt data.
+
+    All adapters must return prompt data that conforms to this protocol.
+    Model-specific prompt data classes can add additional attributes
+    (e.g., attention masks for Qwen).
+    """
+
+    @property
+    def prompt_embeds(self) -> mx.array:
+        """Text embeddings from encoder."""
+        ...
+
+    @property
+    def pooled_prompt_embeds(self) -> mx.array:
+        """Pooled text embeddings (for Flux) or placeholder (for Qwen)."""
+        ...
+
+    @property
+    def negative_prompt_embeds(self) -> mx.array | None:
+        """Negative prompt embeddings for CFG (None if not using CFG)."""
+        ...
+
+    @property
+    def negative_pooled_prompt_embeds(self) -> mx.array | None:
+        """Negative pooled embeddings for CFG (None if not using CFG)."""
+        ...
+
+    def get_extra_forward_kwargs(self, positive: bool = True) -> dict[str, Any]:
+        """Return model-specific kwargs for forward pass.
+
+        Args:
+            positive: If True, return kwargs for positive prompt pass.
+                     If False, return kwargs for negative prompt pass.
+
+        Returns:
+            Dict of extra kwargs (e.g., {"encoder_hidden_states_mask": ...} for Qwen)
+        """
+        ...
 
 
 class ModelAdapter(Protocol):
@@ -246,24 +282,77 @@ class ModelAdapter(Protocol):
         """
         ...
 
-    def generate_image(
-        self,
-        settings: "Config",
-        prompt: str,
-        seed: int,
-        runner: "DiffusionRunner | None" = None,
-    ) -> Any:
-        """Generate an image using this model.
+    # -------------------------------------------------------------------------
+    # High-level generation methods (used by DiffusionRunner)
+    # -------------------------------------------------------------------------
 
-        This is the main entry point for image generation. Implementations
-        should handle the full generation flow: latent creation, prompt
-        encoding, denoising loop, and decoding.
+    def create_latents(self, seed: int, runtime_config: RuntimeConfig) -> mx.array:
+        """Create initial noise latents for generation.
 
         Args:
-            settings: Generation config (steps, height, width)
-            prompt: Text prompt
             seed: Random seed
-            runner: Optional DiffusionRunner for distributed mode
+            runtime_config: Runtime configuration with dimensions
+
+        Returns:
+            Initial latent tensor
+        """
+        ...
+
+    def encode_prompt(self, prompt: str) -> PromptData:
+        """Encode prompt into model-specific prompt data.
+
+        Args:
+            prompt: Text prompt
+
+        Returns:
+            PromptData containing embeddings (and model-specific extras)
+        """
+        ...
+
+    @property
+    def needs_cfg(self) -> bool:
+        """Whether this model uses classifier-free guidance.
+
+        Returns:
+            True if model requires two forward passes with guidance (e.g., Qwen)
+            False if model uses a single forward pass (e.g., Flux)
+        """
+        ...
+
+    def apply_guidance(
+        self,
+        noise_positive: mx.array,
+        noise_negative: mx.array,
+        guidance_scale: float,
+    ) -> mx.array:
+        """Apply classifier-free guidance to combine positive/negative predictions.
+
+        Only called when needs_cfg is True.
+
+        Args:
+            noise_positive: Noise prediction from positive prompt
+            noise_negative: Noise prediction from negative prompt
+            guidance_scale: Guidance strength
+
+        Returns:
+            Guided noise prediction
+        """
+        ...
+
+    def decode_latents(
+        self,
+        latents: mx.array,
+        runtime_config: RuntimeConfig,
+        seed: int,
+        prompt: str,
+    ) -> Any:
+        """Decode latents to final image.
+
+        Args:
+            latents: Final denoised latents
+            runtime_config: Runtime configuration
+            seed: Random seed (for metadata)
+            prompt: Text prompt (for metadata)
 
         Returns:
             GeneratedImage result

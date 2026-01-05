@@ -189,16 +189,11 @@ class DistributedImageModel:
             return image.image
 
     def _generate_image(self, settings: Config, prompt: str, seed: int) -> Any:
-        """Generate image by delegating to the adapter.
-
-        The adapter handles all model-specific logic (latent creation,
-        prompt encoding, denoising loop, decoding) via the template method pattern.
-        """
-        return self._adapter.generate_image(
+        """Generate image by delegating to the runner."""
+        return self._runner.generate_image(
             settings=settings,
             prompt=prompt,
             seed=seed,
-            runner=self._runner if self.is_distributed else None,
         )
 
 
