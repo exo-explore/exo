@@ -38,7 +38,7 @@ class ImageModelConfig(BaseModel):
 
     # Inference parameters
     default_steps: dict[str, int]  # {"low": X, "medium": Y, "high": Z}
-    num_sync_steps_factor: float  # Fraction of medium steps for sync phase
+    num_sync_steps_factor: float  # Fraction of steps for sync phase
 
     # Feature flags
     uses_attention_mask: bool  # True for Fibo
