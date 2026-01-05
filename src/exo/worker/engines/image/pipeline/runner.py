@@ -1,5 +1,5 @@
 from math import ceil
-from typing import Optional
+from typing import Any, Optional
 
 import mlx.core as mx
 from mflux.callbacks.callbacks import Callbacks
@@ -254,6 +254,80 @@ class DiffusionRunner:
 
         return latents
 
+    def single_forward_pass(
+        self,
+        t: int,
+        config: RuntimeConfig,
+        latents: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        **kwargs: Any,
+    ) -> mx.array:
+        """Run a single forward pass through the transformer.
+
+        Returns noise prediction without applying scheduler step.
+        Used by adapters that need multiple forward passes (e.g., CFG).
+
+        Args:
+            t: Current timestep
+            config: Runtime configuration
+            latents: Input latents (will be scaled internally)
+            prompt_embeds: Text embeddings
+            pooled_prompt_embeds: Pooled text embeddings (Flux) or placeholder (Qwen)
+            **kwargs: Model-specific arguments (e.g., encoder_hidden_states_mask)
+
+        Returns:
+            Noise prediction tensor
+        """
+        scaled_latents = config.scheduler.scale_model_input(latents, t)
+
+        hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
+            scaled_latents, prompt_embeds
+        )
+        text_embeddings = self.adapter.compute_text_embeddings(
+            t, pooled_prompt_embeds, config, hidden_states=hidden_states
+        )
+        rotary_embeddings = self.adapter.compute_rotary_embeddings(
+            prompt_embeds, config, **kwargs
+        )
+
+        text_seq_len = prompt_embeds.shape[1]
+
+        # Run through all joint blocks
+        for block_idx, wrapper in enumerate(self.joint_block_wrappers):
+            encoder_hidden_states, hidden_states = wrapper(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                text_seq_len=text_seq_len,
+                kv_cache=None,
+                mode=BlockWrapperMode.CACHING,
+                block_idx=block_idx,
+                **kwargs,
+            )
+
+        # Merge streams
+        if self.joint_block_wrappers:
+            hidden_states = self.adapter.merge_streams(
+                hidden_states, encoder_hidden_states
+            )
+
+        # Run through single blocks
+        for wrapper in self.single_block_wrappers:
+            hidden_states = wrapper(
+                hidden_states=hidden_states,
+                text_embeddings=text_embeddings,
+                rotary_embeddings=rotary_embeddings,
+                text_seq_len=text_seq_len,
+                kv_cache=None,
+                mode=BlockWrapperMode.CACHING,
+            )
+
+        # Extract image portion and project
+        hidden_states = hidden_states[:, text_seq_len:, ...]
+        return self.adapter.final_projection(hidden_states, text_embeddings)
+
     def _diffusion_step(
         self,
         t: int,
@@ -289,55 +363,13 @@ class DiffusionRunner:
         pooled_prompt_embeds: mx.array,
     ) -> mx.array:
         """Execute a single diffusion step on a single node (no distribution)."""
-        latents = config.scheduler.scale_model_input(latents, t)
-
-        # Compute embeddings
-        hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
-            latents, prompt_embeds
+        noise = self.single_forward_pass(
+            t=t,
+            config=config,
+            latents=latents,
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
         )
-        text_embeddings = self.adapter.compute_text_embeddings(
-            t, pooled_prompt_embeds, config
-        )
-        rotary_embeddings = self.adapter.compute_rotary_embeddings(
-            prompt_embeds, config
-        )
-
-        text_seq_len = prompt_embeds.shape[1]
-
-        # Run through all joint blocks
-        for wrapper in self.joint_block_wrappers:
-            encoder_hidden_states, hidden_states = wrapper(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                text_embeddings=text_embeddings,
-                rotary_embeddings=rotary_embeddings,
-                text_seq_len=text_seq_len,
-                kv_cache=None,
-                mode=BlockWrapperMode.CACHING,
-            )
-
-        # Merge streams for single blocks (only if we had joint blocks)
-        if self.joint_block_wrappers:
-            hidden_states = self.adapter.merge_streams(hidden_states, encoder_hidden_states)
-
-        # Run through all single blocks
-        for wrapper in self.single_block_wrappers:
-            hidden_states = wrapper(
-                hidden_states=hidden_states,
-                text_embeddings=text_embeddings,
-                rotary_embeddings=rotary_embeddings,
-                text_seq_len=text_seq_len,
-                kv_cache=None,
-                mode=BlockWrapperMode.CACHING,
-            )
-
-        # Extract image portion (remove text embeddings prefix)
-        hidden_states = hidden_states[:, text_seq_len:, ...]
-
-        # Final projection
-        noise = self.adapter.final_projection(hidden_states, text_embeddings)
-
-        # Scheduler step
         return config.scheduler.step(model_output=noise, timestep=t, sample=latents)
 
     def _initialize_kv_caches(
