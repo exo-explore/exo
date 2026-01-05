@@ -32,6 +32,7 @@ from exo.shared.types.worker.runners import (
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
+    RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
 )
@@ -187,13 +188,14 @@ def main(
                         current_status = RunnerReady()
                         logger.info("runner ready")
                     case Shutdown():
+                        current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
                         event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.Complete
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
                             )
                         )
-                        break
+                        current_status = RunnerShutdown()
                     case _:
                         raise ValueError(
                             f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
@@ -208,9 +210,8 @@ def main(
                         runner_id=runner_id, runner_status=current_status
                     )
                 )
-        event_sender.send(
-            RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerShutdown())
-        )
+                if isinstance(current_status, RunnerShutdown):
+                    break
     except ClosedResourceError:
         logger.warning("runner communication closed unexpectedly")
     except Exception as e:
