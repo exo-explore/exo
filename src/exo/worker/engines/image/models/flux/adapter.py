@@ -121,7 +121,9 @@ class FluxModelAdapter(BaseModelAdapter):
         t: int,
         pooled_prompt_embeds: mx.array,
         runtime_config: RuntimeConfig,
+        hidden_states: mx.array | None = None,  # Ignored by Flux
     ) -> mx.array:
+        # hidden_states is ignored - Flux uses pooled_prompt_embeds instead
         return Transformer.compute_text_embeddings(
             t, pooled_prompt_embeds, self._transformer.time_text_embed, runtime_config
         )
@@ -146,12 +148,13 @@ class FluxModelAdapter(BaseModelAdapter):
         hidden_states: mx.array,
         encoder_hidden_states: mx.array,
         text_embeddings: mx.array,
-        rotary_embeddings: mx.array,
+        rotary_embeddings: Any,  # mx.array for Flux
         kv_cache: ImagePatchKVCache | None,
         mode: BlockWrapperMode,
         text_seq_len: int,
         patch_start: int | None = None,
         patch_end: int | None = None,
+        **kwargs: Any,
     ) -> tuple[mx.array, mx.array]:
         if mode == BlockWrapperMode.CACHING:
             return self._apply_joint_block_caching(
