@@ -22,9 +22,8 @@ from exo.worker.engines.image.pipeline.block_wrapper import (
 from exo.worker.engines.image.pipeline.kv_cache import ImagePatchKVCache
 
 
-def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: int):
+def calculate_patch_heights(latent_height: int, num_patches: int):
     patch_height = ceil(latent_height / num_patches)
-    patch_height = ceil(patch_height / patch_size) * patch_size
 
     actual_num_patches = ceil(latent_height / patch_height)
     patch_heights = [patch_height] * (actual_num_patches - 1)
@@ -35,25 +34,20 @@ def calculate_patch_heights(latent_height: int, num_patches: int, patch_size: in
     return patch_heights, actual_num_patches
 
 
-def calculate_token_indices(
-    patch_heights: list[int], latent_width: int, patch_size: int
-):
-    tokens_per_row = latent_width // patch_size
+def calculate_token_indices(patch_heights: list[int], latent_width: int):
+    tokens_per_row = latent_width
 
     token_ranges = []
     cumulative_height = 0
 
     for h in patch_heights:
-        start_row = cumulative_height // patch_size
-        end_row = (cumulative_height + h) // patch_size
-
-        start_token = tokens_per_row * start_row
-        end_token = tokens_per_row * end_row
+        start_token = tokens_per_row * cumulative_height
+        end_token = tokens_per_row * (cumulative_height + h)
 
         token_ranges.append((start_token, end_token))
         cumulative_height += h
 
-    return token_ranges  # List of (start, end) token indices
+    return token_ranges
 
 
 class DiffusionRunner:
@@ -484,14 +478,12 @@ class DiffusionRunner:
         config: RuntimeConfig,
     ) -> tuple[list[mx.array], list[tuple[int, int]]]:
         """Split latents into patches for async pipeline."""
-        latent_height = config.height // self.config.vae_scale_factor
-        latent_width = config.width // self.config.vae_scale_factor
-        patch_size = self.config.patch_size
+        # Use 16 to match FluxLatentCreator.create_noise formula
+        latent_height = config.height // 16
+        latent_width = config.width // 16
 
-        patch_heights, _ = calculate_patch_heights(
-            latent_height, self.num_patches, patch_size
-        )
-        token_indices = calculate_token_indices(patch_heights, latent_width, patch_size)
+        patch_heights, _ = calculate_patch_heights(latent_height, self.num_patches)
+        token_indices = calculate_token_indices(patch_heights, latent_width)
 
         # Split latents into patches
         patch_latents = [latents[:, start:end, :] for start, end in token_indices]
