@@ -273,7 +273,9 @@ def get_mlx_jaccl_devices_matrix(
                 logger.warning(
                     f"Failed to find interface name between {node_i} and {node_j}"
                 )
-                raise ValueError("Current jaccl backend requires all-to-all RDMA connections")
+                raise ValueError(
+                    "Current jaccl backend requires all-to-all RDMA connections"
+                )
 
     return matrix
 
@@ -417,6 +419,4 @@ def get_mlx_jaccl_coordinators(
             "Current jaccl backend requires all participating devices to be able to communicate"
         )
 
-    return {
-        n: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle
-    }
+    return {n: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle}
