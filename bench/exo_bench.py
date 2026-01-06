@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportAny=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 from __future__ import annotations
 
 import argparse
@@ -73,8 +74,6 @@ class ExoClient:
 
 
 def unwrap_instance(instance: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(instance, dict):
-        raise TypeError(f"instance must be dict, got {type(instance)}")
     if len(instance) != 1:
         raise KeyError(f"Expected 1 key, got keys={list(instance.keys())}")
 
