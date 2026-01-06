@@ -274,6 +274,12 @@ def _pending_tasks(
             if task.instance_id != runner.bound_instance.instance.instance_id:
                 continue
 
+            # I have a design point here; this is a state race in disguise as the task status doesn't get updated to completed fast enough
+            # however, realistically the task status should be set to completed by the LAST runner, so this is a true race
+            # the actual solution is somewhat deeper than this bypass - TODO!
+            if task.task_id in runner.completed:
+                continue
+
             # TODO: Check ordering aligns with MLX distributeds expectations.
 
             if isinstance(runner.status, RunnerReady) and all(
