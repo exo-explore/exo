@@ -9,8 +9,8 @@ from exo.master.placement_utils import (
     NodeWithProfile,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
-    get_mlx_ring_hosts_by_node,
     get_mlx_jaccl_devices_matrix,
+    get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
 )

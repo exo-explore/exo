@@ -59,7 +59,11 @@ async def check_reachability(
     out[remote_node_id].add(target_ip)
 
 
-async def check_reachable(topology: Topology, profiles: Mapping[NodeId, NodePerformanceProfile], self_node_id: NodeId) -> dict[NodeId, set[str]]:
+async def check_reachable(
+    topology: Topology,
+    profiles: Mapping[NodeId, NodePerformanceProfile],
+    self_node_id: NodeId,
+) -> dict[NodeId, set[str]]:
     reachable: dict[NodeId, set[str]] = {}
     async with create_task_group() as tg:
         for node_id in topology.list_nodes():
