@@ -680,7 +680,7 @@ class API:
 
             return ImageGenerationResponse(data=images)
         except anyio.get_cancelled_exc_class():
-            # TODO: TaskCancelled
+            # TODO(ciaran): TaskCancelled
             """
             self.command_sender.send_nowait(
                 ForwarderCommand(origin=self.node_id, command=command)

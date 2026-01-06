@@ -42,7 +42,7 @@ def generate_image(
     # Parse parameters
     width, height = parse_size(task.size)
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
-    seed = 2  # TODO: Consider adding seed to ImageGenerationTaskParams
+    seed = 2  # TODO(ciaran): Consider adding seed to ImageGenerationTaskParams
 
     # Generate using the model's generate method
     image = model.generate(

@@ -61,7 +61,7 @@ class DistributedImageModel:
 
             mx.eval(adapter.model.parameters())
 
-            # TODO: Do we need this?
+            # TODO(ciaran): Do we need this?
             mx.eval(adapter.model)
 
             # Synchronize processes before generation to avoid timeout

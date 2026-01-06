@@ -157,7 +157,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
-                            # TODO: refactor with ChatCompletion
+                            # TODO(ciaran): refactor with ChatCompletion
                             instance_task_counts: dict[InstanceId, int] = {}
                             for instance in self.state.instances.values():
                                 if (
@@ -201,7 +201,7 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageEdits():
-                            # TODO: refactor with ChatCompletion
+                            # TODO(ciaran): refactor with ChatCompletion
                             instance_task_counts: dict[InstanceId, int] = {}
                             for instance in self.state.instances.values():
                                 if (

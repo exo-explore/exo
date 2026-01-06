@@ -150,7 +150,7 @@ def main(
                         )
                         time.sleep(0.5)
 
-                    # TODO: switch
+                    # TODO(ciaran): switch
                     if ModelTask.TextGeneration in model_tasks:
                         model, tokenizer = load_mlx_items(
                             bound_instance, group, on_timeout=on_model_load_timeout
@@ -178,7 +178,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in model_tasks:
-                        # assert isinstance(model, Model) TODO: not actually Model
+                        # assert isinstance(model, Model) TODO(ciaran): not actually Model
                         assert model and not isinstance(model, ImageGenerator)
                         assert tokenizer
 
@@ -215,7 +215,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    # assert isinstance(model, Model) TODO: not actually Model
+                    # assert isinstance(model, Model) TODO(ciaran): not actually Model
                     assert model and not isinstance(model, ImageGenerator)
                     assert tokenizer
                     assert task_params.messages[0].content is not None
