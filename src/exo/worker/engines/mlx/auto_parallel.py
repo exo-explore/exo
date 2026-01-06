@@ -103,7 +103,7 @@ class PipelineLastLayer(CustomMlxLayer):
                 # This change happened upstream - check out mlx github somewhere??
                 cache.keys = mx.depends(cache.keys, output)  # type: ignore[reportUnknownMemberType]
 
-        # TODO: This is overkill
+        # TODO(ciaran): This is overkill
         output = mx.distributed.all_gather(output, group=self.group)[-output.shape[0] :]
         return output
 
