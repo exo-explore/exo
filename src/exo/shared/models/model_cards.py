@@ -1,5 +1,5 @@
 from exo.shared.types.memory import Memory
-from exo.shared.types.models import ModelId, ModelMetadata
+from exo.shared.types.models import ComponentInfo, ModelId, ModelMetadata, ModelTask
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
@@ -8,6 +8,7 @@ class ModelCard(CamelCaseModel):
     model_id: ModelId
     name: str
     description: str
+    tasks: list[ModelTask]
     tags: list[str]
     metadata: ModelMetadata
 
@@ -45,6 +46,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/DeepSeek-V3.1-4bit"),
         name="DeepSeek V3.1 (4-bit)",
         description="""DeepSeek V3.1 is a large language model trained on the DeepSeek V3.1 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/DeepSeek-V3.1-4bit"),
@@ -60,6 +62,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/DeepSeek-V3.1-8bit"),
         name="DeepSeek V3.1 (8-bit)",
         description="""DeepSeek V3.1 is a large language model trained on the DeepSeek V3.1 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/DeepSeek-V3.1-8bit"),
@@ -133,6 +136,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
         name="Kimi K2 Instruct (4-bit)",
         description="""Kimi K2 is a large language model trained on the Kimi K2 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Kimi-K2-Instruct-4bit"),
@@ -148,6 +152,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Kimi-K2-Thinking"),
         name="Kimi K2 Thinking (4-bit)",
         description="""Kimi K2 Thinking is the latest, most capable version of open-source thinking model.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Kimi-K2-Thinking"),
@@ -164,6 +169,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"),
         name="Llama 3.1 8B (4-bit)",
         description="""Llama 3.1 is a large language model trained on the Llama 3.1 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"),
@@ -179,6 +185,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-8bit"),
         name="Llama 3.1 8B (8-bit)",
         description="""Llama 3.1 is a large language model trained on the Llama 3.1 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-8bit"),
@@ -194,6 +201,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-bf16"),
         name="Llama 3.1 8B (BF16)",
         description="""Llama 3.1 is a large language model trained on the Llama 3.1 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Meta-Llama-3.1-8B-Instruct-bf16"),
@@ -209,6 +217,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Meta-Llama-3.1-70B-Instruct-4bit"),
         name="Llama 3.1 70B (4-bit)",
         description="""Llama 3.1 is a large language model trained on the Llama 3.1 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Meta-Llama-3.1-70B-Instruct-4bit"),
@@ -225,6 +234,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
         name="Llama 3.2 1B (4-bit)",
         description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
@@ -240,6 +250,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Llama-3.2-3B-Instruct-4bit"),
         name="Llama 3.2 3B (4-bit)",
         description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Llama-3.2-3B-Instruct-4bit"),
@@ -255,6 +266,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Llama-3.2-3B-Instruct-8bit"),
         name="Llama 3.2 3B (8-bit)",
         description="""Llama 3.2 is a large language model trained on the Llama 3.2 dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Llama-3.2-3B-Instruct-8bit"),
@@ -271,6 +283,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Llama-3.3-70B-Instruct-4bit"),
         name="Llama 3.3 70B (4-bit)",
         description="""The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Llama-3.3-70B-Instruct-4bit"),
@@ -286,6 +299,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Llama-3.3-70B-Instruct-8bit"),
         name="Llama 3.3 70B (8-bit)",
         description="""The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Llama-3.3-70B-Instruct-8bit"),
@@ -301,6 +315,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/llama-3.3-70b-instruct-fp16"),
         name="Llama 3.3 70B (FP16)",
         description="""The Meta Llama 3.3 multilingual large language model (LLM) is an instruction tuned generative model in 70B (text in/text out)""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/llama-3.3-70b-instruct-fp16"),
@@ -317,6 +332,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-0.6B-4bit"),
         name="Qwen3 0.6B (4-bit)",
         description="""Qwen3 0.6B is a large language model trained on the Qwen3 0.6B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-0.6B-4bit"),
@@ -332,6 +348,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-0.6B-8bit"),
         name="Qwen3 0.6B (8-bit)",
         description="""Qwen3 0.6B is a large language model trained on the Qwen3 0.6B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-0.6B-8bit"),
@@ -347,6 +364,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-30B-A3B-4bit"),
         name="Qwen3 30B A3B (4-bit)",
         description="""Qwen3 30B is a large language model trained on the Qwen3 30B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-30B-A3B-4bit"),
@@ -362,6 +380,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-30B-A3B-8bit"),
         name="Qwen3 30B A3B (8-bit)",
         description="""Qwen3 30B is a large language model trained on the Qwen3 30B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-30B-A3B-8bit"),
@@ -377,6 +396,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Instruct-4bit"),
         name="Qwen3 80B A3B (4-bit)",
         description="""Qwen3 80B""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Instruct-4bit"),
@@ -392,6 +412,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit"),
         name="Qwen3 80B A3B (8-bit)",
         description="""Qwen3 80B""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit"),
@@ -407,6 +428,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"),
         name="Qwen3 80B A3B Thinking (4-bit)",
         description="""Qwen3 80B Reasoning model""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"),
@@ -422,6 +444,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Thinking-8bit"),
         name="Qwen3 80B A3B Thinking (8-bit)",
         description="""Qwen3 80B Reasoning model""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-Next-80B-A3B-Thinking-8bit"),
@@ -437,6 +460,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-235B-A22B-Instruct-2507-4bit"),
         name="Qwen3 235B A22B (4-bit)",
         description="""Qwen3 235B (Active 22B) is a large language model trained on the Qwen3 235B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-235B-A22B-Instruct-2507-4bit"),
@@ -452,6 +476,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-235B-A22B-Instruct-2507-8bit"),
         name="Qwen3 235B A22B (8-bit)",
         description="""Qwen3 235B (Active 22B) is a large language model trained on the Qwen3 235B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-235B-A22B-Instruct-2507-8bit"),
@@ -467,6 +492,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-Coder-480B-A35B-Instruct-4bit"),
         name="Qwen3 Coder 480B A35B (4-bit)",
         description="""Qwen3 Coder 480B (Active 35B) is a large language model trained on the Qwen3 Coder 480B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-Coder-480B-A35B-Instruct-4bit"),
@@ -482,6 +508,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/Qwen3-Coder-480B-A35B-Instruct-8bit"),
         name="Qwen3 Coder 480B A35B (8-bit)",
         description="""Qwen3 Coder 480B (Active 35B) is a large language model trained on the Qwen3 Coder 480B dataset.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/Qwen3-Coder-480B-A35B-Instruct-8bit"),
@@ -498,6 +525,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/gpt-oss-120b-MXFP4-Q8"),
         name="GPT-OSS 120B (MXFP4-Q8, MLX)",
         description="""OpenAI's GPT-OSS 120B is a 117B-parameter Mixture-of-Experts model designed for high-reasoning and general-purpose use; this variant is a 4-bit MLX conversion for Apple Silicon.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/gpt-oss-120b-MXFP4-Q8"),
@@ -513,6 +541,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
         name="GPT-OSS 20B (MXFP4-Q4, MLX)",
         description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this MLX variant uses MXFP4 4-bit quantization.""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
@@ -529,6 +558,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/GLM-4.5-Air-8bit"),
         name="GLM 4.5 Air 8bit",
         description="""GLM 4.5 Air 8bit""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/GLM-4.5-Air-8bit"),
@@ -544,6 +574,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("mlx-community/GLM-4.5-Air-bf16"),
         name="GLM 4.5 Air bf16",
         description="""GLM 4.5 Air bf16""",
+        tasks=[ModelTask.TextGeneration],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("mlx-community/GLM-4.5-Air-bf16"),
@@ -569,4 +600,146 @@ MODEL_CARDS: dict[str, ModelCard] = {
     #         supports_tensor=True,
     #     ),
     # ),
+    "flux1-schnell": ModelCard(
+        short_id="flux1-schnell",
+        model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
+        name="FLUX.1 [schnell]",
+        description="""FLUX.1 [schnell] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
+            pretty_name="FLUX.1 [schnell]",
+            hidden_size=1,
+            supports_tensor=False,
+            storage_size=Memory.from_bytes(23782357120),  # + 9524621312),
+            n_layers=57,  # sharded layers
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(0),
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="text_encoder_2",
+                    component_path="text_encoder_2/",
+                    storage_size=Memory.from_bytes(9524621312),
+                    n_layers=24,
+                    can_shard=False,
+                    safetensors_index_filename="model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(23782357120),
+                    n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
+        ),
+    ),
+    "flux1-dev": ModelCard(
+        short_id="flux1-dev",
+        model_id=ModelId("black-forest-labs/FLUX.1-dev"),
+        name="FLUX.1 [dev]",
+        description="""FLUX.1 [dev] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("black-forest-labs/FLUX.1-dev"),
+            pretty_name="FLUX.1 [dev]",
+            hidden_size=1,
+            supports_tensor=False,
+            storage_size=Memory.from_bytes(23782357120 + 9524621312),
+            n_layers=57,  # sharded layers
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(0),
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="text_encoder_2",
+                    component_path="text_encoder_2/",
+                    storage_size=Memory.from_bytes(9524621312),
+                    n_layers=24,
+                    can_shard=False,
+                    safetensors_index_filename="model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(23802816640),
+                    n_layers=57,  # 19 transformer_blocks + 38 single_transformer_blocks
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
+        ),
+    ),
+    "qwen-image": ModelCard(
+        short_id="qwen-image",
+        model_id=ModelId("Qwen/Qwen-Image"),
+        name="Qwen Image",
+        description="""an image generation foundation model in the Qwen series that achieves significant advances in complex text rendering and precise image editing""",
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen-Image"),
+            pretty_name="Qwen Image",
+            hidden_size=1,
+            supports_tensor=False,
+            storage_size=Memory.from_bytes(16584333312 + 40860802176),
+            n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(16584333312),
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(40860802176),
+                    n_layers=60,
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
+        ),
+    ),
 }

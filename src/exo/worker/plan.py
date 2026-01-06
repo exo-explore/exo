@@ -9,6 +9,8 @@ from exo.shared.types.tasks import (
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
+    ImageEdits,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -265,7 +267,12 @@ def _pending_tasks(
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
-        if not isinstance(task, ChatCompletion):
+        # TODO(ciaran): do this better!
+        if (
+            not isinstance(task, ChatCompletion)
+            and not isinstance(task, ImageGeneration)
+            and not isinstance(task, ImageEdits)
+        ):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue

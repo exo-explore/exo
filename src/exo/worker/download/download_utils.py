@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import urljoin
+from huggingface_hub._snapshot_download import snapshot_download
 
 import aiofiles
 import aiofiles.os as aios
@@ -441,12 +442,31 @@ def calculate_repo_progress(
 async def get_weight_map(repo_id: str, revision: str = "main") -> dict[str, str]:
     target_dir = (await ensure_models_dir()) / str(repo_id).replace("/", "--")
     await aios.makedirs(target_dir, exist_ok=True)
-    index_file = await download_file_with_retry(
-        repo_id, revision, "model.safetensors.index.json", target_dir
+
+    index_files_dir = snapshot_download(
+        repo_id=repo_id, local_dir=target_dir, allow_patterns="*.safetensors.index.json"
     )
-    async with aiofiles.open(index_file, "r") as f:
-        index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
-    return index_data.weight_map
+
+    index_files = list(Path(index_files_dir).glob("**/*.safetensors.index.json"))
+
+    weight_map: dict[str, str] = {}
+
+    for index_file in index_files:
+        relative_dir = index_file.parent.relative_to(index_files_dir)
+
+        async with aiofiles.open(index_file, "r") as f:
+            index_data = ModelSafetensorsIndex.model_validate_json(await f.read())
+
+            if relative_dir != Path("."):
+                prefixed_weight_map = {
+                    f"{relative_dir}/{key}": str(relative_dir / value)
+                    for key, value in index_data.weight_map.items()
+                }
+                weight_map = weight_map | prefixed_weight_map
+            else:
+                weight_map = weight_map | index_data.weight_map
+
+    return weight_map
 
 
 async def resolve_allow_patterns(shard: ShardMetadata) -> list[str]:
@@ -551,8 +571,6 @@ async def download_shard(
     logger.info(f"Downloading {shard.model_meta.model_id=} with {allow_patterns=}")
 
     all_start_time = time.time()
-    # TODO: currently not recursive. Some models might require subdirectories - thus this will need to be changed.
-    #  Update: <- This does not seem to be the case. Yay?
     file_list = await fetch_file_list_with_cache(
         str(shard.model_meta.model_id), revision, recursive=True
     )

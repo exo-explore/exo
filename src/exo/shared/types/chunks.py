@@ -23,7 +23,10 @@ class TokenChunk(BaseChunk):
 
 
 class ImageChunk(BaseChunk):
-    data: bytes
+    data: str
+    chunk_index: int
+    total_chunks: int
+    image_index: int
 
 
 GenerationChunk = TokenChunk | ImageChunk

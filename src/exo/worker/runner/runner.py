@@ -1,7 +1,10 @@
+import base64
 import time
 
+from exo.master.api import get_model_card
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.types.api import ChatCompletionMessageText
-from exo.shared.types.chunks import TokenChunk
+from exo.shared.types.chunks import ImageChunk, TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -9,9 +12,12 @@ from exo.shared.types.events import (
     TaskAcknowledged,
     TaskStatusUpdated,
 )
+from exo.shared.types.models import ModelTask
 from exo.shared.types.tasks import (
     ChatCompletion,
     ConnectToGroup,
+    ImageEdits,
+    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
@@ -21,6 +27,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
+    ImageGenerationResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -37,6 +44,12 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.image import (
+    ImageGenerator,
+    generate_image,
+    initialize_image_model,
+    warmup_image_generator,
+)
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -69,6 +82,10 @@ def main(
         tokenizer = None
         sampler = None
         group = None
+
+        model_card = get_model_card(shard_metadata.model_meta.model_id)
+        assert model_card
+        model_tasks = model_card.tasks
 
         current_status: RunnerStatus = RunnerIdle()
         logger.info("runner created")
@@ -112,16 +129,26 @@ def main(
                             )
                         )
 
-                        model, tokenizer, sampler = load_mlx_items(
-                            bound_instance, group
-                        )
+                        # TODO(ciaran): switch
+                        if ModelTask.TextGeneration in model_tasks:
+                            model, tokenizer, sampler = load_mlx_items(
+                                bound_instance, group
+                            )
+                        elif (
+                            ModelTask.TextToImage in model_tasks
+                            or ModelTask.ImageToImage in model_tasks
+                        ):
+                            model = initialize_image_model(bound_instance)
+                        else:
+                            raise ValueError(
+                                f"Unknown model task(s): {model_card.tasks}"
+                            )
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
                     case StartWarmup() if isinstance(current_status, RunnerLoaded):
                         assert model
-                        assert tokenizer
-                        assert sampler
+
                         current_status = RunnerWarmingUp()
                         logger.info("runner warming up")
                         event_sender.send(
@@ -131,22 +158,42 @@ def main(
                         )
 
                         logger.info(f"warming up inference for instance: {instance}")
-                        toks = warmup_inference(
-                            model=model,
-                            tokenizer=tokenizer,
-                            sampler=sampler,
-                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
-                        )
-                        logger.info(f"warmed up by generating {toks} tokens")
-                        logger.info(
-                            f"runner initialized in {time.time() - setup_start_time} seconds"
-                        )
+                        if ModelTask.TextGeneration in model_tasks:
+                            # assert isinstance(model, Model) TODO(ciaran): not actually Model
+                            assert model and not isinstance(model, ImageGenerator)
+                            assert tokenizer
+                            assert sampler
+
+                            toks = warmup_inference(
+                                model=model,
+                                tokenizer=tokenizer,
+                                sampler=sampler,
+                                # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
+                            )
+                            logger.info(f"warmed up by generating {toks} tokens")
+                            logger.info(
+                                f"runner initialized in {time.time() - setup_start_time} seconds"
+                            )
+                        elif (
+                            ModelTask.TextToImage in model_tasks
+                            or ModelTask.ImageToImage in model_tasks
+                        ):
+                            assert isinstance(model, ImageGenerator)
+                            image = warmup_image_generator(model=model)
+                            if image is not None:
+                                logger.info(
+                                    f"warmed up by generating {image.size} image"
+                                )
+                            else:
+                                logger.info("warmup completed (non-primary node)")
+
                         current_status = RunnerReady()
                         logger.info("runner ready")
                     case ChatCompletion(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
-                        assert model
+                        # assert isinstance(model, Model) TODO(ciaran): not actually Model
+                        assert model and not isinstance(model, ImageGenerator)
                         assert tokenizer
                         assert sampler
                         logger.info(f"received chat request: {str(task)[:500]}")
@@ -187,6 +234,130 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
+                    case ImageGeneration(
+                        task_params=task_params, command_id=command_id
+                    ) if isinstance(current_status, RunnerReady):
+                        assert isinstance(model, ImageGenerator)
+                        logger.info(
+                            f"received image generation request: {str(task)[:500]}"
+                        )
+                        current_status = RunnerRunning()
+                        logger.info("runner running")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+
+                        # Generate images using the image generation backend
+                        for image_index, response in enumerate(
+                            generate_image(
+                                model=model,
+                                task=task_params,
+                            )
+                        ):
+                            match response:
+                                case ImageGenerationResponse():
+                                    if (
+                                        shard_metadata.device_rank
+                                        == shard_metadata.world_size - 1
+                                    ):
+                                        encoded_data = base64.b64encode(
+                                            response.image_data
+                                        ).decode("utf-8")
+                                        # Split into chunks to stay under gossipsub 1MB limit
+                                        data_chunks = [
+                                            encoded_data[i : i + EXO_MAX_CHUNK_SIZE]
+                                            for i in range(
+                                                0, len(encoded_data), EXO_MAX_CHUNK_SIZE
+                                            )
+                                        ]
+                                        total_chunks = len(data_chunks)
+                                        logger.info(
+                                            f"sending ImageChunk: {len(encoded_data)} bytes in {total_chunks} chunks"
+                                        )
+                                        for chunk_index, chunk_data in enumerate(
+                                            data_chunks
+                                        ):
+                                            event_sender.send(
+                                                ChunkGenerated(
+                                                    command_id=command_id,
+                                                    chunk=ImageChunk(
+                                                        idx=chunk_index,
+                                                        model=shard_metadata.model_meta.model_id,
+                                                        data=chunk_data,
+                                                        chunk_index=chunk_index,
+                                                        total_chunks=total_chunks,
+                                                        image_index=image_index,
+                                                    ),
+                                                )
+                                            )
+
+                        current_status = RunnerReady()
+                        logger.info("runner ready")
+                    case ImageEdits(task_params=task_params, command_id=command_id) if (
+                        isinstance(current_status, RunnerReady)
+                    ):
+                        assert isinstance(model, ImageGenerator)
+                        logger.info(f"received image edits request: {str(task)[:500]}")
+                        current_status = RunnerRunning()
+                        logger.info("runner running")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
+                            )
+                        )
+
+                        for image_index, response in enumerate(
+                            generate_image(
+                                model=model,
+                                task=task_params,
+                            )
+                        ):
+                            match response:
+                                case ImageGenerationResponse():
+                                    if shard_metadata.device_rank == 0:
+                                        encoded_data = base64.b64encode(
+                                            response.image_data
+                                        ).decode("utf-8")
+                                        # Split into chunks to stay under gossipsub 1MB limit
+                                        data_chunks = [
+                                            encoded_data[i : i + EXO_MAX_CHUNK_SIZE]
+                                            for i in range(
+                                                0, len(encoded_data), EXO_MAX_CHUNK_SIZE
+                                            )
+                                        ]
+                                        total_chunks = len(data_chunks)
+                                        logger.info(
+                                            f"sending ImageChunk: {len(encoded_data)} bytes in {total_chunks} chunks"
+                                        )
+                                        for chunk_index, chunk_data in enumerate(
+                                            data_chunks
+                                        ):
+                                            is_last_chunk = (
+                                                chunk_index == total_chunks - 1
+                                            )
+                                            event_sender.send(
+                                                ChunkGenerated(
+                                                    command_id=command_id,
+                                                    chunk=ImageChunk(
+                                                        idx=chunk_index,
+                                                        model=shard_metadata.model_meta.model_id,
+                                                        data=chunk_data,
+                                                        chunk_index=chunk_index,
+                                                        total_chunks=total_chunks,
+                                                        image_index=image_index,
+                                                    ),
+                                                )
+                                            )
+
+                        current_status = RunnerReady()
+                        logger.info("runner ready")
+                        event_sender.send(
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=RunnerReady()
+                            )
+                        )
                     case Shutdown():
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")

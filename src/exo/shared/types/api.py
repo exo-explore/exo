@@ -1,6 +1,7 @@
 import time
 from typing import Any, Literal
 
+from fastapi import UploadFile
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUseDefault
 
@@ -181,3 +182,38 @@ class DeleteInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     instance_id: InstanceId
+
+
+class ImageGenerationTaskParams(BaseModel):
+    prompt: str
+    model: str
+    n: int | None = 1
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    user: str | None = None
+
+
+class ImageEditsTaskParams(BaseModel):
+    image: UploadFile
+    mask: UploadFile | None
+    prompt: str
+    model: str
+    n: int | None = 1
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    user: str | None = None
+
+
+class ImageData(BaseModel):
+    b64_json: str | None = None
+    url: str | None = None
+    revised_prompt: str | None = None
+
+
+class ImageGenerationResponse(BaseModel):
+    created: int = Field(default_factory=lambda: int(time.time()))
+    data: list[ImageData]
