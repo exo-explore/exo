@@ -301,18 +301,18 @@ class AppStore {
 	// Conversation state
 	conversations = $state<Conversation[]>([]);
 	activeConversationId = $state<string | null>(null);
-	
+
 	// Chat state
 	hasStartedChat = $state(false);
 	messages = $state<Message[]>([]);
 	currentResponse = $state('');
 	isLoading = $state(false);
-	
+
 	// Performance metrics
 	ttftMs = $state<number | null>(null);  // Time to first token in ms
 	tps = $state<number | null>(null);     // Tokens per second
 	totalTokens = $state<number>(0);       // Total tokens in current response
-	
+
 	// Topology state
 	topologyData = $state<TopologyData | null>(null);
 	instances = $state<Record<string, unknown>>({});
@@ -322,14 +322,14 @@ class AppStore {
 	selectedPreviewModelId = $state<string | null>(null);
 	isLoadingPreviews = $state(false);
 	lastUpdate = $state<number | null>(null);
-	
+
 	// UI state
 	isTopologyMinimized = $state(false);
 	isSidebarOpen = $state(false); // Hidden by default, shown when in chat mode
 	debugMode = $state(false);
 	topologyOnlyMode = $state(false);
 	chatSidebarVisible = $state(true); // Shown by default
-	
+
 	private fetchInterval: ReturnType<typeof setInterval> | null = null;
 	private previewsInterval: ReturnType<typeof setInterval> | null = null;
 	private lastConversationPersistTs = 0;
@@ -481,14 +481,14 @@ class AppStore {
 			sharding: derivedSharding,
 			instanceType: derivedInstanceType
 		};
-		
+
 		this.conversations.unshift(conversation);
 		this.activeConversationId = id;
 		this.messages = [];
 		this.hasStartedChat = true;
 		this.isTopologyMinimized = true;
 		this.isSidebarOpen = true; // Auto-open sidebar when chatting
-		
+
 		this.saveConversationsToStorage();
 		return id;
 	}
@@ -499,14 +499,14 @@ class AppStore {
 	loadConversation(id: string): boolean {
 		const conversation = this.conversations.find(c => c.id === id);
 		if (!conversation) return false;
-		
+
 		this.activeConversationId = id;
 		this.messages = [...conversation.messages];
 		this.hasStartedChat = true;
 		this.isTopologyMinimized = true;
 		this.isSidebarOpen = true; // Auto-open sidebar when chatting
 		this.refreshConversationModelFromInstances();
-		
+
 		return true;
 	}
 
@@ -515,14 +515,14 @@ class AppStore {
 	 */
 	deleteConversation(id: string) {
 		this.conversations = this.conversations.filter(c => c.id !== id);
-		
+
 		if (this.activeConversationId === id) {
 			this.activeConversationId = null;
 			this.messages = [];
 			this.hasStartedChat = false;
 			this.isTopologyMinimized = false;
 		}
-		
+
 		this.saveConversationsToStorage();
 	}
 
@@ -690,12 +690,12 @@ class AppStore {
 	 */
 	private updateActiveConversation() {
 		if (!this.activeConversationId) return;
-		
+
 		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
 		if (conversation) {
 			conversation.messages = [...this.messages];
 			conversation.updatedAt = Date.now();
-			
+
 			// Auto-generate name from first user message if still has default name
 			if (conversation.name.startsWith('Chat ')) {
 				const firstUserMsg = conversation.messages.find(m => m.role === 'user' && m.content.trim());
@@ -704,14 +704,14 @@ class AppStore {
 					let content = firstUserMsg.content
 						.replace(/\[File:.*?\][\s\S]*?```[\s\S]*?```/g, '') // Remove file attachments
 						.trim();
-					
+
 					if (content) {
 						const preview = content.slice(0, 50);
 						conversation.name = preview.length < content.length ? preview + '...' : preview;
 					}
 				}
 			}
-			
+
 			this.saveConversationsToStorage();
 		}
 	}
@@ -788,7 +788,7 @@ class AppStore {
 				throw new Error(`Failed to fetch state: ${response.status}`);
 			}
 			const data: RawStateResponse = await response.json();
-			
+
 			if (data.topology) {
 				this.topologyData = transformTopology(data.topology, data.nodeProfiles);
 			}
@@ -810,12 +810,12 @@ class AppStore {
 
 	async fetchPlacementPreviews(modelId: string, showLoading = true) {
 		if (!modelId) return;
-		
+
 		if (showLoading) {
 			this.isLoadingPreviews = true;
 		}
 		this.selectedPreviewModelId = modelId;
-		
+
 		try {
 			const response = await fetch(`/instance/previews?model_id=${encodeURIComponent(modelId)}`);
 			if (!response.ok) {
@@ -832,14 +832,14 @@ class AppStore {
 			}
 		}
 	}
-	
+
 	startPreviewsPolling(modelId: string) {
 		// Stop any existing preview polling
 		this.stopPreviewsPolling();
-		
+
 		// Fetch immediately
 		this.fetchPlacementPreviews(modelId);
-		
+
 		// Then poll every 15 seconds (don't show loading spinner for subsequent fetches)
 		this.previewsInterval = setInterval(() => {
 			if (this.selectedPreviewModelId) {
@@ -847,14 +847,14 @@ class AppStore {
 			}
 		}, 15000);
 	}
-	
+
 	stopPreviewsPolling() {
 		if (this.previewsInterval) {
 			clearInterval(this.previewsInterval);
 			this.previewsInterval = null;
 		}
 	}
-	
+
 	selectPreviewModel(modelId: string | null) {
 		if (modelId) {
 			this.startPreviewsPolling(modelId);
@@ -902,7 +902,7 @@ class AppStore {
 	deleteMessage(messageId: string) {
 		const messageIndex = this.messages.findIndex(m => m.id === messageId);
 		if (messageIndex === -1) return;
-		
+
 		// Remove this message and all subsequent messages
 		this.messages = this.messages.slice(0, messageIndex);
 		this.updateActiveConversation();
@@ -914,7 +914,7 @@ class AppStore {
 	editMessage(messageId: string, newContent: string) {
 		const message = this.messages.find(m => m.id === messageId);
 		if (!message) return;
-		
+
 		message.content = newContent;
 		message.timestamp = Date.now();
 		this.updateActiveConversation();
@@ -926,17 +926,17 @@ class AppStore {
 	async editAndRegenerate(messageId: string, newContent: string): Promise<void> {
 		const messageIndex = this.messages.findIndex(m => m.id === messageId);
 		if (messageIndex === -1) return;
-		
+
 		const message = this.messages[messageIndex];
 		if (message.role !== 'user') return;
-		
+
 		// Update the message content
 		message.content = newContent;
 		message.timestamp = Date.now();
-		
+
 		// Remove all messages after this one (including the assistant response)
 		this.messages = this.messages.slice(0, messageIndex + 1);
-		
+
 		// Regenerate the response
 		await this.regenerateLastResponse();
 	}
@@ -946,7 +946,7 @@ class AppStore {
 	 */
 	async regenerateLastResponse(): Promise<void> {
 		if (this.isLoading) return;
-		
+
 		// Find the last user message
 		let lastUserIndex = -1;
 		for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -955,32 +955,32 @@ class AppStore {
 				break;
 			}
 		}
-		
+
 		if (lastUserIndex === -1) return;
-		
+
 		// Remove any messages after the user message
 		this.messages = this.messages.slice(0, lastUserIndex + 1);
-		
+
 		// Resend the message to get a new response
 		this.isLoading = true;
 		this.currentResponse = '';
-		
+
 		// Create placeholder for assistant message
 		const assistantMessage = this.addMessage('assistant', '');
-		
+
 		try {
 			const systemPrompt = {
 				role: 'system' as const,
 				content: 'You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process.'
 			};
-			
+
 			const apiMessages = [
 				systemPrompt,
 				...this.messages.slice(0, -1).map((m) => {
 					return { role: m.role, content: m.content };
 				})
 			];
-			
+
 			// Determine which model to use
 			let modelToUse = this.selectedChatModel;
 			if (!modelToUse) {
@@ -996,7 +996,7 @@ class AppStore {
 					}
 				}
 			}
-			
+
 			if (!modelToUse) {
 				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 				if (idx !== -1) {
@@ -1006,7 +1006,7 @@ class AppStore {
 				this.updateActiveConversation();
 				return;
 			}
-			
+
 			const response = await fetch('/v1/chat/completions', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -1016,7 +1016,7 @@ class AppStore {
 					stream: true
 				})
 			});
-			
+
 			if (!response.ok) {
 				const errorText = await response.text();
 				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1027,7 +1027,7 @@ class AppStore {
 				this.updateActiveConversation();
 				return;
 			}
-			
+
 			const reader = response.body?.getReader();
 			if (!reader) {
 				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1038,23 +1038,23 @@ class AppStore {
 				this.updateActiveConversation();
 				return;
 			}
-			
+
 			const decoder = new TextDecoder();
 			let fullContent = '';
 			let partialLine = '';
-			
+
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
-				
+
 				const chunk = decoder.decode(value, { stream: true });
 				const lines = (partialLine + chunk).split('\n');
 				partialLine = lines.pop() || '';
-				
+
 				for (const line of lines) {
 					const trimmed = line.trim();
 					if (!trimmed || trimmed === 'data: [DONE]') continue;
-					
+
 					if (trimmed.startsWith('data: ')) {
 						try {
 							const json = JSON.parse(trimmed.slice(6));
@@ -1063,7 +1063,7 @@ class AppStore {
 								fullContent += delta;
 								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
-								
+
 								// Update the assistant message in place (triggers Svelte reactivity)
 								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 								if (idx !== -1) {
@@ -1078,7 +1078,7 @@ class AppStore {
 					}
 				}
 			}
-			
+
 			// Final cleanup of the message
 			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1087,7 +1087,7 @@ class AppStore {
 				this.messages[idx].thinking = thinkingContent || undefined;
 			}
 			this.persistActiveConversation();
-			
+
 		} catch (error) {
 			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 			if (idx !== -1) {
@@ -1151,7 +1151,7 @@ class AppStore {
 	 */
 	async sendMessage(content: string, files?: { id: string; name: string; type: string; textContent?: string; preview?: string }[]): Promise<void> {
 		if ((!content.trim() && (!files || files.length === 0)) || this.isLoading) return;
-		
+
 		if (!this.hasStartedChat) {
 			this.startChat();
 		}
@@ -1161,15 +1161,15 @@ class AppStore {
 		this.ttftMs = null;
 		this.tps = null;
 		this.totalTokens = 0;
-		
+
 		// Build attachments from files
 		const attachments: MessageAttachment[] = [];
 		let fileContext = '';
-		
+
 		if (files && files.length > 0) {
 			for (const file of files) {
 				const isImage = file.type.startsWith('image/');
-				
+
 				if (isImage && file.preview) {
 					attachments.push({
 						type: 'image',
@@ -1195,10 +1195,10 @@ class AppStore {
 				}
 			}
 		}
-		
+
 		// Combine content with file context
 		const fullContent = content + fileContext;
-		
+
 		// Add user message with attachments
 		const userMessage: Message = {
 			id: generateUUID(),
@@ -1208,38 +1208,79 @@ class AppStore {
 			attachments: attachments.length > 0 ? attachments : undefined
 		};
 		this.messages.push(userMessage);
-		
+
 		// Create placeholder for assistant message
 		const assistantMessage = this.addMessage('assistant', '');
 		this.updateActiveConversation();
-		
+
 		try {
 			// Build the messages array for the API with system prompt
 			const systemPrompt = {
 				role: 'system' as const,
 				content: 'You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process. When files are shared with you, analyze them and respond helpfully.'
 			};
-			
-			// Build API messages - include file content for text files
+
+			// Build API messages - include file content for text files, images as multimodal content
 			const apiMessages = [
 				systemPrompt,
 				...this.messages.slice(0, -1).map((m) => {
-					// Build content including any text file attachments
-					let msgContent = m.content;
-					
-					// Add text attachments as context
-					if (m.attachments) {
-						for (const attachment of m.attachments) {
-							if (attachment.type === 'text' && attachment.content) {
-								msgContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
+					// Check if this message has image attachments
+					const hasImages = m.attachments?.some(a => a.type === 'image');
+
+					if (hasImages) {
+						// Build multimodal content array
+						const contentParts: Array<{ type: 'text', text: string } | { type: 'image_url', image_url: { url: string } }> = [];
+
+						// Add text content first
+						if (m.content) {
+							contentParts.push({
+								type: 'text',
+								text: m.content
+							});
+						}
+
+						// Add text file attachments as context
+						if (m.attachments) {
+							for (const attachment of m.attachments) {
+								if (attachment.type === 'text' && attachment.content) {
+									contentParts.push({
+										type: 'text',
+										text: `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``
+									});
+								} else if (attachment.type === 'image' && attachment.preview) {
+									// Add image as image_url content
+									contentParts.push({
+										type: 'image_url',
+										image_url: {
+											url: attachment.preview // This is already a base64 data URL
+										}
+									});
+								}
 							}
 						}
+
+						return {
+							role: m.role,
+							content: contentParts
+						};
+					} else {
+						// Text-only message - build content including any text file attachments
+						let msgContent = m.content;
+
+						// Add text attachments as context
+						if (m.attachments) {
+							for (const attachment of m.attachments) {
+								if (attachment.type === 'text' && attachment.content) {
+									msgContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
+								}
+							}
+						}
+
+						return {
+							role: m.role,
+							content: msgContent
+						};
 					}
-					
-					return {
-						role: m.role,
-						content: msgContent
-					};
 				})
 			];
 
@@ -1272,7 +1313,7 @@ class AppStore {
 			const requestStartTime = performance.now();
 			let firstTokenTime: number | null = null;
 			let tokenCount = 0;
-			
+
 			const response = await fetch('/v1/chat/completions', {
 				method: 'POST',
 				headers: {
@@ -1305,7 +1346,7 @@ class AppStore {
 				if (done) break;
 
 				buffer += decoder.decode(value, { stream: true });
-				
+
 				// Process complete lines
 				const lines = buffer.split('\n');
 				buffer = lines.pop() || ''; // Keep incomplete line in buffer
@@ -1313,7 +1354,7 @@ class AppStore {
 				for (const line of lines) {
 					const trimmed = line.trim();
 					if (!trimmed) continue;
-					
+
 					if (trimmed.startsWith('data: ')) {
 						const data = trimmed.slice(6);
 						if (data === '[DONE]') continue;
@@ -1327,23 +1368,23 @@ class AppStore {
 									firstTokenTime = performance.now();
 									this.ttftMs = firstTokenTime - requestStartTime;
 								}
-								
+
 								// Count tokens (each SSE chunk is typically one token)
 								tokenCount += 1;
 								this.totalTokens = tokenCount;
-								
+
 								// Update real-time TPS during streaming
 								if (firstTokenTime !== null && tokenCount > 1) {
 									const elapsed = performance.now() - firstTokenTime;
 									this.tps = (tokenCount / elapsed) * 1000;
 								}
-								
+
 								fullContent += tokenContent;
-								
+
 								// Strip thinking tags for display and extract thinking content
 								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
-								
+
 								// Update the assistant message in place
 								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
 								if (idx !== -1) {
@@ -1358,7 +1399,7 @@ class AppStore {
 					}
 				}
 			}
-			
+
 			// Process any remaining buffer
 			if (buffer.trim()) {
 				const trimmed = buffer.trim();
@@ -1375,13 +1416,13 @@ class AppStore {
 					}
 				}
 			}
-			
+
 			// Calculate final TPS
 			if (firstTokenTime !== null && tokenCount > 1) {
 				const totalGenerationTime = performance.now() - firstTokenTime;
 				this.tps = (tokenCount / totalGenerationTime) * 1000; // tokens per second
 			}
-			
+
 			// Final cleanup of the message
 			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
 			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1397,7 +1438,7 @@ class AppStore {
 				}
 			}
 			this.persistActiveConversation();
-			
+
 		} catch (error) {
 			console.error('Error sending message:', error);
 			// Update the assistant message with error

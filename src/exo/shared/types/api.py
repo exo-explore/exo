@@ -39,10 +39,19 @@ class ChatCompletionMessageText(BaseModel):
     text: str
 
 
+class ChatCompletionMessageImageUrl(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: dict[str, str]  # {"url": "data:image/jpeg;base64,..."}
+
+
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "developer", "tool", "function"]
     content: (
-        str | ChatCompletionMessageText | list[ChatCompletionMessageText] | None
+        str
+        | ChatCompletionMessageText
+        | ChatCompletionMessageImageUrl
+        | list[ChatCompletionMessageText | ChatCompletionMessageImageUrl]
+        | None
     ) = None
     thinking: str | None = None  # Added for GPT-OSS harmony format support
     name: str | None = None

@@ -27,10 +27,12 @@ class ConfigData(BaseModel):
     num_decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Transformer models
     decoder_layers: Annotated[int, Field(ge=0)] | None = None  # Some architectures
     hidden_size: Annotated[int, Field(ge=0)] | None = None
+    text_config: dict | None = None
+    text_model_config: dict | None = None
 
     @property
     def layer_count(self) -> int:
-        # Check common field names for layer count
+        # Check common field names at top level
         layer_fields = [
             self.num_hidden_layers,
             self.num_layers,
@@ -44,9 +46,25 @@ class ConfigData(BaseModel):
             if layer_count is not None:
                 return layer_count
 
+        # Check nested configs for multimodal models (required as the location of  layer variables were shifted to nested "text_config" in Qwen3 from Qwen2) seems like a new standard in VLM. (could be seen same in SmolVLM's)
+        for nested in [self.text_config, self.text_model_config]:
+            if isinstance(nested, dict):
+                for key in ["num_hidden_layers", "num_layers", "n_layer", "n_layers", "num_decoder_layers", "decoder_layers"]:
+                    if (val := nested.get(key)) is not None:
+                        return val
+
         raise ValueError(
             f"No layer count found in config.json: {self.model_dump_json()}"
         )
+
+    @property
+    def hidden_dim(self) -> int:
+        if self.hidden_size is not None:
+            return self.hidden_size
+        for nested in [self.text_config, self.text_model_config]:
+            if isinstance(nested, dict) and (val := nested.get("hidden_size")) is not None:
+                return val
+        return 0
 
 
 async def get_config_data(model_id: str) -> ConfigData:
@@ -118,7 +136,7 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
         pretty_name=model_card.name if model_card is not None else model_id,
         storage_size=mem_size_bytes,
         n_layers=num_layers,
-        hidden_size=config_data.hidden_size or 0,
+        hidden_size=config_data.hidden_dim,
         # TODO: all custom models currently do not support tensor. We could add a dynamic test for this?
         supports_tensor=model_card.metadata.supports_tensor
         if model_card is not None
