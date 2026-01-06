@@ -605,7 +605,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
         name="FLUX.1 [schnell]",
         description="""FLUX.1 [schnell] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
-        tasks=[ModelTask.TextToImage],
+        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
@@ -618,7 +618,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
                 ComponentInfo(
                     component_name="text_encoder",
                     component_path="text_encoder/",
-                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    storage_size=Memory.from_kb(0),
                     n_layers=12,
                     can_shard=False,
                     safetensors_index_filename=None,  # Single file
@@ -642,8 +642,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
                 ComponentInfo(
                     component_name="vae",
                     component_path="vae/",
-                    storage_size=Memory.from_kb(0),  # TODO: ?
-                    n_layers=None,  # TODO: ?
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
                     can_shard=False,
                     safetensors_index_filename=None,
                 ),
@@ -652,7 +652,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     ),
     "flux1-dev": ModelCard(
         short_id="flux1-dev",
-        model_id="black-forest-labs/FLUX.1-dev",
+        model_id=ModelId("black-forest-labs/FLUX.1-dev"),
         name="FLUX.1 [dev]",
         description="""FLUX.1 [dev] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
         tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
@@ -660,13 +660,15 @@ MODEL_CARDS: dict[str, ModelCard] = {
         metadata=ModelMetadata(
             model_id=ModelId("black-forest-labs/FLUX.1-dev"),
             pretty_name="FLUX.1 [dev]",
-            storage_size=Memory.from_bytes(23782357120),  # + 9524621312),
+            hidden_size=0,
+            supports_tensor=False,
+            storage_size=Memory.from_bytes(23782357120 + 9524621312),
             n_layers=57,  # sharded layers
             components=[
                 ComponentInfo(
                     component_name="text_encoder",
                     component_path="text_encoder/",
-                    storage_size=Memory.from_kb(0),  # TODO: ?
+                    storage_size=Memory.from_kb(0),
                     n_layers=12,
                     can_shard=False,
                     safetensors_index_filename=None,  # Single file
@@ -690,8 +692,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
                 ComponentInfo(
                     component_name="vae",
                     component_path="vae/",
-                    storage_size=Memory.from_kb(0),  # TODO: ?
-                    n_layers=None,  # TODO: ?
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
                     can_shard=False,
                     safetensors_index_filename=None,
                 ),
@@ -700,7 +702,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
     ),
     "qwen-image": ModelCard(
         short_id="qwen-image",
-        model_id="Qwen/Qwen-Image",
+        model_id=ModelId("Qwen/Qwen-Image"),
         name="Qwen Image",
         description="""an image generation foundation model in the Qwen series that achieves significant advances in complex text rendering and precise image editing""",
         tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
@@ -708,13 +710,15 @@ MODEL_CARDS: dict[str, ModelCard] = {
         metadata=ModelMetadata(
             model_id=ModelId("Qwen/Qwen-Image"),
             pretty_name="Qwen Image",
-            storage_size=Memory.from_bytes(237823571),
+            hidden_size=0,
+            supports_tensor=False,
+            storage_size=Memory.from_bytes(16584333312 + 40860802176),
             n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
             components=[
                 ComponentInfo(
                     component_name="text_encoder",
                     component_path="text_encoder/",
-                    storage_size=Memory.from_kb(16584333312),  # TODO: ?
+                    storage_size=Memory.from_kb(16584333312),
                     n_layers=12,
                     can_shard=False,
                     safetensors_index_filename=None,  # Single file
@@ -730,8 +734,8 @@ MODEL_CARDS: dict[str, ModelCard] = {
                 ComponentInfo(
                     component_name="vae",
                     component_path="vae/",
-                    storage_size=Memory.from_kb(0),  # TODO: ?
-                    n_layers=None,  # TODO: ?
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
                     can_shard=False,
                     safetensors_index_filename=None,
                 ),
