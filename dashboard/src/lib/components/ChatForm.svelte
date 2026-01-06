@@ -320,14 +320,14 @@
 										{:else}
 											<span class="w-3"></span>
 										{/if}
-										<span class="truncate flex-1">{model.label}</span>
 										{#if model.isImageModel}
-											<svg class="w-3.5 h-3.5 flex-shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label="Image generation model">
+											<svg class="w-3.5 h-3.5 flex-shrink-0 text-exo-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label="Image generation model">
 												<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
 												<circle cx="8.5" cy="8.5" r="1.5"/>
 												<polyline points="21 15 16 10 5 21"/>
 											</svg>
 										{/if}
+										<span class="truncate flex-1">{model.label}</span>
 									</button>
 								{/each}
 							</div>
@@ -400,9 +400,7 @@
 				class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
 					{!canSend || loading 
 						? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed' 
-						: isImageModel() 
-							? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 hover:shadow-[0_0_20px_rgba(168,85,247,0.4)]'
-							: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+						: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
 				aria-label={isImageModel() ? "Generate image" : "Send message"}
 			>
 				{#if loading}
