@@ -267,7 +267,7 @@ def _pending_tasks(
 ) -> Task | None:
     for task in tasks.values():
         # for now, just forward chat completions
-        # TODO: do this better!
+        # TODO(ciaran): do this better!
         if (
             not isinstance(task, ChatCompletion)
             and not isinstance(task, ImageGeneration)

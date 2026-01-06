@@ -126,7 +126,7 @@ def main(
                         )
                     )
 
-                    # TODO: switch
+                    # TODO(ciaran): switch
                     if ModelTask.TextGeneration in model_tasks:
                         model, tokenizer = load_mlx_items(bound_instance, group)
                     elif (
@@ -152,7 +152,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in model_tasks:
-                        # assert isinstance(model, Model) TODO: not actually Model
+                        # assert isinstance(model, Model) TODO(ciaran): not actually Model
                         assert model and not isinstance(model, ImageGenerator)
                         assert tokenizer
 
@@ -181,7 +181,7 @@ def main(
                 case ChatCompletion(task_params=task_params, command_id=command_id) if (
                     isinstance(current_status, RunnerReady)
                 ):
-                    # assert isinstance(model, Model) TODO: not actually Model
+                    # assert isinstance(model, Model) TODO(ciaran): not actually Model
                     assert model and not isinstance(model, ImageGenerator)
                     assert tokenizer
                     logger.info(f"received chat request: {str(task)[:500]}")
