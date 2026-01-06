@@ -47,7 +47,30 @@ const sidebarVisible = $derived(chatSidebarVisible());
 	let mounted = $state(false);
 
 	// Instance launch state
-	let models = $state<Array<{id: string, name?: string, storage_size_megabytes?: number}>>([]);
+	let models = $state<Array<{id: string, name?: string, storage_size_megabytes?: number, tasks?: string[], hugging_face_id?: string}>>([]);
+	
+	// Model tasks lookup for ChatForm - maps both short IDs and full HuggingFace IDs
+	const modelTasks = $derived(() => {
+		const tasks: Record<string, string[]> = {};
+		for (const model of models) {
+			if (model.tasks && model.tasks.length > 0) {
+				// Map by short ID
+				tasks[model.id] = model.tasks;
+				// Also map by hugging_face_id from the API response
+				if (model.hugging_face_id) {
+					tasks[model.hugging_face_id] = model.tasks;
+				}
+			}
+		}
+		return tasks;
+	});
+	
+	// Helper to check if a model supports image generation
+	function modelSupportsImageGeneration(modelId: string): boolean {
+		const model = models.find(m => m.id === modelId || m.hugging_face_id === modelId);
+		if (!model?.tasks) return false;
+		return model.tasks.includes('TextToImage') || model.tasks.includes('ImageToImage');
+	}
 	let selectedSharding = $state<'Pipeline' | 'Tensor'>('Pipeline');
 	type InstanceMeta = 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
 	
@@ -1270,6 +1293,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								placeholder="Ask anything" 
 								showHelperText={false}
 								showModelSelector={true}
+								modelTasks={modelTasks()}
 							/>
 						</div>
 					</div>
@@ -1491,8 +1515,18 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									{@const foundModel = models.find(m => m.id === selectedModelId)}
 									{#if foundModel}
 										{@const sizeGB = getModelSizeGB(foundModel)}
+										{@const isImageModel = modelSupportsImageGeneration(foundModel.id)}
 										<span class="flex items-center justify-between gap-2 w-full pr-4">
-											<span class="text-exo-light-gray truncate">{foundModel.name || foundModel.id}</span>
+											<span class="flex items-center gap-2 text-exo-light-gray truncate">
+												<span class="truncate">{foundModel.name || foundModel.id}</span>
+												{#if isImageModel}
+													<svg class="w-4 h-4 flex-shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+														<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+														<circle cx="8.5" cy="8.5" r="1.5"/>
+														<polyline points="21 15 16 10 5 21"/>
+													</svg>
+												{/if}
+											</span>
 											<span class="text-white/50 text-xs flex-shrink-0">{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB</span>
 										</span>
 									{:else}
@@ -1537,6 +1571,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 										) as model}
 											{@const sizeGB = getModelSizeGB(model)}
 											{@const modelCanFit = hasEnoughMemory(model)}
+											{@const isImageModel = modelSupportsImageGeneration(model.id)}
 											<button
 												type="button"
 												onclick={() => {
@@ -1556,7 +1591,16 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 															: 'text-white/30 cursor-default'
 												}"
 											>
-												<span class="truncate">{model.name || model.id}</span>
+												<span class="flex items-center gap-2 truncate flex-1">
+													<span class="truncate">{model.name || model.id}</span>
+													{#if isImageModel}
+														<svg class="w-4 h-4 flex-shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label="Image generation model">
+															<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+															<circle cx="8.5" cy="8.5" r="1.5"/>
+															<polyline points="21 15 16 10 5 21"/>
+														</svg>
+													{/if}
+												</span>
 												<span class="flex-shrink-0 text-xs {modelCanFit ? 'text-white/50' : 'text-red-400/60'}">
 													{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB
 												</span>
@@ -1753,7 +1797,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 					
 					<div class="flex-shrink-0 px-8 pb-6 pt-4 bg-gradient-to-t from-exo-black via-exo-black to-transparent">
 						<div class="max-w-7xl mx-auto">
-							<ChatForm placeholder="Ask anything" showModelSelector={true} />
+							<ChatForm placeholder="Ask anything" showModelSelector={true} modelTasks={modelTasks()} />
 						</div>
 					</div>
 				</div>
