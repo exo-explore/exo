@@ -145,21 +145,17 @@ class DiffusionRunner:
             self.has_single_blocks or self.end_layer == self.total_joint
         )
 
-        # Slice blocks to only those assigned to this stage
-        all_joint_blocks = self.adapter.get_joint_blocks()
-        all_single_blocks = self.adapter.get_single_blocks()
-
-        assigned_joint_blocks = all_joint_blocks[self.joint_start : self.joint_end]
-        assigned_single_blocks = all_single_blocks[self.single_start : self.single_end]
+        joint_blocks = self.adapter.get_joint_blocks()
+        single_blocks = self.adapter.get_single_blocks()
 
         # Wrap blocks at initialization (reused across all calls)
         self.joint_block_wrappers = [
             JointBlockWrapper(block=block, adapter=self.adapter)
-            for block in assigned_joint_blocks
+            for block in joint_blocks
         ]
         self.single_block_wrappers = [
             SingleBlockWrapper(block=block, adapter=self.adapter)
-            for block in assigned_single_blocks
+            for block in single_blocks
         ]
 
     @property

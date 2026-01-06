@@ -46,6 +46,14 @@ class DistributedImageModel:
         config = get_config_for_model(model_id)
         adapter = create_adapter_for_model(config, model_id, local_path, quantize)
 
+        if group is not None:
+            adapter.slice_transformer_blocks(
+                start_layer=shard_metadata.start_layer,
+                end_layer=shard_metadata.end_layer,
+                total_joint_blocks=config.joint_block_count,
+                total_single_blocks=config.single_block_count,
+            )
+
         # Create diffusion runner (handles both single-node and distributed modes)
         num_sync_steps = config.get_num_sync_steps("medium") if group else 0
         runner = DiffusionRunner(

@@ -319,6 +319,17 @@ class QwenModelAdapter(BaseModelAdapter):
         """Qwen has no single blocks."""
         return []
 
+    def slice_transformer_blocks(
+        self,
+        start_layer: int,
+        end_layer: int,
+        total_joint_blocks: int,
+        total_single_blocks: int,
+    ) -> None:
+        all_blocks = list(self._transformer.transformer_blocks)
+        assigned_blocks = all_blocks[start_layer:end_layer]
+        self._transformer.transformer_blocks = assigned_blocks
+
     def merge_streams(
         self,
         hidden_states: mx.array,

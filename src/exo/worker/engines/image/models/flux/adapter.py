@@ -250,6 +250,36 @@ class FluxModelAdapter(BaseModelAdapter):
             list(self._transformer.single_transformer_blocks),
         )
 
+    def slice_transformer_blocks(
+        self,
+        start_layer: int,
+        end_layer: int,
+        total_joint_blocks: int,
+        total_single_blocks: int,
+    ) -> None:
+        if end_layer <= total_joint_blocks:
+            # All assigned are joint blocks
+            joint_start, joint_end = start_layer, end_layer
+            single_start, single_end = 0, 0
+        elif start_layer >= total_joint_blocks:
+            # All assigned are single blocks
+            joint_start, joint_end = 0, 0
+            single_start = start_layer - total_joint_blocks
+            single_end = end_layer - total_joint_blocks
+        else:
+            # Spans both joint and single
+            joint_start, joint_end = start_layer, total_joint_blocks
+            single_start = 0
+            single_end = end_layer - total_joint_blocks
+
+        all_joint = list(self._transformer.transformer_blocks)
+        self._transformer.transformer_blocks = all_joint[joint_start:joint_end]
+
+        all_single = list(self._transformer.single_transformer_blocks)
+        self._transformer.single_transformer_blocks = all_single[
+            single_start:single_end
+        ]
+
     def merge_streams(
         self,
         hidden_states: mx.array,
