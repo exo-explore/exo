@@ -115,6 +115,7 @@ def mlx_generate(
     sampler: Callable[[mx.array], mx.array],
     task: ChatCompletionTaskParams,
 ) -> Generator[GenerationResponse]:
+    mx.reset_peak_memory()
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
     # Currently we support chat-completion tasks only.
