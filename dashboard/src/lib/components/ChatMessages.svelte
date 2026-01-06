@@ -365,10 +365,58 @@ function isThinkingExpanded(messageId: string): boolean {
 										{/if}
 									</div>
 								{/if}
+								
+								<!-- Generated Images -->
+								{#if message.attachments?.some(a => a.type === 'generated-image')}
+									<div class="mb-3">
+										{#each message.attachments.filter(a => a.type === 'generated-image') as attachment}
+											<div class="relative group/img inline-block">
+												<img 
+													src={attachment.preview} 
+													alt=""
+													class="max-w-full max-h-[512px] rounded-lg border border-exo-yellow/20 shadow-lg shadow-black/20"
+												/>
+												<!-- Download button overlay -->
+												<button
+													type="button"
+													class="absolute top-2 right-2 p-2 rounded-lg bg-exo-dark-gray/80 border border-exo-yellow/30 text-exo-yellow opacity-0 group-hover/img:opacity-100 transition-opacity hover:bg-exo-dark-gray hover:border-exo-yellow/50 cursor-pointer"
+													onclick={() => {
+														if (attachment.preview) {
+															const link = document.createElement('a');
+															link.href = attachment.preview;
+															link.download = `generated-image-${Date.now()}.png`;
+															link.click();
+														}
+													}}
+													title="Download image"
+												>
+													<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+														<path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+													</svg>
+												</button>
+											</div>
+										{/each}
+									</div>
+								{/if}
+								
 								<div class="text-xs text-foreground">
-									<MarkdownContent content={message.content || (loading ? response : '')} />
-									{#if loading && !message.content}
-										<span class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"></span>
+									{#if message.content === 'Generating image...'}
+										<div class="flex items-center gap-3 text-exo-yellow">
+											<div class="relative">
+												<div class="w-8 h-8 border-2 border-exo-yellow/30 border-t-exo-yellow rounded-full animate-spin"></div>
+												<svg class="absolute inset-0 w-8 h-8 p-1.5 text-exo-yellow/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+													<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+													<circle cx="8.5" cy="8.5" r="1.5"/>
+													<polyline points="21 15 16 10 5 21"/>
+												</svg>
+											</div>
+											<span class="font-mono tracking-wider uppercase text-sm">Generating image...</span>
+										</div>
+									{:else if message.content || (loading && !message.attachments?.some(a => a.type === 'generated-image'))}
+										<MarkdownContent content={message.content || (loading ? response : '')} />
+										{#if loading && !message.content}
+											<span class="inline-block w-2 h-4 bg-exo-yellow/70 ml-1 cursor-blink"></span>
+										{/if}
 									{/if}
 								</div>
 							</div>

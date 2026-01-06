@@ -649,6 +649,7 @@ class API:
                     tags=card.tags,
                     storage_size_megabytes=int(card.metadata.storage_size.in_mb),
                     supports_tensor=card.metadata.supports_tensor,
+                    tasks=[task.value for task in card.tasks],
                 )
                 for card in MODEL_CARDS.values()
             ]
