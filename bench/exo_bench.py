@@ -274,7 +274,9 @@ def main() -> int:
         description="Benchmark exo model throughput across placement previews.",
     )
     ap.add_argument("--host", default=os.environ.get("EXO_HOST", "localhost"))
-    ap.add_argument("--port", type=int, default=int(os.environ.get("EXO_PORT", "52415")))
+    ap.add_argument(
+        "--port", type=int, default=int(os.environ.get("EXO_PORT", "52415"))
+    )
     ap.add_argument("--model", required=True, help="Model short id or huggingface id")
     ap.add_argument(
         "--pp",
@@ -407,7 +409,7 @@ def main() -> int:
             str(p.get("sharding", "")),
             -nodes_used_in_instance(p["instance"]),
         ),
-        reverse=True
+        reverse=True,
     )
 
     logger.debug(f"exo-bench model: short_id={short_id} full_id={full_model_id}")
@@ -442,14 +444,22 @@ def main() -> int:
 
         try:
             for i in range(args.warmup):
-                run_one_completion(client, full_model_id, pp_list[0], tg_list[0], prompt_sizer)
+                run_one_completion(
+                    client, full_model_id, pp_list[0], tg_list[0], prompt_sizer
+                )
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             for pp in pp_list:
-                if pp*n_nodes > 2048 and "ring" in instance_meta.lower() and "tensor" in sharding.lower():
+                if (
+                    pp * n_nodes > 2048
+                    and "ring" in instance_meta.lower()
+                    and "tensor" in sharding.lower()
+                ):
                     model_card = MODEL_CARDS[short_id]
                     if model_card.metadata.storage_size > Memory.from_gb(10):
-                        logger.info(f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}")
+                        logger.info(
+                            f"Skipping tensor ring as this is too slow for model of size {model_card.metadata.storage_size} on {n_nodes=}"
+                        )
                         continue
                 for tg in tg_list:
                     runs: list[dict[str, Any]] = []
@@ -479,7 +489,6 @@ def main() -> int:
                         all_rows.append(row)
 
                     if runs:
-
                         prompt_tps = mean(x["stats"]["prompt_tps"] for x in runs)
                         gen_tps = mean(x["stats"]["generation_tps"] for x in runs)
                         ptok = mean(x["stats"]["prompt_tokens"] for x in runs)
