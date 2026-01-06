@@ -403,7 +403,9 @@ class Worker:
         while True:
             # TODO: EdgeDeleted
             edges = set(self.state.topology.list_connections())
-            conns = await check_reachable(self.state.topology, self.state.node_profiles, self.node_id)
+            conns = await check_reachable(
+                self.state.topology, self.state.node_profiles, self.node_id
+            )
             for nid in conns:
                 for ip in conns[nid]:
                     if "127.0.0.1" in ip or "localhost" in ip:
