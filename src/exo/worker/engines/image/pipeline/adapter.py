@@ -262,6 +262,26 @@ class ModelAdapter(Protocol):
         """Get the list of single transformer blocks from the model."""
         ...
 
+    def slice_transformer_blocks(
+        self,
+        start_layer: int,
+        end_layer: int,
+        total_joint_blocks: int,
+        total_single_blocks: int,
+    ):
+        """Remove transformer blocks outside the assigned range.
+
+        This should be called BEFORE mx.eval() to avoid loading unused weights
+        in distributed mode.
+
+        Args:
+            start_layer: First layer index (inclusive) assigned to this node
+            end_layer: Last layer index (exclusive) assigned to this node
+            total_joint_blocks: Total number of joint blocks in the model
+            total_single_blocks: Total number of single blocks in the model
+        """
+        ...
+
     def merge_streams(
         self,
         hidden_states: mx.array,
