@@ -1,5 +1,7 @@
 import time
 
+import mlx.core as mx
+
 from exo.shared.types.api import ChatCompletionMessageText
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
@@ -36,12 +38,11 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
-    mlx_cleanup,
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
@@ -57,182 +58,158 @@ def main(
         bound_instance.bound_runner_id,
         bound_instance.bound_shard,
     )
-    try:
-        logger.info("hello from the runner")
-        if getattr(shard_metadata, "immediate_exception", False):
-            raise Exception("Fake exception - runner failed to spin up.")
-        if timeout := getattr(shard_metadata, "should_timeout", 0):
-            time.sleep(timeout)
+    logger.info("hello from the runner")
+    if getattr(shard_metadata, "immediate_exception", False):
+        raise Exception("Fake exception - runner failed to spin up.")
+    if timeout := getattr(shard_metadata, "should_timeout", 0):
+        time.sleep(timeout)
 
-        setup_start_time = time.time()
+    setup_start_time = time.time()
 
-        model = None
-        tokenizer = None
-        sampler = None
-        group = None
+    model = None
+    tokenizer = None
+    sampler = None
+    group = None
 
-        current_status: RunnerStatus = RunnerIdle()
-        logger.info("runner created")
-        event_sender.send(
-            RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
-        )
-        with task_receiver as tasks:
-            for task in tasks:
-                event_sender.send(
-                    TaskStatusUpdated(
-                        task_id=task.task_id, task_status=TaskStatus.Running
-                    )
-                )
-                event_sender.send(TaskAcknowledged(task_id=task.task_id))
-                match task:
-                    case ConnectToGroup() if isinstance(
-                        current_status, (RunnerIdle, RunnerFailed)
-                    ):
-                        logger.info("runner connecting")
-                        current_status = RunnerConnecting()
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
-                        group = initialize_mlx(bound_instance)
-
-                        logger.info("runner connected")
-                        current_status = RunnerConnected()
-
-                    # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
-                    case LoadModel() if (
-                        isinstance(current_status, RunnerConnected)
-                        and group is not None
-                    ) or (isinstance(current_status, RunnerIdle) and group is None):
-                        current_status = RunnerLoading()
-                        logger.info("runner loading")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
-
-                        model, tokenizer, sampler = load_mlx_items(
-                            bound_instance, group
-                        )
-
-                        current_status = RunnerLoaded()
-                        logger.info("runner loaded")
-                    case StartWarmup() if isinstance(current_status, RunnerLoaded):
-                        assert model
-                        assert tokenizer
-                        assert sampler
-                        current_status = RunnerWarmingUp()
-                        logger.info("runner warming up")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
-
-                        logger.info(f"warming up inference for instance: {instance}")
-                        toks = warmup_inference(
-                            model=model,
-                            tokenizer=tokenizer,
-                            sampler=sampler,
-                            # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
-                        )
-                        logger.info(f"warmed up by generating {toks} tokens")
-                        logger.info(
-                            f"runner initialized in {time.time() - setup_start_time} seconds"
-                        )
-                        current_status = RunnerReady()
-                        logger.info("runner ready")
-                    case ChatCompletion(
-                        task_params=task_params, command_id=command_id
-                    ) if isinstance(current_status, RunnerReady):
-                        assert model
-                        assert tokenizer
-                        assert sampler
-                        logger.info(f"received chat request: {str(task)[:500]}")
-                        current_status = RunnerRunning()
-                        logger.info("runner running")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
-                        assert task_params.messages[0].content is not None
-                        _check_for_debug_prompts(task_params.messages[0].content)
-
-                        # Generate responses using the actual MLX generation
-                        for response in mlx_generate(
-                            model=model,
-                            tokenizer=tokenizer,
-                            sampler=sampler,
-                            task=task_params,
-                        ):
-                            match response:
-                                case GenerationResponse():
-                                    if shard_metadata.device_rank == 0:
-                                        event_sender.send(
-                                            ChunkGenerated(
-                                                command_id=command_id,
-                                                chunk=TokenChunk(
-                                                    idx=response.token,
-                                                    model=shard_metadata.model_meta.model_id,
-                                                    text=response.text,
-                                                    token_id=response.token,
-                                                    finish_reason=response.finish_reason,
-                                                    stats=response.stats,
-                                                ),
-                                            )
-                                        )
-                                    # case TokenizedResponse():
-                                    # TODO: something here ig
-
-                        current_status = RunnerReady()
-                        logger.info("runner ready")
-                    case Shutdown():
-                        current_status = RunnerShuttingDown()
-                        logger.info("runner shutting down")
-                        mlx_cleanup(model, tokenizer, group)
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=current_status
-                            )
-                        )
-                        current_status = RunnerShutdown()
-                    case _:
-                        raise ValueError(
-                            f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
-                        )
-                event_sender.send(
-                    TaskStatusUpdated(
-                        task_id=task.task_id, task_status=TaskStatus.Complete
-                    )
-                )
-                event_sender.send(
-                    RunnerStatusUpdated(
-                        runner_id=runner_id, runner_status=current_status
-                    )
-                )
-                if isinstance(current_status, RunnerShutdown):
-                    break
-    except ClosedResourceError:
-        logger.warning("runner communication closed unexpectedly")
-    except Exception as e:
-        logger.opt(exception=e).warning(
-            f"Runner {runner_id} crashed with critical exception {e}"
-        )
-        event_sender.send(
-            RunnerStatusUpdated(
-                runner_id=runner_id,
-                runner_status=RunnerFailed(error_message=str(e)),
+    current_status: RunnerStatus = RunnerIdle()
+    logger.info("runner created")
+    event_sender.send(
+        RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
+    )
+    with task_receiver as tasks:
+        for task in tasks:
+            event_sender.send(
+                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Running)
             )
-        )
-    finally:
-        event_sender.close()
-        task_receiver.close()
-        event_sender.join()
-        task_receiver.join()
-        logger.info("bye from the runner")
+            event_sender.send(TaskAcknowledged(task_id=task.task_id))
+            match task:
+                case ConnectToGroup() if isinstance(
+                    current_status, (RunnerIdle, RunnerFailed)
+                ):
+                    logger.info("runner connecting")
+                    current_status = RunnerConnecting()
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    group = initialize_mlx(bound_instance)
+
+                    logger.info("runner connected")
+                    current_status = RunnerConnected()
+
+                # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
+                case LoadModel() if (
+                    isinstance(current_status, RunnerConnected) and group is not None
+                ) or (isinstance(current_status, RunnerIdle) and group is None):
+                    current_status = RunnerLoading()
+                    logger.info("runner loading")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+
+                    model, tokenizer, sampler = load_mlx_items(bound_instance, group)
+
+                    current_status = RunnerLoaded()
+                    logger.info("runner loaded")
+                case StartWarmup() if isinstance(current_status, RunnerLoaded):
+                    assert model
+                    assert tokenizer
+                    assert sampler
+                    current_status = RunnerWarmingUp()
+                    logger.info("runner warming up")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+
+                    logger.info(f"warming up inference for instance: {instance}")
+                    toks = warmup_inference(
+                        model=model,
+                        tokenizer=tokenizer,
+                        sampler=sampler,
+                        # kv_prefix_cache=kv_prefix_cache,  # supply for warmup-time prefix caching
+                    )
+                    logger.info(f"warmed up by generating {toks} tokens")
+                    logger.info(
+                        f"runner initialized in {time.time() - setup_start_time} seconds"
+                    )
+                    current_status = RunnerReady()
+                    logger.info("runner ready")
+                case ChatCompletion(task_params=task_params, command_id=command_id) if (
+                    isinstance(current_status, RunnerReady)
+                ):
+                    assert model
+                    assert tokenizer
+                    assert sampler
+                    logger.info(f"received chat request: {str(task)[:500]}")
+                    current_status = RunnerRunning()
+                    logger.info("runner running")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    assert task_params.messages[0].content is not None
+                    _check_for_debug_prompts(task_params.messages[0].content)
+
+                    # Generate responses using the actual MLX generation
+                    for response in mlx_generate(
+                        model=model,
+                        tokenizer=tokenizer,
+                        sampler=sampler,
+                        task=task_params,
+                    ):
+                        match response:
+                            case GenerationResponse():
+                                if shard_metadata.device_rank == 0:
+                                    event_sender.send(
+                                        ChunkGenerated(
+                                            command_id=command_id,
+                                            chunk=TokenChunk(
+                                                idx=response.token,
+                                                model=shard_metadata.model_meta.model_id,
+                                                text=response.text,
+                                                token_id=response.token,
+                                                finish_reason=response.finish_reason,
+                                                stats=response.stats,
+                                            ),
+                                        )
+                                    )
+                                # case TokenizedResponse():
+                                # TODO: something here ig
+
+                    current_status = RunnerReady()
+                    logger.info("runner ready")
+                case Shutdown():
+                    current_status = RunnerShuttingDown()
+                    logger.info("runner shutting down")
+                    event_sender.send(
+                        RunnerStatusUpdated(
+                            runner_id=runner_id, runner_status=current_status
+                        )
+                    )
+                    current_status = RunnerShutdown()
+                case _:
+                    raise ValueError(
+                        f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
+                    )
+            event_sender.send(
+                TaskStatusUpdated(task_id=task.task_id, task_status=TaskStatus.Complete)
+            )
+            event_sender.send(
+                RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
+            )
+            if isinstance(current_status, RunnerShutdown):
+                del model, tokenizer, group, sampler
+                mx.clear_cache()
+                import gc
+
+                gc.collect()
+                break
 
 
 EXO_RUNNER_MUST_FAIL = "EXO RUNNER MUST FAIL"
