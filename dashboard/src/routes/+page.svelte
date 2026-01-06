@@ -1516,16 +1516,16 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 									{#if foundModel}
 										{@const sizeGB = getModelSizeGB(foundModel)}
 										{@const isImageModel = modelSupportsImageGeneration(foundModel.id)}
-										<span class="flex items-center justify-between gap-2 w-full pr-4">
+											<span class="flex items-center justify-between gap-2 w-full pr-4">
 											<span class="flex items-center gap-2 text-exo-light-gray truncate">
-												<span class="truncate">{foundModel.name || foundModel.id}</span>
 												{#if isImageModel}
-													<svg class="w-4 h-4 flex-shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+													<svg class="w-4 h-4 flex-shrink-0 text-exo-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 														<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
 														<circle cx="8.5" cy="8.5" r="1.5"/>
 														<polyline points="21 15 16 10 5 21"/>
 													</svg>
 												{/if}
+												<span class="truncate">{foundModel.name || foundModel.id}</span>
 											</span>
 											<span class="text-white/50 text-xs flex-shrink-0">{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB</span>
 										</span>
@@ -1592,14 +1592,14 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 												}"
 											>
 												<span class="flex items-center gap-2 truncate flex-1">
-													<span class="truncate">{model.name || model.id}</span>
 													{#if isImageModel}
-														<svg class="w-4 h-4 flex-shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label="Image generation model">
+														<svg class="w-4 h-4 flex-shrink-0 text-exo-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label="Image generation model">
 															<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
 															<circle cx="8.5" cy="8.5" r="1.5"/>
 															<polyline points="21 15 16 10 5 21"/>
 														</svg>
 													{/if}
+													<span class="truncate">{model.name || model.id}</span>
 												</span>
 												<span class="flex-shrink-0 text-xs {modelCanFit ? 'text-white/50' : 'text-red-400/60'}">
 													{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)}GB
