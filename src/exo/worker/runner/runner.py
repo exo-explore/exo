@@ -47,9 +47,9 @@ from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.image import (
     ImageGenerator,
     generate_image,
+    initialize_image_model,
     warmup_image_generator,
 )
-from exo.worker.engines.image import initialize_image_model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -234,11 +234,6 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case ImageGeneration(
                         task_params=task_params, command_id=command_id
                     ) if isinstance(current_status, RunnerReady):
@@ -284,9 +279,6 @@ def main(
                                         for chunk_index, chunk_data in enumerate(
                                             data_chunks
                                         ):
-                                            is_last_chunk = (
-                                                chunk_index == total_chunks - 1
-                                            )
                                             event_sender.send(
                                                 ChunkGenerated(
                                                     command_id=command_id,
@@ -303,11 +295,6 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case ImageEdits(task_params=task_params, command_id=command_id) if (
                         isinstance(current_status, RunnerReady)
                     ):
