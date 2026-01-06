@@ -163,7 +163,7 @@ interface RawStateResponse {
 }
 
 export interface MessageAttachment {
-	type: 'image' | 'text' | 'file';
+	type: 'image' | 'text' | 'file' | 'generated-image';
 	name: string;
 	content?: string;
 	preview?: string;
@@ -1414,6 +1414,90 @@ class AppStore {
 	}
 
 	/**
+	 * Generate an image using the image generation API
+	 */
+	async generateImage(prompt: string, modelId?: string): Promise<void> {
+		if (!prompt.trim() || this.isLoading) return;
+		
+		if (!this.hasStartedChat) {
+			this.startChat();
+		}
+
+		this.isLoading = true;
+		this.currentResponse = '';
+		
+		// Add user message
+		const userMessage: Message = {
+			id: generateUUID(),
+			role: 'user',
+			content: prompt,
+			timestamp: Date.now()
+		};
+		this.messages.push(userMessage);
+		
+		// Create placeholder for assistant message with generating state
+		const assistantMessage = this.addMessage('assistant', '');
+		this.messages[this.messages.length - 1].content = 'Generating image...';
+		this.updateActiveConversation();
+		
+		try {
+			// Determine the model to use
+			let model = modelId || this.selectedChatModel;
+			if (!model) {
+				throw new Error('No model selected. Please select an image generation model.');
+			}
+			
+			const response = await fetch('/v1/images/generations', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					model,
+					prompt,
+					quality: 'medium',
+					size: '1024x1024',
+					response_format: 'b64_json'
+				})
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`API error: ${response.status} - ${errorText}`);
+			}
+
+			const data = await response.json();
+			const imageData = data.data?.[0]?.b64_json;
+			
+			if (!imageData) {
+				throw new Error('No image data received from the API');
+			}
+			
+			// Update the assistant message with the generated image
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			if (idx !== -1) {
+				this.messages[idx].content = '';
+				this.messages[idx].attachments = [{
+					type: 'generated-image',
+					name: 'generated-image.png',
+					preview: `data:image/png;base64,${imageData}`,
+					mimeType: 'image/png'
+				}];
+			}
+			
+		} catch (error) {
+			console.error('Error generating image:', error);
+			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			if (idx !== -1) {
+				this.messages[idx].content = `Error: ${error instanceof Error ? error.message : 'Failed to generate image'}`;
+			}
+		} finally {
+			this.isLoading = false;
+			this.updateActiveConversation();
+		}
+	}
+
+	/**
 	 * Clear current chat and go back to welcome state
 	 */
 	clearChat() {
@@ -1463,6 +1547,7 @@ export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
 // Actions
 export const startChat = () => appStore.startChat();
 export const sendMessage = (content: string, files?: { id: string; name: string; type: string; textContent?: string; preview?: string }[]) => appStore.sendMessage(content, files);
+export const generateImage = (prompt: string, modelId?: string) => appStore.generateImage(prompt, modelId);
 export const clearChat = () => appStore.clearChat();
 export const setSelectedChatModel = (modelId: string) => appStore.setSelectedModel(modelId);
 export const selectPreviewModel = (modelId: string | null) => appStore.selectPreviewModel(modelId);

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { isLoading, sendMessage, selectedChatModel, setSelectedChatModel, instances, ttftMs, tps, totalTokens } from '$lib/stores/app.svelte';
+	import { isLoading, sendMessage, generateImage, selectedChatModel, setSelectedChatModel, instances, ttftMs, tps, totalTokens } from '$lib/stores/app.svelte';
 	import ChatAttachments from './ChatAttachments.svelte';
 	import type { ChatUploadedFile } from '$lib/types/files';
 	import { processUploadedFiles, getAcceptString } from '$lib/types/files';
@@ -10,6 +10,7 @@
 		showHelperText?: boolean;
 		autofocus?: boolean;
 		showModelSelector?: boolean;
+		modelTasks?: Record<string, string[]>;
 	}
 
 	let { 
@@ -17,7 +18,8 @@
 		placeholder = 'Ask anything',
 		showHelperText = false,
 		autofocus = true,
-		showModelSelector = false
+		showModelSelector = false,
+		modelTasks = {}
 	}: Props = $props();
 
 	let message = $state('');
@@ -48,13 +50,29 @@
 	// Accept all supported file types
 	const acceptString = getAcceptString(['image', 'text', 'pdf']);
 
+	// Check if a model supports image generation
+	function modelSupportsImageGeneration(modelId: string): boolean {
+		const tasks = modelTasks[modelId] || [];
+		return tasks.includes('TextToImage') || tasks.includes('ImageToImage');
+	}
+
+	// Check if the currently selected model supports image generation
+	const isImageModel = $derived(() => {
+		if (!currentModel) return false;
+		return modelSupportsImageGeneration(currentModel);
+	});
+
 	// Extract available models from running instances
 	const availableModels = $derived(() => {
-		const models: Array<{id: string, label: string}> = [];
+		const models: Array<{id: string, label: string, isImageModel: boolean}> = [];
 		for (const [, instance] of Object.entries(instanceData)) {
 			const modelId = getInstanceModelId(instance);
 			if (modelId && modelId !== 'Unknown' && !models.some(m => m.id === modelId)) {
-				models.push({ id: modelId, label: modelId.split('/').pop() || modelId });
+				models.push({ 
+					id: modelId, 
+					label: modelId.split('/').pop() || modelId,
+					isImageModel: modelSupportsImageGeneration(modelId)
+				});
 			}
 		}
 		return models;
@@ -160,7 +178,12 @@
 		uploadedFiles = [];
 		resetTextareaHeight();
 		
-		sendMessage(content, files);
+		// Use image generation for image models
+		if (isImageModel() && content) {
+			generateImage(content);
+		} else {
+			sendMessage(content, files);
+		}
 		
 		// Refocus the textarea after sending
 		setTimeout(() => textareaRef?.focus(), 10);
@@ -297,7 +320,14 @@
 										{:else}
 											<span class="w-3"></span>
 										{/if}
-										<span class="truncate">{model.label}</span>
+										<span class="truncate flex-1">{model.label}</span>
+										{#if model.isImageModel}
+											<svg class="w-3.5 h-3.5 flex-shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label="Image generation model">
+												<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+												<circle cx="8.5" cy="8.5" r="1.5"/>
+												<polyline points="21 15 16 10 5 21"/>
+											</svg>
+										{/if}
 									</button>
 								{/each}
 							</div>
@@ -357,7 +387,7 @@
 				onkeydown={handleKeydown}
 				oninput={handleInput}
 				onpaste={handlePaste}
-				{placeholder}
+				placeholder={isImageModel() ? 'Describe the image you want to generate...' : placeholder}
 				disabled={loading}
 				rows={1}
 				class="flex-1 resize-none bg-transparent text-foreground placeholder:text-exo-light-gray/60 placeholder:text-sm placeholder:tracking-[0.15em] placeholder:leading-7 focus:outline-none focus:ring-0 focus:border-none disabled:opacity-50 text-sm leading-7 font-mono"
@@ -370,14 +400,25 @@
 				class="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-xs tracking-[0.1em] sm:tracking-[0.15em] uppercase font-medium transition-all duration-200 whitespace-nowrap
 					{!canSend || loading 
 						? 'bg-exo-medium-gray/50 text-exo-light-gray cursor-not-allowed' 
-						: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
-				aria-label="Send message"
+						: isImageModel() 
+							? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 hover:shadow-[0_0_20px_rgba(168,85,247,0.4)]'
+							: 'bg-exo-yellow text-exo-black hover:bg-exo-yellow-darker hover:shadow-[0_0_20px_rgba(255,215,0,0.3)]'}"
+				aria-label={isImageModel() ? "Generate image" : "Send message"}
 			>
 				{#if loading}
 					<span class="inline-flex items-center gap-1 sm:gap-2">
 						<span class="w-2.5 h-2.5 sm:w-3 sm:h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-						<span class="hidden sm:inline">PROCESSING</span>
+						<span class="hidden sm:inline">{isImageModel() ? 'GENERATING' : 'PROCESSING'}</span>
 						<span class="sm:hidden">...</span>
+					</span>
+				{:else if isImageModel()}
+					<span class="inline-flex items-center gap-1.5">
+						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+							<circle cx="8.5" cy="8.5" r="1.5"/>
+							<polyline points="21 15 16 10 5 21"/>
+						</svg>
+						<span>GENERATE</span>
 					</span>
 				{:else}
 					SEND
