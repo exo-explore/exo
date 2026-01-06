@@ -22,6 +22,7 @@ from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     make_kv_cache,
+    mx_barrier,
 )
 from exo.worker.runner.bootstrap import logger
 
@@ -87,6 +88,8 @@ def warmup_inference(
     logger.info("Generated ALL warmup tokens")
 
     # TODO: Do we want an mx_barrier?
+    #  At least this version is actively incorrect, as it should use mx_barrier(group)
+    mx_barrier()
 
     return tokens_generated
 
@@ -115,6 +118,7 @@ def mlx_generate(
     sampler: Callable[[mx.array], mx.array],
     task: ChatCompletionTaskParams,
 ) -> Generator[GenerationResponse]:
+    # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
     is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
 
@@ -143,6 +147,7 @@ def mlx_generate(
         sampler=sampler,
         logits_processors=logits_processors,
         prompt_cache=caches,
+        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
         prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
