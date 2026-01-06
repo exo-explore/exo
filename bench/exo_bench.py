@@ -5,7 +5,6 @@ import argparse
 import http.client
 import json
 import os
-import sys
 import time
 from collections.abc import Callable
 from statistics import mean
@@ -70,7 +69,6 @@ class ExoClient:
             conn.close()
 
     def post_bench_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        # logger.debug(payload)
         return self.request_json("POST", "/bench/chat/completions", body=payload)
 
 
@@ -207,7 +205,7 @@ def sharding_filter(sharding: str, wanted: str) -> bool:
 def run_one_completion(
     client: ExoClient, model_id: str, pp_hint: int, tg: int, prompt_sizer: PromptSizer
 ) -> tuple[dict[str, Any], int]:
-    content, pp_tokens = build_user_content(prompt_sizer, pp_hint)
+    content, pp_tokens = prompt_sizer.build(pp_hint)
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": content}],
@@ -271,13 +269,6 @@ class PromptSizer:
         return content, tok
 
 
-def build_user_content(
-    prompt_sizer: PromptSizer, pp_val: int
-) -> tuple[str, int | None]:
-    content, est = prompt_sizer.build(pp_val)
-    return content, est
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="exo-bench",
@@ -312,7 +303,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--skip-pipeline-jaccl",
-        default="store_true",
+        action="store_true",
         help="Pipeline jaccl is often pointless, skip by default",
     )
     ap.add_argument(
@@ -340,10 +331,10 @@ def main() -> int:
     pp_list = parse_int_list(args.pp)
     tg_list = parse_int_list(args.tg)
     if not pp_list or not tg_list:
-        logger.error("pp and tg lists must be non-empty", file=sys.stderr)
+        logger.error("pp and tg lists must be non-empty")
         return 2
     if args.repeat <= 0:
-        logger.error("--repeat must be >= 1", file=sys.stderr)
+        logger.error("--repeat must be >= 1")
         return 2
 
     client = ExoClient(args.host, args.port, timeout_s=args.timeout)
@@ -360,15 +351,13 @@ def main() -> int:
     )
     if tokenizer is None:
         raise RuntimeError("[exo-bench] tokenizer load failed")
-    else:
-        try:
-            prompt_sizer = PromptSizer(tokenizer)
-            logger.debug(
-                f"[exo-bench] loaded tokenizer: {full_model_id} for prompt sizer"
-            )
-        except Exception as e:
-            logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
-            raise e
+
+    try:
+        prompt_sizer = PromptSizer(tokenizer)
+        logger.debug(f"[exo-bench] loaded tokenizer: {full_model_id} for prompt sizer")
+    except Exception:
+        logger.error("[exo-bench] tokenizer usable but prompt sizing failed")
+        raise
 
     selected: list[dict[str, Any]] = []
     for p in previews:
@@ -410,7 +399,7 @@ def main() -> int:
             selected.append(p)
 
     if not selected:
-        logger.error("No valid placements matched your filters.", file=sys.stderr)
+        logger.error("No valid placements matched your filters.")
         return 1
 
     selected.sort(
@@ -454,7 +443,7 @@ def main() -> int:
 
         try:
             for i in range(args.warmup):
-                run_one_completion(client, full_model_id, pp_list[0], tg_list[0])
+                run_one_completion(client, full_model_id, pp_list[0], tg_list[0], prompt_sizer)
                 logger.debug(f"  warmup {i + 1}/{args.warmup} done")
 
             for pp in pp_list:
@@ -468,7 +457,7 @@ def main() -> int:
                     for r in range(args.repeat):
                         time.sleep(3)
                         try:
-                            row, pp = run_one_completion(
+                            row, actual_pp_tokens = run_one_completion(
                                 client, full_model_id, pp, tg, prompt_sizer
                             )
                         except Exception as e:
@@ -482,7 +471,7 @@ def main() -> int:
                                 "placement_instance_meta": instance_meta,
                                 "placement_nodes": n_nodes,
                                 "instance_id": instance_id,
-                                "pp_tokens": pp,
+                                "pp_tokens": actual_pp_tokens,
                                 "tg": tg,
                                 "repeat_index": r,
                             }
