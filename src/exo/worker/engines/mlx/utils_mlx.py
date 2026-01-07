@@ -397,3 +397,13 @@ def set_wired_limit_for_model(model_size: Memory):
         )
     mx.set_wired_limit(max_rec_size)
     logger.info(f"Wired limit set to {max_rec_size}.")
+
+
+def mlx_cleanup(
+    model: Model | None, tokenizer: TokenizerWrapper | None, group: Group | None
+) -> None:
+    del model, tokenizer, group
+    mx.clear_cache()
+    import gc
+
+    gc.collect()

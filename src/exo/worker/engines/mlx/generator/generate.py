@@ -6,8 +6,14 @@ from mlx_lm import stream_generate
 from mlx_lm.models.cache import KVCache, trim_prompt_cache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from exo.shared.types.api import ChatCompletionMessage, FinishReason
+from exo.shared.types.api import (
+    BenchChatCompletionTaskParams,
+    ChatCompletionMessage,
+    FinishReason,
+    GenerationStats,
+)
 from exo.shared.types.mlx import KVCacheType
+from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
@@ -130,7 +136,7 @@ def warmup_inference(
         max_tokens=50,
         sampler=sampler,
         prompt_cache=cache,
-        prefill_step_size=65536,
+        prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
@@ -138,9 +144,30 @@ def warmup_inference(
         tokens_generated += 1
 
     logger.info("Generated ALL warmup tokens")
+
+    # TODO: Do we want an mx_barrier?
+    #  At least this version is actively incorrect, as it should use mx_barrier(group)
     mx_barrier()
 
     return tokens_generated
+
+
+def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.array]:
+    token_ids = [int(t) for t in token_ids]
+
+    def proc(_history: mx.array, logits: mx.array) -> mx.array:
+        for tid in token_ids:
+            logits[..., tid] = -1e9
+        return logits
+
+    return proc
+
+
+def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
+    eos: list[int] | None = getattr(tokenizer, "eos_token_ids", None)
+    if eos is None:
+        return []
+    return eos
 
 
 def mlx_generate(
@@ -150,6 +177,10 @@ def mlx_generate(
     task: ChatCompletionTaskParams,
     kv_prefix_cache: KVPrefixCache | None = None,
 ) -> Generator[GenerationResponse]:
+    # Ensure that generation stats only contains peak memory for this generation
+    mx.reset_peak_memory()
+    is_bench: bool = isinstance(task, BenchChatCompletionTaskParams)
+
     # Currently we support chat-completion tasks only.
     logger.info(f"task_params: {task}")
 
@@ -173,6 +204,12 @@ def mlx_generate(
     # stream_generate starts from the last token
     last_token = prompt_tokens[-1:]
 
+    logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
+    if is_bench:
+        # Only sample length eos tokens
+        eos_ids = eos_ids_from_tokenizer(tokenizer)
+        logits_processors = [ban_token_ids(eos_ids)]
+
     max_tokens = task.max_tokens or MAX_TOKENS
     generated_text_parts: list[str] = []
     generation_start_time = time.time()
@@ -182,26 +219,38 @@ def mlx_generate(
         prompt=last_token,
         max_tokens=max_tokens,
         sampler=sampler,
+        logits_processors=logits_processors,
         prompt_cache=caches,
-        prefill_step_size=65536,
+        # TODO: Dynamically change prefill step size to be the maximum possible without timing out.
+        prefill_step_size=2048,
         kv_group_size=KV_GROUP_SIZE,
         kv_bits=KV_BITS,
     ):
         generated_text_parts.append(out.text)
         logger.info(out.text)
-        if out.finish_reason is not None and out.finish_reason not in get_args(
-            FinishReason
-        ):
-            # We don't throw here as this failure case is really not all that bad
-            # Just log the error and move on
-            logger.warning(
-                f"Model generated unexpected finish_reason: {out.finish_reason}"
+
+        stats: GenerationStats | None = None
+        if out.finish_reason is not None:
+            stats = GenerationStats(
+                prompt_tps=float(out.prompt_tps),
+                generation_tps=float(out.generation_tps),
+                prompt_tokens=int(out.prompt_tokens),
+                generation_tokens=int(out.generation_tokens),
+                peak_memory_usage=Memory.from_gb(out.peak_memory),
             )
+
+            if out.finish_reason not in get_args(FinishReason):
+                # We don't throw here as this failure case is really not all that bad
+                # Just log the error and move on
+                logger.warning(
+                    f"Model generated unexpected finish_reason: {out.finish_reason}"
+                )
 
         yield GenerationResponse(
             text=out.text,
             token=out.token,
             finish_reason=cast(FinishReason | None, out.finish_reason),
+            stats=stats,
         )
 
         if out.finish_reason is not None:
@@ -222,3 +271,5 @@ def mlx_generate(
                 full_prompt = prompt + "".join(generated_text_parts)
                 kv_prefix_cache.add_kv_cache(tokenizer, full_prompt, caches)
             break
+
+        # TODO: Do we want an mx_barrier?

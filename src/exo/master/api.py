@@ -27,6 +27,8 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import MODEL_CARDS
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
+    BenchChatCompletionResponse,
+    BenchChatCompletionTaskParams,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionResponse,
@@ -34,6 +36,7 @@ from exo.shared.types.api import (
     CreateInstanceResponse,
     DeleteInstanceResponse,
     FinishReason,
+    GenerationStats,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -172,6 +175,7 @@ class API:
         self.app.post("/v1/chat/completions", response_model=None)(
             self.chat_completions
         )
+        self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -490,6 +494,45 @@ class API:
             ],
         )
 
+    async def _collect_chat_completion_with_stats(
+        self, command_id: CommandId, parse_gpt_oss: bool
+    ) -> BenchChatCompletionResponse:
+        text_parts: list[str] = []
+        model: str | None = None
+        finish_reason: FinishReason | None = None
+
+        stats: GenerationStats | None = None
+
+        async for chunk in self._chat_chunk_stream(command_id, parse_gpt_oss):
+            if model is None:
+                model = chunk.model
+
+            text_parts.append(chunk.text)
+            stats = chunk.stats or stats
+
+            if chunk.finish_reason is not None:
+                finish_reason = chunk.finish_reason
+
+        combined_text = "".join(text_parts)
+        assert model is not None
+
+        resp = BenchChatCompletionResponse(
+            id=command_id,
+            created=int(time.time()),
+            model=model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant", content=combined_text
+                    ),
+                    finish_reason=finish_reason,
+                )
+            ],
+            generation_stats=stats,
+        )
+        return resp
+
     async def _trigger_notify_user_to_download_model(self, model_id: str) -> None:
         logger.warning(
             "TODO: we should send a notification to the user to download the model"
@@ -524,6 +567,33 @@ class API:
             )
 
         return await self._collect_chat_completion(command.command_id, parse_gpt_oss)
+
+    async def bench_chat_completions(
+        self, payload: BenchChatCompletionTaskParams
+    ) -> BenchChatCompletionResponse:
+        model_meta = await resolve_model_meta(payload.model)
+        parse_gpt_oss = "gpt-oss" in model_meta.model_id.lower()
+        payload.model = model_meta.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == payload.model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(payload.model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {payload.model}"
+            )
+
+        payload.stream = False
+
+        command = ChatCompletion(request_params=payload)
+        await self._send(command)
+
+        response = await self._collect_chat_completion_with_stats(
+            command.command_id,
+            parse_gpt_oss,
+        )
+        return response
 
     def _calculate_total_available_memory(self) -> Memory:
         """Calculate total available memory across all nodes in bytes."""
