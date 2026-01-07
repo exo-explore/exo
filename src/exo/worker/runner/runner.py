@@ -41,6 +41,7 @@ from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_infer
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
+    mlx_cleanup,
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
@@ -179,6 +180,7 @@ def main(
                                                     text=response.text,
                                                     token_id=response.token,
                                                     finish_reason=response.finish_reason,
+                                                    stats=response.stats,
                                                 ),
                                             )
                                         )
@@ -190,6 +192,7 @@ def main(
                     case Shutdown():
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
+                        mlx_cleanup(model, tokenizer, group)
                         event_sender.send(
                             RunnerStatusUpdated(
                                 runner_id=runner_id, runner_status=current_status
