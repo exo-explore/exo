@@ -62,6 +62,7 @@ from exo.worker.engines.image import (
     initialize_image_model,
     warmup_image_generator,
 )
+from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -178,8 +179,7 @@ def main(
 
                     logger.info(f"warming up inference for instance: {instance}")
                     if ModelTask.TextGeneration in model_tasks:
-                        # assert isinstance(model, Model) TODO(ciaran): not actually Model
-                        assert model and not isinstance(model, ImageGenerator)
+                        assert model and isinstance(model, Model)
                         assert tokenizer
 
                         toks = warmup_inference(
@@ -215,8 +215,7 @@ def main(
                             runner_id=runner_id, runner_status=current_status
                         )
                     )
-                    # assert isinstance(model, Model) TODO(ciaran): not actually Model
-                    assert model and not isinstance(model, ImageGenerator)
+                    assert model and isinstance(model, Model)
                     assert tokenizer
                     assert task_params.messages[0].content is not None
 
