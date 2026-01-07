@@ -33,6 +33,7 @@ from exo.shared.types.worker.runners import (
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
+    RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
 )
@@ -41,6 +42,7 @@ from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_infer
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
     load_mlx_items,
+    mlx_cleanup,
     mlx_force_oom,
 )
 from exo.worker.runner.bootstrap import logger
@@ -203,6 +205,7 @@ def main(
                                                     text=response.text,
                                                     token_id=response.token,
                                                     finish_reason=response.finish_reason,
+                                                    stats=response.stats,
                                                 ),
                                             )
                                         )
@@ -212,13 +215,15 @@ def main(
                         current_status = RunnerReady()
                         logger.info("runner ready")
                     case Shutdown():
+                        current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
+                        mlx_cleanup(model, tokenizer, group)
                         event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.Complete
+                            RunnerStatusUpdated(
+                                runner_id=runner_id, runner_status=current_status
                             )
                         )
-                        break
+                        current_status = RunnerShutdown()
                     case _:
                         raise ValueError(
                             f"Received {task.__class__.__name__} outside of state machine in {current_status=}"
@@ -233,9 +238,8 @@ def main(
                         runner_id=runner_id, runner_status=current_status
                     )
                 )
-        event_sender.send(
-            RunnerStatusUpdated(runner_id=runner_id, runner_status=RunnerShutdown())
-        )
+                if isinstance(current_status, RunnerShutdown):
+                    break
     except ClosedResourceError:
         logger.warning("runner communication closed unexpectedly")
     except Exception as e:

@@ -28,7 +28,7 @@ from exo.worker.main import Worker
 @dataclass
 class Node:
     router: Router
-    worker: Worker
+    worker: Worker | None
     election: Election  # Every node participates in election, as we do want a node to become master even if it isn't a master candidate if no master candidates are present.
     election_result_receiver: Receiver[ElectionResult]
     master: Master | None
@@ -62,17 +62,21 @@ class Node:
             )
         else:
             api = None
+            
+        if not args.no_worker:
+            worker = Worker(
+                node_id,
+                session_id,
+                exo_shard_downloader(),
+                connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
+                global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
+                local_event_sender=router.sender(topics.LOCAL_EVENTS),
+                command_sender=router.sender(topics.COMMANDS),
+                worker_command_receiver=router.receiver(topics.WORKER_COMMANDS),
+            )
+        else:
+            worker = None
 
-        worker = Worker(
-            node_id,
-            session_id,
-            exo_shard_downloader(),
-            connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
-            global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
-            local_event_sender=router.sender(topics.LOCAL_EVENTS),
-            command_sender=router.sender(topics.COMMANDS),
-            worker_command_receiver=router.receiver(topics.WORKER_COMMANDS),
-        )
         # We start every node with a master
         master = Master(
             node_id,
@@ -103,8 +107,9 @@ class Node:
         async with self._tg as tg:
             signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
-            tg.start_soon(self.worker.run)
             tg.start_soon(self.election.run)
+            if self.worker:
+                tg.start_soon(self.worker.run)
             if self.master:
                 tg.start_soon(self.master.run)
             if self.api:
@@ -218,6 +223,7 @@ class Args(CamelCaseModel):
     spawn_api: bool = False
     api_port: PositiveInt = 52415
     tb_only: bool = False
+    no_worker: bool = False
 
     @classmethod
     def parse(cls) -> Self:
@@ -254,6 +260,10 @@ class Args(CamelCaseModel):
             type=int,
             dest="api_port",
             default=52415,
+        )
+        parser.add_argument(
+            "--no-worker",
+            action="store_true",
         )
 
         args = parser.parse_args()

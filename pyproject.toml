@@ -82,7 +82,7 @@ build-backend = "uv_build"
 ###
 
 [tool.basedpyright]
-include = [".venv/lib/mlx", ".venv/lib/mlx_lm", "src"]
+include = [".venv/lib/mlx", ".venv/lib/mlx_lm", "src", "bench"]
 typeCheckingMode = "strict"
 failOnWarnings = true
 

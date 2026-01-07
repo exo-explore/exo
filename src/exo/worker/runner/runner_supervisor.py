@@ -14,13 +14,23 @@ from anyio import (
 from anyio.abc import TaskGroup
 from loguru import logger
 
-from exo.shared.types.events import Event, RunnerStatusUpdated, TaskAcknowledged
-from exo.shared.types.tasks import CancelGeneration, Task, TaskId
+from exo.shared.types.events import (
+    Event,
+    RunnerStatusUpdated,
+    TaskAcknowledged,
+    TaskStatusUpdated,
+)
+from exo.shared.types.tasks import CancelGeneration, Task, TaskId, TaskStatus
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
+    RunnerConnecting,
     RunnerFailed,
     RunnerIdle,
+    RunnerLoading,
+    RunnerRunning,
+    RunnerShuttingDown,
     RunnerStatus,
+    RunnerWarmingUp,
 )
 from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.channels import MpReceiver, MpSender, Sender, mp_channel
@@ -40,10 +50,10 @@ class RunnerSupervisor:
     _task_sender: MpSender[Task]
     _cancel_sender: MpSender[CancelGeneration]
     _event_sender: Sender[Event]
-    # err_path: str
     _tg: TaskGroup | None = field(default=None, init=False)
     status: RunnerStatus = field(default_factory=RunnerIdle, init=False)
     pending: dict[TaskId, anyio.Event] = field(default_factory=dict, init=False)
+    completed: set[TaskId] = field(default_factory=set, init=False)
 
     @classmethod
     def create(
@@ -82,7 +92,6 @@ class RunnerSupervisor:
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
             _event_sender=event_sender,
-            # err_path=err_path,
         )
 
         return self
@@ -139,6 +148,10 @@ class RunnerSupervisor:
             logger.warning(f"Task {task} dropped, runner closed communication.")
 
     async def start_task(self, task: Task):
+        if task.task_id in self.completed:
+            logger.info(
+                f"Skipping invalid task {task} as it has already been completed"
+            )
         logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
@@ -159,6 +172,22 @@ class RunnerSupervisor:
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
                         continue
+                    if (
+                        isinstance(event, TaskStatusUpdated)
+                        and event.task_status == TaskStatus.Complete
+                    ):
+                        # If a task has just been completed, we should be working on it.
+                        assert isinstance(
+                            self.status,
+                            (
+                                RunnerRunning,
+                                RunnerWarmingUp,
+                                RunnerLoading,
+                                RunnerConnecting,
+                                RunnerShuttingDown,
+                            ),
+                        )
+                        self.completed.add(event.task_id)
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:
                 await self._check_runner(e)
