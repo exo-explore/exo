@@ -288,11 +288,11 @@ def apply_chat_template(
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
-            if len(message.content) != 1:
-                logger.warning("Received malformed prompt")
+            if len(message.content) == 0:
+                logger.warning("Received prompt with no content, skipping")
                 continue
 
-            message.content = message.content[0].text
+            message.content = "\n".join(c.text for c in message.content).strip()
         if message.content is None and message.thinking is None:
             continue
 
