@@ -106,7 +106,15 @@ class Master:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
-                    logger.info(f"Executing command: {forwarder_command.command}")
+                    match forwarder_command.command:
+                        case ImageEdits(request_params=params):
+                            logger.info(
+                                f"Executing command: ImageEdits(prompt={params.prompt!r}, model={params.model})"
+                            )
+                        case _:
+                            logger.info(
+                                f"Executing command: {forwarder_command.command}"
+                            )
                     generated_events: list[Event] = []
                     command = forwarder_command.command
                     match command:
