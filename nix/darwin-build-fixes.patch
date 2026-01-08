@@ -1,0 +1,79 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0ed30932..d8528132 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -177,11 +177,7 @@ if(MLX_BUILD_METAL)
+     add_compile_definitions(MLX_METAL_DEBUG)
+   endif()
+ 
+-  # Throw an error if xcrun not found
+-  execute_process(
+-    COMMAND zsh "-c" "/usr/bin/xcrun -sdk macosx --show-sdk-version"
+-    OUTPUT_VARIABLE MACOS_SDK_VERSION
+-    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
++  set(MACOS_SDK_VERSION @sdkVersion@)
+ 
+   if(${MACOS_SDK_VERSION} LESS 14.0)
+     message(
+@@ -199,11 +195,8 @@ if(MLX_BUILD_METAL)
+     endif()
+     set(XCRUN_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+   endif()
+-  execute_process(
+-    COMMAND
+-      zsh "-c"
+-      "echo \"__METAL_VERSION__\" | xcrun -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1 | tr -d '\n'"
+-    OUTPUT_VARIABLE MLX_METAL_VERSION COMMAND_ERROR_IS_FATAL ANY)
++  set(
++    MLX_METAL_VERSION @metalVersion@)
+   FetchContent_Declare(metal_cpp URL ${METAL_CPP_URL})
+   FetchContent_MakeAvailable(metal_cpp)
+   target_include_directories(
+diff --git a/cmake/extension.cmake b/cmake/extension.cmake
+index 13db804a..5b385132 100644
+--- a/cmake/extension.cmake
++++ b/cmake/extension.cmake
+@@ -36,7 +36,7 @@ macro(mlx_build_metallib)
+   add_custom_command(
+     OUTPUT ${MTLLIB_BUILD_TARGET}
+     COMMAND
+-      xcrun -sdk macosx metal
++      metal
+       "$<LIST:TRANSFORM,${MTLLIB_INCLUDE_DIRS},PREPEND,-I>"
+       ${MTLLIB_COMPILE_OPTIONS} ${MTLLIB_SOURCES} -o ${MTLLIB_BUILD_TARGET}
+     DEPENDS ${MTLLIB_DEPS} ${MTLLIB_SOURCES}
+diff --git a/mlx/backend/metal/kernels/CMakeLists.txt b/mlx/backend/metal/kernels/CMakeLists.txt
+index 262b0495..5c7446ad 100644
+--- a/mlx/backend/metal/kernels/CMakeLists.txt
++++ b/mlx/backend/metal/kernels/CMakeLists.txt
+@@ -29,7 +29,7 @@ function(build_kernel_base TARGET SRCFILE DEPS)
+                     "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+   endif()
+   add_custom_command(
+-    COMMAND xcrun -sdk macosx metal ${METAL_FLAGS} -c ${SRCFILE}
++    COMMAND metal ${METAL_FLAGS} -c ${SRCFILE}
+             -I${PROJECT_SOURCE_DIR} -o ${TARGET}.air
+     DEPENDS ${SRCFILE} ${DEPS} ${BASE_HEADERS}
+     OUTPUT ${TARGET}.air
+@@ -170,7 +170,7 @@ endif()
+ 
+ add_custom_command(
+   OUTPUT ${MLX_METAL_PATH}/mlx.metallib
+-  COMMAND xcrun -sdk macosx metallib ${KERNEL_AIR} -o
++  COMMAND metallib ${KERNEL_AIR} -o
+           ${MLX_METAL_PATH}/mlx.metallib
+   DEPENDS ${KERNEL_AIR}
+   COMMENT "Building mlx.metallib"
+diff --git a/mlx/backend/metal/make_compiled_preamble.sh b/mlx/backend/metal/make_compiled_preamble.sh
+index bb55ed3a..94ea7dd7 100644
+--- a/mlx/backend/metal/make_compiled_preamble.sh
++++ b/mlx/backend/metal/make_compiled_preamble.sh
+@@ -31,7 +31,7 @@ OUTPUT_FILE=${OUTPUT_DIR}/${SRC_NAME}.cpp
+ mkdir -p "$OUTPUT_DIR"
+ 
+ # Use the metal compiler to get a list of headers (with depth)
+-CCC="xcrun -sdk macosx metal -x metal"
++CCC="metal -x metal"
+ HDRS=$( $CCC -I"$SRC_DIR" -I"$JIT_INCLUDES" -DMLX_METAL_JIT -E -P -CC -C -H "$INPUT_FILE" $CFLAGS -w 2>&1 1>/dev/null )
+ 
+ # Remove any included system frameworks (for MetalPerformancePrimitive headers)

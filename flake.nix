@@ -87,6 +87,11 @@
             touch $out
           '';
 
+          packages =
+            if pkgs.stdenv.isDarwin then {
+              metal = pkgs.callPackage ./nix/metalWrapper.nix { metalVersion = "310"; };
+            } else { };
+
           devShells.default = with pkgs; pkgs.mkShell {
             inputsFrom = [ self'.checks.cargo-build ];
 
@@ -123,6 +128,7 @@
               ];
 
             OPENSSL_NO_VENDOR = "1";
+
 
             shellHook = ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${python313}/lib"

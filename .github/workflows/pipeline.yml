@@ -113,6 +113,29 @@ jobs:
         with:
           lfs: false
 
+      - name: Select Xcode
+        if: startsWith(matrix.runner, 'macos-')
+        run: |
+          XCODE_BASEDIR="$(printf '%s\n' /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          [[ -z "$XCODE_BASEDIR" ]] && exit 1
+
+          ls -ld "/Applications/Xcode.app"
+          sudo /usr/bin/xcode-select -s "$XCODE_BASEDIR"
+          /usr/bin/xcode-select -p || true
+          /usr/bin/xcrun --toolchain default --find xcodebuild || true
+
+      - name: Install Metal toolchain component
+        if: startsWith(matrix.runner, 'macos-')
+        run: |
+          set -e
+          if ! xcrun --find metal >/dev/null 2>&1; then
+            sudo xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --find metal
+          xcrun --find metallib
+          echo "GH_OVERRIDE_METAL=$(xcrun --find metal)" >> $GITHUB_ENV
+          echo "GH_OVERRIDE_METALLIB=$(xcrun --find metallib)" >> $GITHUB_ENV
+
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
@@ -124,6 +147,9 @@ jobs:
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
       - name: Build all Nix outputs
+        env:
+          GH_OVERRIDE_METAL: ${{ env.GH_OVERRIDE_METAL }}
+          GH_OVERRIDE_METALLIB: ${{ env.GH_OVERRIDE_METALLIB }}
         run: |
           nix flake show --json | jq -r '
             [
