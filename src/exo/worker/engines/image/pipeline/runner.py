@@ -229,9 +229,9 @@ class DiffusionRunner:
             Final denoised latents ready for VAE decoding
         """
 
-        num_steps = runtime_config.num_inference_steps - runtime_config.init_time_step
-
-        time_steps = tqdm(range(num_steps))
+        time_steps = tqdm(
+            range(runtime_config.init_time_step, runtime_config.num_inference_steps)
+        )
 
         # Call subscribers for beginning of loop
         Callbacks.before_loop(
@@ -373,7 +373,7 @@ class DiffusionRunner:
         """
         if self.group is None:
             return self._single_node_step(t, config, latents, prompt_data)
-        elif t < self.num_sync_steps:
+        elif t < config.init_time_step + self.num_sync_steps:
             return self._sync_pipeline(
                 t,
                 config,
@@ -528,7 +528,7 @@ class DiffusionRunner:
         text_seq_len = prompt_embeds.shape[1]
         hidden_dim = self.adapter.hidden_dim
 
-        if t == 0:
+        if t == config.init_time_step:
             self._initialize_kv_caches(
                 batch_size=batch_size,
                 num_img_tokens=num_img_tokens,
@@ -711,7 +711,10 @@ class DiffusionRunner:
             start_token, end_token = token_indices[patch_idx]
 
             if self.has_joint_blocks:
-                if not self.is_first_stage or t != self.num_sync_steps:
+                if (
+                    not self.is_first_stage
+                    or t != config.init_time_step + self.num_sync_steps
+                ):
                     if self.is_first_stage:
                         # First stage receives latent-space from last stage (scheduler output)
                         recv_template = patch
