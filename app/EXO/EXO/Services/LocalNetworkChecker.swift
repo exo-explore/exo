@@ -110,8 +110,9 @@ final class LocalNetworkChecker: ObservableObject {
                     }
                 case .failed(let error):
                     let errorStr = "\(error)"
-                    if errorStr.contains("65") || errorStr.contains("EHOSTUNREACH") ||
-                       errorStr.contains("permission") || errorStr.contains("denied") {
+                    if errorStr.contains("65") || errorStr.contains("EHOSTUNREACH")
+                        || errorStr.contains("permission") || errorStr.contains("denied")
+                    {
                         resumeOnce(.notWorking(reason: "Permission denied"))
                     } else {
                         resumeOnce(.notWorking(reason: "Failed: \(error.localizedDescription)"))

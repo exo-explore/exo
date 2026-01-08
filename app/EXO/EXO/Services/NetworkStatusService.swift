@@ -85,10 +85,11 @@ private struct NetworkStatusFetcher {
     private func readBridgeInactive() -> Bool? {
         let result = runCommand(["ifconfig", "bridge0"])
         guard result.exitCode == 0 else { return nil }
-        guard let statusLine = result.output
-            .components(separatedBy: .newlines)
-            .first(where: { $0.contains("status:") })?
-            .lowercased()
+        guard
+            let statusLine = result.output
+                .components(separatedBy: .newlines)
+                .first(where: { $0.contains("status:") })?
+                .lowercased()
         else {
             return nil
         }
@@ -171,4 +172,3 @@ private struct NetworkStatusFetcher {
         )
     }
 }
-

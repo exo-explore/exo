@@ -20,8 +20,8 @@ struct InstanceRowView: View {
                 if let progress = instance.downloadProgress {
                     downloadStatusView(progress: progress)
                 } else {
-                statusChip(label: instance.state.label.uppercased(), color: statusColor)
-            }
+                    statusChip(label: instance.state.label.uppercased(), color: statusColor)
+                }
             }
             if let progress = instance.downloadProgress {
                 GeometryReader { geometry in
@@ -97,7 +97,8 @@ struct InstanceRowView: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                     if let subtitle = task.subtitle,
-                       subtitle.caseInsensitiveCompare(parentModelName) != .orderedSame {
+                        subtitle.caseInsensitiveCompare(parentModelName) != .orderedSame
+                    {
                         Text(subtitle)
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -234,9 +235,12 @@ struct InstanceRowView: View {
         Button {
             isExpanded.wrappedValue.toggle()
         } label: {
-            Label(isExpanded.wrappedValue ? "Hide" : "Show", systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                .labelStyle(.titleAndIcon)
-                .contentTransition(.symbolEffect(.replace))
+            Label(
+                isExpanded.wrappedValue ? "Hide" : "Show",
+                systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down"
+            )
+            .labelStyle(.titleAndIcon)
+            .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
         .font(.caption2)
@@ -311,7 +315,9 @@ struct InstanceRowView: View {
         }
 
         @ViewBuilder
-        private func detailRow(icon: String? = nil, title: String, value: String, tint: Color = .secondary) -> some View {
+        private func detailRow(
+            icon: String? = nil, title: String, value: String, tint: Color = .secondary
+        ) -> some View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let icon {
                     Image(systemName: icon)
@@ -329,4 +335,3 @@ struct InstanceRowView: View {
         }
     }
 }
-
