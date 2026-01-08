@@ -40,8 +40,9 @@ struct BugReportService {
         now: Date = Date(),
         isManual: Bool = false
     ) async throws -> BugReportOutcome {
-        let timestamp = ISO8601DateFormatter().string(from: now)
-        let prefix = "reports/\(timestamp)/"
+        let timestamp = Self.runTimestampString(now)
+        let dayPrefix = Self.dayPrefixString(now)
+        let prefix = "reports/\(dayPrefix)/\(timestamp)/"
 
         let logData = readLog()
         let ifconfigText = try await captureIfconfig()
@@ -88,6 +89,24 @@ struct BugReportService {
 
         return BugReportOutcome(
             success: true, message: "Bug Report sent. Thank you for helping to improve EXO 1.0.")
+    }
+
+    private static func dayPrefixString(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        let year = components.year ?? 0
+        let month = components.month ?? 0
+        let day = components.day ?? 0
+        return String(format: "%04d/%02d/%02d", year, month, day)
+    }
+
+    private static func runTimestampString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HHmmss.SSS'Z'"
+        return formatter.string(from: date)
     }
 
     private func fetchPresignedUploadUrls(keys: [String], bundle: Bundle = .main) async throws
