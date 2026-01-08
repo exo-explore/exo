@@ -459,6 +459,7 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundColor(thunderboltStatusColor)
                     interfaceIpList
+                    rdmaStatusView
                     sendBugReportButton
                         .padding(.top, 6)
                 }
@@ -466,6 +467,52 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showDebugInfo)
+    }
+
+    private var rdmaStatusView: some View {
+        let rdma = networkStatusService.status.rdmaStatus
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("RDMA: \(rdmaStatusText(rdma))")
+                .font(.caption2)
+                .foregroundColor(rdmaStatusColor(rdma))
+            if !rdma.devices.isEmpty {
+                Text("  Devices: \(rdma.devices.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !rdma.activePorts.isEmpty {
+                Text("  Active Ports:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(rdma.activePorts, id: \.device) { port in
+                    Text("    \(port.device) port \(port.port): \(port.state)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+    }
+
+    private func rdmaStatusText(_ rdma: RDMAStatus) -> String {
+        switch rdma.rdmaCtlEnabled {
+        case .some(true):
+            return "Enabled"
+        case .some(false):
+            return "Disabled"
+        case nil:
+            return rdma.devices.isEmpty ? "Not Available" : "Available"
+        }
+    }
+
+    private func rdmaStatusColor(_ rdma: RDMAStatus) -> Color {
+        switch rdma.rdmaCtlEnabled {
+        case .some(true):
+            return .green
+        case .some(false):
+            return .orange
+        case nil:
+            return rdma.devices.isEmpty ? .secondary : .green
+        }
     }
 
     private var sendBugReportButton: some View {

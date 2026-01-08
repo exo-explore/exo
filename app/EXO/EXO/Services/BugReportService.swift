@@ -110,7 +110,16 @@ struct BugReportService {
     private func readDebugInfo() -> DebugInfo {
         DebugInfo(
             thunderboltBridgeDisabled: readThunderboltBridgeDisabled(),
-            interfaces: readInterfaces()
+            interfaces: readInterfaces(),
+            rdma: readRDMADebugInfo()
+        )
+    }
+
+    private func readRDMADebugInfo() -> DebugInfo.RDMADebugInfo {
+        DebugInfo.RDMADebugInfo(
+            rdmaCtlStatus: safeRunCommand(["/usr/bin/rdma_ctl", "status"]),
+            ibvDevices: safeRunCommand(["/usr/bin/ibv_devices"]),
+            ibvDevinfo: safeRunCommand(["/usr/bin/ibv_devinfo"])
         )
     }
 
@@ -360,6 +369,7 @@ struct BugReportService {
 private struct DebugInfo {
     let thunderboltBridgeDisabled: Bool?
     let interfaces: [InterfaceStatus]
+    let rdma: RDMADebugInfo
 
     struct InterfaceStatus {
         let name: String
@@ -373,10 +383,25 @@ private struct DebugInfo {
         }
     }
 
+    struct RDMADebugInfo {
+        let rdmaCtlStatus: String?
+        let ibvDevices: String?
+        let ibvDevinfo: String?
+
+        func toDictionary() -> [String: Any] {
+            [
+                "rdma_ctl_status": rdmaCtlStatus as Any,
+                "ibv_devices": ibvDevices as Any,
+                "ibv_devinfo": ibvDevinfo as Any,
+            ]
+        }
+    }
+
     func toDictionary() -> [String: Any] {
         [
             "thunderbolt_bridge_disabled": thunderboltBridgeDisabled as Any,
             "interfaces": interfaces.map { $0.toDictionary() },
+            "rdma": rdma.toDictionary(),
         ]
     }
 }
