@@ -12,6 +12,7 @@ struct ContentView: View {
     @EnvironmentObject private var controller: ExoProcessController
     @EnvironmentObject private var stateService: ClusterStateService
     @EnvironmentObject private var networkStatusService: NetworkStatusService
+    @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
@@ -26,6 +27,9 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             statusSection
+            if shouldShowLocalNetworkWarning {
+                localNetworkWarningBanner
+            }
             if shouldShowClusterDetails {
                 Divider()
                 overviewSection
@@ -40,12 +44,60 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: shouldShowClusterDetails)
         .animation(.easeInOut(duration: 0.3), value: shouldShowInstances)
+        .animation(.easeInOut(duration: 0.3), value: shouldShowLocalNetworkWarning)
         .padding()
         .frame(width: 340)
         .onAppear {
             Task {
                 await networkStatusService.refresh()
             }
+        }
+    }
+
+    private var shouldShowLocalNetworkWarning: Bool {
+        if case .notWorking = localNetworkChecker.status {
+            return controller.status != .stopped
+        }
+        return false
+    }
+
+    private var localNetworkWarningBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("Local Network Access Issue")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+            Text("Device discovery won't work. To fix:\n1. Quit EXO\n2. Open System Settings → Privacy & Security → Local Network\n3. Toggle EXO off, then back on\n4. Relaunch EXO")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                openLocalNetworkSettings()
+            } label: {
+                Text("Open Settings")
+                    .font(.caption2)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private func openLocalNetworkSettings() {
+        // Open Privacy & Security settings - Local Network section
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
+            NSWorkspace.shared.open(url)
         }
     }
 
