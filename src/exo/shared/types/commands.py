@@ -2,7 +2,7 @@ from pydantic import Field
 
 from exo.shared.types.api import (
     ChatCompletionTaskParams,
-    ImageEditsTaskParams,
+    ImageEditsInternalParams,
     ImageGenerationTaskParams,
 )
 from exo.shared.types.common import CommandId, NodeId
@@ -29,7 +29,7 @@ class ImageGeneration(BaseCommand):
 
 
 class ImageEdits(BaseCommand):
-    request_params: ImageEditsTaskParams
+    request_params: ImageEditsInternalParams
 
 
 class PlaceInstance(BaseCommand):

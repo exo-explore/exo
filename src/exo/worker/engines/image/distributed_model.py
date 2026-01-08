@@ -184,11 +184,19 @@ class DistributedImageModel:
         width: int,
         quality: Literal["low", "medium", "high"] = "medium",
         seed: int = 2,
+        image_path: Path | None = None,
+        image_strength: float | None = None,
     ) -> Optional[Image.Image]:
         # Determine number of inference steps based on quality
         steps = self._config.get_steps_for_quality(quality)
 
-        config = Config(num_inference_steps=steps, height=height, width=width)
+        config = Config(
+            num_inference_steps=steps,
+            height=height,
+            width=width,
+            image_path=image_path,
+            image_strength=image_strength,
+        )
         image = self._generate_image(settings=config, prompt=prompt, seed=seed)
         logger.info("generated image")
 
