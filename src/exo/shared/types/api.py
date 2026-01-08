@@ -1,4 +1,5 @@
 import time
+from collections.abc import Generator
 from typing import Any, Literal
 
 from fastapi import UploadFile
@@ -255,11 +256,25 @@ class ImageEditsInternalParams(BaseModel):
     size: str | None = "1024x1024"
     image_strength: float = 0.7
 
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "image_data":
+                yield name, f"<{len(self.image_data)} chars>"
+            elif name is not None:
+                yield name, value
+
 
 class ImageData(BaseModel):
     b64_json: str | None = None
     url: str | None = None
     revised_prompt: str | None = None
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "b64_json" and value is not None:
+                yield name, f"<{len(value)} chars>"
+            elif name is not None:
+                yield name, value
 
 
 class ImageGenerationResponse(BaseModel):

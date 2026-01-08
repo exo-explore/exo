@@ -1,4 +1,6 @@
+from collections.abc import Generator
 from enum import Enum
+from typing import Any
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.api import GenerationStats
@@ -32,12 +34,26 @@ class ImageChunk(BaseChunk):
     total_chunks: int
     image_index: int
 
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "data":
+                yield name, f"<{len(self.data)} chars>"
+            elif name is not None:
+                yield name, value
+
 
 class InputImageChunk(BaseChunk):
     command_id: CommandId
     data: str
     chunk_index: int
     total_chunks: int
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "data":
+                yield name, f"<{len(self.data)} chars>"
+            elif name is not None:
+                yield name, value
 
 
 GenerationChunk = TokenChunk | ImageChunk
