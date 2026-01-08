@@ -30,6 +30,7 @@ _CONFIG_REGISTRY: dict[str, ImageModelConfig] = {
     "flux.1-schnell": FLUX_SCHNELL_CONFIG,
     "flux.1-dev": FLUX_DEV_CONFIG,
     "qwen-image": QWEN_IMAGE_CONFIG,
+    "qwen-image-edit-2509": QWEN_IMAGE_CONFIG,
 }
 
 
