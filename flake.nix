@@ -70,7 +70,12 @@
             touch $out
           '';
 
-          devShells.default = with pkgs; pkgs.mkShell {
+          packages =
+            if pkgs.stdenv.isDarwin then {
+              metal = pkgs.callPackage ./nix/metalWrapper.nix { metalVersion = "230"; };
+            } else { };
+
+          devShells.default = with pkgs; mkShellNoCC {
             packages =
               [
                 # FORMATTING
@@ -102,7 +107,7 @@
                 just
                 jq
               ]
-              ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
+              ++ (lib.optionals stdenv.isLinux [
                 # IFCONFIG
                 unixtools.ifconfig
 
@@ -110,10 +115,11 @@
                 pkg-config
                 openssl
               ])
-              ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              ++ (lib.optionals stdenv.isDarwin [
                 # MACMON
                 macmon
               ]);
+
 
             shellHook = ''
               # PYTHON
