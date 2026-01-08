@@ -5,6 +5,7 @@ from exo.shared.types.api import (
     ImageEditsInternalParams,
     ImageGenerationTaskParams,
 )
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -51,6 +52,12 @@ class TaskFinished(BaseCommand):
     finished_command_id: CommandId
 
 
+class SendInputChunk(BaseCommand):
+    """Command to send an input image chunk (converted to event by master)."""
+
+    chunk: InputImageChunk
+
+
 class RequestEventLog(BaseCommand):
     since_idx: int
 
@@ -65,6 +72,7 @@ Command = (
     | CreateInstance
     | DeleteInstance
     | TaskFinished
+    | SendInputChunk
 )
 
 

@@ -315,7 +315,10 @@ def main(
                         ):
                             match response:
                                 case ImageGenerationResponse():
-                                    if shard_metadata.device_rank == shard_metadata.world_size - 1:
+                                    if (
+                                        shard_metadata.device_rank
+                                        == shard_metadata.world_size - 1
+                                    ):
                                         encoded_data = base64.b64encode(
                                             response.image_data
                                         ).decode("utf-8")
@@ -333,9 +336,6 @@ def main(
                                         for chunk_index, chunk_data in enumerate(
                                             data_chunks
                                         ):
-                                            is_last_chunk = (
-                                                chunk_index == total_chunks - 1
-                                            )
                                             event_sender.send(
                                                 ChunkGenerated(
                                                     command_id=command_id,
