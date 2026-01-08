@@ -12,12 +12,15 @@ from exo.master.placement import (
 )
 from exo.shared.apply import apply
 from exo.shared.types.commands import (
+    CancelGenerationCommand,
     ChatCompletion,
     CreateInstance,
     DeleteInstance,
     ForwarderCommand,
+    ForwarderWorkerCommand,
     PlaceInstance,
     RequestEventLog,
+    TaskCancelled,
     TaskFinished,
     TestCommand,
 )
@@ -57,6 +60,8 @@ class Master:
         # Send events to the forwarder to be indexed (usually from command processing)
         # Ideally these would be MasterForwarderEvents but type system says no :(
         global_event_sender: Sender[ForwarderEvent],
+        # Send commands directly to workers (bypasses event log)
+        worker_command_sender: Sender[ForwarderWorkerCommand],
     ):
         self.state = State()
         self._tg: TaskGroup = anyio.create_task_group()
@@ -66,6 +71,7 @@ class Master:
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
         self.global_event_sender = global_event_sender
+        self.worker_command_sender = worker_command_sender
         send, recv = channel[Event]()
         self.event_sender: Sender[Event] = send
         self._loopback_event_receiver: Receiver[Event] = recv
@@ -185,6 +191,28 @@ class Master:
                                 del self.command_task_mapping[
                                     command.finished_command_id
                                 ]
+                        case TaskCancelled():
+                            if (
+                                command.cancelled_command_id
+                                in self.command_task_mapping
+                            ):
+                                task_id = self.command_task_mapping[
+                                    command.cancelled_command_id
+                                ]
+                                # Delete the task from state
+                                generated_events.append(TaskDeleted(task_id=task_id))
+                                del self.command_task_mapping[
+                                    command.cancelled_command_id
+                                ]
+                            # Send direct cancellation command to workers
+                            await self.worker_command_sender.send(
+                                ForwarderWorkerCommand(
+                                    origin=self.node_id,
+                                    command=CancelGenerationCommand(
+                                        command_id_to_cancel=command.cancelled_command_id,
+                                    ),
+                                )
+                            )
                         case RequestEventLog():
                             # We should just be able to send everything, since other buffers will ignore old messages
                             for i in range(command.since_idx, len(self._event_log)):

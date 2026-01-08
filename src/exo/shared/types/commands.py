@@ -39,6 +39,10 @@ class TaskFinished(BaseCommand):
     finished_command_id: CommandId
 
 
+class TaskCancelled(BaseCommand):
+    cancelled_command_id: CommandId
+
+
 class RequestEventLog(BaseCommand):
     since_idx: int
 
@@ -51,9 +55,29 @@ Command = (
     | CreateInstance
     | DeleteInstance
     | TaskFinished
+    | TaskCancelled
 )
 
 
 class ForwarderCommand(CamelCaseModel):
     origin: NodeId
     command: Command
+
+
+# Worker commands are sent directly from master to workers
+# bypassing the event log for low-latency operations
+class CancelGenerationCommand(BaseCommand):
+    """Cancel an ongoing generation on a worker."""
+
+    command_id_to_cancel: CommandId
+
+
+# Union of all worker commands (add new commands here with |)
+WorkerCommand = CancelGenerationCommand
+
+
+class ForwarderWorkerCommand(CamelCaseModel):
+    """Wrapper for commands sent from master to workers."""
+
+    origin: NodeId
+    command: WorkerCommand

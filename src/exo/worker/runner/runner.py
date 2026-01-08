@@ -10,6 +10,7 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.tasks import (
+    CancelGeneration,
     ChatCompletion,
     ConnectToGroup,
     LoadModel,
@@ -36,7 +37,7 @@ from exo.shared.types.worker.runners import (
     RunnerStatus,
     RunnerWarmingUp,
 )
-from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender, WouldBlock
 from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
@@ -51,6 +52,7 @@ def main(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event],
     task_receiver: MpReceiver[Task],
+    cancel_receiver: MpReceiver[CancelGeneration],
 ):
     instance, runner_id, shard_metadata = (
         bound_instance.instance,
@@ -162,12 +164,35 @@ def main(
                         _check_for_debug_prompts(task_params.messages[0].content)
 
                         # Generate responses using the actual MLX generation
+                        # Cancellation is checked on dedicated channel after each chunk
                         for response in mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
                             sampler=sampler,
                             task=task_params,
                         ):
+                            # Check dedicated cancel channel for cancellation
+                            # Drain all pending cancellations to handle stale ones
+                            generation_cancelled = False
+                            while True:
+                                try:
+                                    cancel_task = cancel_receiver.receive_nowait()
+                                    if cancel_task.command_id == command_id:
+                                        logger.info(
+                                            "Generation cancelled mid-stream by client disconnect"
+                                        )
+                                        generation_cancelled = True
+                                        break
+                                    else:
+                                        # Stale cancellation for a different command - ignore
+                                        logger.debug(
+                                            f"Ignoring stale CancelGeneration for {cancel_task.command_id}"
+                                        )
+                                except WouldBlock:
+                                    break
+                            if generation_cancelled:
+                                break
+
                             match response:
                                 case GenerationResponse():
                                     if shard_metadata.device_rank == 0:
