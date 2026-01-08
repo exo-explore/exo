@@ -4,7 +4,7 @@ from pydantic import Field
 
 from exo.shared.types.api import (
     ChatCompletionTaskParams,
-    ImageEditsTaskParams,
+    ImageEditsInternalParams,
     ImageGenerationTaskParams,
 )
 from exo.shared.types.common import CommandId, Id
@@ -70,7 +70,7 @@ class ImageGeneration(BaseTask):  # emitted by Master
 
 class ImageEdits(BaseTask):  # emitted by Master
     command_id: CommandId
-    task_params: ImageEditsTaskParams
+    task_params: ImageEditsInternalParams
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)
