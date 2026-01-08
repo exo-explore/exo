@@ -605,7 +605,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
         name="FLUX.1 [schnell]",
         description="""FLUX.1 [schnell] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
-        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tasks=[ModelTask.TextToImage],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("black-forest-labs/FLUX.1-schnell"),
@@ -655,7 +655,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("black-forest-labs/FLUX.1-dev"),
         name="FLUX.1 [dev]",
         description="""FLUX.1 [dev] is a 12 billion parameter rectified flow transformer capable of generating images from text descriptions""",
-        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tasks=[ModelTask.TextToImage],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("black-forest-labs/FLUX.1-dev"),
@@ -705,11 +705,53 @@ MODEL_CARDS: dict[str, ModelCard] = {
         model_id=ModelId("Qwen/Qwen-Image"),
         name="Qwen Image",
         description="""an image generation foundation model in the Qwen series that achieves significant advances in complex text rendering and precise image editing""",
-        tasks=[ModelTask.TextToImage, ModelTask.ImageToImage],
+        tasks=[ModelTask.TextToImage],
         tags=[],
         metadata=ModelMetadata(
             model_id=ModelId("Qwen/Qwen-Image"),
             pretty_name="Qwen Image",
+            hidden_size=1,
+            supports_tensor=False,
+            storage_size=Memory.from_bytes(16584333312 + 40860802176),
+            n_layers=60,  # Qwen has 60 transformer blocks (all joint-style)
+            components=[
+                ComponentInfo(
+                    component_name="text_encoder",
+                    component_path="text_encoder/",
+                    storage_size=Memory.from_kb(16584333312),
+                    n_layers=12,
+                    can_shard=False,
+                    safetensors_index_filename=None,  # Single file
+                ),
+                ComponentInfo(
+                    component_name="transformer",
+                    component_path="transformer/",
+                    storage_size=Memory.from_bytes(40860802176),
+                    n_layers=60,
+                    can_shard=True,
+                    safetensors_index_filename="diffusion_pytorch_model.safetensors.index.json",
+                ),
+                ComponentInfo(
+                    component_name="vae",
+                    component_path="vae/",
+                    storage_size=Memory.from_kb(0),
+                    n_layers=None,
+                    can_shard=False,
+                    safetensors_index_filename=None,
+                ),
+            ],
+        ),
+    ),
+    "qwen-image-edit-2509": ModelCard(
+        short_id="qwen-image-edit-2509",
+        model_id=ModelId("Qwen/Qwen-Image-Edit-2509"),
+        name="Qwen Image Edit 2509",
+        description="""an image generation foundation model in the Qwen series that achieves significant advances in complex text rendering and precise image editing""",
+        tasks=[ModelTask.ImageToImage],
+        tags=[],
+        metadata=ModelMetadata(
+            model_id=ModelId("Qwen/Qwen-Image-Edit-2509"),
+            pretty_name="Qwen Image Edit 2509",
             hidden_size=1,
             supports_tensor=False,
             storage_size=Memory.from_bytes(16584333312 + 40860802176),
