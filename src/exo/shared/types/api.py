@@ -220,13 +220,19 @@ class DeleteInstanceResponse(BaseModel):
 
 class ImageGenerationTaskParams(BaseModel):
     prompt: str
+    # background: str | None = None
     model: str
+    # moderation: str | None = None
     n: int | None = 1
-    quality: Literal["high", "medium", "low"] | None = "medium"
+    # output_compression: int | None = None
     output_format: Literal["png", "jpeg", "webp"] = "png"
+    partial_images: int | None = 0
+    quality: Literal["high", "medium", "low"] | None = "medium"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
     size: str | None = "1024x1024"
-    user: str | None = None
+    stream: bool | None = False
+    # style: str | None = "vivid"
+    # user: str | None = None
 
 
 class ImageEditsTaskParams(BaseModel):
@@ -239,7 +245,7 @@ class ImageEditsTaskParams(BaseModel):
     output_format: Literal["png", "jpeg", "webp"] = "png"
     response_format: Literal["url", "b64_json"] | None = "b64_json"
     size: str | None = "1024x1024"
-    user: str | None = None
+    # user: str | None = None
 
 
 class ImageEditsInternalParams(BaseModel):
