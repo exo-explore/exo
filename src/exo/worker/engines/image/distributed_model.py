@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
@@ -186,7 +187,8 @@ class DistributedImageModel:
         seed: int = 2,
         image_path: Path | None = None,
         image_strength: float | None = None,
-    ) -> Optional[Image.Image]:
+        partial_images: int = 0,
+    ) -> Generator[Image.Image | tuple[Image.Image, int, int], None, None]:
         # Determine number of inference steps based on quality
         steps = self._config.get_steps_for_quality(quality)
 
@@ -197,20 +199,22 @@ class DistributedImageModel:
             image_path=image_path,
             image_strength=image_strength,
         )
-        image = self._generate_image(settings=config, prompt=prompt, seed=seed)
-        logger.info("generated image")
 
-        # Only final rank returns the actual image
-        if self.is_last_stage:
-            return image.image
-
-    def _generate_image(self, settings: Config, prompt: str, seed: int) -> Any:
-        """Generate image by delegating to the runner."""
-        return self._runner.generate_image(
-            settings=settings,
+        # Generate images via the runner
+        for result in self._runner.generate_image(
+            settings=config,
             prompt=prompt,
             seed=seed,
-        )
+            partial_images=partial_images,
+        ):
+            if isinstance(result, tuple):
+                # Partial image: (GeneratedImage, partial_index, total_partials)
+                generated_image, partial_idx, total_partials = result
+                yield (generated_image.image, partial_idx, total_partials)
+            else:
+                # Final image: GeneratedImage
+                logger.info("generated image")
+                yield result.image
 
 
 def initialize_image_model(bound_instance: BoundInstance) -> DistributedImageModel:

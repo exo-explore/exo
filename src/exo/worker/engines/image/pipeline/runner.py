@@ -170,43 +170,125 @@ class DiffusionRunner:
     def is_distributed(self) -> bool:
         return self.group is not None
 
+    def _calculate_capture_steps(
+        self,
+        partial_images: int,
+        init_time_step: int,
+        num_inference_steps: int,
+    ) -> set[int]:
+        """Calculate which timesteps should produce partial images.
+
+        Evenly spaces `partial_images` captures across the diffusion loop.
+        Does NOT include the final timestep (that's the complete image).
+
+        Args:
+            partial_images: Number of partial images to capture
+            init_time_step: Starting timestep (for img2img this may not be 0)
+            num_inference_steps: Total inference steps
+
+        Returns:
+            Set of timestep indices to capture
+        """
+        if partial_images <= 0:
+            return set()
+
+        total_steps = num_inference_steps - init_time_step
+        if total_steps <= 1:
+            return set()
+
+        if partial_images >= total_steps - 1:
+            # Capture every step except final
+            return set(range(init_time_step, num_inference_steps - 1))
+
+        # Evenly space partial captures
+        step_interval = total_steps / (partial_images + 1)
+        capture_steps: set[int] = set()
+        for i in range(1, partial_images + 1):
+            step_idx = int(init_time_step + i * step_interval)
+            # Ensure we don't capture the final step
+            if step_idx < num_inference_steps - 1:
+                capture_steps.add(step_idx)
+
+        return capture_steps
+
     def generate_image(
         self,
         settings: Config,
         prompt: str,
         seed: int,
-    ) -> Any:
+        partial_images: int = 0,
+    ):
         """Primary entry point for image generation.
 
         Orchestrates the full generation flow:
         1. Create runtime config
         2. Create initial latents
         3. Encode prompt
-        4. Run diffusion loop
+        4. Run diffusion loop (yielding partials if requested)
         5. Decode to image
+
+        When partial_images > 0, yields (GeneratedImage, partial_index, total_partials)
+        tuples for intermediate images, then yields the final GeneratedImage.
 
         Args:
             settings: Generation config (steps, height, width)
             prompt: Text prompt
             seed: Random seed
+            partial_images: Number of intermediate images to yield (0 for none)
 
-        Returns:
-            GeneratedImage result
+        Yields:
+            Partial images as (GeneratedImage, partial_index, total_partials) tuples
+            Final GeneratedImage
         """
         runtime_config = RuntimeConfig(settings, self.adapter.model.model_config)
         latents = self.adapter.create_latents(seed, runtime_config)
         prompt_data = self.adapter.encode_prompt(prompt)
 
-        latents = self._run_diffusion_loop(
+        # Calculate which steps to capture
+        capture_steps = self._calculate_capture_steps(
+            partial_images=partial_images,
+            init_time_step=runtime_config.init_time_step,
+            num_inference_steps=runtime_config.num_inference_steps,
+        )
+
+        # Run diffusion loop - may yield partial latents
+        diffusion_gen = self._run_diffusion_loop(
             latents=latents,
             prompt_data=prompt_data,
             runtime_config=runtime_config,
             seed=seed,
             prompt=prompt,
+            capture_steps=capture_steps,
         )
 
+        # Process partial yields and get final latents
+        partial_index = 0
+        total_partials = len(capture_steps)
+
+        if capture_steps:
+            # Generator mode - iterate to get partials and final latents
+            try:
+                while True:
+                    partial_latents, _step = next(diffusion_gen)
+                    if self.is_last_stage:
+                        partial_image = self.adapter.decode_latents(
+                            partial_latents, runtime_config, seed, prompt
+                        )
+                        yield (partial_image, partial_index, total_partials)
+                        partial_index += 1
+            except StopIteration as e:
+                latents = e.value
+        else:
+            # No partials - just consume generator to get final latents
+            try:
+                while True:
+                    next(diffusion_gen)
+            except StopIteration as e:
+                latents = e.value
+
+        # Yield final image (only on last stage)
         if self.is_last_stage:
-            return self.adapter.decode_latents(latents, runtime_config, seed, prompt)
+            yield self.adapter.decode_latents(latents, runtime_config, seed, prompt)
 
     def _run_diffusion_loop(
         self,
@@ -215,8 +297,13 @@ class DiffusionRunner:
         runtime_config: RuntimeConfig,
         seed: int,
         prompt: str,
-    ) -> mx.array:
-        """Execute the diffusion loop.
+        capture_steps: set[int] | None = None,
+    ):
+        """Execute the diffusion loop, optionally yielding at capture steps.
+
+        When capture_steps is provided and non-empty, this becomes a generator
+        that yields (latents, step_index) tuples at the specified timesteps.
+        Only the last stage yields (others have incomplete latents).
 
         Args:
             latents: Initial noise latents
@@ -224,10 +311,16 @@ class DiffusionRunner:
             runtime_config: RuntimeConfig with scheduler, steps, dimensions
             seed: Random seed (for callbacks)
             prompt: Text prompt (for callbacks)
+            capture_steps: Set of timestep indices to capture (None = no captures)
+
+        Yields:
+            (latents, step_index) tuples at capture steps (last stage only)
 
         Returns:
             Final denoised latents ready for VAE decoding
         """
+        if capture_steps is None:
+            capture_steps = set()
 
         time_steps = tqdm(
             range(runtime_config.init_time_step, runtime_config.num_inference_steps)
@@ -261,6 +354,10 @@ class DiffusionRunner:
                 )
 
                 mx.eval(latents)
+
+                # Yield partial latents at capture steps (only on last stage)
+                if t in capture_steps and self.is_last_stage:
+                    yield (latents, t)
 
             except KeyboardInterrupt:  # noqa: PERF203
                 Callbacks.interruption(
