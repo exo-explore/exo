@@ -33,5 +33,19 @@ class ImageGenerationResponse(BaseRunnerResponse):
                 yield name, value
 
 
+class PartialImageResponse(BaseRunnerResponse):
+    image_data: bytes
+    format: Literal["png", "jpeg", "webp"] = "png"
+    partial_index: int
+    total_partials: int
+
+    def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
+        for name, value in super().__repr_args__():
+            if name == "image_data":
+                yield name, f"<{len(self.image_data)} bytes>"
+            elif name is not None:
+                yield name, value
+
+
 class FinishedResponse(BaseRunnerResponse):
     pass
