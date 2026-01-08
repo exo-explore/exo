@@ -30,6 +30,9 @@ class ImageChunk(BaseChunk):
     chunk_index: int
     total_chunks: int
     image_index: int
+    is_partial: bool = False
+    partial_index: int | None = None
+    total_partials: int | None = None
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():

@@ -28,6 +28,7 @@ from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ImageGenerationResponse,
+    PartialImageResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -249,18 +250,18 @@ def main(
                         )
 
                         # Generate images using the image generation backend
-                        for image_index, response in enumerate(
-                            generate_image(
-                                model=model,
-                                task=task_params,
-                            )
+                        # Track image_index for final images only
+                        image_index = 0
+                        for response in generate_image(
+                            model=model,
+                            task=task_params,
                         ):
-                            match response:
-                                case ImageGenerationResponse():
-                                    if (
-                                        shard_metadata.device_rank
-                                        == shard_metadata.world_size - 1
-                                    ):
+                            if (
+                                shard_metadata.device_rank
+                                == shard_metadata.world_size - 1
+                            ):
+                                match response:
+                                    case PartialImageResponse():
                                         encoded_data = base64.b64encode(
                                             response.image_data
                                         ).decode("utf-8")
@@ -273,7 +274,41 @@ def main(
                                         ]
                                         total_chunks = len(data_chunks)
                                         logger.info(
-                                            f"sending ImageChunk: {len(encoded_data)} bytes in {total_chunks} chunks"
+                                            f"sending partial ImageChunk {response.partial_index}/{response.total_partials}: {len(encoded_data)} bytes in {total_chunks} chunks"
+                                        )
+                                        for chunk_index, chunk_data in enumerate(
+                                            data_chunks
+                                        ):
+                                            event_sender.send(
+                                                ChunkGenerated(
+                                                    command_id=command_id,
+                                                    chunk=ImageChunk(
+                                                        idx=chunk_index,
+                                                        model=shard_metadata.model_meta.model_id,
+                                                        data=chunk_data,
+                                                        chunk_index=chunk_index,
+                                                        total_chunks=total_chunks,
+                                                        image_index=response.partial_index,
+                                                        is_partial=True,
+                                                        partial_index=response.partial_index,
+                                                        total_partials=response.total_partials,
+                                                    ),
+                                                )
+                                            )
+                                    case ImageGenerationResponse():
+                                        encoded_data = base64.b64encode(
+                                            response.image_data
+                                        ).decode("utf-8")
+                                        # Split into chunks to stay under gossipsub 1MB limit
+                                        data_chunks = [
+                                            encoded_data[i : i + EXO_MAX_CHUNK_SIZE]
+                                            for i in range(
+                                                0, len(encoded_data), EXO_MAX_CHUNK_SIZE
+                                            )
+                                        ]
+                                        total_chunks = len(data_chunks)
+                                        logger.info(
+                                            f"sending final ImageChunk: {len(encoded_data)} bytes in {total_chunks} chunks"
                                         )
                                         for chunk_index, chunk_data in enumerate(
                                             data_chunks
@@ -288,9 +323,11 @@ def main(
                                                         chunk_index=chunk_index,
                                                         total_chunks=total_chunks,
                                                         image_index=image_index,
+                                                        is_partial=False,
                                                     ),
                                                 )
                                             )
+                                        image_index += 1
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
@@ -307,18 +344,17 @@ def main(
                             )
                         )
 
-                        for image_index, response in enumerate(
-                            generate_image(
-                                model=model,
-                                task=task_params,
-                            )
+                        image_index = 0
+                        for response in generate_image(
+                            model=model,
+                            task=task_params,
                         ):
-                            match response:
-                                case ImageGenerationResponse():
-                                    if (
-                                        shard_metadata.device_rank
-                                        == shard_metadata.world_size - 1
-                                    ):
+                            if (
+                                shard_metadata.device_rank
+                                == shard_metadata.world_size - 1
+                            ):
+                                match response:
+                                    case ImageGenerationResponse():
                                         encoded_data = base64.b64encode(
                                             response.image_data
                                         ).decode("utf-8")
@@ -346,9 +382,11 @@ def main(
                                                         chunk_index=chunk_index,
                                                         total_chunks=total_chunks,
                                                         image_index=image_index,
+                                                        is_partial=False,
                                                     ),
                                                 )
                                             )
+                                        image_index += 1
 
                         current_status = RunnerReady()
                         logger.info("runner ready")

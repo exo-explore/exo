@@ -7,7 +7,10 @@ from typing import Generator, Literal
 from PIL import Image
 
 from exo.shared.types.api import ImageEditsInternalParams, ImageGenerationTaskParams
-from exo.shared.types.worker.runner_response import ImageGenerationResponse
+from exo.shared.types.worker.runner_response import (
+    ImageGenerationResponse,
+    PartialImageResponse,
+)
 from exo.worker.engines.image.base import ImageGenerator
 
 
@@ -29,22 +32,41 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
 
 
 def warmup_image_generator(model: ImageGenerator) -> Image.Image | None:
-    return model.generate(
+    """Warmup the image generator with a small image."""
+    for result in model.generate(
         prompt="Warmup",
         height=256,
         width=256,
         quality="low",
         seed=2,
-    )
+    ):
+        if not isinstance(result, tuple):
+            return result
+    return None
 
 
 def generate_image(
     model: ImageGenerator,
     task: ImageGenerationTaskParams | ImageEditsInternalParams,
-) -> Generator[ImageGenerationResponse, None, None]:
+) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
+    """Generate image(s), optionally yielding partial results.
+
+    When partial_images > 0 (ImageGenerationTaskParams only), yields
+    PartialImageResponse for intermediate images, then ImageGenerationResponse
+    for the final image.
+
+    Yields:
+        PartialImageResponse for intermediate images (if partial_images > 0)
+        ImageGenerationResponse for the final complete image
+    """
     width, height = parse_size(task.size)
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
     seed = 2  # TODO(ciaran): Randomise when not testing anymore
+
+    # Get partial_images setting (only for ImageGenerationTaskParams)
+    partial_images = 0
+    if isinstance(task, ImageGenerationTaskParams):
+        partial_images = task.partial_images or 0
 
     image_path: Path | None = None
     image_strength: float | None = None
@@ -56,7 +78,8 @@ def generate_image(
             image_path.write_bytes(base64.b64decode(task.image_data))
             image_strength = task.image_strength
 
-        image = model.generate(
+        # Iterate over generator results
+        for result in model.generate(
             prompt=task.prompt,
             height=height,
             width=width,
@@ -64,22 +87,33 @@ def generate_image(
             seed=seed,
             image_path=image_path,
             image_strength=image_strength,
-        )
+            partial_images=partial_images,
+        ):
+            if isinstance(result, tuple):
+                # Partial image: (Image, partial_index, total_partials)
+                image, partial_idx, total_partials = result
+                buffer = io.BytesIO()
+                image_format = task.output_format.upper()
+                if image_format == "JPG":
+                    image_format = "JPEG"
+                image.save(buffer, format=image_format)
 
-        # Only final rank returns the image
-        if image is None:
-            return
+                yield PartialImageResponse(
+                    image_data=buffer.getvalue(),
+                    format=task.output_format,
+                    partial_index=partial_idx,
+                    total_partials=total_partials,
+                )
+            else:
+                # Final image
+                image = result
+                buffer = io.BytesIO()
+                image_format = task.output_format.upper()
+                if image_format == "JPG":
+                    image_format = "JPEG"
+                image.save(buffer, format=image_format)
 
-        buffer = io.BytesIO()
-        image_format = task.output_format.upper()
-        if image_format == "JPG":
-            image_format = "JPEG"
-
-        image.save(buffer, format=image_format)
-        image_bytes = buffer.getvalue()
-
-        # Send complete image as single response (no artificial chunking)
-        yield ImageGenerationResponse(
-            image_data=image_bytes,
-            format=task.output_format,
-        )
+                yield ImageGenerationResponse(
+                    image_data=buffer.getvalue(),
+                    format=task.output_format,
+                )
