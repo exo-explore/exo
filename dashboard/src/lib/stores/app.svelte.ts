@@ -1624,6 +1624,8 @@ class AppStore {
                     quality: "medium",
                     size: "1024x1024",
                     response_format: "b64_json",
+                    stream: true,
+                    partial_images: 3,
                 }),
             });
 
@@ -1632,25 +1634,70 @@ class AppStore {
                 throw new Error(`API error: ${response.status} - ${errorText}`);
             }
 
-            const data = await response.json();
-            const imageData = data.data?.[0]?.b64_json;
-
-            if (!imageData) {
-                throw new Error("No image data received from the API");
+            const reader = response.body?.getReader();
+            if (!reader) {
+                throw new Error("No response body");
             }
 
-            // Update the assistant message with the generated image
+            const decoder = new TextDecoder();
+            let buffer = "";
             const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
-            if (idx !== -1) {
-                this.messages[idx].content = "";
-                this.messages[idx].attachments = [
-                    {
-                        type: "generated-image",
-                        name: "generated-image.png",
-                        preview: `data:image/png;base64,${imageData}`,
-                        mimeType: "image/png",
-                    },
-                ];
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Process complete lines
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+
+                    if (trimmed.startsWith("data: ")) {
+                        const data = trimmed.slice(6);
+                        if (data === "[DONE]") continue;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            const imageData = parsed.data?.b64_json;
+
+                            if (imageData && idx !== -1) {
+                                if (parsed.type === "partial") {
+                                    // Update with partial image and progress
+                                    const partialNum = (parsed.partial_index ?? 0) + 1;
+                                    const totalPartials = parsed.total_partials ?? 3;
+                                    this.messages[idx].content =
+                                        `Generating... ${partialNum}/${totalPartials}`;
+                                    this.messages[idx].attachments = [
+                                        {
+                                            type: "generated-image",
+                                            name: "generated-image.png",
+                                            preview: `data:image/png;base64,${imageData}`,
+                                            mimeType: "image/png",
+                                        },
+                                    ];
+                                } else if (parsed.type === "final") {
+                                    // Final image
+                                    this.messages[idx].content = "";
+                                    this.messages[idx].attachments = [
+                                        {
+                                            type: "generated-image",
+                                            name: "generated-image.png",
+                                            preview: `data:image/png;base64,${imageData}`,
+                                            mimeType: "image/png",
+                                        },
+                                    ];
+                                }
+                            }
+                        } catch {
+                            // Ignore parse errors for incomplete JSON
+                        }
+                    }
+                }
             }
         } catch (error) {
             console.error("Error generating image:", error);
