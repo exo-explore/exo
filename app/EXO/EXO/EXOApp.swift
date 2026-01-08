@@ -19,6 +19,7 @@ struct EXOApp: App {
     @StateObject private var controller: ExoProcessController
     @StateObject private var stateService: ClusterStateService
     @StateObject private var networkStatusService: NetworkStatusService
+    @StateObject private var localNetworkChecker: LocalNetworkChecker
     @StateObject private var updater: SparkleUpdater
     private let terminationObserver: TerminationObserver
     private let ciContext = CIContext(options: nil)
@@ -37,9 +38,13 @@ struct EXOApp: App {
         _stateService = StateObject(wrappedValue: service)
         let networkStatus = NetworkStatusService()
         _networkStatusService = StateObject(wrappedValue: networkStatus)
+        let localNetwork = LocalNetworkChecker()
+        _localNetworkChecker = StateObject(wrappedValue: localNetwork)
         _updater = StateObject(wrappedValue: updater)
         enableLaunchAtLoginIfNeeded()
         NetworkSetupHelper.ensureLaunchDaemonInstalled()
+        // Check local network access BEFORE launching exo
+        localNetwork.check()
         controller.scheduleLaunch(after: 15)
         service.startPolling()
         networkStatus.startPolling()
@@ -51,6 +56,7 @@ struct EXOApp: App {
                 .environmentObject(controller)
                 .environmentObject(stateService)
                 .environmentObject(networkStatusService)
+                .environmentObject(localNetworkChecker)
                 .environmentObject(updater)
         } label: {
             menuBarIcon
