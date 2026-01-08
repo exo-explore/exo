@@ -3,6 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-old.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
     # Provides Rust dev-env integration:
     fenix = {
@@ -36,6 +37,7 @@
     inputs.flake-utils.lib.eachSystem systems (
       system:
       let
+        xcode = pkgs.callPackage ./nix/xcode.nix { };
         pkgs = import inputs.nixpkgs {
           inherit system;
           overlays = [ inputs.fenix.overlays.default ];
@@ -60,6 +62,7 @@
           };
         };
       in
+      rec
       {
         formatter = treefmtEval.config.build.wrapper;
         checks.formatting = treefmtEval.config.build.check inputs.self;
@@ -68,13 +71,18 @@
           ${pkgs.ruff}/bin/ruff check ${inputs.self}/
           touch $out
         '';
+        packages =
+          {
+            mlx = pkgs.python3Packages.callPackage ./nix/mlx.nix { inherit xcode; };
+          };
 
-        devShells.default = pkgs.mkShell {
+        devShells.default = pkgs.mkShellNoCC {
           packages =
             with pkgs;
             [
               # PYTHON
-              python313
+              (python313.withPackages (_: [ packages.mlx ]))
+
               uv
               ruff
               basedpyright
@@ -102,6 +110,7 @@
             ++ (pkgs.lib.optionals pkgs.stdenv.isLinux [
               # IFCONFIG
               unixtools.ifconfig
+              inputs.nixpkgs-old.legacyPackages."x86_64-linux".gcc12
 
               # Build dependencies for Linux
               pkg-config
