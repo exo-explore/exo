@@ -284,7 +284,7 @@ def apply_chat_template(
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
+    for message in messages:
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
@@ -305,6 +305,7 @@ def apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
+        tools=chat_task_data.tools,
     )
 
     return prompt  # type: ignore
