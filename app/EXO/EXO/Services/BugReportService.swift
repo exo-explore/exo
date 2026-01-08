@@ -112,12 +112,15 @@ struct BugReportService {
     private func fetchPresignedUploadUrls(keys: [String], bundle: Bundle = .main) async throws
         -> [String: String]
     {
-        guard let endpointString = bundle.infoDictionary?["EXOBugReportPresignedUrlEndpoint"] as? String
+        guard
+            let endpointString = bundle.infoDictionary?["EXOBugReportPresignedUrlEndpoint"]
+                as? String
         else {
             throw BugReportError.invalidEndpoint
         }
         let trimmedEndpointString = endpointString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEndpointString.isEmpty, let endpoint = URL(string: trimmedEndpointString) else {
+        guard !trimmedEndpointString.isEmpty, let endpoint = URL(string: trimmedEndpointString)
+        else {
             throw BugReportError.invalidEndpoint
         }
 
