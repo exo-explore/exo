@@ -244,7 +244,8 @@ class ImageEditsTaskParams(BaseModel):
 class ImageEditsInternalParams(BaseModel):
     """Serializable version of ImageEditsTaskParams for distributed task execution."""
 
-    image_data: str  # Base64-encoded image
+    image_data: str = ""  # Base64-encoded image (empty when using chunked transfer)
+    total_input_chunks: int = 0
     prompt: str
     model: str
     n: int | None = 1

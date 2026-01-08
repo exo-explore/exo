@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import anyio
 from anyio.abc import TaskGroup
+from fastapi.routing import request_response
 from loguru import logger
 
 from exo.master.placement import (
@@ -11,6 +12,7 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
+from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     ChatCompletion,
     CreateInstance,
@@ -20,6 +22,7 @@ from exo.shared.types.commands import (
     ImageGeneration,
     PlaceInstance,
     RequestEventLog,
+    SendInputChunk,
     TaskFinished,
     TestCommand,
 )
@@ -28,6 +31,7 @@ from exo.shared.types.events import (
     Event,
     ForwarderEvent,
     IndexedEvent,
+    InputChunkReceived,
     InstanceDeleted,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -107,15 +111,8 @@ class Master:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
                 try:
-                    match forwarder_command.command:
-                        case ImageEdits(request_params=params):
-                            logger.info(
-                                f"Executing command: ImageEdits(prompt={params.prompt!r}, model={params.model})"
-                            )
-                        case _:
-                            logger.info(
-                                f"Executing command: {forwarder_command.command}"
-                            )
+                    logger.info(f"Executing command: {forwarder_command.command}")
+
                     generated_events: list[Event] = []
                     command = forwarder_command.command
                     match command:
@@ -278,6 +275,13 @@ class Master:
                                 self.state.instances, placement
                             )
                             generated_events.extend(transition_events)
+                        case SendInputChunk(chunk=chunk):
+                            generated_events.append(
+                                InputChunkReceived(
+                                    command_id=chunk.command_id,
+                                    chunk=chunk,
+                                )
+                            )
                         case TaskFinished():
                             generated_events.append(
                                 TaskDeleted(

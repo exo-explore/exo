@@ -385,7 +385,6 @@ def main(
                                     for chunk_index, chunk_data in enumerate(
                                         data_chunks
                                     ):
-                                        is_last_chunk = chunk_index == total_chunks - 1
                                         event_sender.send(
                                             ChunkGenerated(
                                                 command_id=command_id,
@@ -402,11 +401,6 @@ def main(
 
                     current_status = RunnerReady()
                     logger.info("runner ready")
-                    event_sender.send(
-                        RunnerStatusUpdated(
-                            runner_id=runner_id, runner_status=RunnerReady()
-                        )
-                    )
                 case Shutdown():
                     current_status = RunnerShuttingDown()
                     logger.info("runner shutting down")

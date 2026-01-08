@@ -18,6 +18,7 @@ from loguru import logger
 
 from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
+from exo.shared.constants import EXO_MAX_CHUNK_SIZE
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
 from exo.shared.models.model_cards import (
@@ -49,7 +50,7 @@ from exo.shared.types.api import (
     PlacementPreviewResponse,
     StreamingChoiceResponse,
 )
-from exo.shared.types.chunks import ImageChunk, TokenChunk
+from exo.shared.types.chunks import ImageChunk, InputImageChunk, TokenChunk
 from exo.shared.types.commands import (
     ChatCompletion,
     Command,
@@ -59,6 +60,7 @@ from exo.shared.types.commands import (
     ImageEdits,
     ImageGeneration,
     PlaceInstance,
+    SendInputChunk,
     TaskFinished,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId
@@ -723,20 +725,46 @@ class API:
         # Map input_fidelity to image_strength
         image_strength = 0.3 if input_fidelity == "high" else 0.7
 
-        # Create internal params
-        internal_params = ImageEditsInternalParams(
-            image_data=image_data,
-            prompt=prompt,
-            model=resolved_model,
-            n=n,
-            size=size,
-            response_format=response_format,
-            image_strength=image_strength,
+        # Split image into chunks to stay under gossipsub message size limit
+        data_chunks = [
+            image_data[i : i + EXO_MAX_CHUNK_SIZE]
+            for i in range(0, len(image_data), EXO_MAX_CHUNK_SIZE)
+        ]
+        total_chunks = len(data_chunks)
+
+        # Create command first to get command_id
+        command = ImageEdits(
+            request_params=ImageEditsInternalParams(
+                image_data="",  # Empty - will be assembled at worker from chunks
+                total_input_chunks=total_chunks,
+                prompt=prompt,
+                model=resolved_model,
+                n=n,
+                size=size,
+                response_format=response_format,
+                image_strength=image_strength,
+            ),
         )
 
-        command = ImageEdits(
-            request_params=internal_params,
+        # Send input chunks BEFORE the command
+        logger.info(
+            f"Sending input image: {len(image_data)} bytes in {total_chunks} chunks"
         )
+        for chunk_index, chunk_data in enumerate(data_chunks):
+            await self._send(
+                SendInputChunk(
+                    chunk=InputImageChunk(
+                        idx=chunk_index,
+                        model=resolved_model,
+                        command_id=command.command_id,
+                        data=chunk_data,
+                        chunk_index=chunk_index,
+                        total_chunks=total_chunks,
+                    )
+                )
+            )
+
+        # Now send the main command
         await self._send(command)
 
         num_images = n

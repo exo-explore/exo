@@ -5,6 +5,7 @@ from exo.shared.types.api import GenerationStats
 from exo.utils.pydantic_ext import TaggedModel
 
 from .api import FinishReason
+from .common import CommandId
 
 
 class ChunkType(str, Enum):
@@ -30,6 +31,13 @@ class ImageChunk(BaseChunk):
     chunk_index: int
     total_chunks: int
     image_index: int
+
+
+class InputImageChunk(BaseChunk):
+    command_id: CommandId
+    data: str
+    chunk_index: int
+    total_chunks: int
 
 
 GenerationChunk = TokenChunk | ImageChunk
