@@ -723,7 +723,7 @@ class API:
         image_data = base64.b64encode(image_content).decode("utf-8")
 
         # Map input_fidelity to image_strength
-        image_strength = 0.3 if input_fidelity == "high" else 0.7
+        image_strength = 0.7 if input_fidelity == "high" else 0.3
 
         # Split image into chunks to stay under gossipsub message size limit
         data_chunks = [
