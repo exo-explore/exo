@@ -52,6 +52,10 @@
               enable = true;
               package = (fenixToolchain system).rustfmt;
             };
+            prettier = {
+              enable = true;
+              includes = [ "*.ts" ];
+            };
             swift-format.enable = true;
           };
         };
