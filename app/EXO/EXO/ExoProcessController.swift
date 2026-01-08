@@ -31,7 +31,8 @@ final class ExoProcessController: ObservableObject {
     @Published private(set) var launchCountdownSeconds: Int?
     @Published var customNamespace: String = {
         return UserDefaults.standard.string(forKey: customNamespaceKey) ?? ""
-    }() {
+    }()
+    {
         didSet {
             UserDefaults.standard.set(customNamespace, forKey: customNamespaceKey)
         }
@@ -221,7 +222,9 @@ final class ExoProcessController: ObservableObject {
         if let tag = Bundle.main.infoDictionary?["EXOBuildTag"] as? String, !tag.isEmpty {
             return tag
         }
-        if let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, !short.isEmpty {
+        if let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            !short.isEmpty
+        {
             return short
         }
         return "dev"

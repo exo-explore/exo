@@ -70,10 +70,12 @@ struct ContentView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
             }
-            Text("Device discovery won't work. To fix:\n1. Quit EXO\n2. Open System Settings → Privacy & Security → Local Network\n3. Toggle EXO off, then back on\n4. Relaunch EXO")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Device discovery won't work. To fix:\n1. Quit EXO\n2. Open System Settings → Privacy & Security → Local Network\n3. Toggle EXO off, then back on\n4. Relaunch EXO"
+            )
+            .font(.caption2)
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             Button {
                 openLocalNetworkSettings()
             } label: {
@@ -96,14 +98,18 @@ struct ContentView: View {
 
     private func openLocalNetworkSettings() {
         // Open Privacy & Security settings - Local Network section
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+        {
             NSWorkspace.shared.open(url)
         }
     }
 
     private var topologySection: some View {
         Group {
-            if let topology = stateService.latestSnapshot?.topologyViewModel(localNodeId: stateService.localNodeId), !topology.nodes.isEmpty {
+            if let topology = stateService.latestSnapshot?.topologyViewModel(
+                localNodeId: stateService.localNodeId), !topology.nodes.isEmpty
+            {
                 TopologyMiniView(topology: topology)
             }
         }
@@ -137,8 +143,10 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         VStack(alignment: .leading) {
-                            Text("\(overview.usedRam, specifier: "%.0f") / \(overview.totalRam, specifier: "%.0f") GB")
-                                .font(.headline)
+                            Text(
+                                "\(overview.usedRam, specifier: "%.0f") / \(overview.totalRam, specifier: "%.0f") GB"
+                            )
+                            .font(.headline)
                             Text("Memory")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -262,7 +270,9 @@ struct ContentView: View {
         }
     }
 
-    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void)
+        -> some View
+    {
         HoverButton(title: title, tint: tint, trailingSystemImage: nil, action: action)
     }
 
@@ -293,9 +303,12 @@ struct ContentView: View {
         Button {
             isExpanded.wrappedValue.toggle()
         } label: {
-            Label(isExpanded.wrappedValue ? "Hide" : "Show All", systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                .labelStyle(.titleAndIcon)
-                .contentTransition(.symbolEffect(.replace))
+            Label(
+                isExpanded.wrappedValue ? "Hide" : "Show All",
+                systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down"
+            )
+            .labelStyle(.titleAndIcon)
+            .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
         .font(.caption2)
@@ -588,4 +601,3 @@ private struct HoverButton: View {
         .onHover { isHovering = $0 }
     }
 }
-
