@@ -60,19 +60,34 @@
 		return models;
 	});
 
-	// Auto-select the first available model if none is selected OR if current selection is stale
+	// Track previous model IDs to detect newly added models (plain variable to avoid reactive loop)
+	let previousModelIds: Set<string> = new Set();
+
+	// Auto-select the first available model if none is selected, if current selection is stale, or if a new model is added
 	$effect(() => {
 		const models = availableModels();
+		const currentModelIds = new Set(models.map(m => m.id));
+
 		if (models.length > 0) {
+			// Find newly added models (in current but not in previous)
+			const newModels = models.filter(m => !previousModelIds.has(m.id));
+
 			// If no model selected, select the first available
 			if (!currentModel) {
 				setSelectedChatModel(models[0].id);
-			} 
+			}
 			// If current model is stale (no longer has a running instance), reset to first available
 			else if (!models.some(m => m.id === currentModel)) {
 				setSelectedChatModel(models[0].id);
 			}
+			// If a new model was just added, select it
+			else if (newModels.length > 0 && previousModelIds.size > 0) {
+				setSelectedChatModel(newModels[0].id);
+			}
 		}
+
+		// Update previous model IDs for next comparison
+		previousModelIds = currentModelIds;
 	});
 
 	function getInstanceModelId(instanceWrapped: unknown): string {
