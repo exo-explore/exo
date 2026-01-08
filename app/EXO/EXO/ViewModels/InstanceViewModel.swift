@@ -57,7 +57,7 @@ struct InstanceViewModel: Identifiable, Equatable {
         case waiting
         case failed
         case idle
-        case unknown
+        case preparing
 
         var label: String {
             switch self {
@@ -68,7 +68,7 @@ struct InstanceViewModel: Identifiable, Equatable {
             case .waiting: return "Waiting"
             case .failed: return "Failed"
             case .idle: return "Idle"
-            case .unknown: return "Unknown"
+            case .preparing: return "Preparing"
             }
         }
     }
@@ -185,7 +185,7 @@ extension InstanceViewModel.State {
         } else if statuses.isEmpty {
             self = .idle
         } else {
-            self = .unknown
+            self = .preparing
         }
     }
 }
