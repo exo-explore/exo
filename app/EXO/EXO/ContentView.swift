@@ -12,6 +12,7 @@ struct ContentView: View {
     @EnvironmentObject private var controller: ExoProcessController
     @EnvironmentObject private var stateService: ClusterStateService
     @EnvironmentObject private var networkStatusService: NetworkStatusService
+    @EnvironmentObject private var localNetworkChecker: LocalNetworkChecker
     @EnvironmentObject private var updater: SparkleUpdater
     @State private var focusedNode: NodeViewModel?
     @State private var deletingInstanceIDs: Set<String> = []
@@ -22,10 +23,14 @@ struct ContentView: View {
     @State private var bugReportInFlight = false
     @State private var bugReportMessage: String?
     @State private var uninstallInProgress = false
+    @State private var pendingNamespace: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             statusSection
+            if shouldShowLocalNetworkWarning {
+                localNetworkWarningBanner
+            }
             if shouldShowClusterDetails {
                 Divider()
                 overviewSection
@@ -40,6 +45,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: shouldShowClusterDetails)
         .animation(.easeInOut(duration: 0.3), value: shouldShowInstances)
+        .animation(.easeInOut(duration: 0.3), value: shouldShowLocalNetworkWarning)
         .padding()
         .frame(width: 340)
         .onAppear {
@@ -49,9 +55,62 @@ struct ContentView: View {
         }
     }
 
+    private var shouldShowLocalNetworkWarning: Bool {
+        if case .notWorking = localNetworkChecker.status {
+            return controller.status != .stopped
+        }
+        return false
+    }
+
+    private var localNetworkWarningBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("Local Network Access Issue")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+            Text(
+                "Device discovery won't work. To fix:\n1. Quit EXO\n2. Open System Settings → Privacy & Security → Local Network\n3. Toggle EXO off, then back on\n4. Relaunch EXO"
+            )
+            .font(.caption2)
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            Button {
+                openLocalNetworkSettings()
+            } label: {
+                Text("Open Settings")
+                    .font(.caption2)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private func openLocalNetworkSettings() {
+        // Open Privacy & Security settings - Local Network section
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
+        {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private var topologySection: some View {
         Group {
-            if let topology = stateService.latestSnapshot?.topologyViewModel(localNodeId: stateService.localNodeId), !topology.nodes.isEmpty {
+            if let topology = stateService.latestSnapshot?.topologyViewModel(
+                localNodeId: stateService.localNodeId), !topology.nodes.isEmpty
+            {
                 TopologyMiniView(topology: topology)
             }
         }
@@ -85,8 +144,10 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         VStack(alignment: .leading) {
-                            Text("\(overview.usedRam, specifier: "%.0f") / \(overview.totalRam, specifier: "%.0f") GB")
-                                .font(.headline)
+                            Text(
+                                "\(overview.usedRam, specifier: "%.0f") / \(overview.totalRam, specifier: "%.0f") GB"
+                            )
+                            .font(.headline)
                             Text("Memory")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -215,7 +276,28 @@ struct ContentView: View {
             }
             .animation(nil, value: showAdvanced)
             if showAdvanced {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cluster Namespace")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            TextField("optional", text: $pendingNamespace)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption2)
+                                .onAppear {
+                                    pendingNamespace = controller.customNamespace
+                                }
+                            Button("Save & Restart") {
+                                controller.customNamespace = pendingNamespace
+                                if controller.status == .running || controller.status == .starting {
+                                    controller.restart()
+                                }
+                            }
+                            .font(.caption2)
+                            .disabled(pendingNamespace == controller.customNamespace)
+                        }
+                    }
                     HoverButton(title: "Check for Updates", small: true) {
                         updater.checkForUpdates()
                     }
@@ -262,9 +344,12 @@ struct ContentView: View {
         Button {
             isExpanded.wrappedValue.toggle()
         } label: {
-            Label(isExpanded.wrappedValue ? "Hide" : "Show All", systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                .labelStyle(.titleAndIcon)
-                .contentTransition(.symbolEffect(.replace))
+            Label(
+                isExpanded.wrappedValue ? "Hide" : "Show All",
+                systemImage: isExpanded.wrappedValue ? "chevron.up" : "chevron.down"
+            )
+            .labelStyle(.titleAndIcon)
+            .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
         .font(.caption2)
@@ -374,6 +459,7 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundColor(thunderboltStatusColor)
                     interfaceIpList
+                    rdmaStatusView
                     sendBugReportButton
                         .padding(.top, 6)
                 }
@@ -382,6 +468,52 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showDebugInfo)
+    }
+
+    private var rdmaStatusView: some View {
+        let rdma = networkStatusService.status.rdmaStatus
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("RDMA: \(rdmaStatusText(rdma))")
+                .font(.caption2)
+                .foregroundColor(rdmaStatusColor(rdma))
+            if !rdma.devices.isEmpty {
+                Text("  Devices: \(rdma.devices.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !rdma.activePorts.isEmpty {
+                Text("  Active Ports:")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                ForEach(rdma.activePorts, id: \.device) { port in
+                    Text("    \(port.device) port \(port.port): \(port.state)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+    }
+
+    private func rdmaStatusText(_ rdma: RDMAStatus) -> String {
+        switch rdma.rdmaCtlEnabled {
+        case .some(true):
+            return "Enabled"
+        case .some(false):
+            return "Disabled"
+        case nil:
+            return rdma.devices.isEmpty ? "Not Available" : "Available"
+        }
+    }
+
+    private func rdmaStatusColor(_ rdma: RDMAStatus) -> Color {
+        switch rdma.rdmaCtlEnabled {
+        case .some(true):
+            return .green
+        case .some(false):
+            return .orange
+        case nil:
+            return rdma.devices.isEmpty ? .secondary : .green
+        }
     }
 
     private var sendBugReportButton: some View {
@@ -609,4 +741,3 @@ private struct HoverButton: View {
         .onHover { isHovering = $0 }
     }
 }
-

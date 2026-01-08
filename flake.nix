@@ -42,11 +42,22 @@
         };
         treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
-          programs.ruff-format.enable = true;
-          programs.ruff-format.excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
-          programs.rustfmt.enable = true;
-          programs.rustfmt.package = (fenixToolchain system).rustfmt;
-          programs.nixpkgs-fmt.enable = true;
+          programs = {
+            nixpkgs-fmt.enable = true;
+            ruff-format = {
+              enable = true;
+              excludes = [ "rust/exo_pyo3_bindings/exo_pyo3_bindings.pyi" ];
+            };
+            rustfmt = {
+              enable = true;
+              package = (fenixToolchain system).rustfmt;
+            };
+            prettier = {
+              enable = true;
+              includes = [ "*.ts" ];
+            };
+            swift-format.enable = true;
+          };
         };
       in
       {

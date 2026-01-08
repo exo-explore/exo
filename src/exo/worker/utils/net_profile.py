@@ -32,6 +32,8 @@ async def check_reachability(
             return NodeId(body) or None
         except OSError:
             return None
+        except http.client.HTTPException:
+            return None
         finally:
             connection.close()
 
