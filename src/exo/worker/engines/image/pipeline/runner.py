@@ -228,9 +228,10 @@ class DiffusionRunner:
         Returns:
             Final denoised latents ready for VAE decoding
         """
-        time_steps = tqdm(
-            range(runtime_config.init_time_step, runtime_config.num_inference_steps)
-        )
+
+        num_steps = runtime_config.num_inference_steps - runtime_config.init_time_step
+
+        time_steps = tqdm(range(num_steps))
 
         # Call subscribers for beginning of loop
         Callbacks.before_loop(
