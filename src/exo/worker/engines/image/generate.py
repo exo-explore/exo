@@ -1,9 +1,12 @@
+import base64
 import io
+import tempfile
+from pathlib import Path
 from typing import Generator, Literal
 
 from PIL import Image
 
-from exo.shared.types.api import ImageGenerationTaskParams
+from exo.shared.types.api import ImageEditsInternalParams, ImageGenerationTaskParams
 from exo.shared.types.worker.runner_response import ImageGenerationResponse
 from exo.worker.engines.image.base import ImageGenerator
 
@@ -37,36 +40,46 @@ def warmup_image_generator(model: ImageGenerator) -> Image.Image | None:
 
 def generate_image(
     model: ImageGenerator,
-    task: ImageGenerationTaskParams,
+    task: ImageGenerationTaskParams | ImageEditsInternalParams,
 ) -> Generator[ImageGenerationResponse, None, None]:
-    # Parse parameters
     width, height = parse_size(task.size)
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
     seed = 2  # TODO(ciaran): Randomise when not testing anymore
 
-    # Generate using the model's generate method
-    image = model.generate(
-        prompt=task.prompt,
-        height=height,
-        width=width,
-        quality=quality,
-        seed=seed,
-    )
+    image_path: Path | None = None
+    image_strength: float | None = None
 
-    # Only rank 0 returns the image
-    if image is None:
-        return
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if isinstance(task, ImageEditsInternalParams):
+            # Decode base64 image data and save to temp file
+            image_path = Path(tmpdir) / "input.png"
+            image_path.write_bytes(base64.b64decode(task.image_data))
+            image_strength = task.image_strength
 
-    buffer = io.BytesIO()
-    image_format = task.output_format.upper()
-    if image_format == "JPG":
-        image_format = "JPEG"
+        image = model.generate(
+            prompt=task.prompt,
+            height=height,
+            width=width,
+            quality=quality,
+            seed=seed,
+            image_path=image_path,
+            image_strength=image_strength,
+        )
 
-    image.save(buffer, format=image_format)
-    image_bytes = buffer.getvalue()
+        # Only final rank returns the image
+        if image is None:
+            return
 
-    # Send complete image as single response (no artificial chunking)
-    yield ImageGenerationResponse(
-        image_data=image_bytes,
-        format=task.output_format,
-    )
+        buffer = io.BytesIO()
+        image_format = task.output_format.upper()
+        if image_format == "JPG":
+            image_format = "JPEG"
+
+        image.save(buffer, format=image_format)
+        image_bytes = buffer.getvalue()
+
+        # Send complete image as single response (no artificial chunking)
+        yield ImageGenerationResponse(
+            image_data=image_bytes,
+            format=task.output_format,
+        )

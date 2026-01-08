@@ -1,12 +1,13 @@
+import base64
 import time
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import cast
+from typing import Literal, cast
 
 import anyio
 from anyio import BrokenResourceError, create_task_group
 from anyio.abc import TaskGroup
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,7 +39,7 @@ from exo.shared.types.api import (
     FinishReason,
     GenerationStats,
     ImageData,
-    ImageEditsTaskParams,
+    ImageEditsInternalParams,
     ImageGenerationResponse,
     ImageGenerationTaskParams,
     ModelList,
@@ -203,7 +204,7 @@ class API:
         )
         self.app.post("/bench/chat/completions")(self.bench_chat_completions)
         self.app.post("/v1/images/generations")(self.image_generations)
-        # self.app.post("/v1/images/edits")(self.image_edits)
+        self.app.post("/v1/images/edits")(self.image_edits)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -686,6 +687,101 @@ class API:
                 ForwarderCommand(origin=self.node_id, command=command)
             )
             """
+            raise
+        finally:
+            # Send TaskFinished command
+            await self._send(TaskFinished(finished_command_id=command.command_id))
+            del self._image_generation_queues[command.command_id]
+
+    async def image_edits(
+        self,
+        image: UploadFile = File(...),
+        prompt: str = Form(...),
+        model: str = Form(...),
+        n: int = Form(1),
+        size: str = Form("1024x1024"),
+        response_format: Literal["url", "b64_json"] = Form("b64_json"),
+        input_fidelity: Literal["low", "high"] = Form("low"),
+    ) -> ImageGenerationResponse:
+        """Handle image editing requests (img2img)."""
+        model_meta = await resolve_model_meta(model)
+        resolved_model = model_meta.model_id
+
+        if not any(
+            instance.shard_assignments.model_id == resolved_model
+            for instance in self.state.instances.values()
+        ):
+            await self._trigger_notify_user_to_download_model(resolved_model)
+            raise HTTPException(
+                status_code=404, detail=f"No instance found for model {resolved_model}"
+            )
+
+        # Read and base64 encode the uploaded image
+        image_content = await image.read()
+        image_data = base64.b64encode(image_content).decode("utf-8")
+
+        # Map input_fidelity to image_strength
+        image_strength = 0.3 if input_fidelity == "high" else 0.7
+
+        # Create internal params
+        internal_params = ImageEditsInternalParams(
+            image_data=image_data,
+            prompt=prompt,
+            model=resolved_model,
+            n=n,
+            size=size,
+            response_format=response_format,
+            image_strength=image_strength,
+        )
+
+        command = ImageEdits(
+            request_params=internal_params,
+        )
+        await self._send(command)
+
+        num_images = n
+
+        # Track chunks per image: {image_index: {chunk_index: data}}
+        image_chunks: dict[int, dict[int, str]] = {}
+        image_total_chunks: dict[int, int] = {}
+        images_complete = 0
+
+        try:
+            self._image_generation_queues[command.command_id], recv = channel[
+                ImageChunk
+            ]()
+
+            while images_complete < num_images:
+                with recv as chunks:
+                    async for chunk in chunks:
+                        if chunk.image_index not in image_chunks:
+                            image_chunks[chunk.image_index] = {}
+                            image_total_chunks[chunk.image_index] = chunk.total_chunks
+
+                        image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+
+                        if (
+                            len(image_chunks[chunk.image_index])
+                            == image_total_chunks[chunk.image_index]
+                        ):
+                            images_complete += 1
+
+                        if images_complete >= num_images:
+                            break
+
+            images: list[ImageData] = []
+            for image_idx in range(num_images):
+                chunks_dict = image_chunks[image_idx]
+                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
+                images.append(
+                    ImageData(
+                        b64_json=full_data if response_format == "b64_json" else None,
+                        url=None,  # URL format not implemented yet
+                    )
+                )
+
+            return ImageGenerationResponse(data=images)
+        except anyio.get_cancelled_exc_class():
             raise
         finally:
             # Send TaskFinished command

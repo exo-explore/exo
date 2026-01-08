@@ -230,8 +230,8 @@ class ImageGenerationTaskParams(BaseModel):
 
 class ImageEditsTaskParams(BaseModel):
     image: UploadFile
-    mask: UploadFile | None
     prompt: str
+    input_fidelity: float = 0.7
     model: str
     n: int | None = 1
     quality: Literal["high", "medium", "low"] | None = "medium"
@@ -239,6 +239,20 @@ class ImageEditsTaskParams(BaseModel):
     response_format: Literal["url", "b64_json"] | None = "b64_json"
     size: str | None = "1024x1024"
     user: str | None = None
+
+
+class ImageEditsInternalParams(BaseModel):
+    """Serializable version of ImageEditsTaskParams for distributed task execution."""
+
+    image_data: str  # Base64-encoded image
+    prompt: str
+    model: str
+    n: int | None = 1
+    quality: Literal["high", "medium", "low"] | None = "medium"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    response_format: Literal["url", "b64_json"] | None = "b64_json"
+    size: str | None = "1024x1024"
+    image_strength: float = 0.7
 
 
 class ImageData(BaseModel):
