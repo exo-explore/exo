@@ -6,7 +6,7 @@ from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task
 from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
 from exo.shared.types.worker.runners import RunnerFailed
-from exo.utils.channels import MpReceiver, MpSender
+from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -31,6 +31,8 @@ def entrypoint(
         from exo.worker.runner.runner import main
 
         main(bound_instance, event_sender, task_receiver)
+    except ClosedResourceError:
+        logger.warning("Runner communication closed unexpectedly")
     except Exception as e:
         logger.opt(exception=e).warning(
             f"Runner {bound_instance.bound_runner_id} crashed with critical exception {e}"
@@ -42,8 +44,10 @@ def entrypoint(
             )
         )
     finally:
-        event_sender.close()
-        task_receiver.close()
-        event_sender.join()
-        task_receiver.join()
-        logger.info("bye from the runner")
+        try:
+            event_sender.close()
+            task_receiver.close()
+        finally:
+            event_sender.join()
+            task_receiver.join()
+            logger.info("bye from the runner")
