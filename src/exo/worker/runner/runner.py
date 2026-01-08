@@ -352,11 +352,6 @@ def main(
 
                         current_status = RunnerReady()
                         logger.info("runner ready")
-                        event_sender.send(
-                            RunnerStatusUpdated(
-                                runner_id=runner_id, runner_status=RunnerReady()
-                            )
-                        )
                     case Shutdown():
                         current_status = RunnerShuttingDown()
                         logger.info("runner shutting down")
