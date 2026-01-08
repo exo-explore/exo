@@ -84,6 +84,11 @@
 			else if (newModels.length > 0 && previousModelIds.size > 0) {
 				setSelectedChatModel(newModels[0].id);
 			}
+		} else {
+			// No instances running - clear the selected model
+			if (currentModel) {
+				setSelectedChatModel('');
+			}
 		}
 
 		// Update previous model IDs for next comparison
