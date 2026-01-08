@@ -66,7 +66,7 @@ struct BugReportService {
             ("\(prefix)exo.log", logData),
             ("\(prefix)state.json", stateData),
             ("\(prefix)events.json", eventsData),
-            ("\(prefix)report.json", reportJSON)
+            ("\(prefix)report.json", reportJSON),
         ]
 
         let uploader = try S3Uploader(config: credentials)
@@ -78,7 +78,8 @@ struct BugReportService {
             )
         }
 
-        return BugReportOutcome(success: true, message: "Bug Report sent. Thank you for helping to improve EXO 1.0.")
+        return BugReportOutcome(
+            success: true, message: "Bug Report sent. Thank you for helping to improve EXO 1.0.")
     }
 
     private func loadCredentials() throws -> AWSConfig {
@@ -100,7 +101,8 @@ struct BugReportService {
     private func captureIfconfig() async throws -> String {
         let result = runCommand(["/sbin/ifconfig"])
         guard result.exitCode == 0 else {
-            throw BugReportError.collectFailed(result.error.isEmpty ? "ifconfig failed" : result.error)
+            throw BugReportError.collectFailed(
+                result.error.isEmpty ? "ifconfig failed" : result.error)
         }
         return result.output
     }
@@ -122,7 +124,9 @@ struct BugReportService {
     }
 
     private func readThunderboltBridgeDisabled() -> Bool? {
-        let result = runCommand(["/usr/sbin/networksetup", "-getnetworkserviceenabled", "Thunderbolt Bridge"])
+        let result = runCommand([
+            "/usr/sbin/networksetup", "-getnetworkserviceenabled", "Thunderbolt Bridge",
+        ])
         guard result.exitCode == 0 else { return nil }
         let output = result.output.lowercased()
         if output.contains("enabled") {
@@ -165,7 +169,8 @@ struct BugReportService {
         request.timeoutInterval = 5
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else {
                 return nil
             }
             return data
@@ -191,7 +196,7 @@ struct BugReportService {
             "system": system,
             "exo_version": exo.version as Any,
             "exo_commit": exo.commit as Any,
-            "report_type": isManual ? "manual" : "automated"
+            "report_type": isManual ? "manual" : "automated",
         ]
         return try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
     }
@@ -222,10 +227,13 @@ struct BugReportService {
         let user = safeRunCommand(["/usr/bin/whoami"])
         let consoleUser = safeRunCommand(["/usr/bin/stat", "-f%Su", "/dev/console"])
         let uptime = safeRunCommand(["/usr/bin/uptime"])
-        let diskRoot = safeRunCommand(["/bin/sh", "-c", "/bin/df -h / | awk 'NR==2 {print $1, $2, $3, $4, $5}'"])
+        let diskRoot = safeRunCommand([
+            "/bin/sh", "-c", "/bin/df -h / | awk 'NR==2 {print $1, $2, $3, $4, $5}'",
+        ])
 
         let interfacesList = safeRunCommand(["/usr/sbin/ipconfig", "getiflist"])
-        let interfacesAndIPs = interfacesList?
+        let interfacesAndIPs =
+            interfacesList?
             .split(whereSeparator: { $0 == " " || $0 == "\n" })
             .compactMap { iface -> [String: Any]? in
                 let name = String(iface)
@@ -236,7 +244,8 @@ struct BugReportService {
             } ?? []
 
         let wifiSSID: String?
-        let airportPath = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
+        let airportPath =
+            "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
         if FileManager.default.isExecutableFile(atPath: airportPath) {
             wifiSSID = safeRunCommand([airportPath, "-I"]).flatMap(parseWifiSSID)
         } else {
@@ -264,7 +273,7 @@ struct BugReportService {
             "disk_root": diskRoot as Any,
             "interfaces_and_ips": interfacesAndIPs,
             "ipconfig_getiflist": interfacesList as Any,
-            "wifi_ssid": wifiSSID as Any
+            "wifi_ssid": wifiSSID as Any,
         ]
     }
 
@@ -322,7 +331,8 @@ struct BugReportService {
         for line in airportOutput.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("SSID:") {
-                return trimmed.replacingOccurrences(of: "SSID:", with: "").trimmingCharacters(in: .whitespaces)
+                return trimmed.replacingOccurrences(of: "SSID:", with: "").trimmingCharacters(
+                    in: .whitespaces)
             }
         }
         return nil
@@ -368,7 +378,7 @@ private struct DebugInfo {
         func toDictionary() -> [String: Any] {
             [
                 "name": name,
-                "ip": ip as Any
+                "ip": ip as Any,
             ]
         }
     }
@@ -382,7 +392,7 @@ private struct DebugInfo {
             [
                 "rdma_ctl_status": rdmaCtlStatus as Any,
                 "ibv_devices": ibvDevices as Any,
-                "ibv_devinfo": ibvDevinfo as Any
+                "ibv_devinfo": ibvDevinfo as Any,
             ]
         }
     }
@@ -391,7 +401,7 @@ private struct DebugInfo {
         [
             "thunderbolt_bridge_disabled": thunderboltBridgeDisabled as Any,
             "interfaces": interfaces.map { $0.toDictionary() },
-            "rdma": rdma.toDictionary()
+            "rdma": rdma.toDictionary(),
         ]
     }
 }
@@ -423,7 +433,7 @@ private struct S3Uploader {
         let headers = [
             "host": host,
             "x-amz-content-sha256": payloadHash,
-            "x-amz-date": amzDate
+            "x-amz-date": amzDate,
         ]
 
         let canonicalRequest = buildCanonicalRequest(
@@ -439,18 +449,20 @@ private struct S3Uploader {
             canonicalRequestHash: sha256Hex(canonicalRequest.data(using: .utf8) ?? Data())
         )
 
-        let signingKey = deriveKey(secret: config.secretKey, dateStamp: dateStamp, region: config.region, service: "s3")
+        let signingKey = deriveKey(
+            secret: config.secretKey, dateStamp: dateStamp, region: config.region, service: "s3")
         let signature = hmacHex(key: signingKey, data: Data(stringToSign.utf8))
 
         let signedHeaders = "host;x-amz-content-sha256;x-amz-date"
         let authorization = """
-AWS4-HMAC-SHA256 Credential=\(config.accessKey)/\(dateStamp)/\(config.region)/s3/aws4_request, SignedHeaders=\(signedHeaders), Signature=\(signature)
-"""
+            AWS4-HMAC-SHA256 Credential=\(config.accessKey)/\(dateStamp)/\(config.region)/s3/aws4_request, SignedHeaders=\(signedHeaders), Signature=\(signature)
+            """
 
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.httpBody = body
-        request.setValue(headers["x-amz-content-sha256"], forHTTPHeaderField: "x-amz-content-sha256")
+        request.setValue(
+            headers["x-amz-content-sha256"], forHTTPHeaderField: "x-amz-content-sha256")
         request.setValue(headers["x-amz-date"], forHTTPHeaderField: "x-amz-date")
         request.setValue(host, forHTTPHeaderField: "Host")
         request.setValue(authorization, forHTTPHeaderField: "Authorization")
@@ -458,7 +470,7 @@ AWS4-HMAC-SHA256 Credential=\(config.accessKey)/\(dateStamp)/\(config.region)/s3
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let statusText = (response as? HTTPURLResponse)?.statusCode ?? -1
-            _ = data // ignore response body for UX
+            _ = data  // ignore response body for UX
             throw BugReportError.uploadFailed("HTTP status \(statusText)")
         }
     }
@@ -472,7 +484,8 @@ AWS4-HMAC-SHA256 Credential=\(config.accessKey)/\(dateStamp)/\(config.region)/s3
         let canonicalURI = encodePath(url.path)
         let canonicalQuery = url.query ?? ""
         let sortedHeaders = headers.sorted { $0.key < $1.key }
-        let canonicalHeaders = sortedHeaders
+        let canonicalHeaders =
+            sortedHeaders
             .map { "\($0.key.lowercased()):\($0.value)\n" }
             .joined()
         let signedHeaders = sortedHeaders.map { $0.key.lowercased() }.joined(separator: ";")
@@ -483,15 +496,17 @@ AWS4-HMAC-SHA256 Credential=\(config.accessKey)/\(dateStamp)/\(config.region)/s3
             canonicalQuery,
             canonicalHeaders,
             signedHeaders,
-            payloadHash
+            payloadHash,
         ].joined(separator: "\n")
     }
 
     private func encodePath(_ path: String) -> String {
-        return path
+        return
+            path
             .split(separator: "/")
             .map { segment in
-                segment.addingPercentEncoding(withAllowedCharacters: Self.rfc3986) ?? String(segment)
+                segment.addingPercentEncoding(withAllowedCharacters: Self.rfc3986)
+                    ?? String(segment)
             }
             .joined(separator: "/")
             .prependSlashIfNeeded()
@@ -503,14 +518,16 @@ AWS4-HMAC-SHA256 Credential=\(config.accessKey)/\(dateStamp)/\(config.region)/s3
         canonicalRequestHash: String
     ) -> String {
         """
-AWS4-HMAC-SHA256
-\(amzDate)
-\(dateStamp)/\(config.region)/s3/aws4_request
-\(canonicalRequestHash)
-"""
+        AWS4-HMAC-SHA256
+        \(amzDate)
+        \(dateStamp)/\(config.region)/s3/aws4_request
+        \(canonicalRequestHash)
+        """
     }
 
-    private func deriveKey(secret: String, dateStamp: String, region: String, service: String) -> Data {
+    private func deriveKey(secret: String, dateStamp: String, region: String, service: String)
+        -> Data
+    {
         let kDate = hmac(key: Data(("AWS4" + secret).utf8), data: Data(dateStamp.utf8))
         let kRegion = hmac(key: kDate, data: Data(region.utf8))
         let kService = hmac(key: kRegion, data: Data(service.utf8))
@@ -553,8 +570,8 @@ AWS4-HMAC-SHA256
     }()
 }
 
-private extension String {
-    func prependSlashIfNeeded() -> String {
+extension String {
+    fileprivate func prependSlashIfNeeded() -> String {
         if hasPrefix("/") {
             return self
         }

@@ -16,10 +16,13 @@ struct ClusterState: Decodable {
         self.instances = rawInstances.mapValues(\.instance)
         self.runners = try container.decode([String: RunnerStatusSummary].self, forKey: .runners)
         self.nodeProfiles = try container.decode([String: NodeProfile].self, forKey: .nodeProfiles)
-        let rawTasks = try container.decodeIfPresent([String: TaggedTask].self, forKey: .tasks) ?? [:]
+        let rawTasks =
+            try container.decodeIfPresent([String: TaggedTask].self, forKey: .tasks) ?? [:]
         self.tasks = rawTasks.compactMapValues(\.task)
         self.topology = try container.decodeIfPresent(Topology.self, forKey: .topology)
-        let rawDownloads = try container.decodeIfPresent([String: [TaggedNodeDownload]].self, forKey: .downloads) ?? [:]
+        let rawDownloads =
+            try container.decodeIfPresent([String: [TaggedNodeDownload]].self, forKey: .downloads)
+            ?? [:]
         self.downloads = rawDownloads.mapValues { $0.compactMap(\.status) }
     }
 
@@ -41,7 +44,8 @@ private struct TaggedInstance: Decodable {
         let payloads = try container.decode([String: ClusterInstancePayload].self)
         guard let entry = payloads.first else {
             throw DecodingError.dataCorrupted(
-                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Empty instance payload")
+                DecodingError.Context(
+                    codingPath: decoder.codingPath, debugDescription: "Empty instance payload")
             )
         }
         self.instance = ClusterInstance(
@@ -77,7 +81,8 @@ struct RunnerStatusSummary: Decodable {
         let payloads = try container.decode([String: RunnerStatusDetail].self)
         guard let entry = payloads.first else {
             throw DecodingError.dataCorrupted(
-                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Empty runner status payload")
+                DecodingError.Context(
+                    codingPath: decoder.codingPath, debugDescription: "Empty runner status payload")
             )
         }
         self.status = entry.key
@@ -257,7 +262,9 @@ struct ChatCompletionTaskParameters: Decodable, Equatable {
 
     func promptPreview() -> String? {
         guard let messages else { return nil }
-        if let userMessage = messages.last(where: { $0.role?.lowercased() == "user" && ($0.content?.isEmpty == false) }) {
+        if let userMessage = messages.last(where: {
+            $0.role?.lowercased() == "user" && ($0.content?.isEmpty == false)
+        }) {
             return userMessage.content
         }
         return messages.last?.content
@@ -365,5 +372,3 @@ extension ClusterState {
 
     func availableModels() -> [ModelOption] { [] }
 }
-
-

@@ -88,7 +88,8 @@ private struct NetworkStatusFetcher {
         let rdmaCtlEnabled = readRDMACtlEnabled()
         let devices = readRDMADevices()
         let activePorts = readRDMAActivePorts()
-        return RDMAStatus(rdmaCtlEnabled: rdmaCtlEnabled, devices: devices, activePorts: activePorts)
+        return RDMAStatus(
+            rdmaCtlEnabled: rdmaCtlEnabled, devices: devices, activePorts: activePorts)
     }
 
     private func readRDMACtlEnabled() -> Bool? {
@@ -110,7 +111,9 @@ private struct NetworkStatusFetcher {
         var devices: [String] = []
         for line in result.output.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("---") || trimmed.lowercased().hasPrefix("device") || trimmed.isEmpty {
+            if trimmed.hasPrefix("---") || trimmed.lowercased().hasPrefix("device")
+                || trimmed.isEmpty
+            {
                 continue
             }
             let parts = trimmed.split(separator: " ", maxSplits: 1)
@@ -131,11 +134,14 @@ private struct NetworkStatusFetcher {
         for line in result.output.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("hca_id:") {
-                currentDevice = trimmed.replacingOccurrences(of: "hca_id:", with: "").trimmingCharacters(in: .whitespaces)
+                currentDevice = trimmed.replacingOccurrences(of: "hca_id:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
             } else if trimmed.hasPrefix("port:") {
-                currentPort = trimmed.replacingOccurrences(of: "port:", with: "").trimmingCharacters(in: .whitespaces)
+                currentPort = trimmed.replacingOccurrences(of: "port:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
             } else if trimmed.hasPrefix("state:") {
-                let state = trimmed.replacingOccurrences(of: "state:", with: "").trimmingCharacters(in: .whitespaces)
+                let state = trimmed.replacingOccurrences(of: "state:", with: "").trimmingCharacters(
+                    in: .whitespaces)
                 if let device = currentDevice, let port = currentPort {
                     if state.lowercased().contains("active") {
                         ports.append(RDMAPort(device: device, port: port, state: state))
@@ -168,10 +174,11 @@ private struct NetworkStatusFetcher {
     private func readBridgeInactive() -> Bool? {
         let result = runCommand(["ifconfig", "bridge0"])
         guard result.exitCode == 0 else { return nil }
-        guard let statusLine = result.output
-            .components(separatedBy: .newlines)
-            .first(where: { $0.contains("status:") })?
-            .lowercased()
+        guard
+            let statusLine = result.output
+                .components(separatedBy: .newlines)
+                .first(where: { $0.contains("status:") })?
+                .lowercased()
         else {
             return nil
         }
@@ -254,4 +261,3 @@ private struct NetworkStatusFetcher {
         )
     }
 }
-
