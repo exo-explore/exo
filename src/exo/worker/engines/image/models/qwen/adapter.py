@@ -70,6 +70,11 @@ class QwenPromptData:
         else:
             return {"encoder_hidden_states_mask": self.negative_prompt_mask}
 
+    @property
+    def conditioning_latents(self) -> mx.array | None:
+        """Standard Qwen does not use conditioning latents."""
+        return None
+
 
 class QwenModelAdapter(BaseModelAdapter):
     """Adapter for Qwen-Image model.

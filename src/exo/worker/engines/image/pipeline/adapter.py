@@ -1,4 +1,5 @@
 from enum import Enum
+from pathlib import Path
 from typing import Any, Protocol
 
 import mlx.core as mx
@@ -93,6 +94,15 @@ class PromptData(Protocol):
 
         Returns:
             Dict of extra kwargs (e.g., {"encoder_hidden_states_mask": ...} for Qwen)
+        """
+        ...
+
+    @property
+    def conditioning_latents(self) -> mx.array | None:
+        """Conditioning latents for edit mode.
+
+        Returns:
+            Conditioning latents array for image editing, None for standard generation.
         """
         ...
 
@@ -372,5 +382,21 @@ class ModelAdapter(Protocol):
 
         Returns:
             GeneratedImage result
+        """
+        ...
+
+    def set_image_dimensions(self, image_path: Path) -> tuple[int, int] | None:
+        """Compute and store dimensions from input image for edit mode.
+
+        For edit adapters: computes dimensions from input image aspect ratio,
+        stores image paths internally for encode_prompt(), returns (width, height).
+
+        For standard adapters: returns None (use user-specified dimensions).
+
+        Args:
+            image_path: Path to the input image
+
+        Returns:
+            Tuple of (width, height) if dimensions were computed, None otherwise.
         """
         ...
