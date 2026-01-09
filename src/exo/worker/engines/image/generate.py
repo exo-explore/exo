@@ -51,9 +51,8 @@ def generate_image(
 ) -> Generator[ImageGenerationResponse | PartialImageResponse, None, None]:
     """Generate image(s), optionally yielding partial results.
 
-    When partial_images > 0 (ImageGenerationTaskParams only), yields
-    PartialImageResponse for intermediate images, then ImageGenerationResponse
-    for the final image.
+    When partial_images > 0 or stream=True, yields PartialImageResponse for
+    intermediate images, then ImageGenerationResponse for the final image.
 
     Yields:
         PartialImageResponse for intermediate images (if partial_images > 0)
@@ -63,8 +62,8 @@ def generate_image(
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
     seed = 2  # TODO(ciaran): Randomise when not testing anymore
 
-    if isinstance(task, ImageGenerationTaskParams):
-        partial_images = task.partial_images or (3 if task.stream else 0)
+    # Handle streaming params for both generation and edit tasks
+    partial_images = task.partial_images or (3 if task.stream else 0)
 
     image_path: Path | None = None
     image_strength: float | None = None
