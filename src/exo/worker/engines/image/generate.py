@@ -33,15 +33,22 @@ def parse_size(size_str: str | None) -> tuple[int, int]:
 
 def warmup_image_generator(model: ImageGenerator) -> Image.Image | None:
     """Warmup the image generator with a small image."""
-    for result in model.generate(
-        prompt="Warmup",
-        height=256,
-        width=256,
-        quality="low",
-        seed=2,
-    ):
-        if not isinstance(result, tuple):
-            return result
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a small dummy image for warmup (needed for edit models)
+        dummy_image = Image.new("RGB", (256, 256), color=(128, 128, 128))
+        dummy_path = Path(tmpdir) / "warmup.png"
+        dummy_image.save(dummy_path)
+
+        for result in model.generate(
+            prompt="Warmup",
+            height=256,
+            width=256,
+            quality="low",
+            seed=2,
+            image_path=dummy_path,
+        ):
+            if not isinstance(result, tuple):
+                return result
     return None
 
 
