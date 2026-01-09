@@ -394,6 +394,9 @@ class DiffusionRunner:
         This is the internal method called by adapters via compute_step_noise.
         Returns noise prediction without applying scheduler step.
 
+        For edit mode, concatenates conditioning latents with generated latents
+        before the transformer, and extracts only the generated portion after.
+
         Args:
             latents: Input latents (already scaled by caller)
             prompt_embeds: Text embeddings
@@ -408,6 +411,14 @@ class DiffusionRunner:
         if config is None:
             raise ValueError("config must be provided in kwargs")
         scaled_latents = config.scheduler.scale_model_input(latents, t)
+
+        # For edit mode: concatenate with conditioning latents
+        conditioning_latents = kwargs.get("conditioning_latents")
+        original_latent_tokens = scaled_latents.shape[1]
+        if conditioning_latents is not None:
+            scaled_latents = mx.concatenate(
+                [scaled_latents, conditioning_latents], axis=1
+            )
 
         hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
             scaled_latents, prompt_embeds
@@ -454,6 +465,11 @@ class DiffusionRunner:
 
         # Extract image portion and project
         hidden_states = hidden_states[:, text_seq_len:, ...]
+
+        # For edit mode: extract only the generated portion (exclude conditioning latents)
+        if conditioning_latents is not None:
+            hidden_states = hidden_states[:, :original_latent_tokens, ...]
+
         return self.adapter.final_projection(hidden_states, text_embeddings)
 
     def _diffusion_step(
@@ -494,6 +510,10 @@ class DiffusionRunner:
     ) -> mx.array:
         """Execute a single diffusion step on a single node (no distribution)."""
         base_kwargs = {"t": t, "config": config}
+
+        # For edit mode: include conditioning latents
+        if prompt_data.conditioning_latents is not None:
+            base_kwargs["conditioning_latents"] = prompt_data.conditioning_latents
 
         if self.adapter.needs_cfg:
             # Two forward passes + guidance for CFG models (e.g., Qwen)

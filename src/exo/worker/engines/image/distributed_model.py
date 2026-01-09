@@ -192,6 +192,14 @@ class DistributedImageModel:
         # Determine number of inference steps based on quality
         steps = self._config.get_steps_for_quality(quality)
 
+        # For edit mode: compute dimensions from input image
+        # This also stores image_paths in the adapter for encode_prompt()
+        if image_path is not None:
+            computed_dims = self._adapter.set_image_dimensions(image_path)
+            if computed_dims is not None:
+                # Override user-provided dimensions with computed ones
+                width, height = computed_dims
+
         config = Config(
             num_inference_steps=steps,
             height=height,
