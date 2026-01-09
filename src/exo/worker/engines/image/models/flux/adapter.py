@@ -54,6 +54,11 @@ class FluxPromptData:
         """Flux has no extra forward kwargs."""
         return {}
 
+    @property
+    def conditioning_latents(self) -> mx.array | None:
+        """Flux does not use conditioning latents."""
+        return None
+
 
 class FluxModelAdapter(BaseModelAdapter):
     def __init__(

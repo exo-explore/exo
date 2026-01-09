@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -90,3 +91,13 @@ class BaseModelAdapter(ABC):
             total_single_blocks: Total number of single blocks in the model
         """
         ...
+
+    def set_image_dimensions(self, image_path: Path) -> tuple[int, int] | None:
+        """Default implementation: no dimension computation needed.
+
+        Override in edit adapters to compute dimensions from input image.
+
+        Returns:
+            None (use user-specified dimensions)
+        """
+        return None
