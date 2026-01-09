@@ -1,4 +1,4 @@
-# EXO Master API – Technical Reference
+# EXO API – Technical Reference
 
 This document describes the REST API exposed by the **EXO ** service, as implemented in:
 
