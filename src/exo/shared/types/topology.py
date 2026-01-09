@@ -1,37 +1,32 @@
-from exo.shared.types.common import NodeId
+from enum import Enum
+
+from loguru import logger
+
 from exo.shared.types.multiaddr import Multiaddr
-from exo.shared.types.profiling import ConnectionProfile, NodePerformanceProfile
-from exo.utils.pydantic_ext import CamelCaseModel
+from exo.utils.pydantic_ext import FrozenModel
 
 
-class NodeInfo(CamelCaseModel):
-    node_id: NodeId
-    node_profile: NodePerformanceProfile | None = None
-
-
-class Connection(CamelCaseModel):
-    local_node_id: NodeId
-    send_back_node_id: NodeId
-    send_back_multiaddr: Multiaddr
-    connection_profile: ConnectionProfile | None = None
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                self.local_node_id,
-                self.send_back_node_id,
-                self.send_back_multiaddr.address,
-            )
-        )
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Connection):
-            raise ValueError("Cannot compare Connection with non-Connection")
-        return (
-            self.local_node_id == other.local_node_id
-            and self.send_back_node_id == other.send_back_node_id
-            and self.send_back_multiaddr == other.send_back_multiaddr
-        )
+class RDMAConnection(FrozenModel):
+    source_rdma_iface: str
+    sink_rdma_iface: str
 
     def is_thunderbolt(self) -> bool:
-        return str(self.send_back_multiaddr.ipv4_address).startswith("169.254")
+        logger.warning("duh")
+        return True
+
+
+# TODO
+class LinkType(str, Enum):
+    Thunderbolt = "Thunderbolt"
+    Ethernet = "Ethernet"
+    WiFi = "WiFi"
+
+
+class SocketConnection(FrozenModel):
+    sink_multiaddr: Multiaddr
+
+    def __hash__(self):
+        return hash(self.sink_multiaddr.ip_address)
+
+    def is_thunderbolt(self) -> bool:
+        return str(self.sink_multiaddr.ipv4_address).startswith("169.254")

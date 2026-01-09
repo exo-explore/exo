@@ -39,7 +39,4 @@ def test_apply_two_node_download_progress():
         NodeDownloadProgress(download_progress=event2), state
     )
 
-    # TODO: This test is failing. We should support the following:
-    # 1. Downloading multiple models concurrently on the same node (one per runner is fine).
-    # 2. Downloading a model, it completes, then downloading a different model on the same node.
     assert new_state.downloads == {NodeId("node-1"): [event1, event2]}
