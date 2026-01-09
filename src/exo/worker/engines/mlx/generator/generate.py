@@ -3,6 +3,7 @@ from typing import Any, Callable, Generator, cast, get_args
 import mlx.core as mx
 from mlx_lm import stream_generate
 from mlx_lm.models.cache import KVCache
+from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 # from exo.engines.mlx.cache import KVPrefixCache
@@ -47,7 +48,6 @@ def maybe_quantize_kv_cache(
 def warmup_inference(
     model: Model,
     tokenizer: TokenizerWrapper,
-    sampler: Callable[[mx.array], mx.array],
 ) -> int:
     content = "Prompt to warm up the inference engine. Repeat this."
 
@@ -69,6 +69,9 @@ def warmup_inference(
     cache = make_kv_cache(
         model=model,
     )
+
+    # Use a default sampler for warmup
+    sampler = make_sampler(temp=0.7)
 
     logger.info("Generating warmup tokens")
     for _r in stream_generate(
@@ -115,7 +118,6 @@ def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
 def mlx_generate(
     model: Model,
     tokenizer: TokenizerWrapper,
-    sampler: Callable[[mx.array], mx.array],
     task: ChatCompletionTaskParams,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
@@ -124,6 +126,9 @@ def mlx_generate(
 
     # Currently we support chat-completion tasks only.
     logger.info(f"task_params: {task}")
+
+    if task.seed is not None:
+        mx.random.seed(task.seed)
 
     prompt = apply_chat_template(
         tokenizer=tokenizer,
@@ -137,6 +142,11 @@ def mlx_generate(
         # Only sample length eos tokens
         eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)]
+
+    sampler = make_sampler(
+        temp=task.temperature if task.temperature is not None else 0.7,
+        top_p=task.top_p if task.top_p is not None else 1.0,
+    )
 
     max_tokens = task.max_tokens or MAX_TOKENS
     for out in stream_generate(
