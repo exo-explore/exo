@@ -322,9 +322,7 @@ class DiffusionRunner:
         if capture_steps is None:
             capture_steps = set()
 
-        time_steps = tqdm(
-            range(runtime_config.init_time_step, runtime_config.num_inference_steps)
-        )
+        time_steps = tqdm(range(runtime_config.num_inference_steps))
 
         # Call subscribers for beginning of loop
         Callbacks.before_loop(
