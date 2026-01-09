@@ -107,10 +107,13 @@ extension ClusterState {
             let nodeToRunner = instance.shardAssignments.nodeToRunner
             let nodeIds = Array(nodeToRunner.keys)
             let runnerIds = Array(nodeToRunner.values)
-            let nodeNames = nodeIds.compactMap { nodeProfiles[$0]?.friendlyName ?? nodeProfiles[$0]?.modelId ?? $0 }
+            let nodeNames = nodeIds.compactMap {
+                nodeProfiles[$0]?.friendlyName ?? nodeProfiles[$0]?.modelId ?? $0
+            }
             let statuses = runnerIds.compactMap { runners[$0]?.status.lowercased() }
             let downloadProgress = aggregateDownloadProgress(for: nodeIds)
-            let state = InstanceViewModel.State(statuses: statuses, hasActiveDownload: downloadProgress != nil)
+            let state = InstanceViewModel.State(
+                statuses: statuses, hasActiveDownload: downloadProgress != nil)
             let chatTasks = (chatTasksByInstance[entry.key] ?? [])
                 .sorted(by: { $0.sortPriority < $1.sortPriority })
                 .map { InstanceTaskViewModel(task: $0) }
@@ -165,8 +168,8 @@ extension ClusterState {
     }
 }
 
-private extension InstanceViewModel.State {
-    init(statuses: [String], hasActiveDownload: Bool = false) {
+extension InstanceViewModel.State {
+    fileprivate init(statuses: [String], hasActiveDownload: Bool = false) {
         if statuses.contains(where: { $0.contains("failed") }) {
             self = .failed
         } else if hasActiveDownload || statuses.contains(where: { $0.contains("downloading") }) {
@@ -243,4 +246,3 @@ extension InstanceTaskViewModel {
         self.parameters = task.parameters
     }
 }
-
