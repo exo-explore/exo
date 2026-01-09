@@ -313,7 +313,9 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: showAdvanced)
     }
 
-    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+    private func controlButton(title: String, tint: Color = .primary, action: @escaping () -> Void)
+        -> some View
+    {
         HoverButton(title: title, tint: tint, trailingSystemImage: nil, action: action)
     }
 
@@ -703,7 +705,10 @@ private struct HoverButton: View {
     let small: Bool
     let action: () -> Void
 
-    init(title: String, tint: Color = .primary, trailingSystemImage: String? = nil, small: Bool = false, action: @escaping () -> Void) {
+    init(
+        title: String, tint: Color = .primary, trailingSystemImage: String? = nil,
+        small: Bool = false, action: @escaping () -> Void
+    ) {
         self.title = title
         self.tint = tint
         self.trailingSystemImage = trailingSystemImage

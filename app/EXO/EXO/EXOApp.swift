@@ -143,7 +143,9 @@ enum LaunchAtLoginHelper {
             try SMAppService.mainApp.unregister()
             logger.info("Unregistered EXO from launch at login")
         } catch {
-            logger.error("Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)")
+            logger.error(
+                "Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }

@@ -98,42 +98,42 @@ enum NetworkSetupHelper {
 
     private static func makeUninstallScript() -> String {
         """
-set -euo pipefail
+        set -euo pipefail
 
-LABEL="\(daemonLabel)"
-SCRIPT_DEST="\(scriptDestination)"
-PLIST_DEST="\(plistDestination)"
-LOG_OUT="/var/log/\(daemonLabel).log"
-LOG_ERR="/var/log/\(daemonLabel).err.log"
+        LABEL="\(daemonLabel)"
+        SCRIPT_DEST="\(scriptDestination)"
+        PLIST_DEST="\(plistDestination)"
+        LOG_OUT="/var/log/\(daemonLabel).log"
+        LOG_ERR="/var/log/\(daemonLabel).err.log"
 
-# Unload the LaunchDaemon if running
-launchctl bootout system/"$LABEL" 2>/dev/null || true
+        # Unload the LaunchDaemon if running
+        launchctl bootout system/"$LABEL" 2>/dev/null || true
 
-# Remove LaunchDaemon plist
-rm -f "$PLIST_DEST"
+        # Remove LaunchDaemon plist
+        rm -f "$PLIST_DEST"
 
-# Remove the script and parent directory if empty
-rm -f "$SCRIPT_DEST"
-rmdir "$(dirname "$SCRIPT_DEST")" 2>/dev/null || true
+        # Remove the script and parent directory if empty
+        rm -f "$SCRIPT_DEST"
+        rmdir "$(dirname "$SCRIPT_DEST")" 2>/dev/null || true
 
-# Remove log files
-rm -f "$LOG_OUT" "$LOG_ERR"
+        # Remove log files
+        rm -f "$LOG_OUT" "$LOG_ERR"
 
-# Switch back to Automatic network location
-networksetup -switchtolocation Automatic 2>/dev/null || true
+        # Switch back to Automatic network location
+        networksetup -switchtolocation Automatic 2>/dev/null || true
 
-# Delete the exo network location if it exists
-networksetup -listlocations | grep -q '^exo$' && {
-  networksetup -deletelocation exo 2>/dev/null || true
-} || true
+        # Delete the exo network location if it exists
+        networksetup -listlocations | grep -q '^exo$' && {
+          networksetup -deletelocation exo 2>/dev/null || true
+        } || true
 
-# Re-enable Thunderbolt Bridge if it exists
-networksetup -listnetworkservices | grep -q "Thunderbolt Bridge" && {
-  networksetup -setnetworkserviceenabled "Thunderbolt Bridge" on 2>/dev/null || true
-} || true
+        # Re-enable Thunderbolt Bridge if it exists
+        networksetup -listnetworkservices | grep -q "Thunderbolt Bridge" && {
+          networksetup -setnetworkserviceenabled "Thunderbolt Bridge" on 2>/dev/null || true
+        } || true
 
-echo "EXO network components removed successfully"
-"""
+        echo "EXO network components removed successfully"
+        """
     }
 
     private static func daemonAlreadyInstalled() -> Bool {
