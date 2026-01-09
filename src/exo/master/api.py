@@ -209,7 +209,7 @@ class API:
         self.app.post("/v1/images/generations", response_model=None)(
             self.image_generations
         )
-        self.app.post("/v1/images/edits")(self.image_edits)
+        self.app.post("/v1/images/edits", response_model=None)(self.image_edits)
         self.app.get("/state")(lambda: self.state)
         self.app.get("/events")(lambda: self._event_log)
 
@@ -809,7 +809,9 @@ class API:
         size: str = Form("1024x1024"),
         response_format: Literal["url", "b64_json"] = Form("b64_json"),
         input_fidelity: Literal["low", "high"] = Form("low"),
-    ) -> ImageGenerationResponse:
+        stream: bool = Form(False),
+        partial_images: int = Form(0),
+    ) -> ImageGenerationResponse | StreamingResponse:
         """Handle image editing requests (img2img)."""
         model_meta = await resolve_model_meta(model)
         resolved_model = model_meta.model_id
@@ -848,6 +850,8 @@ class API:
                 size=size,
                 response_format=response_format,
                 image_strength=image_strength,
+                stream=stream,
+                partial_images=partial_images,
             ),
         )
 
@@ -873,6 +877,17 @@ class API:
         await self._send(command)
 
         num_images = n
+
+        # Check if streaming is requested
+        if stream and partial_images and partial_images > 0:
+            return StreamingResponse(
+                self._generate_image_stream(
+                    command_id=command.command_id,
+                    num_images=num_images,
+                    response_format=response_format,
+                ),
+                media_type="text/event-stream",
+            )
 
         # Track chunks per image: {image_index: {chunk_index: data}}
         image_chunks: dict[int, dict[int, str]] = {}

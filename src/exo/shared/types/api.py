@@ -261,6 +261,8 @@ class ImageEditsInternalParams(BaseModel):
     response_format: Literal["url", "b64_json"] | None = "b64_json"
     size: str | None = "1024x1024"
     image_strength: float = 0.7
+    stream: bool = False
+    partial_images: int | None = 0
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():
