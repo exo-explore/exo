@@ -26,3 +26,24 @@ QWEN_IMAGE_CONFIG = ImageModelConfig(
     uses_attention_mask=True,  # Qwen uses encoder_hidden_states_mask
     guidance_scale=None,  # Set to None or < 1.0 to disable CFG
 )
+
+# Qwen-Image-Edit uses the same architecture but different processing pipeline
+# Uses vision-language encoding and conditioning latents
+QWEN_IMAGE_EDIT_CONFIG = ImageModelConfig(
+    model_family="qwen-edit",
+    model_variant="image-edit",
+    hidden_dim=3072,
+    num_heads=24,
+    head_dim=128,
+    block_configs=(
+        TransformerBlockConfig(
+            block_type=BlockType.JOINT, count=60, has_separate_text_output=True
+        ),
+    ),
+    patch_size=2,
+    vae_scale_factor=16,
+    default_steps={"low": 10, "medium": 25, "high": 50},
+    num_sync_steps_factor=0.125,
+    uses_attention_mask=True,
+    guidance_scale=None,
+)
