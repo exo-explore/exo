@@ -81,3 +81,80 @@ async def get_model_and_chip() -> tuple[str, str]:
     chip = chip_line.split(": ")[1] if chip_line else "Unknown Chip"
 
     return (model, chip)
+
+
+def _profile_memory_bandwidth_numpy() -> int | None:
+    """Profile memory bandwidth using 1GB array benchmark."""
+    try:
+        import numpy as np
+        import time
+
+        size = 1024 * 1024 * 1024 // 8
+        num_runs = 3
+        best_bandwidth = 0.0
+
+        for _ in range(num_runs):
+            src = np.random.random(size)
+            start = time.perf_counter()
+            dst = src.copy()
+            end = time.perf_counter()
+            _ = dst[0]
+            bandwidth = (size * 8 * 2) / (end - start)
+            best_bandwidth = max(best_bandwidth, bandwidth)
+            del src, dst
+
+        return int(best_bandwidth)
+    except Exception:
+        return None
+
+
+def _profile_memory_bandwidth_simple() -> int | None:
+    """Fallback memory bandwidth benchmark using 200MB array."""
+    try:
+        import numpy as np
+        import time
+
+        size = 200 * 1024 * 1024 // 8
+        best_bandwidth = 0.0
+        num_runs = 5
+
+        for _ in range(num_runs):
+            src = np.random.random(size)
+            start = time.perf_counter()
+            dst = src.copy()
+            end = time.perf_counter()
+            _ = dst[0]
+            bandwidth = (size * 8 * 2) / (end - start)
+            best_bandwidth = max(best_bandwidth, bandwidth)
+            del src, dst
+
+        return int(best_bandwidth)
+    except Exception:
+        return None
+
+
+def profile_memory_bandwidth() -> int | None:
+    """
+    Profile device memory bandwidth using numpy benchmarks.
+
+    Returns measured bandwidth which may be lower than theoretical peak.
+    Relative ratios between devices remain accurate for placement decisions.
+    """
+    bandwidth = _profile_memory_bandwidth_numpy()
+    if bandwidth and bandwidth > 0:
+        return bandwidth
+
+    bandwidth = _profile_memory_bandwidth_simple()
+    if bandwidth and bandwidth > 0:
+        return bandwidth
+
+    return None
+
+
+def get_memory_bandwidth(_chip_id: str) -> int | None:
+    """
+    Returns measured memory bandwidth in bytes/second.
+
+    Uses runtime profiling via numpy benchmarks. Works on any platform.
+    """
+    return profile_memory_bandwidth()

@@ -22,6 +22,7 @@ from .macmon import (
 )
 from .system_info import (
     get_friendly_name,
+    get_memory_bandwidth,
     get_model_and_chip,
     get_network_interfaces,
 )
@@ -92,6 +93,7 @@ async def start_polling_node_metrics(
                     friendly_name=friendly_name,
                     network_interfaces=network_interfaces,
                     memory=memory_profile,
+                    memory_bandwidth=get_memory_bandwidth(chip_id),
                     system=SystemPerformanceProfile(
                         gpu_usage=metrics.gpu_usage[1],
                         temp=metrics.temp.gpu_temp_avg,
