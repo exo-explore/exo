@@ -127,11 +127,12 @@ class QwenEditModelAdapter(BaseModelAdapter):
         )
         self._transformer = self._model.transformer
 
-        # Store dimensions computed from input image (set during encode_prompt_with_images)
+        # Store dimensions and image paths (set via set_image_dimensions)
         self._vl_width: int | None = None
         self._vl_height: int | None = None
         self._vae_width: int | None = None
         self._vae_height: int | None = None
+        self._image_paths: list[str] | None = None
 
     @property
     def config(self) -> ImageModelConfig:
@@ -213,28 +214,25 @@ class QwenEditModelAdapter(BaseModelAdapter):
         )
 
     def encode_prompt(self, prompt: str) -> QwenEditPromptData:
-        """Not supported - use encode_prompt_with_images for edit mode."""
-        raise NotImplementedError(
-            "QwenEditModelAdapter requires encode_prompt_with_images()"
-        )
-
-    def encode_prompt_with_images(
-        self,
-        prompt: str,
-        image_paths: list[str],
-        runtime_config: RuntimeConfig,
-    ) -> QwenEditPromptData:
         """Encode prompt with input images using vision-language encoder.
+
+        Uses stored image_paths from set_image_dimensions() for VL encoding.
 
         Args:
             prompt: Text prompt for editing
-            image_paths: List of paths to input images
-            runtime_config: Runtime configuration with dimensions
 
         Returns:
             QwenEditPromptData with VL embeddings and conditioning latents
         """
+        # Ensure image_paths and dimensions were set via set_image_dimensions()
+        if self._image_paths is None:
+            raise RuntimeError(
+                "set_image_dimensions() must be called before encode_prompt() "
+                "for QwenEditModelAdapter"
+            )
+
         negative_prompt = ""
+        image_paths = self._image_paths
 
         # Use stored dimensions (computed from input image)
         vl_width = self._vl_width
@@ -316,6 +314,8 @@ class QwenEditModelAdapter(BaseModelAdapter):
     def set_image_dimensions(self, image_path: Path) -> tuple[int, int]:
         """Compute and store dimensions from input image.
 
+        Also stores image_paths for use in encode_prompt().
+
         Returns:
             (output_width, output_height) for runtime config
         """
@@ -326,6 +326,7 @@ class QwenEditModelAdapter(BaseModelAdapter):
         self._vl_height = vl_h
         self._vae_width = vae_w
         self._vae_height = vae_h
+        self._image_paths = [str(image_path)]
         return out_w, out_h
 
     @property
