@@ -9,6 +9,8 @@ from exo.worker.engines.image.models.flux import (
 )
 from exo.worker.engines.image.models.qwen import (
     QWEN_IMAGE_CONFIG,
+    QWEN_IMAGE_EDIT_CONFIG,
+    QwenEditModelAdapter,
     QwenModelAdapter,
 )
 from exo.worker.engines.image.pipeline.adapter import ModelAdapter
@@ -22,6 +24,7 @@ AdapterFactory = Callable[[ImageModelConfig, str, Path, int | None], ModelAdapte
 # Registry maps model_family string to adapter factory
 _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
     "flux": FluxModelAdapter,
+    "qwen-edit": QwenEditModelAdapter,
     "qwen": QwenModelAdapter,
 }
 
@@ -29,8 +32,8 @@ _ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
 _CONFIG_REGISTRY: dict[str, ImageModelConfig] = {
     "flux.1-schnell": FLUX_SCHNELL_CONFIG,
     "flux.1-dev": FLUX_DEV_CONFIG,
+    "qwen-image-edit": QWEN_IMAGE_EDIT_CONFIG,  # Must come before "qwen-image" for pattern matching
     "qwen-image": QWEN_IMAGE_CONFIG,
-    "qwen-image-edit-2509": QWEN_IMAGE_CONFIG,
 }
 
 
