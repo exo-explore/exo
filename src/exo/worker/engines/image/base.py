@@ -21,7 +21,6 @@ class ImageGenerator(Protocol):
         quality: Literal["low", "medium", "high"],
         seed: int,
         image_path: Path | None = None,
-        image_strength: float | None = None,
         partial_images: int = 0,
     ) -> Generator[Image.Image | tuple[Image.Image, int, int], None, None]:
         """Generate an image from a text prompt, or edit an existing image.
@@ -41,8 +40,7 @@ class ImageGenerator(Protocol):
             width: Image width in pixels
             quality: Generation quality level
             seed: Random seed for reproducibility
-            image_path: Optional path to input image for img2img
-            image_strength: Optional strength for img2img (0.0-1.0, higher = more change)
+            image_path: Optional path to input image for image editing
             partial_images: Number of intermediate images to yield (0 for none)
 
         Yields:

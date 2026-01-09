@@ -186,7 +186,6 @@ class DistributedImageModel:
         quality: Literal["low", "medium", "high"] = "medium",
         seed: int = 2,
         image_path: Path | None = None,
-        image_strength: float | None = None,
         partial_images: int = 0,
     ) -> Generator[Image.Image | tuple[Image.Image, int, int], None, None]:
         # Determine number of inference steps based on quality
@@ -205,7 +204,6 @@ class DistributedImageModel:
             height=height,
             width=width,
             image_path=image_path,
-            image_strength=image_strength,
         )
 
         # Generate images via the runner
