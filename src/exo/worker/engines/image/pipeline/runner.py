@@ -622,6 +622,21 @@ class DiffusionRunner:
 
         hidden_states = config.scheduler.scale_model_input(hidden_states, t)
 
+        # For edit mode: handle conditioning latents
+        # All stages need to know the total token count for correct recv templates
+        conditioning_latents = prompt_data.conditioning_latents
+        original_latent_tokens = hidden_states.shape[1]
+        if conditioning_latents is not None:
+            num_img_tokens = original_latent_tokens + conditioning_latents.shape[1]
+        else:
+            num_img_tokens = original_latent_tokens
+
+        # First stage: concatenate conditioning latents before embedding
+        if self.is_first_stage and conditioning_latents is not None:
+            hidden_states = mx.concatenate(
+                [hidden_states, conditioning_latents], axis=1
+            )
+
         # === PHASE 1: Embeddings ===
         if self.is_first_stage:
             hidden_states, encoder_hidden_states = self.adapter.compute_embeddings(
@@ -641,7 +656,6 @@ class DiffusionRunner:
 
         # === Initialize KV caches to populate during sync for async warmstart ===
         batch_size = prev_latents.shape[0]
-        num_img_tokens = prev_latents.shape[1]
         text_seq_len = prompt_embeds.shape[1]
         hidden_dim = self.adapter.hidden_dim
 
@@ -741,6 +755,10 @@ class DiffusionRunner:
         # === PHASE 5: Last Stage - Final Projection + Scheduler ===
         # Extract image portion (remove text embeddings prefix)
         hidden_states = hidden_states[:, text_seq_len:, ...]
+
+        # For edit mode: extract only the generated portion (exclude conditioning latents)
+        if conditioning_latents is not None:
+            hidden_states = hidden_states[:, :original_latent_tokens, ...]
 
         if self.is_last_stage:
             hidden_states = self.adapter.final_projection(
