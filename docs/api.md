@@ -1,6 +1,6 @@
-# Exo Master API – Technical Reference
+# EXO Master API – Technical Reference
 
-This document describes the REST API exposed by the **Exo Master** service, as implemented in:
+This document describes the REST API exposed by the **EXO ** service, as implemented in:
 
 `src/exo/master/api.py`
 
@@ -207,6 +207,6 @@ POST    /bench/chat/completions
 
 ## 6. Notes
 
-* The `/v1/chat/completions` endpoint is compatible with the OpenAI API format, so existing OpenAI clients can be pointed to Exo by changing the base URL.
+* The `/v1/chat/completions` endpoint is compatible with the OpenAI API format, so existing OpenAI clients can be pointed to EXO by changing the base URL.
 * The instance placement endpoints allow you to plan and preview cluster allocations before actually creating instances.
 * The `/events` and `/state` endpoints are primarily intended for operational visibility and debugging.
