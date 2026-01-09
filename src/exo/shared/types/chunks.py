@@ -39,7 +39,7 @@ class ImageChunk(BaseChunk):
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():
-            if name == "data":
+            if name == "data" and hasattr(value, "__len__"):
                 yield name, f"<{len(self.data)} chars>"
             elif name is not None:
                 yield name, value
@@ -53,7 +53,7 @@ class InputImageChunk(BaseChunk):
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():
-            if name == "data":
+            if name == "data" and hasattr(value, "__len__"):
                 yield name, f"<{len(self.data)} chars>"
             elif name is not None:
                 yield name, value

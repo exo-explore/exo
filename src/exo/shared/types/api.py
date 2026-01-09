@@ -279,8 +279,8 @@ class ImageData(BaseModel):
 
     def __repr_args__(self) -> Generator[tuple[str, Any], None, None]:
         for name, value in super().__repr_args__():
-            if name == "b64_json" and value is not None:
-                yield name, f"<{len(value)} chars>"
+            if name == "b64_json" and self.b64_json is not None:
+                yield name, f"<{len(self.b64_json)} chars>"
             elif name is not None:
                 yield name, value
 

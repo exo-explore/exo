@@ -271,11 +271,7 @@ def _pending_tasks(
     for task in tasks.values():
         # for now, just forward chat completions
         # TODO(ciaran): do this better!
-        if (
-            not isinstance(task, ChatCompletion)
-            and not isinstance(task, ImageGeneration)
-            and not isinstance(task, ImageEdits)
-        ):
+        if not isinstance(task, (ChatCompletion, ImageGeneration, ImageEdits)):
             continue
         if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
             continue
