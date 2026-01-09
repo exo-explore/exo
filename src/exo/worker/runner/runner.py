@@ -136,9 +136,9 @@ def main(
                     )
                     current_status = RunnerReady()
                     logger.info("runner ready")
-                case ChatCompletion(
-                    task_params=task_params, command_id=command_id
-                ) if isinstance(current_status, RunnerReady):
+                case ChatCompletion(task_params=task_params, command_id=command_id) if (
+                    isinstance(current_status, RunnerReady)
+                ):
                     assert model
                     assert tokenizer
                     logger.info(f"received chat request: {str(task)[:500]}")
@@ -199,7 +199,7 @@ def main(
                 RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
             )
             if isinstance(current_status, RunnerShutdown):
-                del model, tokenizer, group, sampler
+                del model, tokenizer, group
                 mx.clear_cache()
                 import gc
 
