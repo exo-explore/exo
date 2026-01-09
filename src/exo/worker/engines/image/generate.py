@@ -63,10 +63,8 @@ def generate_image(
     quality: Literal["low", "medium", "high"] = task.quality or "medium"
     seed = 2  # TODO(ciaran): Randomise when not testing anymore
 
-    # Get partial_images setting (only for ImageGenerationTaskParams)
-    partial_images = 0
     if isinstance(task, ImageGenerationTaskParams):
-        partial_images = task.partial_images or 0
+        partial_images = task.partial_images or (3 if task.stream else 0)
 
     image_path: Path | None = None
     image_strength: float | None = None
