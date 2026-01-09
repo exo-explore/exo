@@ -166,6 +166,24 @@ Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-
 
 The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
 
+#### Uninstalling the macOS App
+
+The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
+
+If you've already deleted the app, you can run the standalone uninstaller script:
+
+```bash
+sudo ./app/EXO/uninstall-exo.sh
+```
+
+This removes:
+- Network setup LaunchDaemon
+- Network configuration script
+- Log files
+- The "exo" network location
+
+**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
+
 ---
 
 ### Enabling RDMA on macOS
