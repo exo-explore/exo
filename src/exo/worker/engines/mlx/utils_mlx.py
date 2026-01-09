@@ -284,15 +284,15 @@ def apply_chat_template(
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
+    for message in messages:
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
-            if len(message.content) != 1:
-                logger.warning("Received malformed prompt")
+            if len(message.content) == 0:
+                logger.warning("Received prompt with no content, skipping")
                 continue
 
-            message.content = message.content[0].text
+            message.content = "\n".join(c.text for c in message.content).strip()
         if message.content is None and message.thinking is None:
             continue
 
@@ -305,6 +305,7 @@ def apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
+        tools=chat_task_data.tools,
     )
 
     return prompt  # type: ignore
