@@ -73,14 +73,12 @@ def generate_image(
     partial_images = task.partial_images or (3 if task.stream else 0)
 
     image_path: Path | None = None
-    image_strength: float | None = None
 
     with tempfile.TemporaryDirectory() as tmpdir:
         if isinstance(task, ImageEditsInternalParams):
             # Decode base64 image data and save to temp file
             image_path = Path(tmpdir) / "input.png"
             image_path.write_bytes(base64.b64decode(task.image_data))
-            image_strength = task.image_strength
 
         # Iterate over generator results
         for result in model.generate(
@@ -90,7 +88,6 @@ def generate_image(
             quality=quality,
             seed=seed,
             image_path=image_path,
-            image_strength=image_strength,
             partial_images=partial_images,
         ):
             if isinstance(result, tuple):
