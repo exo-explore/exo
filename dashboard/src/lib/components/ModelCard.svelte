@@ -445,12 +445,6 @@ function toggleNodeDetails(nodeId: string): void {
 								<feMergeNode in="SourceGraphic"/>
 							</feMerge>
 						</filter>
-						
-						<!-- Strong glow for new memory -->
-						<filter id="memGlow-{filterId}" x="-100%" y="-100%" width="300%" height="300%">
-							<feGaussianBlur stdDeviation="3" result="blur"/>
-							<feComposite in="SourceGraphic" in2="blur" operator="over"/>
-						</filter>
 					</defs>
 					
 					<!-- Connection lines between nodes (if multiple) -->
@@ -558,7 +552,7 @@ function toggleNodeDetails(nodeId: string): void {
 										height={node.currentFillHeight}
 										fill="#374151"
 									/>
-									<!-- New model memory fill (glowing yellow) -->
+									<!-- New model memory fill (yellow) -->
 									{#if node.modelUsageGB > 0 && node.isUsed}
 										<rect 
 											x="4" 
@@ -566,8 +560,7 @@ function toggleNodeDetails(nodeId: string): void {
 											width={node.iconSize - 8} 
 											height={node.modelFillHeight}
 											fill="#FFD700"
-											filter="url(#memGlow-{filterId})"
-											class="animate-pulse-slow"
+											opacity="0.9"
 										/>
 									{/if}
 									<!-- Base/keyboard -->
@@ -611,8 +604,7 @@ function toggleNodeDetails(nodeId: string): void {
 											width={node.iconSize - 8} 
 											height={(node.iconSize - 8) * ((node.newPercent - node.currentPercent) / 100)}
 											fill="#FFD700"
-											filter="url(#memGlow-{filterId})"
-											class="animate-pulse-slow"
+											opacity="0.9"
 										/>
 									{/if}
 								</g>
@@ -649,8 +641,7 @@ function toggleNodeDetails(nodeId: string): void {
 											width={node.iconSize - 8} 
 											height={(node.iconSize * 0.36) * ((node.newPercent - node.currentPercent) / 100)}
 											fill="#FFD700"
-											filter="url(#memGlow-{filterId})"
-											class="animate-pulse-slow"
+											opacity="0.9"
 										/>
 									{/if}
 								</g>
@@ -709,11 +700,5 @@ function toggleNodeDetails(nodeId: string): void {
 </div>
 
 <style>
-	@keyframes pulse-slow {
-		0%, 100% { opacity: 0.8; }
-		50% { opacity: 1; }
-	}
-	.animate-pulse-slow {
-		animation: pulse-slow 1.5s ease-in-out infinite;
-	}
+	/* Styles removed - animations were causing GPU overhead */
 </style>
