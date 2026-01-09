@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 
 import anyio
 from anyio.abc import TaskGroup
-from fastapi.routing import request_response
 from loguru import logger
 
 from exo.master.placement import (
@@ -12,7 +11,6 @@ from exo.master.placement import (
     place_instance,
 )
 from exo.shared.apply import apply
-from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     ChatCompletion,
     CreateInstance,
@@ -114,11 +112,11 @@ class Master:
 
                     generated_events: list[Event] = []
                     command = forwarder_command.command
+                    instance_task_counts: dict[InstanceId, int] = {}
                     match command:
                         case TestCommand():
                             pass
                         case ChatCompletion():
-                            instance_task_counts: dict[InstanceId, int] = {}
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
@@ -161,7 +159,6 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
-                            instance_task_counts: dict[InstanceId, int] = {}
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
@@ -204,7 +201,6 @@ class Master:
 
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageEdits():
-                            instance_task_counts: dict[InstanceId, int] = {}
                             for instance in self.state.instances.values():
                                 if (
                                     instance.shard_assignments.model_id
