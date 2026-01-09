@@ -19,7 +19,7 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
 from exo.worker.engines.mlx import Model
-from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS
+from exo.worker.engines.mlx.constants import KV_BITS, KV_GROUP_SIZE, MAX_TOKENS, MAX_KV_SIZE, KEEP_KV_SIZE
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     make_kv_cache,
@@ -68,6 +68,8 @@ def warmup_inference(
 
     cache = make_kv_cache(
         model=model,
+        max_kv_size=MAX_KV_SIZE,
+        keep=KEEP_KV_SIZE or 0,
     )
 
     # Use a default sampler for warmup
@@ -135,7 +137,7 @@ def mlx_generate(
         chat_task_data=task,
     )
 
-    caches = make_kv_cache(model=model)
+    caches = make_kv_cache(model=model,max_kv_size=MAX_KV_SIZE,keep=KEEP_KV_SIZE or 0)
 
     logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = []
     if is_bench:
