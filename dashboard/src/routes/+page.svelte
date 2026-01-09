@@ -593,7 +593,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		// Unwrap the instance
 		const [instanceTag, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { isDownloading: false, progress: null, statusText: 'UNKNOWN', perNode: [] };
+			return { isDownloading: false, progress: null, statusText: 'PREPARING', perNode: [] };
 		}
 
 		const inst = instance as { shardAssignments?: { nodeToRunner?: Record<string, string>; runnerToShard?: Record<string, unknown>; modelId?: string } };
@@ -706,7 +706,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	function deriveInstanceStatus(instanceWrapped: unknown): { statusText: string; statusClass: string } {
 		const [, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+			return { statusText: 'PREPARING', statusClass: 'inactive' };
 		}
 		
 		const inst = instance as { shardAssignments?: { runnerToShard?: Record<string, unknown> } };
@@ -735,7 +735,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 		const has = (s: string) => statuses.includes(s);
 
-		if (statuses.length === 0) return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+		if (statuses.length === 0) return { statusText: 'PREPARING', statusClass: 'inactive' };
 		if (has('Failed')) return { statusText: 'FAILED', statusClass: 'failed' };
 		if (has('Shutdown')) return { statusText: 'SHUTDOWN', statusClass: 'inactive' };
 		if (has('Loading')) return { statusText: 'LOADING', statusClass: 'starting' };
