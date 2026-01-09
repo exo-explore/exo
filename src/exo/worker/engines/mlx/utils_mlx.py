@@ -3,11 +3,10 @@ import os
 import resource
 import time
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.engines.mlx.constants import (
@@ -176,11 +175,7 @@ def initialize_mlx(
 
 def load_mlx_items(
     bound_instance: BoundInstance, group: Group | None
-) -> tuple[Model, TokenizerWrapper, Callable[[mx.array], mx.array]]:
-    # TODO: pass temperature
-    sampler: Callable[[mx.array], mx.array] = make_sampler(temp=0.7)
-    logger.info("Created a sampler")
-
+) -> tuple[Model, TokenizerWrapper]:
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_meta.model_id)
@@ -201,7 +196,7 @@ def load_mlx_items(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
-    return cast(Model, model), tokenizer, sampler
+    return cast(Model, model), tokenizer
 
 
 def shard_and_load(
@@ -289,15 +284,15 @@ def apply_chat_template(
     messages = chat_task_data.messages
 
     formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
+    for message in messages:
         if isinstance(message.content, ChatCompletionMessageText):
             message.content = message.content.text
         if isinstance(message.content, list):
-            if len(message.content) != 1:
-                logger.warning("Received malformed prompt")
+            if len(message.content) == 0:
+                logger.warning("Received prompt with no content, skipping")
                 continue
 
-            message.content = message.content[0].text
+            message.content = "\n".join(c.text for c in message.content).strip()
         if message.content is None and message.thinking is None:
             continue
 
@@ -310,6 +305,7 @@ def apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
+        tools=chat_task_data.tools,
     )
 
     return prompt  # type: ignore

@@ -83,7 +83,7 @@ struct InstanceRowView: View {
         case .ready: return .teal
         case .waiting, .idle: return .gray
         case .failed: return .red
-        case .unknown: return .secondary
+        case .preparing: return .secondary
         }
     }
 
