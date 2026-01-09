@@ -83,33 +83,78 @@ async def get_model_and_chip() -> tuple[str, str]:
     return (model, chip)
 
 
-# Data from: https://en.wikipedia.org/wiki/Apple_silicon
-# Bandwidth in bytes/second
-APPLE_SILICON_BANDWIDTH = {
-    # M1 Series
-    "Apple M1": 68_250_000_000,
-    "Apple M1 Pro": 200_000_000_000,
-    "Apple M1 Max": 400_000_000_000,
-    "Apple M1 Ultra": 800_000_000_000,
-    # M2 Series
-    "Apple M2": 100_000_000_000,
-    "Apple M2 Pro": 200_000_000_000,
-    "Apple M2 Max": 400_000_000_000,
-    "Apple M2 Ultra": 800_000_000_000,
-    # M3 Series
-    "Apple M3": 100_000_000_000,
-    "Apple M3 Pro": 150_000_000_000,
-    "Apple M3 Max": 400_000_000_000,
-    # M4 Series
-    "Apple M4": 120_000_000_000,
-    "Apple M4 Pro": 273_000_000_000,
-    "Apple M4 Max": 546_000_000_000,
-}
+def _profile_memory_bandwidth_numpy() -> int | None:
+    """Profile memory bandwidth using 1GB array benchmark."""
+    try:
+        import numpy as np
+        import time
+
+        size = 1024 * 1024 * 1024 // 8
+        num_runs = 3
+        best_bandwidth = 0.0
+
+        for _ in range(num_runs):
+            src = np.random.random(size)
+            start = time.perf_counter()
+            dst = src.copy()
+            end = time.perf_counter()
+            _ = dst[0]
+            bandwidth = (size * 8 * 2) / (end - start)
+            best_bandwidth = max(best_bandwidth, bandwidth)
+            del src, dst
+
+        return int(best_bandwidth)
+    except Exception:
+        return None
 
 
-def get_memory_bandwidth(chip_id: str) -> int | None:
+def _profile_memory_bandwidth_simple() -> int | None:
+    """Fallback memory bandwidth benchmark using 200MB array."""
+    try:
+        import numpy as np
+        import time
+
+        size = 200 * 1024 * 1024 // 8
+        best_bandwidth = 0.0
+        num_runs = 5
+
+        for _ in range(num_runs):
+            src = np.random.random(size)
+            start = time.perf_counter()
+            dst = src.copy()
+            end = time.perf_counter()
+            _ = dst[0]
+            bandwidth = (size * 8 * 2) / (end - start)
+            best_bandwidth = max(best_bandwidth, bandwidth)
+            del src, dst
+
+        return int(best_bandwidth)
+    except Exception:
+        return None
+
+
+def profile_memory_bandwidth() -> int | None:
     """
-    Returns the theoretical memory bandwidth in bytes/second for a given chip ID.
-    Currently only supports Apple Silicon.
+    Profile device memory bandwidth using numpy benchmarks.
+
+    Returns measured bandwidth which may be lower than theoretical peak.
+    Relative ratios between devices remain accurate for placement decisions.
     """
-    return APPLE_SILICON_BANDWIDTH.get(chip_id)
+    bandwidth = _profile_memory_bandwidth_numpy()
+    if bandwidth and bandwidth > 0:
+        return bandwidth
+
+    bandwidth = _profile_memory_bandwidth_simple()
+    if bandwidth and bandwidth > 0:
+        return bandwidth
+
+    return None
+
+
+def get_memory_bandwidth(_chip_id: str) -> int | None:
+    """
+    Returns measured memory bandwidth in bytes/second.
+
+    Uses runtime profiling via numpy benchmarks. Works on any platform.
+    """
+    return profile_memory_bandwidth()
