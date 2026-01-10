@@ -200,6 +200,7 @@ def test_get_shard_assignments(
         storage_size=Memory.from_kb(1000),
         hidden_size=1000,
         supports_tensor=True,
+        supports_vision=False,
     )
     cycles = topology.get_cycles()
     selected_cycle = cycles[0]

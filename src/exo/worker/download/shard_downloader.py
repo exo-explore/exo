@@ -90,6 +90,7 @@ NOOP_DOWNLOAD_PROGRESS = RepoDownloadProgress(
             n_layers=1,
             hidden_size=1,
             supports_tensor=False,
+            supports_vision=False,
         ),
         device_rank=0,
         world_size=1,

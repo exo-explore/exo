@@ -40,6 +40,7 @@ def get_pipeline_shard_metadata(
             n_layers=32,
             hidden_size=2048,
             supports_tensor=False,
+            supports_vision=False,
         ),
         device_rank=device_rank,
         world_size=world_size,

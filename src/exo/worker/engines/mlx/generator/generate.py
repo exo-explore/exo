@@ -195,7 +195,7 @@ def mlx_generate(
             model,
             tokenizer,
             prompt,
-            images[0] if images else None,
+            images if images else None,
             max_tokens=max_tokens,
             temp=temperature,
             verbose=False,

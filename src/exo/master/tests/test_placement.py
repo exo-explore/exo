@@ -52,6 +52,7 @@ def model_meta() -> ModelMetadata:
         n_layers=10,
         hidden_size=30,
         supports_tensor=True,
+        supports_vision=False,
     )
 
 

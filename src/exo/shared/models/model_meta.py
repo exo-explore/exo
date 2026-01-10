@@ -141,4 +141,7 @@ async def _get_model_meta(model_id: str) -> ModelMetadata:
         supports_tensor=model_card.metadata.supports_tensor
         if model_card is not None
         else False,
+        supports_vision=model_card.metadata.supports_vision
+        if model_card is not None
+        else False,
     )
