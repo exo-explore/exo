@@ -16,6 +16,7 @@ digest.txt
 *.xcuserdatad/
 **/.DS_Store
 app/EXO/build/
+dist/
 
 
 # rust

@@ -1,23 +1,26 @@
 /**
  * AppStore - Central state management for the EXO dashboard
- * 
+ *
  * Manages:
  * - Chat state (whether a conversation has started)
  * - Topology data from the EXO server
  * - UI state for the topology/chat transition
  */
 
-import { browser } from '$app/environment';
+import { browser } from "$app/environment";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
-	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+	if (
+		typeof crypto !== "undefined" &&
+		typeof crypto.randomUUID === "function"
+	) {
 		return crypto.randomUUID();
 	}
 	// Fallback implementation
-	return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-		const r = Math.random() * 16 | 0;
-		const v = c === 'x' ? r : (r & 0x3 | 0x8);
+	return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+		const r = (Math.random() * 16) | 0;
+		const v = c === "x" ? r : (r & 0x3) | 0x8;
 		return v.toString(16);
 	});
 }
@@ -102,7 +105,9 @@ interface RawTopologyNode {
 interface RawTopologyConnection {
 	localNodeId: string;
 	sendBackNodeId: string;
-	sendBackMultiaddr?: { multiaddr?: string; address?: string; ip_address?: string } | string;
+	sendBackMultiaddr?:
+		| { multiaddr?: string; address?: string; ip_address?: string }
+		| string;
 }
 
 interface RawTopology {
@@ -143,8 +148,8 @@ export interface ModelDownloadStatus {
 // Placement preview from the API
 export interface PlacementPreview {
 	model_id: string;
-	sharding: 'Pipeline' | 'Tensor';
-	instance_meta: 'MlxRing' | 'MlxIbv' | 'MlxJaccl';
+	sharding: "Pipeline" | "Tensor";
+	instance_meta: "MlxRing" | "MlxIbv" | "MlxJaccl";
 	instance: unknown | null;
 	memory_delta_by_node: Record<string, number> | null;
 	error: string | null;
@@ -156,14 +161,21 @@ export interface PlacementPreviewResponse {
 
 interface RawStateResponse {
 	topology?: RawTopology;
-	instances?: Record<string, { MlxRingInstance?: Instance; MlxIbvInstance?: Instance; MlxJacclInstance?: Instance }>;
+	instances?: Record<
+		string,
+		{
+			MlxRingInstance?: Instance;
+			MlxIbvInstance?: Instance;
+			MlxJacclInstance?: Instance;
+		}
+	>;
 	runners?: Record<string, unknown>;
 	downloads?: Record<string, unknown[]>;
 	nodeProfiles?: RawNodeProfiles;
 }
 
 export interface MessageAttachment {
-	type: 'image' | 'text' | 'file';
+	type: "image" | "text" | "file";
 	name: string;
 	content?: string;
 	preview?: string;
@@ -172,13 +184,13 @@ export interface MessageAttachment {
 
 export interface Message {
 	id: string;
-	role: 'user' | 'assistant' | 'system';
+	role: "user" | "assistant" | "system";
 	content: string;
 	timestamp: number;
 	thinking?: string;
 	attachments?: MessageAttachment[];
-	ttftMs?: number;  // Time to first token in ms (for assistant messages)
-	tps?: number;     // Tokens per second (for assistant messages)
+	ttftMs?: number; // Time to first token in ms (for assistant messages)
+	tps?: number; // Tokens per second (for assistant messages)
 }
 
 export interface Conversation {
@@ -192,9 +204,12 @@ export interface Conversation {
 	instanceType: string | null;
 }
 
-const STORAGE_KEY = 'exo-conversations';
+const STORAGE_KEY = "exo-conversations";
 
-function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): TopologyData {
+function transformTopology(
+	raw: RawTopology,
+	profiles?: RawNodeProfiles,
+): TopologyData {
 	const nodes: Record<string, NodeInfo> = {};
 	const edges: TopologyEdge[] = [];
 
@@ -205,58 +220,75 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 		const ramAvailable = profile?.memory?.ramAvailable?.inBytes ?? 0;
 		const ramUsage = Math.max(ramTotal - ramAvailable, 0);
 
-		const networkInterfaces = (profile?.networkInterfaces || []).map((iface) => {
-			const addresses: string[] = [];
-			if (iface.ipAddress && typeof iface.ipAddress === 'string') {
-				addresses.push(iface.ipAddress);
-			}
-			if (Array.isArray(iface.addresses)) {
-				for (const addr of iface.addresses) {
-					if (typeof addr === 'string') addresses.push(addr);
-					else if (addr && typeof addr === 'object' && addr.address) addresses.push(addr.address);
+		const networkInterfaces = (profile?.networkInterfaces || []).map(
+			(iface) => {
+				const addresses: string[] = [];
+				if (iface.ipAddress && typeof iface.ipAddress === "string") {
+					addresses.push(iface.ipAddress);
 				}
-			}
-			if (Array.isArray(iface.ipAddresses)) {
-				addresses.push(...iface.ipAddresses.filter((a): a is string => typeof a === 'string'));
-			}
-			if (Array.isArray(iface.ips)) {
-				addresses.push(...iface.ips.filter((a): a is string => typeof a === 'string'));
-			}
-			if (iface.ipv4 && typeof iface.ipv4 === 'string') addresses.push(iface.ipv4);
-			if (iface.ipv6 && typeof iface.ipv6 === 'string') addresses.push(iface.ipv6);
+				if (Array.isArray(iface.addresses)) {
+					for (const addr of iface.addresses) {
+						if (typeof addr === "string") addresses.push(addr);
+						else if (addr && typeof addr === "object" && addr.address)
+							addresses.push(addr.address);
+					}
+				}
+				if (Array.isArray(iface.ipAddresses)) {
+					addresses.push(
+						...iface.ipAddresses.filter(
+							(a): a is string => typeof a === "string",
+						),
+					);
+				}
+				if (Array.isArray(iface.ips)) {
+					addresses.push(
+						...iface.ips.filter((a): a is string => typeof a === "string"),
+					);
+				}
+				if (iface.ipv4 && typeof iface.ipv4 === "string")
+					addresses.push(iface.ipv4);
+				if (iface.ipv6 && typeof iface.ipv6 === "string")
+					addresses.push(iface.ipv6);
 
-			return {
-				name: iface.name,
-				addresses: Array.from(new Set(addresses))
-			};
-		});
+				return {
+					name: iface.name,
+					addresses: Array.from(new Set(addresses)),
+				};
+			},
+		);
 
 		const ipToInterface: Record<string, string> = {};
 		for (const iface of networkInterfaces) {
 			for (const addr of iface.addresses || []) {
-				ipToInterface[addr] = iface.name ?? '';
+				ipToInterface[addr] = iface.name ?? "";
 			}
 		}
 
 		nodes[node.nodeId] = {
 			system_info: {
-				model_id: profile?.modelId ?? 'Unknown',
+				model_id: profile?.modelId ?? "Unknown",
 				chip: profile?.chipId,
-				memory: ramTotal
+				memory: ramTotal,
 			},
 			network_interfaces: networkInterfaces,
 			ip_to_interface: ipToInterface,
 			macmon_info: {
 				memory: {
 					ram_usage: ramUsage,
-					ram_total: ramTotal
+					ram_total: ramTotal,
 				},
-				temp: profile?.system?.temp !== undefined ? { gpu_temp_avg: profile.system.temp } : undefined,
-				gpu_usage: profile?.system?.gpuUsage !== undefined ? [0, profile.system.gpuUsage] : undefined,
-				sys_power: profile?.system?.sysPower
+				temp:
+					profile?.system?.temp !== undefined
+						? { gpu_temp_avg: profile.system.temp }
+						: undefined,
+				gpu_usage:
+					profile?.system?.gpuUsage !== undefined
+						? [0, profile.system.gpuUsage]
+						: undefined,
+				sys_power: profile?.system?.sysPower,
 			},
 			last_macmon_update: Date.now() / 1000,
-			friendly_name: profile?.friendlyName
+			friendly_name: profile?.friendlyName,
 		};
 	}
 
@@ -268,17 +300,20 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 		let sendBackIp: string | undefined;
 		if (conn.sendBackMultiaddr) {
 			const multi = conn.sendBackMultiaddr;
-			if (typeof multi === 'string') {
+			if (typeof multi === "string") {
 				sendBackIp = extractIpFromMultiaddr(multi);
 			} else {
-				sendBackIp = multi.ip_address || extractIpFromMultiaddr(multi.multiaddr) || extractIpFromMultiaddr(multi.address);
+				sendBackIp =
+					multi.ip_address ||
+					extractIpFromMultiaddr(multi.multiaddr) ||
+					extractIpFromMultiaddr(multi.address);
 			}
 		}
 
 		edges.push({
 			source: conn.localNodeId,
 			target: conn.sendBackNodeId,
-			sendBackIp
+			sendBackIp,
 		});
 	}
 
@@ -287,9 +322,9 @@ function transformTopology(raw: RawTopology, profiles?: RawNodeProfiles): Topolo
 
 function extractIpFromMultiaddr(ma?: string): string | undefined {
 	if (!ma) return undefined;
-	const parts = ma.split('/');
-	const ip4Idx = parts.indexOf('ip4');
-	const ip6Idx = parts.indexOf('ip6');
+	const parts = ma.split("/");
+	const ip4Idx = parts.indexOf("ip4");
+	const ip6Idx = parts.indexOf("ip6");
 	const idx = ip4Idx >= 0 ? ip4Idx : ip6Idx;
 	if (idx >= 0 && parts.length > idx + 1) {
 		return parts[idx + 1];
@@ -305,7 +340,7 @@ class AppStore {
 	// Chat state
 	hasStartedChat = $state(false);
 	messages = $state<Message[]>([]);
-	currentResponse = $state('');
+	currentResponse = $state("");
 	isLoading = $state(false);
 
 	// Performance metrics
@@ -329,7 +364,7 @@ class AppStore {
 	debugMode = $state(false);
 	topologyOnlyMode = $state(false);
 	chatSidebarVisible = $state(true); // Shown by default
-	
+
 	private fetchInterval: ReturnType<typeof setInterval> | null = null;
 	private previewsInterval: ReturnType<typeof setInterval> | null = null;
 	private lastConversationPersistTs = 0;
@@ -354,17 +389,17 @@ class AppStore {
 				const parsed = JSON.parse(stored) as Array<Partial<Conversation>>;
 				this.conversations = parsed.map((conversation) => ({
 					id: conversation.id ?? generateUUID(),
-					name: conversation.name ?? 'Chat',
+					name: conversation.name ?? "Chat",
 					messages: conversation.messages ?? [],
 					createdAt: conversation.createdAt ?? Date.now(),
 					updatedAt: conversation.updatedAt ?? Date.now(),
 					modelId: conversation.modelId ?? null,
 					sharding: conversation.sharding ?? null,
-					instanceType: conversation.instanceType ?? null
+					instanceType: conversation.instanceType ?? null,
 				}));
 			}
 		} catch (error) {
-			console.error('Failed to load conversations:', error);
+			console.error("Failed to load conversations:", error);
 		}
 	}
 
@@ -375,64 +410,70 @@ class AppStore {
 		try {
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(this.conversations));
 		} catch (error) {
-			console.error('Failed to save conversations:', error);
+			console.error("Failed to save conversations:", error);
 		}
 	}
 
 	private loadDebugModeFromStorage() {
 		try {
-			const stored = localStorage.getItem('exo-debug-mode');
+			const stored = localStorage.getItem("exo-debug-mode");
 			if (stored !== null) {
-				this.debugMode = stored === 'true';
+				this.debugMode = stored === "true";
 			}
 		} catch (error) {
-			console.error('Failed to load debug mode:', error);
+			console.error("Failed to load debug mode:", error);
 		}
 	}
 
 	private saveDebugModeToStorage() {
 		try {
-			localStorage.setItem('exo-debug-mode', this.debugMode ? 'true' : 'false');
+			localStorage.setItem("exo-debug-mode", this.debugMode ? "true" : "false");
 		} catch (error) {
-			console.error('Failed to save debug mode:', error);
+			console.error("Failed to save debug mode:", error);
 		}
 	}
 
 	private loadTopologyOnlyModeFromStorage() {
 		try {
-			const stored = localStorage.getItem('exo-topology-only-mode');
+			const stored = localStorage.getItem("exo-topology-only-mode");
 			if (stored !== null) {
-				this.topologyOnlyMode = stored === 'true';
+				this.topologyOnlyMode = stored === "true";
 			}
 		} catch (error) {
-			console.error('Failed to load topology only mode:', error);
+			console.error("Failed to load topology only mode:", error);
 		}
 	}
 
 	private saveTopologyOnlyModeToStorage() {
 		try {
-			localStorage.setItem('exo-topology-only-mode', this.topologyOnlyMode ? 'true' : 'false');
+			localStorage.setItem(
+				"exo-topology-only-mode",
+				this.topologyOnlyMode ? "true" : "false",
+			);
 		} catch (error) {
-			console.error('Failed to save topology only mode:', error);
+			console.error("Failed to save topology only mode:", error);
 		}
 	}
 
 	private loadChatSidebarVisibleFromStorage() {
 		try {
-			const stored = localStorage.getItem('exo-chat-sidebar-visible');
+			const stored = localStorage.getItem("exo-chat-sidebar-visible");
 			if (stored !== null) {
-				this.chatSidebarVisible = stored === 'true';
+				this.chatSidebarVisible = stored === "true";
 			}
 		} catch (error) {
-			console.error('Failed to load chat sidebar visibility:', error);
+			console.error("Failed to load chat sidebar visibility:", error);
 		}
 	}
 
 	private saveChatSidebarVisibleToStorage() {
 		try {
-			localStorage.setItem('exo-chat-sidebar-visible', this.chatSidebarVisible ? 'true' : 'false');
+			localStorage.setItem(
+				"exo-chat-sidebar-visible",
+				this.chatSidebarVisible ? "true" : "false",
+			);
 		} catch (error) {
-			console.error('Failed to save chat sidebar visibility:', error);
+			console.error("Failed to save chat sidebar visibility:", error);
 		}
 	}
 
@@ -473,13 +514,15 @@ class AppStore {
 
 		const conversation: Conversation = {
 			id,
-			name: name || `Chat ${new Date(now).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+			name:
+				name ||
+				`Chat ${new Date(now).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
 			messages: [],
 			createdAt: now,
 			updatedAt: now,
 			modelId: derivedModelId,
 			sharding: derivedSharding,
-			instanceType: derivedInstanceType
+			instanceType: derivedInstanceType,
 		};
 
 		this.conversations.unshift(conversation);
@@ -497,7 +540,7 @@ class AppStore {
 	 * Load a conversation by ID
 	 */
 	loadConversation(id: string): boolean {
-		const conversation = this.conversations.find(c => c.id === id);
+		const conversation = this.conversations.find((c) => c.id === id);
 		if (!conversation) return false;
 
 		this.activeConversationId = id;
@@ -514,7 +557,7 @@ class AppStore {
 	 * Delete a conversation by ID
 	 */
 	deleteConversation(id: string) {
-		this.conversations = this.conversations.filter(c => c.id !== id);
+		this.conversations = this.conversations.filter((c) => c.id !== id);
 
 		if (this.activeConversationId === id) {
 			this.activeConversationId = null;
@@ -542,7 +585,7 @@ class AppStore {
 	 * Rename a conversation
 	 */
 	renameConversation(id: string, newName: string) {
-		const conversation = this.conversations.find(c => c.id === id);
+		const conversation = this.conversations.find((c) => c.id === id);
 		if (conversation) {
 			conversation.name = newName;
 			conversation.updatedAt = Date.now();
@@ -551,7 +594,7 @@ class AppStore {
 	}
 
 	private getTaggedValue(obj: unknown): [string | null, unknown] {
-		if (!obj || typeof obj !== 'object') return [null, null];
+		if (!obj || typeof obj !== "object") return [null, null];
 		const keys = Object.keys(obj as Record<string, unknown>);
 		if (keys.length === 1) {
 			return [keys[0], (obj as Record<string, unknown>)[keys[0]]];
@@ -561,36 +604,50 @@ class AppStore {
 
 	private extractInstanceModelId(instanceWrapped: unknown): string | null {
 		const [, instance] = this.getTaggedValue(instanceWrapped);
-		if (!instance || typeof instance !== 'object') return null;
+		if (!instance || typeof instance !== "object") return null;
 		const inst = instance as { shardAssignments?: { modelId?: string } };
 		return inst.shardAssignments?.modelId ?? null;
 	}
 
-	private describeInstance(instanceWrapped: unknown): { sharding: string | null; instanceType: string | null } {
+	private describeInstance(instanceWrapped: unknown): {
+		sharding: string | null;
+		instanceType: string | null;
+	} {
 		const [instanceTag, instance] = this.getTaggedValue(instanceWrapped);
-		if (!instance || typeof instance !== 'object') {
+		if (!instance || typeof instance !== "object") {
 			return { sharding: null, instanceType: null };
 		}
 
 		let instanceType: string | null = null;
-		if (instanceTag === 'MlxRingInstance') instanceType = 'MLX Ring';
-		else if (instanceTag === 'MlxIbvInstance' || instanceTag === 'MlxJacclInstance') instanceType = 'MLX RDMA';
+		if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
+		else if (
+			instanceTag === "MlxIbvInstance" ||
+			instanceTag === "MlxJacclInstance"
+		)
+			instanceType = "MLX RDMA";
 
 		let sharding: string | null = null;
-		const inst = instance as { shardAssignments?: { runnerToShard?: Record<string, unknown> } };
+		const inst = instance as {
+			shardAssignments?: { runnerToShard?: Record<string, unknown> };
+		};
 		const runnerToShard = inst.shardAssignments?.runnerToShard || {};
 		const firstShardWrapped = Object.values(runnerToShard)[0];
 		if (firstShardWrapped) {
 			const [shardTag] = this.getTaggedValue(firstShardWrapped);
-			if (shardTag === 'PipelineShardMetadata') sharding = 'Pipeline';
-			else if (shardTag === 'TensorShardMetadata') sharding = 'Tensor';
-			else if (shardTag === 'PrefillDecodeShardMetadata') sharding = 'Prefill/Decode';
+			if (shardTag === "PipelineShardMetadata") sharding = "Pipeline";
+			else if (shardTag === "TensorShardMetadata") sharding = "Tensor";
+			else if (shardTag === "PrefillDecodeShardMetadata")
+				sharding = "Prefill/Decode";
 		}
 
 		return { sharding, instanceType };
 	}
 
-	private buildConversationModelInfo(modelId: string): { modelId: string; sharding: string | null; instanceType: string | null } {
+	private buildConversationModelInfo(modelId: string): {
+		modelId: string;
+		sharding: string | null;
+		instanceType: string | null;
+	} {
 		let sharding: string | null = null;
 		let instanceType: string | null = null;
 
@@ -607,9 +664,15 @@ class AppStore {
 		return { modelId, sharding, instanceType };
 	}
 
-	private applyConversationModelInfo(info: { modelId: string; sharding: string | null; instanceType: string | null }) {
+	private applyConversationModelInfo(info: {
+		modelId: string;
+		sharding: string | null;
+		instanceType: string | null;
+	}) {
 		if (!this.activeConversationId) return;
-		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
+		const conversation = this.conversations.find(
+			(c) => c.id === this.activeConversationId,
+		);
 		if (!conversation) return;
 
 		// Keep the first known modelId stable; only backfill if missing
@@ -622,21 +685,29 @@ class AppStore {
 	}
 
 	private getModelTail(modelId: string): string {
-		const parts = modelId.split('/');
+		const parts = modelId.split("/");
 		return (parts[parts.length - 1] || modelId).toLowerCase();
 	}
 
-	private isBetterModelId(currentId: string | null, candidateId: string | null): boolean {
+	private isBetterModelId(
+		currentId: string | null,
+		candidateId: string | null,
+	): boolean {
 		if (!candidateId) return false;
 		if (!currentId) return true;
 		const currentTail = this.getModelTail(currentId);
 		const candidateTail = this.getModelTail(candidateId);
-		return candidateTail.length > currentTail.length && candidateTail.startsWith(currentTail);
+		return (
+			candidateTail.length > currentTail.length &&
+			candidateTail.startsWith(currentTail)
+		);
 	}
 
 	private refreshConversationModelFromInstances() {
 		if (!this.activeConversationId) return;
-		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
+		const conversation = this.conversations.find(
+			(c) => c.id === this.activeConversationId,
+		);
 		if (!conversation) return;
 
 		// Prefer stored model; do not replace it once set. Only backfill when missing.
@@ -675,7 +746,9 @@ class AppStore {
 		}
 
 		const info = this.buildConversationModelInfo(preferredModelId);
-		const hasNewInfo = Boolean(info.sharding || info.instanceType || !conversation.modelId);
+		const hasNewInfo = Boolean(
+			info.sharding || info.instanceType || !conversation.modelId,
+		);
 		if (hasNewInfo) {
 			this.applyConversationModelInfo(info);
 		}
@@ -691,23 +764,28 @@ class AppStore {
 	private updateActiveConversation() {
 		if (!this.activeConversationId) return;
 
-		const conversation = this.conversations.find(c => c.id === this.activeConversationId);
+		const conversation = this.conversations.find(
+			(c) => c.id === this.activeConversationId,
+		);
 		if (conversation) {
 			conversation.messages = [...this.messages];
 			conversation.updatedAt = Date.now();
 
 			// Auto-generate name from first user message if still has default name
-			if (conversation.name.startsWith('Chat ')) {
-				const firstUserMsg = conversation.messages.find(m => m.role === 'user' && m.content.trim());
+			if (conversation.name.startsWith("Chat ")) {
+				const firstUserMsg = conversation.messages.find(
+					(m) => m.role === "user" && m.content.trim(),
+				);
 				if (firstUserMsg) {
 					// Clean up the content - remove file context markers and whitespace
 					let content = firstUserMsg.content
-						.replace(/\[File:.*?\][\s\S]*?```[\s\S]*?```/g, '') // Remove file attachments
+						.replace(/\[File:.*?\][\s\S]*?```[\s\S]*?```/g, "") // Remove file attachments
 						.trim();
 
 					if (content) {
 						const preview = content.slice(0, 50);
-						conversation.name = preview.length < content.length ? preview + '...' : preview;
+						conversation.name =
+							preview.length < content.length ? preview + "..." : preview;
 					}
 				}
 			}
@@ -783,7 +861,7 @@ class AppStore {
 
 	async fetchState() {
 		try {
-			const response = await fetch('/state');
+			const response = await fetch("/state");
 			if (!response.ok) {
 				throw new Error(`Failed to fetch state: ${response.status}`);
 			}
@@ -804,7 +882,7 @@ class AppStore {
 			}
 			this.lastUpdate = Date.now();
 		} catch (error) {
-			console.error('Error fetching state:', error);
+			console.error("Error fetching state:", error);
 		}
 	}
 
@@ -817,14 +895,18 @@ class AppStore {
 		this.selectedPreviewModelId = modelId;
 
 		try {
-			const response = await fetch(`/instance/previews?model_id=${encodeURIComponent(modelId)}`);
+			const response = await fetch(
+				`/instance/previews?model_id=${encodeURIComponent(modelId)}`,
+			);
 			if (!response.ok) {
-				throw new Error(`Failed to fetch placement previews: ${response.status}`);
+				throw new Error(
+					`Failed to fetch placement previews: ${response.status}`,
+				);
 			}
 			const data: PlacementPreviewResponse = await response.json();
 			this.placementPreviews = data.previews;
 		} catch (error) {
-			console.error('Error fetching placement previews:', error);
+			console.error("Error fetching placement previews:", error);
 			this.placementPreviews = [];
 		} finally {
 			if (showLoading) {
@@ -885,12 +967,12 @@ class AppStore {
 	/**
 	 * Add a message to the conversation
 	 */
-	addMessage(role: 'user' | 'assistant', content: string) {
+	addMessage(role: "user" | "assistant", content: string) {
 		const message: Message = {
 			id: generateUUID(),
 			role,
 			content,
-			timestamp: Date.now()
+			timestamp: Date.now(),
 		};
 		this.messages.push(message);
 		return message;
@@ -900,7 +982,7 @@ class AppStore {
 	 * Delete a message and all subsequent messages
 	 */
 	deleteMessage(messageId: string) {
-		const messageIndex = this.messages.findIndex(m => m.id === messageId);
+		const messageIndex = this.messages.findIndex((m) => m.id === messageId);
 		if (messageIndex === -1) return;
 
 		// Remove this message and all subsequent messages
@@ -912,7 +994,7 @@ class AppStore {
 	 * Edit a user message content (does not regenerate response)
 	 */
 	editMessage(messageId: string, newContent: string) {
-		const message = this.messages.find(m => m.id === messageId);
+		const message = this.messages.find((m) => m.id === messageId);
 		if (!message) return;
 
 		message.content = newContent;
@@ -923,12 +1005,15 @@ class AppStore {
 	/**
 	 * Edit a user message and regenerate the response
 	 */
-	async editAndRegenerate(messageId: string, newContent: string): Promise<void> {
-		const messageIndex = this.messages.findIndex(m => m.id === messageId);
+	async editAndRegenerate(
+		messageId: string,
+		newContent: string,
+	): Promise<void> {
+		const messageIndex = this.messages.findIndex((m) => m.id === messageId);
 		if (messageIndex === -1) return;
 
 		const message = this.messages[messageIndex];
-		if (message.role !== 'user') return;
+		if (message.role !== "user") return;
 
 		// Update the message content
 		message.content = newContent;
@@ -950,35 +1035,36 @@ class AppStore {
 		// Find the last user message
 		let lastUserIndex = -1;
 		for (let i = this.messages.length - 1; i >= 0; i--) {
-			if (this.messages[i].role === 'user') {
+			if (this.messages[i].role === "user") {
 				lastUserIndex = i;
 				break;
 			}
 		}
 
 		if (lastUserIndex === -1) return;
-		
+
 		// Remove any messages after the user message
 		this.messages = this.messages.slice(0, lastUserIndex + 1);
 
 		// Resend the message to get a new response
 		this.isLoading = true;
-		this.currentResponse = '';
+		this.currentResponse = "";
 
 		// Create placeholder for assistant message
-		const assistantMessage = this.addMessage('assistant', '');
+		const assistantMessage = this.addMessage("assistant", "");
 
 		try {
 			const systemPrompt = {
-				role: 'system' as const,
-				content: 'You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process.'
+				role: "system" as const,
+				content:
+					"You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process.",
 			};
 
 			const apiMessages = [
 				systemPrompt,
 				...this.messages.slice(0, -1).map((m) => {
 					return { role: m.role, content: m.content };
-				})
+				}),
 			];
 
 			// Determine which model to use
@@ -986,42 +1072,52 @@ class AppStore {
 			if (!modelToUse) {
 				const firstInstanceKey = Object.keys(this.instances)[0];
 				if (firstInstanceKey) {
-					const instance = this.instances[firstInstanceKey] as Record<string, unknown> | undefined;
+					const instance = this.instances[firstInstanceKey] as
+						| Record<string, unknown>
+						| undefined;
 					if (instance) {
 						const keys = Object.keys(instance);
 						if (keys.length === 1) {
-							const inst = instance[keys[0]] as { shardAssignments?: { modelId?: string } } | undefined;
-							modelToUse = inst?.shardAssignments?.modelId || '';
+							const inst = instance[keys[0]] as
+								| { shardAssignments?: { modelId?: string } }
+								| undefined;
+							modelToUse = inst?.shardAssignments?.modelId || "";
 						}
 					}
 				}
 			}
 
 			if (!modelToUse) {
-				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+				const idx = this.messages.findIndex(
+					(m) => m.id === assistantMessage.id,
+				);
 				if (idx !== -1) {
-					this.messages[idx].content = 'Error: No model available. Please launch an instance first.';
+					this.messages[idx].content =
+						"Error: No model available. Please launch an instance first.";
 				}
 				this.isLoading = false;
 				this.updateActiveConversation();
 				return;
 			}
 
-			const response = await fetch('/v1/chat/completions', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+			const response = await fetch("/v1/chat/completions", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					model: modelToUse,
 					messages: apiMessages,
-					stream: true
-				})
+					stream: true,
+				}),
 			});
 
 			if (!response.ok) {
 				const errorText = await response.text();
-				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+				const idx = this.messages.findIndex(
+					(m) => m.id === assistantMessage.id,
+				);
 				if (idx !== -1) {
-					this.messages[idx].content = `Error: ${response.status} - ${errorText}`;
+					this.messages[idx].content =
+						`Error: ${response.status} - ${errorText}`;
 				}
 				this.isLoading = false;
 				this.updateActiveConversation();
@@ -1030,9 +1126,11 @@ class AppStore {
 
 			const reader = response.body?.getReader();
 			if (!reader) {
-				const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+				const idx = this.messages.findIndex(
+					(m) => m.id === assistantMessage.id,
+				);
 				if (idx !== -1) {
-					this.messages[idx].content = 'Error: No response stream available';
+					this.messages[idx].content = "Error: No response stream available";
 				}
 				this.isLoading = false;
 				this.updateActiveConversation();
@@ -1040,32 +1138,35 @@ class AppStore {
 			}
 
 			const decoder = new TextDecoder();
-			let fullContent = '';
-			let partialLine = '';
+			let fullContent = "";
+			let partialLine = "";
 
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 
 				const chunk = decoder.decode(value, { stream: true });
-				const lines = (partialLine + chunk).split('\n');
-				partialLine = lines.pop() || '';
+				const lines = (partialLine + chunk).split("\n");
+				partialLine = lines.pop() || "";
 
 				for (const line of lines) {
 					const trimmed = line.trim();
-					if (!trimmed || trimmed === 'data: [DONE]') continue;
+					if (!trimmed || trimmed === "data: [DONE]") continue;
 
-					if (trimmed.startsWith('data: ')) {
+					if (trimmed.startsWith("data: ")) {
 						try {
 							const json = JSON.parse(trimmed.slice(6));
 							const delta = json.choices?.[0]?.delta?.content;
 							if (delta) {
 								fullContent += delta;
-								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
+								const { displayContent, thinkingContent } =
+									this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
-								
+
 								// Update the assistant message in place (triggers Svelte reactivity)
-								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+								const idx = this.messages.findIndex(
+									(m) => m.id === assistantMessage.id,
+								);
 								if (idx !== -1) {
 									this.messages[idx].content = displayContent;
 									this.messages[idx].thinking = thinkingContent || undefined;
@@ -1078,25 +1179,26 @@ class AppStore {
 					}
 				}
 			}
-			
+
 			// Final cleanup of the message
-			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
-			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			const { displayContent, thinkingContent } =
+				this.stripThinkingTags(fullContent);
+			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
 			if (idx !== -1) {
 				this.messages[idx].content = displayContent;
 				this.messages[idx].thinking = thinkingContent || undefined;
 			}
 			this.persistActiveConversation();
-			
 		} catch (error) {
-			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
 			if (idx !== -1) {
-				this.messages[idx].content = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+				this.messages[idx].content =
+					`Error: ${error instanceof Error ? error.message : "Unknown error"}`;
 			}
 			this.persistActiveConversation();
 		} finally {
 			this.isLoading = false;
-			this.currentResponse = '';
+			this.currentResponse = "";
 			this.updateActiveConversation();
 		}
 	}
@@ -1104,7 +1206,7 @@ class AppStore {
 	/**
 	 * Selected model for chat (can be set by the UI)
 	 */
-	selectedChatModel = $state('');
+	selectedChatModel = $state("");
 
 	/**
 	 * Set the model to use for chat
@@ -1120,7 +1222,10 @@ class AppStore {
 	 * Strip thinking tags from content for display.
 	 * Handles both complete <think>...</think> blocks and in-progress <think>... blocks during streaming.
 	 */
-	private stripThinkingTags(content: string): { displayContent: string; thinkingContent: string } {
+	private stripThinkingTags(content: string): {
+		displayContent: string;
+		thinkingContent: string;
+	} {
 		const extracted: string[] = [];
 		let displayContent = content;
 
@@ -1131,10 +1236,10 @@ class AppStore {
 			const inner = match[1]?.trim();
 			if (inner) extracted.push(inner);
 		}
-		displayContent = displayContent.replace(completeBlockRegex, '');
+		displayContent = displayContent.replace(completeBlockRegex, "");
 
 		// Handle in-progress thinking block (has <think> but no closing </think> yet)
-		const openTagIndex = displayContent.lastIndexOf('<think>');
+		const openTagIndex = displayContent.lastIndexOf("<think>");
 		if (openTagIndex !== -1) {
 			const inProgressThinking = displayContent.slice(openTagIndex + 7).trim();
 			if (inProgressThinking) {
@@ -1143,54 +1248,67 @@ class AppStore {
 			displayContent = displayContent.slice(0, openTagIndex);
 		}
 
-		return { displayContent: displayContent.trim(), thinkingContent: extracted.join('\n\n') };
+		return {
+			displayContent: displayContent.trim(),
+			thinkingContent: extracted.join("\n\n"),
+		};
 	}
 
 	/**
 	 * Send a message to the LLM and stream the response
 	 */
-	async sendMessage(content: string, files?: { id: string; name: string; type: string; textContent?: string; preview?: string }[]): Promise<void> {
-		if ((!content.trim() && (!files || files.length === 0)) || this.isLoading) return;
+	async sendMessage(
+		content: string,
+		files?: {
+			id: string;
+			name: string;
+			type: string;
+			textContent?: string;
+			preview?: string;
+		}[],
+	): Promise<void> {
+		if ((!content.trim() && (!files || files.length === 0)) || this.isLoading)
+			return;
 
 		if (!this.hasStartedChat) {
 			this.startChat();
 		}
 
 		this.isLoading = true;
-		this.currentResponse = '';
+		this.currentResponse = "";
 		this.ttftMs = null;
 		this.tps = null;
 		this.totalTokens = 0;
 
 		// Build attachments from files
 		const attachments: MessageAttachment[] = [];
-		let fileContext = '';
+		let fileContext = "";
 
 		if (files && files.length > 0) {
 			for (const file of files) {
-				const isImage = file.type.startsWith('image/');
+				const isImage = file.type.startsWith("image/");
 
 				if (isImage && file.preview) {
 					attachments.push({
-						type: 'image',
+						type: "image",
 						name: file.name,
 						preview: file.preview,
-						mimeType: file.type
+						mimeType: file.type,
 					});
 				} else if (file.textContent) {
 					attachments.push({
-						type: 'text',
+						type: "text",
 						name: file.name,
 						content: file.textContent,
-						mimeType: file.type
+						mimeType: file.type,
 					});
 					// Add text file content to the message context
 					fileContext += `\n\n[File: ${file.name}]\n\`\`\`\n${file.textContent}\n\`\`\``;
 				} else {
 					attachments.push({
-						type: 'file',
+						type: "file",
 						name: file.name,
-						mimeType: file.type
+						mimeType: file.type,
 					});
 				}
 			}
@@ -1202,22 +1320,23 @@ class AppStore {
 		// Add user message with attachments
 		const userMessage: Message = {
 			id: generateUUID(),
-			role: 'user',
+			role: "user",
 			content: content, // Store original content for display
 			timestamp: Date.now(),
-			attachments: attachments.length > 0 ? attachments : undefined
+			attachments: attachments.length > 0 ? attachments : undefined,
 		};
 		this.messages.push(userMessage);
 
 		// Create placeholder for assistant message
-		const assistantMessage = this.addMessage('assistant', '');
+		const assistantMessage = this.addMessage("assistant", "");
 		this.updateActiveConversation();
 
 		try {
 			// Build the messages array for the API with system prompt
 			const systemPrompt = {
-				role: 'system' as const,
-				content: 'You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process. When files are shared with you, analyze them and respond helpfully.'
+				role: "system" as const,
+				content:
+					"You are a helpful AI assistant. Respond directly and concisely. Do not show your reasoning or thought process. When files are shared with you, analyze them and respond helpfully.",
 			};
 
 			// Build API messages - include file content for text files
@@ -1230,7 +1349,7 @@ class AppStore {
 					// Add text attachments as context
 					if (m.attachments) {
 						for (const attachment of m.attachments) {
-							if (attachment.type === 'text' && attachment.content) {
+							if (attachment.type === "text" && attachment.content) {
 								msgContent += `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.content}\n\`\`\``;
 							}
 						}
@@ -1238,9 +1357,9 @@ class AppStore {
 
 					return {
 						role: m.role,
-						content: msgContent
+						content: msgContent,
 					};
-				})
+				}),
 			];
 
 			// Determine the model to use - prefer selectedChatModel, otherwise try to get from instances
@@ -1248,10 +1367,14 @@ class AppStore {
 			if (!modelToUse) {
 				// Try to get model from first running instance
 				for (const [, instanceWrapper] of Object.entries(this.instances)) {
-					if (instanceWrapper && typeof instanceWrapper === 'object') {
-						const keys = Object.keys(instanceWrapper as Record<string, unknown>);
+					if (instanceWrapper && typeof instanceWrapper === "object") {
+						const keys = Object.keys(
+							instanceWrapper as Record<string, unknown>,
+						);
 						if (keys.length === 1) {
-							const instance = (instanceWrapper as Record<string, unknown>)[keys[0]] as { shardAssignments?: { modelId?: string } };
+							const instance = (instanceWrapper as Record<string, unknown>)[
+								keys[0]
+							] as { shardAssignments?: { modelId?: string } };
 							if (instance?.shardAssignments?.modelId) {
 								modelToUse = instance.shardAssignments.modelId;
 								break;
@@ -1262,7 +1385,9 @@ class AppStore {
 			}
 
 			if (!modelToUse) {
-				throw new Error('No model selected and no running instances available. Please launch an instance first.');
+				throw new Error(
+					"No model selected and no running instances available. Please launch an instance first.",
+				);
 			}
 
 			const conversationModelInfo = this.buildConversationModelInfo(modelToUse);
@@ -1273,17 +1398,17 @@ class AppStore {
 			let firstTokenTime: number | null = null;
 			let tokenCount = 0;
 
-			const response = await fetch('/v1/chat/completions', {
-				method: 'POST',
+			const response = await fetch("/v1/chat/completions", {
+				method: "POST",
 				headers: {
-					'Content-Type': 'application/json'
+					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({
 					model: modelToUse,
 					messages: apiMessages,
 					temperature: 0.7,
-					stream: true
-				})
+					stream: true,
+				}),
 			});
 
 			if (!response.ok) {
@@ -1293,12 +1418,12 @@ class AppStore {
 
 			const reader = response.body?.getReader();
 			if (!reader) {
-				throw new Error('No response body');
+				throw new Error("No response body");
 			}
 
 			const decoder = new TextDecoder();
-			let fullContent = '';
-			let buffer = '';
+			let fullContent = "";
+			let buffer = "";
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -1307,16 +1432,16 @@ class AppStore {
 				buffer += decoder.decode(value, { stream: true });
 
 				// Process complete lines
-				const lines = buffer.split('\n');
-				buffer = lines.pop() || ''; // Keep incomplete line in buffer
+				const lines = buffer.split("\n");
+				buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
 				for (const line of lines) {
 					const trimmed = line.trim();
 					if (!trimmed) continue;
 
-					if (trimmed.startsWith('data: ')) {
+					if (trimmed.startsWith("data: ")) {
 						const data = trimmed.slice(6);
-						if (data === '[DONE]') continue;
+						if (data === "[DONE]") continue;
 
 						try {
 							const parsed = JSON.parse(data);
@@ -1341,11 +1466,14 @@ class AppStore {
 								fullContent += tokenContent;
 
 								// Strip thinking tags for display and extract thinking content
-								const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
+								const { displayContent, thinkingContent } =
+									this.stripThinkingTags(fullContent);
 								this.currentResponse = displayContent;
 
 								// Update the assistant message in place
-								const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+								const idx = this.messages.findIndex(
+									(m) => m.id === assistantMessage.id,
+								);
 								if (idx !== -1) {
 									this.messages[idx].content = displayContent;
 									this.messages[idx].thinking = thinkingContent || undefined;
@@ -1362,7 +1490,7 @@ class AppStore {
 			// Process any remaining buffer
 			if (buffer.trim()) {
 				const trimmed = buffer.trim();
-				if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
+				if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
 					try {
 						const parsed = JSON.parse(trimmed.slice(6));
 						const tokenContent = parsed.choices?.[0]?.delta?.content;
@@ -1383,8 +1511,9 @@ class AppStore {
 			}
 
 			// Final cleanup of the message
-			const { displayContent, thinkingContent } = this.stripThinkingTags(fullContent);
-			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			const { displayContent, thinkingContent } =
+				this.stripThinkingTags(fullContent);
+			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
 			if (idx !== -1) {
 				this.messages[idx].content = displayContent;
 				this.messages[idx].thinking = thinkingContent || undefined;
@@ -1397,18 +1526,18 @@ class AppStore {
 				}
 			}
 			this.persistActiveConversation();
-
 		} catch (error) {
-			console.error('Error sending message:', error);
+			console.error("Error sending message:", error);
 			// Update the assistant message with error
-			const idx = this.messages.findIndex(m => m.id === assistantMessage.id);
+			const idx = this.messages.findIndex((m) => m.id === assistantMessage.id);
 			if (idx !== -1) {
-				this.messages[idx].content = `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`;
+				this.messages[idx].content =
+					`Error: ${error instanceof Error ? error.message : "Failed to get response"}`;
 			}
 			this.persistActiveConversation();
 		} finally {
 			this.isLoading = false;
-			this.currentResponse = '';
+			this.currentResponse = "";
 			this.updateActiveConversation();
 		}
 	}
@@ -1421,7 +1550,7 @@ class AppStore {
 		this.messages = [];
 		this.hasStartedChat = false;
 		this.isTopologyMinimized = false;
-		this.currentResponse = '';
+		this.currentResponse = "";
 		// Clear performance stats
 		this.ttftMs = null;
 		this.tps = null;
@@ -1432,7 +1561,9 @@ class AppStore {
 	 */
 	getActiveConversation(): Conversation | null {
 		if (!this.activeConversationId) return null;
-		return this.conversations.find(c => c.id === this.activeConversationId) || null;
+		return (
+			this.conversations.find((c) => c.id === this.activeConversationId) || null
+		);
 	}
 	/* Place an instance on the topology to run the model */
 	async placeInstance(modelId: string, downloadOnly: boolean = false) {
@@ -1509,35 +1640,56 @@ export const chatSidebarVisible = () => appStore.getChatSidebarVisible();
 
 // Actions
 export const startChat = () => appStore.startChat();
-export const sendMessage = (content: string, files?: { id: string; name: string; type: string; textContent?: string; preview?: string }[]) => appStore.sendMessage(content, files);
+export const sendMessage = (
+	content: string,
+	files?: {
+		id: string;
+		name: string;
+		type: string;
+		textContent?: string;
+		preview?: string;
+	}[],
+) => appStore.sendMessage(content, files);
 export const clearChat = () => appStore.clearChat();
-export const setSelectedChatModel = (modelId: string) => appStore.setSelectedModel(modelId);
-export const selectPreviewModel = (modelId: string | null) => appStore.selectPreviewModel(modelId);
-export const deleteMessage = (messageId: string) => appStore.deleteMessage(messageId);
-export const editMessage = (messageId: string, newContent: string) => appStore.editMessage(messageId, newContent);
-export const editAndRegenerate = (messageId: string, newContent: string) => appStore.editAndRegenerate(messageId, newContent);
+export const setSelectedChatModel = (modelId: string) =>
+	appStore.setSelectedModel(modelId);
+export const selectPreviewModel = (modelId: string | null) =>
+	appStore.selectPreviewModel(modelId);
+export const deleteMessage = (messageId: string) =>
+	appStore.deleteMessage(messageId);
+export const editMessage = (messageId: string, newContent: string) =>
+	appStore.editMessage(messageId, newContent);
+export const editAndRegenerate = (messageId: string, newContent: string) =>
+	appStore.editAndRegenerate(messageId, newContent);
 export const regenerateLastResponse = () => appStore.regenerateLastResponse();
 export const registerCustomModel = (repoId: string) => appStore.registerCustomModel(repoId);
 
 // Conversation actions
 export const conversations = () => appStore.conversations;
 export const activeConversationId = () => appStore.activeConversationId;
-export const createConversation = (name?: string) => appStore.createConversation(name);
+export const createConversation = (name?: string) =>
+	appStore.createConversation(name);
 export const loadConversation = (id: string) => appStore.loadConversation(id);
-export const deleteConversation = (id: string) => appStore.deleteConversation(id);
+export const deleteConversation = (id: string) =>
+	appStore.deleteConversation(id);
 export const deleteAllConversations = () => appStore.deleteAllConversations();
-export const renameConversation = (id: string, name: string) => appStore.renameConversation(id, name);
+export const renameConversation = (id: string, name: string) =>
+	appStore.renameConversation(id, name);
 export const getActiveConversation = () => appStore.getActiveConversation();
 
 // Sidebar actions
 export const isSidebarOpen = () => appStore.isSidebarOpen;
 export const toggleSidebar = () => appStore.toggleSidebar();
 export const toggleDebugMode = () => appStore.toggleDebugMode();
-export const setDebugMode = (enabled: boolean) => appStore.setDebugMode(enabled);
+export const setDebugMode = (enabled: boolean) =>
+	appStore.setDebugMode(enabled);
 export const toggleTopologyOnlyMode = () => appStore.toggleTopologyOnlyMode();
-export const setTopologyOnlyMode = (enabled: boolean) => appStore.setTopologyOnlyMode(enabled);
-export const toggleChatSidebarVisible = () => appStore.toggleChatSidebarVisible();
-export const setChatSidebarVisible = (visible: boolean) => appStore.setChatSidebarVisible(visible);
+export const setTopologyOnlyMode = (enabled: boolean) =>
+	appStore.setTopologyOnlyMode(enabled);
+export const toggleChatSidebarVisible = () =>
+	appStore.toggleChatSidebarVisible();
+export const setChatSidebarVisible = (visible: boolean) =>
+	appStore.setChatSidebarVisible(visible);
 export const refreshState = () => appStore.fetchState();
 export const placeInstance = (modelId: string, downloadOnly: boolean) => appStore.placeInstance(modelId, downloadOnly);
 

@@ -57,7 +57,9 @@ final class ClusterStateService: ObservableObject {
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
             let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
+            guard let httpResponse = response as? HTTPURLResponse,
+                (200..<300).contains(httpResponse.statusCode)
+            else {
                 return
             }
             if let nodeId = try? decoder.decode(String.self, from: data) {
@@ -113,7 +115,9 @@ final class ClusterStateService: ObservableObject {
         }
     }
 
-    func launchInstance(modelId: String, sharding: String, instanceMeta: String, minNodes: Int) async {
+    func launchInstance(modelId: String, sharding: String, instanceMeta: String, minNodes: Int)
+        async
+    {
         do {
             var request = URLRequest(url: baseURL.appendingPathComponent("instance"))
             request.httpMethod = "POST"
@@ -122,7 +126,7 @@ final class ClusterStateService: ObservableObject {
                 "model_id": modelId,
                 "sharding": sharding,
                 "instance_meta": instanceMeta,
-                "min_nodes": minNodes
+                "min_nodes": minNodes,
             ]
             request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
             let (_, response) = try await session.data(for: request)
@@ -143,7 +147,9 @@ final class ClusterStateService: ObservableObject {
         do {
             let url = baseURL.appendingPathComponent("models")
             let (data, response) = try await session.data(from: url)
-            guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
+            guard let httpResponse = response as? HTTPURLResponse,
+                (200..<300).contains(httpResponse.statusCode)
+            else {
                 throw URLError(.badServerResponse)
             }
             let list = try decoder.decode(ModelListResponse.self, from: data)

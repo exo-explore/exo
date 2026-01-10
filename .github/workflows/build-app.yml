@@ -18,6 +18,7 @@ jobs:
       SPARKLE_ED25519_PRIVATE: ${{ secrets.SPARKLE_ED25519_PRIVATE }}
       SPARKLE_S3_BUCKET: ${{ secrets.SPARKLE_S3_BUCKET }}
       SPARKLE_S3_PREFIX: ${{ secrets.SPARKLE_S3_PREFIX }}
+      EXO_BUG_REPORT_PRESIGNED_URL_ENDPOINT: ${{ secrets.EXO_BUG_REPORT_PRESIGNED_URL_ENDPOINT }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
       EXO_BUILD_NUMBER: ${{ github.run_number }}
       EXO_LIBP2P_NAMESPACE: ${{ github.ref_name }}
@@ -46,6 +47,32 @@ jobs:
             fi
           fi
           echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Compute build version from semver
+        run: |
+          VERSION="$RELEASE_VERSION"
+          # Extract major.minor.patch (strip prerelease suffix)
+          BASE_VERSION="${VERSION%%-*}"
+          MAJOR=$(echo "$BASE_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$BASE_VERSION" | cut -d. -f2)
+          PATCH=$(echo "$BASE_VERSION" | cut -d. -f3)
+
+          # Extract prerelease number (e.g., "alpha.2" -> 2, or 999 for releases)
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE_PART="${VERSION#*-}"
+            PRERELEASE_NUM="${PRERELEASE_PART##*.}"
+            # Default to 0 if not a number
+            if ! [[ "$PRERELEASE_NUM" =~ ^[0-9]+$ ]]; then
+              PRERELEASE_NUM=0
+            fi
+          else
+            PRERELEASE_NUM=999
+          fi
+
+          # Compute: PRERELEASE + (1000 * PATCH) + (1_000_000 * MINOR) + (1_000_000_000 * MAJOR)
+          BUILD_VERSION=$((PRERELEASE_NUM + 1000 * PATCH + 1000000 * MINOR + 1000000000 * MAJOR))
+          echo "EXO_BUILD_VERSION=$BUILD_VERSION" >> $GITHUB_ENV
+          echo "Computed build version: $BUILD_VERSION from $VERSION"
 
       - name: Ensure tag commit is on main
         if: github.ref_type == 'tag'
@@ -162,11 +189,12 @@ jobs:
             -configuration Release \
             -derivedDataPath build \
             MARKETING_VERSION="$RELEASE_VERSION" \
-            CURRENT_PROJECT_VERSION="$EXO_BUILD_NUMBER" \
+            CURRENT_PROJECT_VERSION="$EXO_BUILD_VERSION" \
             EXO_BUILD_TAG="$RELEASE_VERSION" \
             EXO_BUILD_COMMIT="$GITHUB_SHA" \
             SPARKLE_FEED_URL="$SPARKLE_FEED_URL" \
             SPARKLE_ED25519_PUBLIC="$SPARKLE_ED25519_PUBLIC" \
+            EXO_BUG_REPORT_PRESIGNED_URL_ENDPOINT="$EXO_BUG_REPORT_PRESIGNED_URL_ENDPOINT" \
             CODE_SIGNING_IDENTITY="$SIGNING_IDENTITY" \
             CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES
           mkdir -p ../../output
@@ -294,5 +322,5 @@ jobs:
           aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}${DMG_NAME}"
           if [[ "$IS_ALPHA" != "true" ]]; then
             aws s3 cp "$DMG_NAME" "s3://${SPARKLE_S3_BUCKET}/${PREFIX}EXO-latest.dmg"
+            aws s3 cp appcast.xml "s3://${SPARKLE_S3_BUCKET}/${PREFIX}appcast.xml" --content-type application/xml --cache-control no-cache
           fi
-          aws s3 cp appcast.xml "s3://${SPARKLE_S3_BUCKET}/${PREFIX}appcast.xml" --content-type application/xml --cache-control no-cache

@@ -8,7 +8,7 @@
 exo: Run your own AI cluster at home with everyday devices. Maintained by [exo labs](https://x.com/exolabs).
 
 <p align="center">
-  <a href="https://discord.gg/72NsF6ux" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.gg/TJ4P57arEm" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://x.com/exolabs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/exolabs?style=social" alt="X"></a>
   <a href="https://www.apache.org/licenses/LICENSE-2.0.html" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/License-Apache2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
@@ -165,6 +165,24 @@ The macOS app requires macOS Tahoe 26.2 or later.
 Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
 
 The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
+
+#### Uninstalling the macOS App
+
+The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
+
+If you've already deleted the app, you can run the standalone uninstaller script:
+
+```bash
+sudo ./app/EXO/uninstall-exo.sh
+```
+
+This removes:
+- Network setup LaunchDaemon
+- Network configuration script
+- Log files
+- The "exo" network location
+
+**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
 
 ---
 
