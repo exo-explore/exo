@@ -53,6 +53,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
             hidden_size=7168,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "deepseek-v3.1-8bit": ModelCard(
@@ -68,6 +69,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
             hidden_size=7168,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # "deepseek-v3.2": ModelCard(
@@ -141,6 +143,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
             hidden_size=7168,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "kimi-k2-thinking": ModelCard(
@@ -156,6 +159,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=61,
             hidden_size=7168,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # llama-3.1
@@ -172,6 +176,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=32,
             hidden_size=4096,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.1-8b-8bit": ModelCard(
@@ -187,6 +192,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=32,
             hidden_size=4096,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.1-8b-bf16": ModelCard(
@@ -202,6 +208,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=32,
             hidden_size=4096,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.1-70b": ModelCard(
@@ -217,6 +224,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=80,
             hidden_size=8192,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # llama-3.2
@@ -233,6 +241,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=16,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.2-3b": ModelCard(
@@ -248,6 +257,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=28,
             hidden_size=3072,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.2-3b-8bit": ModelCard(
@@ -263,6 +273,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=28,
             hidden_size=3072,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # llama-3.3
@@ -279,6 +290,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=80,
             hidden_size=8192,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.3-70b-8bit": ModelCard(
@@ -294,6 +306,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=80,
             hidden_size=8192,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "llama-3.3-70b-fp16": ModelCard(
@@ -309,6 +322,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=80,
             hidden_size=8192,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # qwen3
@@ -325,6 +339,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=28,
             hidden_size=1024,
             supports_tensor=False,
+            supports_vision=False,
         ),
     ),
     "qwen3-0.6b-8bit": ModelCard(
@@ -340,6 +355,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=28,
             hidden_size=1024,
             supports_tensor=False,
+            supports_vision=False,
         ),
     ),
     "qwen3-30b": ModelCard(
@@ -355,6 +371,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-30b-8bit": ModelCard(
@@ -370,6 +387,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-80b-a3B-4bit": ModelCard(
@@ -385,6 +403,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-80b-a3B-8bit": ModelCard(
@@ -400,6 +419,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-80b-a3B-thinking-4bit": ModelCard(
@@ -415,6 +435,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-80b-a3B-thinking-8bit": ModelCard(
@@ -430,6 +451,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=48,
             hidden_size=2048,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-235b-a22b-4bit": ModelCard(
@@ -445,6 +467,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=94,
             hidden_size=4096,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-235b-a22b-8bit": ModelCard(
@@ -460,6 +483,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=94,
             hidden_size=4096,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-coder-480b-a35b-4bit": ModelCard(
@@ -475,6 +499,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=62,
             hidden_size=6144,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "qwen3-coder-480b-a35b-8bit": ModelCard(
@@ -490,6 +515,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=62,
             hidden_size=6144,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # gpt-oss
@@ -506,6 +532,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=36,
             hidden_size=2880,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     "gpt-oss-20b-4bit": ModelCard(
@@ -521,6 +548,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=24,
             hidden_size=2880,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # Needs to be quantized g32 or g16.
@@ -537,6 +565,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=46,
             hidden_size=4096,
             supports_tensor=False,
+            supports_vision=False,
         ),
     ),
     "glm-4.5-air-bf16": ModelCard(
@@ -552,6 +581,7 @@ MODEL_CARDS: dict[str, ModelCard] = {
             n_layers=46,
             hidden_size=4096,
             supports_tensor=True,
+            supports_vision=False,
         ),
     ),
     # "devstral-2-123b-instruct-2512-8bit": ModelCard(

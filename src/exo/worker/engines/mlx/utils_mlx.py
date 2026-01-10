@@ -9,12 +9,16 @@ from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
-
+from PIL import Image
+from exo.shared.types.api import ChatCompletionMessage
 from exo.worker.engines.mlx.constants import (
     CACHE_GROUP_SIZE,
     KV_CACHE_BITS,
     TRUST_REMOTE_CODE,
 )
+import base64
+import io
+from PIL import Image
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -183,11 +187,11 @@ def load_mlx_items(
 
     # Check if this is a vision model
     model_id = str(bound_instance.bound_shard.model_meta.model_id)
-    is_vision_model = (
-        "vl" in model_id.lower() 
-        or "vision" in model_id.lower()
-        or getattr(bound_instance.bound_shard.model_meta, 'supports_vision', False)
-    )
+    is_vision_model = getattr(
+    bound_instance.bound_shard.model_meta, 
+    'supports_vision', 
+    False)
+    
 
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
@@ -309,59 +313,37 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata):
 
     return tokenizer
 
+def format_message_for_template(message: ChatCompletionMessage) -> dict[str, Any] | None:
+    """Convert a ChatCompletionMessage to a dict suitable for tokenizer template."""
+    if message.content is None and message.thinking is None:
+        return None
+    
+    # model_dump() recursively handles nested Pydantic models
+    msg_dict = message.model_dump()
+    
+    # Remove None values as they're not valid in tokenizer templates
+    return {k: v for k, v in msg_dict.items() if v is not None}
+    
 
 def apply_chat_template(
     tokenizer: Any,
     chat_task_data: ChatCompletionTaskParams,
 ) -> str:
-    # Check if this is a vision model processor
     is_vision_processor = not hasattr(tokenizer, "eos_token_id") and hasattr(tokenizer, "tokenizer")
     actual_tokenizer = tokenizer.tokenizer if is_vision_processor else tokenizer
 
-    # Now we can properly access the messages
-    messages = chat_task_data.messages
+    formatted_messages = []
+    for message in chat_task_data.messages:
+        formatted = format_message_for_template(message)
+        if formatted is not None:
+            formatted_messages.append(formatted)
 
-    formatted_messages: list[dict[str, Any]] = []
-    for _, message in enumerate(messages):
-        # Handle content being a list (multimodal) or string
-        content = message.content
-        
-        # If it's a list (multimodal), we need to ensure each part is a dictionary
-        if isinstance(content, list):
-            new_content = []
-            for item in content:
-                if hasattr(item, "model_dump"):
-                    new_content.append(item.model_dump())
-                else:
-                    new_content.append(item)
-            content = new_content
-        elif hasattr(content, "model_dump"):
-            # Single object like ChatCompletionMessageText
-            content = content.model_dump()
-        elif isinstance(content, str):
-            # Normal string content stays as is
-            pass
-
-        if content is None and message.thinking is None:
-            continue
-
-        # Construct the message dict carefully
-        msg_dict = {"role": message.role}
-        if content is not None:
-            msg_dict["content"] = content
-        if message.name:
-            msg_dict["name"] = message.name
-            
-        formatted_messages.append(msg_dict)
-
-    logger.debug(f"Formatted messages for template: {formatted_messages}")
-    prompt: str = actual_tokenizer.apply_chat_template(  # type: ignore
+    prompt: str = actual_tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
     )
-    logger.debug(f"Generated prompt string: {prompt}")
-
+    
     return prompt
 
 
@@ -447,3 +429,58 @@ def set_wired_limit_for_model(model_size: Memory):
         )
     mx.set_wired_limit(max_rec_size)
     logger.info(f"Wired limit set to {max_rec_size}.")
+
+
+def extract_images_from_messages(
+    messages: list[ChatCompletionMessage],
+) -> tuple[str, list[Image.Image]]:
+    """
+    Extract text prompt and images from multimodal messages.
+    
+    Returns:
+        tuple: (text_prompt, list_of_pil_images)
+    """
+    text_parts = []
+    images = []
+    
+    for message in messages:
+        content = message.content
+        
+        if content is None:
+            continue
+            
+        # Standardize content to a list of parts
+        parts = []
+        if isinstance(content, str):
+            parts = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            parts = content
+        else:
+            # Single object (text or image_url model)
+            parts = [content]
+
+        for part in parts:
+            # Handle both Pydantic models and dictionaries
+            p_type = getattr(part, 'type', part.get('type') if isinstance(part, dict) else None)
+            
+            if p_type == "text":
+                text = getattr(part, 'text', part.get('text') if isinstance(part, dict) else "")
+                text_parts.append(text)
+            elif p_type == "image_url":
+                image_url_obj = getattr(part, 'image_url', part.get('image_url') if isinstance(part, dict) else {})
+                url = image_url_obj.get("url", "") if isinstance(image_url_obj, dict) else getattr(image_url_obj, 'url', "")
+                
+                if url.startswith("data:image"):
+                    try:
+                        base64_data = url.split(",", 1)[1]
+                        image_bytes = base64.b64decode(base64_data)
+                        image = Image.open(io.BytesIO(image_bytes))
+                        images.append(image)
+                        logger.info(f"Successfully extracted image. Current count: {len(images)}")
+                    except Exception as e:
+                        logger.error(f"Failed to decode image: {e}")
+                        raise
+    
+    prompt = " ".join(text_parts)
+    logger.info(f"Extraction complete. Total text length: {len(prompt)}, Total images: {len(images)}")
+    return prompt, images

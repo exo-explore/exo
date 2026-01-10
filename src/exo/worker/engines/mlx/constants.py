@@ -12,4 +12,8 @@ CACHE_GROUP_SIZE: int = 64
 KV_CACHE_BITS: int | None = None
 
 # TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
+# TODO: We should really make this opt-in, but Kimi requires trust_remote_code=True
 TRUST_REMOTE_CODE: bool = True
+
+DEFAULT_VLM_MAX_TOKENS: int = 30
+DEFAULT_TEMPERATURE: float = 0.7
