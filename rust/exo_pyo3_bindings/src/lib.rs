@@ -26,7 +26,7 @@ use crate::pylibp2p::ident::ident_submodule;
 use crate::pylibp2p::multiaddr::multiaddr_submodule;
 use pyo3::prelude::PyModule;
 use pyo3::prelude::*;
-use pyo3::{Bound, PyResult, pyclass, pymodule};
+use pyo3::{pyclass, pymodule, Bound, PyResult};
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Namespace for all the constants used by this crate.

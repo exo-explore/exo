@@ -6,7 +6,7 @@ use pyo3::marker::Ungil;
 use pyo3::prelude::*;
 use std::{
     future::Future,
-    pin::{Pin, pin},
+    pin::{pin, Pin},
     task::{Context, Poll},
 };
 
