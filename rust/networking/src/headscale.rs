@@ -186,7 +186,33 @@ pub struct Behaviour {
 
 impl Behaviour {
     /// Create a new Headscale discovery behaviour
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created or if the API URL is invalid.
     pub fn new(config: Config, local_peer_id: PeerId) -> io::Result<Self> {
+        // Validate the API URL
+        if config.api_base_url.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Headscale API URL cannot be empty",
+            ));
+        }
+        if !config.api_base_url.starts_with("http://")
+            && !config.api_base_url.starts_with("https://")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Headscale API URL must start with http:// or https://",
+            ));
+        }
+        if !config.api_base_url.starts_with("https://") {
+            log::warn!(
+                "Headscale API URL uses HTTP instead of HTTPS. \
+                 Consider using HTTPS for secure API key transmission."
+            );
+        }
+
         let http_client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -205,6 +231,13 @@ impl Behaviour {
     }
 
     /// Fetch nodes from the Headscale API
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The HTTP request fails (network error, timeout, etc.)
+    /// - The server returns a non-2xx status code (401 unauthorized, 403 forbidden, 5xx server error)
+    /// - The response body cannot be parsed as JSON
     async fn fetch_nodes(
         client: &Client,
         api_base_url: &str,
@@ -315,14 +348,12 @@ impl Behaviour {
                         addresses: addresses.clone(),
                     }));
 
-                // Dial the peer
-                for addr in &addresses {
-                    self.pending_events.push_back(ToSwarm::Dial {
-                        opts: DialOpts::peer_id(peer_id)
-                            .addresses(vec![addr.clone()])
-                            .build(),
-                    });
-                }
+                // Dial the peer with all addresses in a single request
+                self.pending_events.push_back(ToSwarm::Dial {
+                    opts: DialOpts::peer_id(peer_id)
+                        .addresses(addresses.clone())
+                        .build(),
+                });
 
                 // Update or insert the peer
                 self.discovered_peers.insert(
@@ -486,6 +517,8 @@ impl NetworkBehaviour for Behaviour {
                     }
                 }
             }
+            // Other FromSwarm events (e.g., DialFailure, ListenFailure) are not relevant
+            // for Headscale discovery as we only track successful connections.
             _ => {}
         }
     }
@@ -495,15 +528,16 @@ impl NetworkBehaviour for Behaviour {
         if self.poll_timer.poll_unpin(cx).is_ready() || self.needs_poll {
             self.needs_poll = false;
 
-            // Spawn async task to fetch nodes
-            // Note: In a real implementation, we'd use a proper async task spawning mechanism
-            // For now, we use blocking_in_place or similar
+            // TODO: Refactor to use proper async task spawning with a channel-based approach.
+            // Currently using block_in_place which is not ideal as it can cause executor
+            // starvation under heavy load. A better approach would be to:
+            // 1. Spawn a background task that periodically fetches nodes
+            // 2. Send results through an mpsc channel
+            // 3. Have poll() check the channel for new results
+            // This would align with libp2p's non-blocking poll() contract.
             let client = self.http_client.clone();
             let api_base_url = self.config.api_base_url.clone();
             let api_key = self.config.api_key.clone();
-
-            // We need to poll asynchronously - for now we'll use tokio::task::block_in_place
-            // This is not ideal but works for the initial implementation
             match tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(Self::fetch_nodes(
                     &client,
@@ -528,13 +562,11 @@ impl NetworkBehaviour for Behaviour {
         if self.retry_timer.poll_unpin(cx).is_ready() {
             for peer in self.discovered_peers.values() {
                 if !peer.connected {
-                    for addr in &peer.addresses {
-                        self.pending_events.push_back(ToSwarm::Dial {
-                            opts: DialOpts::peer_id(peer.peer_id)
-                                .addresses(vec![addr.clone()])
-                                .build(),
-                        });
-                    }
+                    self.pending_events.push_back(ToSwarm::Dial {
+                        opts: DialOpts::peer_id(peer.peer_id)
+                            .addresses(peer.addresses.clone())
+                            .build(),
+                    });
                 }
             }
             self.retry_timer.reset(RETRY_CONNECT_INTERVAL);

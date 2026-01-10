@@ -280,15 +280,15 @@ class Args(CamelCaseModel):
             "--headscale-api-url",
             type=str,
             dest="headscale_api_url",
-            default=None,
-            help="Headscale API base URL (e.g., https://headscale.example.com) for WAN peer discovery",
+            default=os.getenv("HEADSCALE_API_URL"),
+            help="Headscale API base URL (e.g., https://headscale.example.com) for WAN peer discovery. Can also be set via HEADSCALE_API_URL env var.",
         )
         parser.add_argument(
             "--headscale-api-key",
             type=str,
             dest="headscale_api_key",
-            default=None,
-            help="Headscale API key for authentication",
+            default=os.getenv("HEADSCALE_API_KEY"),
+            help="Headscale API key for authentication. Can also be set via HEADSCALE_API_KEY env var (recommended for security).",
         )
         parser.add_argument(
             "--headscale-poll-interval",
