@@ -150,7 +150,8 @@ def place_instance(
                 instance_id=instance_id,
                 shard_assignments=shard_assignments,
                 ibv_devices=mlx_ibv_devices,
-                jaccl_coordinators=mlx_jaccl_coordinators,
+                ibv_coordinators=mlx_ibv_coordinators,
+                download_only=command.download_only,
             )
         case InstanceMeta.MlxRing:
             ephemeral_port = random_ephemeral_port()
@@ -164,6 +165,7 @@ def place_instance(
                 shard_assignments=shard_assignments,
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
+                download_only=command.download_only,
             )
 
     return target_instances

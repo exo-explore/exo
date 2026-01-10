@@ -19,6 +19,7 @@ class InstanceMeta(str, Enum):
 class BaseInstance(TaggedModel):
     instance_id: InstanceId
     shard_assignments: ShardAssignments
+    download_only: bool = False
 
     def shard(self, runner_id: RunnerId) -> ShardMetadata | None:
         return self.shard_assignments.runner_to_shard.get(runner_id, None)

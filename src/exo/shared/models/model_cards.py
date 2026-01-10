@@ -1,3 +1,8 @@
+import json
+import re
+from typing import Any, cast
+from loguru import logger
+from exo.shared.constants import EXO_CONFIG_HOME
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.utils.pydantic_ext import CamelCaseModel
@@ -508,65 +513,194 @@ MODEL_CARDS: dict[str, ModelCard] = {
             supports_tensor=True,
         ),
     ),
-    "gpt-oss-20b-4bit": ModelCard(
-        short_id="gpt-oss-20b-4bit",
-        model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-        name="GPT-OSS 20B (MXFP4-Q4, MLX)",
-        description="""OpenAI's GPT-OSS 20B is a medium-sized MoE model for lower-latency and local or specialized use cases; this MLX variant uses MXFP4 4-bit quantization.""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/gpt-oss-20b-MXFP4-Q4"),
-            pretty_name="GPT-OSS 20B (MXFP4-Q4, MLX)",
-            storage_size=Memory.from_kb(11_744_051),
-            n_layers=24,
-            hidden_size=2880,
-            supports_tensor=True,
-        ),
-    ),
-    # Needs to be quantized g32 or g16.
-    "glm-4.5-air-8bit": ModelCard(
-        short_id="glm-4.5-air-8bit",
-        model_id=ModelId("mlx-community/GLM-4.5-Air-8bit"),
-        name="GLM 4.5 Air 8bit",
-        description="""GLM 4.5 Air 8bit""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/GLM-4.5-Air-8bit"),
-            pretty_name="GLM 4.5 Air 8bit",
-            storage_size=Memory.from_gb(114),
-            n_layers=46,
-            hidden_size=4096,
-            supports_tensor=False,
-        ),
-    ),
-    "glm-4.5-air-bf16": ModelCard(
-        short_id="glm-4.5-air-bf16",
-        model_id=ModelId("mlx-community/GLM-4.5-Air-bf16"),
-        name="GLM 4.5 Air bf16",
-        description="""GLM 4.5 Air bf16""",
-        tags=[],
-        metadata=ModelMetadata(
-            model_id=ModelId("mlx-community/GLM-4.5-Air-bf16"),
-            pretty_name="GLM 4.5 Air bf16",
-            storage_size=Memory.from_gb(214),
-            n_layers=46,
-            hidden_size=4096,
-            supports_tensor=True,
-        ),
-    ),
-    # "devstral-2-123b-instruct-2512-8bit": ModelCard(
-    #     short_id="devstral-2-123b-instruct-2512-8bit",
-    #     model_id=ModelId("mlx-community/Devstral-2-123B-Instruct-2512-8bit"),
-    #     name="Devstral 2 123B Instruct 2512 (8-bit, MLX)",
-    #     description="""Mistral AI's Devstral 2 123B Instruct (2512) is an agentic coding model.""",
+    # "granite-3.3-8b": ModelCard(
+    #     short_id="granite-3.3-8b",
+    #     model_id=ModelId("mlx-community/granite-3.3-8b-instruct-fp16"),
+    #     name="Granite 3.3 8B",
+    #     description="""Granite-3.3-8B-Instruct is a 8-billion parameter 128K context length language model fine-tuned for improved reasoning and instruction-following capabilities.""",
     #     tags=[],
     #     metadata=ModelMetadata(
-    #         model_id=ModelId("mlx-community/Devstral-2-123B-Instruct-2512-8bit"),
-    #         pretty_name="Devstral 2 123B Instruct 2512 (8-bit, MLX)",
-    #         storage_size=Memory.from_kb(133_000_000),
-    #         n_layers=88,
-    #         hidden_size=12288,
+    #         model_id=ModelId("mlx-community/granite-3.3-8b-instruct-fp16"),
+    #         pretty_name="Granite 3.3 8B",
+    #         storage_size=Memory.from_kb(15958720),
+    #         n_layers=40,
+    #     ),
+    # ),
+    # smol-lm
+    # "smol-lm-135m": ModelCard(
+    #     short_id="smol-lm-135m",
+    #     model_id="mlx-community/SmolLM-135M-4bit",
+    #     name="Smol LM 135M",
+    #     description="""SmolLM is a series of state-of-the-art small language models available in three sizes: 135M, 360M, and 1.7B parameters. """,
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/SmolLM-135M-4bit"),
+    #         pretty_name="Smol LM 135M",
+    #         storage_size=Memory.from_kb(73940),
+    #         n_layers=30,
+    #     ),
+    # ),
+    # gpt-oss
+    # "gpt-oss-120b-MXFP4-Q8": ModelCard(
+    #     short_id="gpt-oss-120b-MXFP4-Q8",
+    #     model_id=ModelId("mlx-community/gpt-oss-120b-MXFP4-Q8"),
+    #     name="GPT-OSS 120B (MXFP4-Q8, MLX)",
+    #     description="""OpenAI's GPT-OSS 120B is a 117B-parameter Mixture-of-Experts model designed for high-reasoning and general-purpose use; this variant is a 4-bit MLX conversion for Apple Silicon.""",
+    #     tags=[],
+    #     metadata=ModelMetadata(
+    #         model_id=ModelId("mlx-community/gpt-oss-120b-MXFP4-Q8"),
+    #         pretty_name="GPT-OSS 120B (MXFP4-Q8, MLX)",
+    #         storage_size=Memory.from_kb(68_996_301),
+    #         n_layers=36,
+    #         hidden_size=2880,
     #         supports_tensor=True,
     #     ),
     # ),
+    #
+    #
 }
+
+
+def get_pretty_name_from_model_id(model_id: str) -> str:
+    """Generates a pretty name from a model ID."""
+    # Strip namespace
+    if "/" in model_id:
+        name = model_id.split("/")[-1]
+    else:
+        name = model_id
+
+    # Handle common replacements
+    name = name.replace("-", " ").replace("_", " ")
+
+    # Handle quantization formats like "4bit", "8bit", "Q4_K_M"
+    # format "model 4bit" -> model (4-bit)"
+    def quant_replacer(match: re.Match[str]) -> str:
+        bits = match.group(1)
+        return f"({bits}-bit)"
+    
+    name = re.sub(r"\b(\d+)\s*-?bit\b", quant_replacer, name, flags=re.IGNORECASE)
+
+    # Remove extra spaces
+    name = " ".join(name.split())
+
+
+    # Capitalize words
+    words = name.split()
+    capitalized_words: list[str] = []
+    for word in words:
+        # If it's already mixed case or all caps (and not just one letter), keep it
+        if (any(c.isupper() for c in word) and len(word) > 1):
+            capitalized_words.append(word)
+        else:
+            # Capitalize the first letter, keep the rest as is
+            capitalized_words.append(word[0].upper() + word[1:] if word else "")
+
+    name = " ".join(capitalized_words)
+    name = name.replace(" (", "(").replace("(", " (").strip() # Ensure single space before (
+
+    return name
+
+
+PERSISTENT_FILE_PATH = EXO_CONFIG_HOME / "custom_models.json"
+custom_models_loaded = False
+
+def load_custom_models_once() -> None:
+    """Loads custom models from persistent storage (called once)"""
+    global custom_models_loaded
+    if custom_models_loaded:
+        return
+    custom_models_loaded = True
+
+    logger.debug(f"Attempting to load custom models from: {PERSISTENT_FILE_PATH}")
+    
+    if not PERSISTENT_FILE_PATH.exists():
+        logger.debug(f"Custom models file does not exist yet: {PERSISTENT_FILE_PATH}")
+        return
+    
+    try:
+        with open(PERSISTENT_FILE_PATH, "r") as f:
+            data = cast(dict[str, dict[str, Any]], json.load(f))
+            logger.debug(f"Loaded {len(data)} entries from custom_models.json")
+            
+            loaded_count = 0
+            any_changes = False
+            for key, card_data in data.items():
+                try:
+                    card = ModelCard.model_validate(card_data)
+                    # prettify the model_id name
+                    if card.name == str(card.model_id) or card.name == key:
+                        card.name = get_pretty_name_from_model_id(str(card.model_id))
+                        if card.metadata.pretty_name == str(card.model_id):
+                             card.metadata.pretty_name = card.name
+                        any_changes = True
+
+                    if key not in MODEL_CARDS:
+                        MODEL_CARDS[key] = card
+                        loaded_count += 1
+                        logger.debug(f"Loaded custom model: {key} ({card.model_id})")
+                    else:
+                        logger.debug(f"Skipping {key} - already in MODEL_CARDS")
+                except Exception as e:
+                    logger.warning(f"Failed to load model card for {key}: {e}")
+            
+            if any_changes:
+                logger.info("Custom model names were prettified. Saving changes.")
+                save_custom_models()
+            
+            logger.info(f"✓ Loaded {loaded_count} custom models from {PERSISTENT_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"Error loading custom models from {PERSISTENT_FILE_PATH}: {e}")
+
+def save_custom_models() -> None:
+    """Saves custom models from MODEL_CARDS to persistent storage."""
+    logger.debug(f"Attempting to save custom models to: {PERSISTENT_FILE_PATH}")
+    
+    try:
+        PERSISTENT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        
+        custom_models = {
+            key: card.model_dump(mode="json") 
+            for key, card in MODEL_CARDS.items() 
+            if "custom" in card.tags
+        }
+        
+        with open(PERSISTENT_FILE_PATH, "w") as f:
+            json.dump(custom_models, f, indent=4)
+        
+        logger.info(f"✓ Saved {len(custom_models)} custom models to {PERSISTENT_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"Failed to save custom models to {PERSISTENT_FILE_PATH}: {e}")
+
+def register_custom_model(model_id: ModelId, metadata: ModelMetadata, name: str | None = None, description: str | None = None) -> ModelCard:
+    """Registers a custom model in MODEL_CARDS and persists it."""
+    load_custom_models_once()
+    
+    short_id = str(model_id)
+    if "/" in short_id:
+        short_id = short_id.split("/")[-1]
+    
+    # Check if model is already registered
+    if short_id in MODEL_CARDS:
+        return MODEL_CARDS[short_id]
+    
+    logger.debug(f"Registering new model with short_id: {short_id}")
+    
+    card = ModelCard(
+        short_id=short_id,
+        model_id=model_id,
+        name=name or get_pretty_name_from_model_id(str(model_id)),
+        description=description or f"Custom model from {str(model_id).split('/')[0] if '/' in str(model_id) else 'Hugging Face'}",
+        tags=["custom"],
+        metadata=metadata,
+    )
+    MODEL_CARDS[short_id] = card
+    logger.info(f"✓ Registered custom model: {short_id} ({model_id})")
+    
+    # Persist to storage
+    save_custom_models()
+    return card
+
+def get_model_cards() -> dict[str, ModelCard]:
+    """Returns MODEL_CARDS, loading custom models on first access."""
+    load_custom_models_once()
+    return MODEL_CARDS
