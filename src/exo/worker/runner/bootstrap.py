@@ -4,7 +4,7 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import BoundInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import BoundInstance, FLASHInstance, MlxJacclInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 
@@ -17,20 +17,27 @@ def entrypoint(
     task_receiver: MpReceiver[Task],
     _logger: "loguru.Logger",
 ) -> None:
-    if (
-        isinstance(bound_instance.instance, MlxJacclInstance)
-        and len(bound_instance.instance.ibv_devices) >= 2
-    ):
-        os.environ["MLX_METAL_FAST_SYNCH"] = "1"
-
     global logger
     logger = _logger
 
-    # Import main after setting global logger - this lets us just import logger from this module
+    # Route based on instance type
     try:
-        from exo.worker.runner.runner import main
+        if isinstance(bound_instance.instance, FLASHInstance):
+            # FLASH MPI simulation runner
+            from exo.worker.runner.flash_runner import main
 
-        main(bound_instance, event_sender, task_receiver)
+            main(bound_instance, event_sender, task_receiver)
+        else:
+            # MLX runner (default)
+            if (
+                isinstance(bound_instance.instance, MlxJacclInstance)
+                and len(bound_instance.instance.ibv_devices) >= 2
+            ):
+                os.environ["MLX_METAL_FAST_SYNCH"] = "1"
+
+            from exo.worker.runner.runner import main
+
+            main(bound_instance, event_sender, task_receiver)
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")
     except Exception as e:
