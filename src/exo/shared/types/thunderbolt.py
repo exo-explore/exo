@@ -61,7 +61,7 @@ class TBConnectivityData(BaseModel, extra="ignore"):
         return TBConnection(source_uuid=self.domain_uuid_key, sink_uuid=sink_key)
 
 
-class TBConnectivity(BaseModel):
+class TBConnectivity(BaseModel, extra="ignore"):
     SPThunderboltDataType: list[TBConnectivityData] = []
 
     @classmethod
