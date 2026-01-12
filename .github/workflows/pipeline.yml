@@ -94,9 +94,19 @@ jobs:
 
       - uses: ./.github/actions/typecheck
 
-  nix-flake-check:
-    name: Check Nix flake
-    runs-on: ubuntu-latest
+  nix:
+    name: Build and check (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            system: aarch64-darwin
+          - runner: ubuntu-latest
+            system: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -113,10 +123,17 @@ jobs:
           name: exo
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
-      - name: Run nix flake check
+      - name: Build all Nix outputs
         run: |
-          nix flake check
-        shell: bash
+          nix flake show --json | jq -r '
+            [
+              (.packages."${{ matrix.system }}" // {} | keys[] | ".#packages.${{ matrix.system }}.\(.)"),
+              (.devShells."${{ matrix.system }}" // {} | keys[] | ".#devShells.${{ matrix.system }}.\(.)")
+            ] | .[]
+          ' | xargs nix build
+
+      - name: Run nix flake check
+        run: nix flake check
 
 #  ci:
 #    needs: typecheck
