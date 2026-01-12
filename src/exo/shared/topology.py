@@ -12,9 +12,7 @@ from exo.shared.types.topology import RDMAConnection, SocketConnection
 
 class TopologySnapshot(BaseModel):
     nodes: Sequence[NodeId]
-    connections: Iterable[tuple[
-        NodeId, NodeId, SocketConnection | RDMAConnection
-    ]]
+    connections: Iterable[tuple[NodeId, NodeId, SocketConnection | RDMAConnection]]
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
