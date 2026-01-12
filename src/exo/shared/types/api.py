@@ -161,6 +161,7 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+    download_only: bool = False
 
     @field_validator("sharding", "instance_meta", mode="plain")
     @classmethod
@@ -202,3 +203,12 @@ class DeleteInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     instance_id: InstanceId
+
+class CreateModelRequest(BaseModel):
+    repo_id: str
+    name: str | None = None
+    description: str | None = None
+
+class CreateModelResponse(BaseModel):
+    id: str # short_id of the model
+    model_id: ModelListModel

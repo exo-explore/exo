@@ -24,7 +24,7 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.shared.apply import apply
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
-from exo.shared.models.model_cards import MODEL_CARDS
+from exo.shared.models.model_cards import get_model_cards
 from exo.shared.models.model_meta import get_model_meta
 from exo.shared.types.api import (
     BenchChatCompletionResponse,
@@ -35,6 +35,8 @@ from exo.shared.types.api import (
     CreateInstanceParams,
     CreateInstanceResponse,
     DeleteInstanceResponse,
+    CreateModelRequest,
+    CreateModelResponse,
     FinishReason,
     GenerationStats,
     ModelList,
@@ -43,6 +45,7 @@ from exo.shared.types.api import (
     PlacementPreview,
     PlacementPreviewResponse,
     StreamingChoiceResponse,
+    FinishReason,
 )
 from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.commands import (
@@ -62,6 +65,7 @@ from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding
+from exo.shared.models.model_cards import register_custom_model
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.dashboard_path import find_dashboard
@@ -88,11 +92,23 @@ def chunk_to_response(
 
 
 async def resolve_model_meta(model_id: str) -> ModelMetadata:
-    if model_id in MODEL_CARDS:
-        model_card = MODEL_CARDS[model_id]
+    from exo.shared.models.model_cards import get_model_cards
+    
+    # Load custom models from persistent storage if not already loaded
+    model_cards = get_model_cards()
+    
+    # Check if model_id is a key (short_id) in MODEL_CARDS
+    if model_id in model_cards:
+        model_card = model_cards[model_id]
         return model_card.metadata
-    else:
-        return await get_model_meta(model_id)
+    
+    # Check if model_id matches any ModelCard's full model_id
+    for card in model_cards.values():
+        if str(card.model_id) == model_id:
+            return card.metadata
+    
+    # Not found in MODEL_CARDS, fetch from HuggingFace
+    return await get_model_meta(model_id)
 
 
 class API:
@@ -166,6 +182,7 @@ class API:
         self.app.get("/node_id")(lambda: self.node_id)
         self.app.post("/instance")(self.create_instance)
         self.app.post("/place_instance")(self.place_instance)
+        self.app.post("/custom_models")(self.create_model)
         self.app.get("/instance/placement")(self.get_placement)
         self.app.get("/instance/previews")(self.get_placement_previews)
         self.app.get("/instance/{instance_id}")(self.get_instance)
@@ -180,19 +197,24 @@ class API:
         self.app.get("/events")(lambda: self._event_log)
 
     async def place_instance(self, payload: PlaceInstanceParams):
-        command = PlaceInstance(
-            model_meta=await resolve_model_meta(payload.model_id),
-            sharding=payload.sharding,
-            instance_meta=payload.instance_meta,
-            min_nodes=payload.min_nodes,
-        )
-        await self._send(command)
+        try:
+            model_meta = await resolve_model_meta(payload.model_id)
+            command = PlaceInstance(
+                model_meta=model_meta,
+                sharding=payload.sharding,
+                instance_meta=payload.instance_meta,
+                min_nodes=payload.min_nodes,
+                download_only=payload.download_only,
+            )
+            await self._send(command)
 
-        return CreateInstanceResponse(
-            message="Command received.",
-            command_id=command.command_id,
-            model_meta=command.model_meta,
-        )
+            return CreateInstanceResponse(
+                message="Command received.",
+                command_id=command.command_id,
+                model_meta=model_meta,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     async def create_instance(
         self, payload: CreateInstanceParams
@@ -262,7 +284,10 @@ class API:
         if len(list(self.state.topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
-        cards = [card for card in MODEL_CARDS.values() if card.short_id == model_id]
+        from exo.shared.models.model_cards import get_model_cards
+        model_cards = get_model_cards()
+        
+        cards = [card for card in model_cards.values() if card.short_id == model_id]
         if not cards:
             raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
@@ -607,6 +632,11 @@ class API:
 
     async def get_models(self) -> ModelList:
         """Returns list of available models."""
+        
+        
+        # Load custom models from persistent storage if not already loaded
+        model_cards = get_model_cards()
+        
         return ModelList(
             data=[
                 ModelListModel(
@@ -616,10 +646,43 @@ class API:
                     description=card.description,
                     tags=card.tags,
                     storage_size_megabytes=int(card.metadata.storage_size.in_mb),
-                    supports_tensor=card.metadata.supports_tensor,
                 )
-                for card in MODEL_CARDS.values()
+                for card in model_cards.values()
             ]
+        )
+
+    async def create_model(self, payload: CreateModelRequest):
+        """Load custom models from persistent storage if not already loaded"""
+        model_cards = get_model_cards()
+        
+        if payload.repo_id in model_cards:
+            raise HTTPException(status_code=400, detail="Model already exists")
+        
+        try:
+            model_meta = await get_model_meta(payload.repo_id)
+        except Exception as e:
+            msg = f"Failed to fetch metadata for {payload.repo_id}: {e}"
+            logger.error(msg)
+            raise HTTPException(status_code=400, detail=msg) from e
+        
+        
+        model_card = register_custom_model(
+            model_id=ModelId(payload.repo_id),
+            metadata=model_meta,
+            name=payload.name,
+            description=payload.description
+        )
+        
+        return CreateModelResponse(
+            id=payload.repo_id,
+            model_id=ModelListModel(
+                id=model_card.short_id,
+                hugging_face_id=model_card.model_id,
+                name=model_card.name,
+                description=model_card.description,
+                tags=model_card.tags,
+                storage_size_megabytes=int(model_card.metadata.storage_size.in_mb),
+            )
         )
 
     async def run(self):

@@ -28,3 +28,6 @@ target/
 dashboard/build/
 dashboard/node_modules/
 dashboard/.svelte-kit/
+
+# VSCode
+.vscode
