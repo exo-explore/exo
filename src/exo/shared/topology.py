@@ -12,9 +12,9 @@ from exo.shared.types.topology import RDMAConnection, SocketConnection
 
 class TopologySnapshot(BaseModel):
     nodes: Sequence[NodeId]
-    connections: Mapping[
-        NodeId, Mapping[NodeId, Sequence[SocketConnection | RDMAConnection]]
-    ]
+    connections: Iterable[tuple[
+        NodeId, NodeId, SocketConnection | RDMAConnection
+    ]]
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -29,7 +29,7 @@ class Topology:
 
     def to_snapshot(self) -> TopologySnapshot:
         return TopologySnapshot(
-            nodes=list(self.list_nodes()), connections=self.map_connections()
+            nodes=list(self.list_nodes()), connections=self.list_connections()
         )
 
     @classmethod
@@ -40,10 +40,8 @@ class Topology:
             with contextlib.suppress(ValueError):
                 topology.add_node(node_id)
 
-        for source in snapshot.connections:
-            for sink in snapshot.connections[source]:
-                for conn in snapshot.connections[source][sink]:
-                    topology.add_connection(source, sink, conn)
+        for source, sink, conn in snapshot.connections:
+            topology.add_connection(source, sink, conn)
 
         return topology
 
