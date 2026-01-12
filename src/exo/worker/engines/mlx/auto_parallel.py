@@ -289,8 +289,7 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         model = cast(DeepseekV3Model, model)
         for layer in model.layers:
             # Shard the self attention
-            if layer.self_attn.q_lora_rank is None:  # pyright: ignore[reportUnnecessaryComparison]
-                # Unfortunately, q_lora_rank can be None despite typing hints.
+            if layer.self_attn.q_lora_rank is None:
                 layer.self_attn.q_proj = self.all_to_sharded_linear(
                     layer.self_attn.q_proj
                 )

@@ -17,9 +17,9 @@ dependencies = [
     "loguru>=0.7.3",
     "exo_pyo3_bindings", # rust bindings
     "anyio==4.11.0",
-    "mlx>=0.30.1; sys_platform == 'darwin'",
-    "mlx[cpu]>=0.30.1; sys_platform == 'linux'",
-    "mlx-lm>=0.28.3",
+    "mlx==0.30.1; sys_platform == 'darwin'",
+    "mlx[cpu]==0.30.1; sys_platform == 'linux'",
+    "mlx-lm @ git+https://github.com/AlexCheema/mlx-lm.git@fix-transformers-5.0.0rc2",
     "tiktoken>=0.12.0", # required for kimi k2 tokenizer
     "hypercorn>=0.18.0",
     "openai-harmony>=0.0.8",
@@ -33,6 +33,7 @@ exo = "exo.main:main"
 # dependencies only required for development
 [dependency-groups]
 dev = [
+    "basedpyright>=1.29.0",
     "pyinstaller>=6.17.0",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
@@ -98,6 +99,7 @@ root = "src"
 
 # supported platforms for this project
 [tool.uv]
+prerelease = "allow"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
