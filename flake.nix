@@ -73,6 +73,9 @@
           packages =
             with pkgs;
             [
+              # FORMATTING
+              treefmtEval.config.build.wrapper
+
               # PYTHON
               python313
               uv

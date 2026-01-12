@@ -1,6 +1,7 @@
 name: Build EXO macOS DMG
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -35,7 +36,7 @@ jobs:
 
       - name: Derive release version from tag
         run: |
-          if [[ "$GITHUB_REF_NAME" == "test-app" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "test-app" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="0.0.0-alpha.0"
             echo "IS_ALPHA=true" >> $GITHUB_ENV
           else

@@ -305,7 +305,10 @@ curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
 - List all models: `curl http://localhost:52415/models`
 - Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
 
-For further details, see API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
+For further details, see:
+
+- API basic documentation in [docs/api.md](docs/api.md).
+- API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
 
 ---
 
