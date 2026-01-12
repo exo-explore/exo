@@ -200,9 +200,10 @@ def mlx_distributed_init(
 
                 jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
-                logger.info(f"rank {rank} MLX_JACCL_DEVICES: {jaccl_devices_json}")
+                # TODO: update once upstream fixes 
+                logger.info(f"rank {rank} MLX_IBV_DEVICES: {jaccl_devices_json}")
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_JACCL_DEVICES"] = devices_file
+                os.environ["MLX_IBV_DEVICES"] = devices_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
