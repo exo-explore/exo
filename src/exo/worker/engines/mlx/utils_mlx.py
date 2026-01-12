@@ -192,7 +192,6 @@ def mlx_distributed_init(
                 coordination_file = (
                     f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
                 )
-                devices_file = f"./hosts_{rank}.json"
                 jaccl_devices_json = json.dumps(jaccl_devices)
 
                 with open(coordination_file, "w") as f:
@@ -203,7 +202,7 @@ def mlx_distributed_init(
                 # TODO: update once upstream fixes 
                 logger.info(f"rank {rank} MLX_IBV_DEVICES: {jaccl_devices_json}")
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
-                os.environ["MLX_IBV_DEVICES"] = devices_file
+                os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
