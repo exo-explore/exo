@@ -20,6 +20,7 @@ from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, channel
 from exo.utils.pydantic_ext import CamelCaseModel
+from exo.download import DownloadManager
 from exo.worker.download.impl_shard_downloader import exo_shard_downloader
 from exo.worker.main import Worker
 
@@ -33,6 +34,7 @@ class Node:
     election_result_receiver: Receiver[ElectionResult]
     master: Master | None
     api: API | None
+    download_manager: DownloadManager
 
     node_id: NodeId
     _tg: TaskGroup = field(init=False, default_factory=anyio.create_task_group)
@@ -62,11 +64,16 @@ class Node:
         else:
             api = None
 
+        download_manager = DownloadManager(
+            node_id=node_id,
+            shard_downloader=exo_shard_downloader(),
+        )
+
         if not args.no_worker:
             worker = Worker(
                 node_id,
                 session_id,
-                exo_shard_downloader(),
+                download_manager,
                 connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
                 global_event_receiver=router.receiver(topics.GLOBAL_EVENTS),
                 local_event_sender=router.sender(topics.LOCAL_EVENTS),
@@ -98,13 +105,17 @@ class Node:
             election_result_sender=er_send,
         )
 
-        return cls(router, worker, election, er_recv, master, api, node_id)
+        return cls(router, worker, election, er_recv, master, api, download_manager, node_id)
 
     async def run(self):
         async with self._tg as tg:
             signal.signal(signal.SIGINT, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.election.run)
+            tg.start_soon(
+                self.download_manager.run,
+                self.router.sender(topics.LOCAL_EVENTS),
+            )
             if self.worker:
                 tg.start_soon(self.worker.run)
             if self.master:
@@ -175,7 +186,7 @@ class Node:
                         self.worker = Worker(
                             self.node_id,
                             result.session_id,
-                            exo_shard_downloader(),
+                            self.download_manager,
                             connection_message_receiver=self.router.receiver(
                                 topics.CONNECTION_MESSAGES
                             ),
