@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import * as d3 from 'd3';
-import { topologyData, isTopologyMinimized, debugMode } from '$lib/stores/app.svelte';
+import { topologyData, isTopologyMinimized, debugMode, type NodeInfo } from '$lib/stores/app.svelte';
 
 	interface Props {
 		class?: string;
@@ -24,14 +24,14 @@ function getNodeLabel(nodeId: string): string {
 
 function getInterfaceLabel(nodeId: string, ip?: string): { label: string; missing: boolean } {
 	if (!ip) return { label: '?', missing: true };
-	
+
 	// Strip port if present (e.g., "192.168.1.1:8080" -> "192.168.1.1")
 	const cleanIp = ip.includes(':') && !ip.includes('[') ? ip.split(':')[0] : ip;
-	
+
 	// Helper to check a node's interfaces
-	function checkNode(node: typeof data.nodes[string]): string | null {
+	function checkNode(node: NodeInfo | undefined): string | null {
 		if (!node) return null;
-		
+
 		const matchFromInterfaces = node.network_interfaces?.find((iface) =>
 			(iface.addresses || []).some((addr) => addr === cleanIp || addr === ip)
 		);
@@ -39,17 +39,19 @@ function getInterfaceLabel(nodeId: string, ip?: string): { label: string; missin
 			return matchFromInterfaces.name;
 		}
 
-		const mapped = node.ip_to_interface?.[cleanIp] || node.ip_to_interface?.[ip];
-		if (mapped && mapped.trim().length > 0) {
-			return mapped;
+		if (node.ip_to_interface) {
+			const mapped = node.ip_to_interface[cleanIp] || (ip ? node.ip_to_interface[ip] : undefined);
+			if (mapped && mapped.trim().length > 0) {
+				return mapped;
+			}
 		}
 		return null;
 	}
-	
+
 	// Try specified node first
 	const result = checkNode(data?.nodes?.[nodeId]);
 	if (result) return { label: result, missing: false };
-	
+
 	// Fallback: search all nodes for this IP
 	for (const [, otherNode] of Object.entries(data?.nodes || {})) {
 		const otherResult = checkNode(otherNode);
@@ -255,21 +257,24 @@ function wrapLine(text: string, maxLen: number): string[] {
 		const arrowsGroup = svg.append('g').attr('class', 'arrows-group');
 		const debugLabelsGroup = svg.append('g').attr('class', 'debug-edge-labels');
 
-		const pairMap = new Map<string, { a: string; b: string; aToB: boolean; bToA: boolean; connections: Array<{ from: string; to: string; ip: string; ifaceLabel: string; missingIface: boolean }> }>();
-		let debugEdgeLabels: Array<{ connections: typeof pairMap extends Map<string, infer V> ? V['connections'] : never; isLeft: boolean; isTop: boolean; mx: number; my: number }> | null = null;
+		type ConnectionInfo = { from: string; to: string; ip: string; ifaceLabel: string; missingIface: boolean };
+		type PairEntry = { a: string; b: string; aToB: boolean; bToA: boolean; connections: ConnectionInfo[] };
+		type DebugEdgeLabelEntry = { connections: ConnectionInfo[]; isLeft: boolean; isTop: boolean; mx: number; my: number };
+		const pairMap = new Map<string, PairEntry>();
+		const debugEdgeLabels: DebugEdgeLabelEntry[] = [];
 		edges.forEach(edge => {
 			if (!edge.source || !edge.target || edge.source === edge.target) return;
 			if (!positionById[edge.source] || !positionById[edge.target]) return;
-			
+
 			const a = edge.source < edge.target ? edge.source : edge.target;
 			const b = edge.source < edge.target ? edge.target : edge.source;
 			const key = `${a}|${b}`;
 			const entry = pairMap.get(key) || { a, b, aToB: false, bToA: false, connections: [] };
-			
+
 			if (edge.source === a) entry.aToB = true;
 			else entry.bToA = true;
 
-			const ip = edge.sendBackIp || edge.sendBackMultiaddr?.ip_address || '?';
+			const ip = edge.sendBackIp || '?';
 			const ifaceInfo = getInterfaceLabel(edge.source, ip);
 			entry.connections.push({
 				from: edge.source,
@@ -338,9 +343,8 @@ function wrapLine(text: string, maxLen: number): string[] {
 				// Determine which side of viewport based on edge midpoint
 				const isLeft = mx < centerX;
 				const isTop = my < safeCenterY;
-				
+
 				// Store for batch rendering after all edges processed
-				if (!debugEdgeLabels) debugEdgeLabels = [];
 				debugEdgeLabels.push({
 					connections: entry.connections,
 					isLeft,
@@ -381,32 +385,32 @@ function wrapLine(text: string, maxLen: number): string[] {
 			}
 			
 			// Group by quadrant: topLeft, topRight, bottomLeft, bottomRight
-			const quadrants: Record<string, typeof debugEdgeLabels> = {
+			const quadrants: Record<string, DebugEdgeLabelEntry[]> = {
 				topLeft: [],
 				topRight: [],
 				bottomLeft: [],
 				bottomRight: []
 			};
-			
+
 			debugEdgeLabels.forEach(edge => {
 				const key = (edge.isTop ? 'top' : 'bottom') + (edge.isLeft ? 'Left' : 'Right');
 				quadrants[key].push(edge);
 			});
-			
+
 			// Render each quadrant
-			Object.entries(quadrants).forEach(([quadrant, edges]) => {
-				if (edges.length === 0) return;
-				
+			Object.entries(quadrants).forEach(([quadrant, quadrantEdges]) => {
+				if (quadrantEdges.length === 0) return;
+
 				const isLeft = quadrant.includes('Left');
 				const isTop = quadrant.includes('top');
-				
+
 				let baseX = isLeft ? padding : width - padding;
 				let baseY = isTop ? padding : height - padding;
 				const textAnchor = isLeft ? 'start' : 'end';
-				
+
 				let currentY = baseY;
-				
-				edges.forEach(edge => {
+
+				quadrantEdges.forEach(edge => {
 					edge.connections.forEach(conn => {
 						const arrow = getArrow(conn.from, conn.to);
 						const label = `${arrow} ${conn.ip} ${conn.ifaceLabel}`;

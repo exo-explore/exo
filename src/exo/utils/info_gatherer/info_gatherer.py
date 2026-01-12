@@ -147,6 +147,7 @@ class InfoGatherer:
         if self.misc_poll_interval is None:
             return
         prev = await MiscData.gather()
+        await self.info_sender.send(prev)
         while True:
             curr = await MiscData.gather()
             if prev != curr:
