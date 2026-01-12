@@ -56,8 +56,12 @@ struct ContentView: View {
     }
 
     private var shouldShowLocalNetworkWarning: Bool {
+        // Only show warning if:
+        // 1. Local network is not working
+        // 2. EXO is running
+        // 3. We've had a successful connection before (avoids false positive on fresh install)
         if case .notWorking = localNetworkChecker.status {
-            return controller.status != .stopped
+            return controller.status != .stopped && localNetworkChecker.hasWorkedBefore
         }
         return false
     }

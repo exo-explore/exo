@@ -7,6 +7,8 @@ import os.log
 /// macOS local network permission can appear enabled in System Preferences but not
 /// actually work after a restart. This service detects this by creating a UDP
 /// connection to the mDNS multicast address (224.0.0.251:5353).
+///
+/// Only shows warnings if permission previously worked (to avoid false positives on fresh install).
 @MainActor
 final class LocalNetworkChecker: ObservableObject {
     enum Status: Equatable {
@@ -35,9 +37,13 @@ final class LocalNetworkChecker: ObservableObject {
     }
 
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "LocalNetworkChecker")
+    private static let hasWorkedBeforeKey = "LocalNetworkChecker.hasWorkedBefore"
 
     @Published private(set) var status: Status = .unknown
     @Published private(set) var lastConnectionState: String = "none"
+
+    /// True if we've ever had a successful connection (persisted across launches)
+    @Published private(set) var hasWorkedBefore: Bool = UserDefaults.standard.bool(forKey: hasWorkedBeforeKey)
 
     private var connection: NWConnection?
     private var checkTask: Task<Void, Never>?
@@ -52,7 +58,14 @@ final class LocalNetworkChecker: ObservableObject {
             guard let self else { return }
             let result = await self.performCheck()
             self.status = result
-            Self.logger.info("Local network check complete: \(result.displayText)")
+
+            // Record success so we can detect regressions on future launches
+            if case .working = result {
+                self.hasWorkedBefore = true
+                UserDefaults.standard.set(true, forKey: Self.hasWorkedBeforeKey)
+            }
+
+            Self.logger.info("Local network check complete: \(result.displayText), hasWorkedBefore: \(self.hasWorkedBefore)")
         }
     }
 
