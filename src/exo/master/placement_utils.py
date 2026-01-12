@@ -246,6 +246,7 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
 
 
 def get_mlx_jaccl_devices_matrix(
+    selected_cycle: list[NodeId],
     cycle_digraph: Topology,
 ) -> list[list[str | None]]:
     """Build connectivity matrix mapping device i to device j via RDMA interface names.
@@ -254,7 +255,6 @@ def get_mlx_jaccl_devices_matrix(
     to device j, or None if no connection exists or no interface name is found.
     Diagonal elements are always None.
     """
-    selected_cycle = list(cycle_digraph.list_nodes())
     num_nodes = len(selected_cycle)
     matrix: list[list[str | None]] = [
         [None for _ in range(num_nodes)] for _ in range(num_nodes)
@@ -402,7 +402,6 @@ def get_mlx_jaccl_coordinators(
     Select an IP address that each node can reach for the rank 0 node. Returns
     address in format "X.X.X.X:PORT" per node.
     """
-    selected_cycle = list(cycle_digraph.list_nodes())
     logger.info(f"Selecting coordinator: {coordinator}")
 
     def get_ip_for_node(n: NodeId) -> str:
@@ -419,4 +418,4 @@ def get_mlx_jaccl_coordinators(
             "Current jaccl backend requires all participating devices to be able to communicate"
         )
 
-    return {n: f"{get_ip_for_node(n)}:{coordinator_port}" for n in selected_cycle}
+    return {n: f"{get_ip_for_node(n)}:{coordinator_port}" for n in cycle_digraph.list_nodes()}
