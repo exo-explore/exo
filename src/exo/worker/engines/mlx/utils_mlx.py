@@ -4,7 +4,7 @@ import resource
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 # Monkey-patch for transformers 5.x compatibility
 # Kimi's tokenization_kimi.py imports bytes_to_unicode from the old location
@@ -20,6 +20,8 @@ except ImportError:
 
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
+from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.engines.mlx.constants import (
@@ -53,13 +55,18 @@ from exo.shared.types.worker.shards import (
     ShardMetadata,
     TensorShardMetadata,
 )
-from exo.worker.download.download_utils import build_model_path
+from exo.worker.download.download_utils import (
+    build_model_path,
+    resolve_model_path_for_repo_sync,
+)
 from exo.worker.engines.mlx import Model
 from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
 from exo.worker.runner.bootstrap import logger
+
+_GPT_OSS_TEMPLATE_FILENAME: Final[str] = "gpt_oss_template.jinja"
 
 Group = mx.distributed.Group
 # Needed for 8 bit model
@@ -209,7 +216,73 @@ def load_mlx_items(
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
+    add_missing_chat_templates(
+        bound_instance.bound_shard.model_meta.model_id, tokenizer, model
+    )
+
     return cast(Model, model), tokenizer
+
+
+def add_missing_chat_templates(
+    repo_id: str,
+    tokenizer: TokenizerWrapper,
+    model: nn.Module,
+) -> None:
+    if isinstance(model, GptOssModel):
+        logger.info("Adding missing chat templates for gpt-oss model")
+        tokenizer.chat_template = _load_gpt_oss_chat_template()
+    if isinstance(model, DeepseekV32Model):
+        logger.info("Adding missing chat templates for deepseek-v32 model")
+        model_dir = "Missing model dir"
+        try:
+            import importlib.util
+
+            model_dir = resolve_model_path_for_repo_sync(repo_id)
+            module_path = model_dir / "encoding" / "encoding_dsv32.py"
+            spec = importlib.util.spec_from_file_location(
+                "encoding_dsv32", str(module_path)
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Cannot find module encoding_dsv32 at {module_path}")
+            encoding_dsv32 = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(encoding_dsv32)
+
+            def apply_chat_template(messages: list[dict[str, Any]], **kwargs) -> str:  # type: ignore
+                encode_config = dict(
+                    thinking_mode="thinking",
+                    drop_thinking=True,
+                    add_default_bos_token=True,
+                )
+                return encoding_dsv32.encode_messages(messages, **encode_config)  # type: ignore
+
+            tokenizer.apply_chat_template = apply_chat_template  # type: ignore[method-assign]
+        except Exception as exc:
+            raise ImportError(
+                f"Failed to import encode_messages and parse_message_from_completion_text from {model_dir}/encoding_dsv32: {exc}"
+            ) from exc
+
+
+def _load_gpt_oss_chat_template() -> str:
+    """
+    Load the GPT-OSS chat template by walking up from this module to the Exo package
+    root and resolving ``shared/models/gpt_oss_template.jinja`` from there.
+
+    This works for:
+    - a source checkout (``src/exo/...``),
+    - an installed package (``site-packages/exo/...``),
+    - a PyInstaller bundle where ``exo/shared/models`` is bundled intact.
+    """
+    current_module = Path(__file__).resolve()
+    for parent in current_module.parents:
+        candidate = parent / "shared" / "models" / _GPT_OSS_TEMPLATE_FILENAME
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+
+    message = (
+        f"Unable to locate {_GPT_OSS_TEMPLATE_FILENAME!r} relative to {__file__!r}. "
+        "Ensure the exo/shared/models directory is available and bundled."
+    )
+    raise FileNotFoundError(message)
 
 
 def shard_and_load(

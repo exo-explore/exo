@@ -132,8 +132,17 @@ async def resolve_model_path_for_repo(repo_id: str) -> Path:
     return (await ensure_models_dir()) / repo_id.replace("/", "--")
 
 
+def resolve_model_path_for_repo_sync(repo_id: str) -> Path:
+    return ensure_models_dir_sync() / repo_id.replace("/", "--")
+
+
 async def ensure_models_dir() -> Path:
     await aios.makedirs(EXO_MODELS_DIR, exist_ok=True)
+    return EXO_MODELS_DIR
+
+
+def ensure_models_dir_sync() -> Path:
+    os.makedirs(EXO_MODELS_DIR, exist_ok=True)
     return EXO_MODELS_DIR
 
 
