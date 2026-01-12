@@ -13,6 +13,7 @@ from pydantic import PositiveInt
 import exo.routing.topics as topics
 from exo.master.api import API  # TODO: should API be in master?
 from exo.master.main import Master
+from exo.rsh.server import run_rsh_server, RSH_PORT
 from exo.routing.router import Router, get_node_id_keypair
 from exo.shared.constants import EXO_LOG
 from exo.shared.election import Election, ElectionResult
@@ -112,6 +113,8 @@ class Node:
             if self.api:
                 tg.start_soon(self.api.run)
             tg.start_soon(self._elect_loop)
+            # Start RSH server for remote execution (used by MPI)
+            tg.start_soon(run_rsh_server, RSH_PORT)
 
     def shutdown(self):
         # if this is our second call to shutdown, just sys.exit

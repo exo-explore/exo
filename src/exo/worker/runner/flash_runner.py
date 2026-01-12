@@ -3,7 +3,8 @@
 Exo-native distributed MPI:
 - Exo handles node discovery and coordination
 - Coordinator generates hostfile from Exo topology
-- mpirun uses SSH (keys already set up) to spawn on remote nodes
+- mpirun uses exo-rsh (no SSH required) to spawn on remote nodes
+- Each Exo node runs an RSH server on port 52416 for remote execution
 - Workers just report ready and wait
 """
 
@@ -41,6 +42,11 @@ from exo.worker.runner.bootstrap import logger
 
 # Find mpirun in PATH, fallback to common locations
 MPIRUN_PATH = shutil.which("mpirun") or "/opt/homebrew/bin/mpirun"
+
+# exo-rsh is installed as console script by exo package
+EXO_RSH_PATH = shutil.which("exo-rsh")
+if not EXO_RSH_PATH:
+    raise RuntimeError("exo-rsh not found in PATH - this should be installed with exo")
 
 
 def get_my_rank(instance: FLASHInstance, my_node_id: str) -> int:
@@ -186,8 +192,12 @@ def main(
                                 "--mca", "btl_tcp_if_include", iface,
                                 "--mca", "oob_tcp_if_include", iface,
                                 "--mca", "plm_rsh_no_tree_spawn", "1",
-                                instance.flash_executable_path,
                             ]
+
+                            # Use exo-rsh for remote execution (no SSH needed)
+                            cmd.extend(["--mca", "plm_rsh_agent", EXO_RSH_PATH])
+
+                            cmd.append(instance.flash_executable_path)
 
                             logger.info(f"FLASH distributed launch: {' '.join(cmd)}")
 
@@ -207,8 +217,8 @@ def main(
                             logger.info(f"FLASH running on {world_size} nodes with {instance.total_ranks} ranks")
 
                         else:
-                            # Worker: mpirun on coordinator will SSH to spawn processes here
-                            logger.info(f"Worker {my_rank}: Ready for mpirun to spawn processes")
+                            # Worker: mpirun on coordinator will use exo-rsh to spawn processes here
+                            logger.info(f"Worker {my_rank}: Ready for mpirun to spawn processes via exo-rsh")
                             current_status = RunnerRunning()
 
                     except Exception as e:
