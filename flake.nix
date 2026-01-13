@@ -131,9 +131,6 @@
                 export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
                 export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
               ''}
-              echo
-              echo "🍎🍎 Run 'just <recipe>' to get started"
-              just --list
             '';
           };
         };
