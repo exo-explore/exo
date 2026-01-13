@@ -1,6 +1,7 @@
 import json
 import os
 import resource
+import sys
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -309,8 +310,6 @@ def load_tokenizer_for_model_id(model_id: str, model_path: Path) -> TokenizerWra
 
     # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
     if "kimi-k2" in model_id_lower:
-        import sys
-
         sys.path.insert(0, str(model_path))
         from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
 
