@@ -79,8 +79,16 @@ async def main():
 async def assert_downloads():
     sd = exo_shard_downloader()
     # await sd.ensure_shard(await build_full_shard(MODEL_CARDS["qwen3-0.6b"].model_id))
-    await sd.ensure_shard(await build_full_shard(MODEL_CARDS["llama-3.2-1b"].model_id))
+    await sd.ensure_shard(
+        await build_full_shard(MODEL_CARDS["llama-3.1-8b-bf16"].model_id)
+    )
     await sd.ensure_shard(await build_full_shard(MODEL_CARDS["qwen3-30b"].model_id))
+    await sd.ensure_shard(
+        await build_full_shard(MODEL_CARDS["gpt-oss-120b-MXFP4-Q8"].model_id)
+    )
+    await sd.ensure_shard(
+        await build_full_shard(MODEL_CARDS["gpt-oss-20b-4bit"].model_id)
+    )
 
 
 async def ring_backend(test: Tests):

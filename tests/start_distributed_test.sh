@@ -42,7 +42,7 @@ for model_id in "${model_ids[@]}"; do
       req="{
         \"model_id\": \"${model_id}\",
         \"devs\": ${devs},
-        \"kind\": \"init\"
+        \"kind\": \"inference\"
        }"
       echo "req $req"
       curl -sN \
@@ -51,6 +51,6 @@ for model_id in "${model_ids[@]}"; do
       2>&1 | sed "s/^/\n${hostnames[$i]}@${ips[$i]}: /" || echo "curl to ${hostnames[$i]} failed" && exit 1
     } &
   done
+  wait
 done
 
-wait
