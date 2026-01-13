@@ -1,5 +1,3 @@
-import os
-import subprocess
 import time
 from collections.abc import AsyncGenerator
 from typing import cast
@@ -64,7 +62,12 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.state import State
 from exo.shared.types.tasks import ChatCompletionTaskParams
-from exo.shared.types.worker.instances import FLASHInstance, Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    FLASHInstance,
+    Instance,
+    InstanceId,
+    InstanceMeta,
+)
 from exo.shared.types.worker.shards import Sharding
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
@@ -690,7 +693,10 @@ class API:
             if isinstance(instance, FLASHInstance):
                 # Get runner statuses for this instance
                 runner_statuses = {}
-                for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
+                for (
+                    node_id,
+                    runner_id,
+                ) in instance.shard_assignments.node_to_runner.items():
                     runner_status = self.state.runners.get(runner_id)
                     runner_statuses[str(node_id)] = (
                         str(runner_status) if runner_status else None

@@ -1,10 +1,9 @@
 """RSH Server - runs on each Exo node to accept remote execution requests."""
 
 import asyncio
-import subprocess
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
@@ -16,6 +15,7 @@ RSH_PORT = 52416
 
 class ExecuteRequest(BaseModel):
     """Request to execute a command."""
+
     command: list[str]
     cwd: Optional[str] = None
     env: Optional[dict[str, str]] = None
@@ -23,6 +23,7 @@ class ExecuteRequest(BaseModel):
 
 class ExecuteResponse(BaseModel):
     """Response from command execution."""
+
     exit_code: int
     stdout: str
     stderr: str
@@ -46,6 +47,7 @@ def create_rsh_app() -> FastAPI:
         try:
             # Build environment
             import os
+
             env = os.environ.copy()
             if request.env:
                 env.update(request.env)
@@ -110,6 +112,7 @@ def create_rsh_app() -> FastAPI:
                 env = None
                 if request.env:
                     import os
+
                     env = os.environ.copy()
                     env.update(request.env)
 
@@ -140,10 +143,12 @@ def create_rsh_app() -> FastAPI:
 
 async def run_rsh_server(port: int = RSH_PORT):
     """Run the RSH server."""
+    import anyio
+
     app = create_rsh_app()
     config = Config()
     config.bind = [f"0.0.0.0:{port}"]
     config.accesslog = None  # Disable access logs for cleaner output
 
     logger.info(f"Starting RSH server on port {port}")
-    await serve(app, config)  # type: ignore
+    await serve(app, config, shutdown_trigger=lambda: anyio.sleep_forever())  # type: ignore

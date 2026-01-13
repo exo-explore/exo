@@ -7,11 +7,11 @@ Usage: exo-rsh [ssh-options...] hostname command [args...]
 It connects to the target node's RSH server (port 52416) and executes the command.
 """
 
+import json
 import socket
 import sys
-from urllib.request import urlopen, Request
 from urllib.error import URLError
-import json
+from urllib.request import Request, urlopen
 
 RSH_PORT = 52416
 
@@ -80,7 +80,9 @@ def main():
         sys.exit(result.get("exit_code", 0))
 
     except URLError as e:
-        print(f"exo-rsh: Failed to connect to {hostname}:{RSH_PORT}: {e}", file=sys.stderr)
+        print(
+            f"exo-rsh: Failed to connect to {hostname}:{RSH_PORT}: {e}", file=sys.stderr
+        )
         sys.exit(255)
     except Exception as e:
         print(f"exo-rsh: Error: {e}", file=sys.stderr)

@@ -87,7 +87,7 @@ def resolve_host(host: str) -> str:
     # It's an IP address, try to resolve to hostname
     try:
         hostname, _, _ = socket.gethostbyaddr(host)
-        hostname = hostname.split('.')[0]
+        hostname = hostname.split(".")[0]
         logger.info(f"Resolved {host} to {hostname}")
         return hostname
     except socket.herror:
@@ -101,13 +101,13 @@ def resolve_host(host: str) -> str:
 def generate_hostfile(instance: FLASHInstance, working_dir: str) -> str:
     """Generate MPI hostfile from instance topology."""
     hostfile_path = os.path.join(working_dir, "flash_hosts.txt")
-    with open(hostfile_path, 'w') as f:
-        for node_id, hosts in instance.hosts_by_node.items():
+    with open(hostfile_path, "w") as f:
+        for _node_id, hosts in instance.hosts_by_node.items():
             if hosts:
                 host = resolve_host(hosts[0].ip)
                 f.write(f"{host} slots={instance.ranks_per_node}\n")
     logger.info(f"Generated hostfile at {hostfile_path}")
-    with open(hostfile_path, 'r') as f:
+    with open(hostfile_path, "r") as f:
         logger.info(f"Hostfile contents:\n{f.read()}")
     return hostfile_path
 
@@ -131,10 +131,12 @@ def main(
 
     my_rank = get_my_rank(instance, my_node_id)
     world_size = len(instance.hosts_by_node)
-    is_coordinator = (my_rank == 0)
+    is_coordinator = my_rank == 0
     coordinator_ip = get_coordinator_host(instance)
 
-    logger.info(f"FLASH node: rank={my_rank}, world_size={world_size}, coordinator={is_coordinator}")
+    logger.info(
+        f"FLASH node: rank={my_rank}, world_size={world_size}, coordinator={is_coordinator}"
+    )
     logger.info(f"FLASH coordinator IP: {coordinator_ip}")
 
     process: subprocess.Popen | None = None
@@ -179,19 +181,32 @@ def main(
                     try:
                         if is_coordinator:
                             # Coordinator: generate hostfile and run mpirun
-                            hostfile = generate_hostfile(instance, instance.working_directory)
+                            hostfile = generate_hostfile(
+                                instance, instance.working_directory
+                            )
 
                             iface = instance.network_interface
                             cmd = [
                                 MPIRUN_PATH,
-                                "-np", str(instance.total_ranks),
-                                "--hostfile", hostfile,
-                                "--wdir", instance.working_directory,
+                                "-np",
+                                str(instance.total_ranks),
+                                "--hostfile",
+                                hostfile,
+                                "--wdir",
+                                instance.working_directory,
                                 "--oversubscribe",
-                                "--mca", "btl", "tcp,self",
-                                "--mca", "btl_tcp_if_include", iface,
-                                "--mca", "oob_tcp_if_include", iface,
-                                "--mca", "plm_rsh_no_tree_spawn", "1",
+                                "--mca",
+                                "btl",
+                                "tcp,self",
+                                "--mca",
+                                "btl_tcp_if_include",
+                                iface,
+                                "--mca",
+                                "oob_tcp_if_include",
+                                iface,
+                                "--mca",
+                                "plm_rsh_no_tree_spawn",
+                                "1",
                             ]
 
                             # Use exo-rsh for remote execution (no SSH needed)
@@ -214,16 +229,21 @@ def main(
                             monitor_thread.start()
 
                             current_status = RunnerRunning()
-                            logger.info(f"FLASH running on {world_size} nodes with {instance.total_ranks} ranks")
+                            logger.info(
+                                f"FLASH running on {world_size} nodes with {instance.total_ranks} ranks"
+                            )
 
                         else:
                             # Worker: mpirun on coordinator will use exo-rsh to spawn processes here
-                            logger.info(f"Worker {my_rank}: Ready for mpirun to spawn processes via exo-rsh")
+                            logger.info(
+                                f"Worker {my_rank}: Ready for mpirun to spawn processes via exo-rsh"
+                            )
                             current_status = RunnerRunning()
 
                     except Exception as e:
                         logger.error(f"Failed to start FLASH: {e}")
                         import traceback
+
                         logger.error(traceback.format_exc())
                         current_status = RunnerFailed(error_message=str(e))
 
@@ -256,7 +276,9 @@ def main(
                             logger.info("FLASH simulation completed successfully")
                             current_status = RunnerReady()
                         else:
-                            logger.error(f"FLASH simulation failed with code {exit_code}")
+                            logger.error(
+                                f"FLASH simulation failed with code {exit_code}"
+                            )
                             current_status = RunnerFailed(
                                 error_message=f"Exit code {exit_code}"
                             )

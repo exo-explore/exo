@@ -4,7 +4,11 @@ import loguru
 
 from exo.shared.types.events import Event, RunnerStatusUpdated
 from exo.shared.types.tasks import Task
-from exo.shared.types.worker.instances import BoundInstance, FLASHInstance, MlxJacclInstance
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    FLASHInstance,
+    MlxJacclInstance,
+)
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 

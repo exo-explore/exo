@@ -21,7 +21,12 @@ from exo.shared.types.worker.downloads import (
     DownloadOngoing,
     DownloadProgress,
 )
-from exo.shared.types.worker.instances import BoundInstance, FLASHInstance, Instance, InstanceId
+from exo.shared.types.worker.instances import (
+    BoundInstance,
+    FLASHInstance,
+    Instance,
+    InstanceId,
+)
 from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerConnecting,

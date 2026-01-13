@@ -20,11 +20,11 @@ from exo.shared.types.commands import (
     LaunchFLASH,
     PlaceInstance,
 )
+from exo.shared.types.common import Host
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
 from exo.shared.types.topology import NodeInfo
-from exo.shared.types.common import Host, NodeId
 from exo.shared.types.worker.instances import (
     FLASHInstance,
     Instance,
@@ -34,8 +34,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
 )
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
-from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
 def random_ephemeral_port() -> int:
@@ -255,11 +254,17 @@ def place_flash_instance(
         for i, node_info in enumerate(selected_nodes):
             if i < len(explicit_hosts):
                 hosts_by_node[node_info.node_id] = [Host(ip=explicit_hosts[i], port=0)]
-                logger.info(f"FLASH placement: node {node_info.node_id} (rank {i}) -> IP {explicit_hosts[i]}")
+                logger.info(
+                    f"FLASH placement: node {node_info.node_id} (rank {i}) -> IP {explicit_hosts[i]}"
+                )
             else:
-                logger.warning(f"Not enough hosts provided for node {i}, using localhost")
+                logger.warning(
+                    f"Not enough hosts provided for node {i}, using localhost"
+                )
                 hosts_by_node[node_info.node_id] = [Host(ip="127.0.0.1", port=0)]
-        logger.info(f"FLASH placement: coordinator will be rank 0 at IP {explicit_hosts[0]}")
+        logger.info(
+            f"FLASH placement: coordinator will be rank 0 at IP {explicit_hosts[0]}"
+        )
     else:
         # Try to get IPs from topology edges
         for node_info in selected_nodes:
@@ -276,7 +281,9 @@ def place_flash_instance(
                             ip_idx = parts.index("ip4") + 1
                             ip = parts[ip_idx]
                             # Skip link-local and localhost addresses
-                            if not ip.startswith("169.254.") and not ip.startswith("127."):
+                            if not ip.startswith("169.254.") and not ip.startswith(
+                                "127."
+                            ):
                                 node_hosts.append(Host(ip=ip, port=0))
                                 break
                         except (ValueError, IndexError):
@@ -295,7 +302,11 @@ def place_flash_instance(
 
     # Determine coordinator IP - first node's first host IP
     first_node_id = list(hosts_by_node.keys())[0]
-    coordinator_ip = hosts_by_node[first_node_id][0].ip if hosts_by_node[first_node_id] else "127.0.0.1"
+    coordinator_ip = (
+        hosts_by_node[first_node_id][0].ip
+        if hosts_by_node[first_node_id]
+        else "127.0.0.1"
+    )
 
     target_instances[instance_id] = FLASHInstance(
         instance_id=instance_id,
@@ -310,9 +321,7 @@ def place_flash_instance(
         coordinator_ip=coordinator_ip,
     )
 
-    logger.info(
-        f"Created FLASH instance {instance_id} with {total_ranks} total ranks"
-    )
+    logger.info(f"Created FLASH instance {instance_id} with {total_ranks} total ranks")
 
     return target_instances
 
