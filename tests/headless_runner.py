@@ -202,7 +202,6 @@ def jaccl_instance(test: Tests, iid: InstanceId, hn: str):
     meta = MODEL_CARDS[test.model_id].metadata
     world_size = len(test.devs)
 
-
     return MlxJacclInstance(
         instance_id=iid,
         ibv_devices=[[None, "rdma_en3"], ["rdma_en3", None]],
@@ -229,7 +228,8 @@ def jaccl_instance(test: Tests, iid: InstanceId, hn: str):
 
 
 def new_runner(
-    instance: Instance, hn: str,
+    instance: Instance,
+    hn: str,
 ) -> tuple[mp.Process, MpReceiver[Event], MpSender[Task]]:
     bound_instance = BoundInstance(
         instance=instance, bound_runner_id=RunnerId(hn), bound_node_id=NodeId(hn)
