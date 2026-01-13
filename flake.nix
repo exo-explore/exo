@@ -18,6 +18,9 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
+    nixpkgs-swift.url = "github:NixOS/nixpkgs/08dacfca559e1d7da38f3cf05f1f45ee9bfd213c";
   };
 
   nixConfig = {
@@ -39,9 +42,11 @@
       ];
 
       perSystem =
-        { config, inputs', pkgs, lib, ... }:
+        { config, inputs', pkgs, lib, system, ... }:
         let
           fenixToolchain = inputs'.fenix.packages.complete;
+          # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
+          pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
         in
         {
           treefmt = {
@@ -60,7 +65,10 @@
                 enable = true;
                 includes = [ "*.ts" ];
               };
-              swift-format.enable = true;
+              swift-format = {
+                enable = true;
+                package = pkgsSwift.swiftPackages.swift-format;
+              };
             };
           };
 
