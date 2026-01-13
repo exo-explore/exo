@@ -89,6 +89,12 @@ async def assert_downloads():
     await sd.ensure_shard(
         await build_full_shard(MODEL_CARDS["gpt-oss-20b-4bit"].model_id)
     )
+    await sd.ensure_shard(
+        await build_full_shard(MODEL_CARDS["glm-4.7-8bit-gs32"].model_id)
+    )
+    await sd.ensure_shard(
+        await build_full_shard(MODEL_CARDS["minimax-m2.1-8bit"].model_id)
+    )
 
 
 async def ring_backend(test: Tests):
