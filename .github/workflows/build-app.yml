@@ -113,11 +113,22 @@ jobs:
           uv python install
           uv sync --locked
 
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v14
+        with:
+          name: exo
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
       - name: Build dashboard
         run: |
-          cd dashboard
-          npm ci
-          npm run build
+          DASHBOARD_OUT=$(nix build .#dashboard --print-build-logs --no-link --print-out-paths)
+          mkdir -p dashboard/build
+          cp -r "$DASHBOARD_OUT"/* dashboard/build/
 
       - name: Install Sparkle CLI
         run: |
