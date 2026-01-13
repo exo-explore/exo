@@ -49,14 +49,12 @@ class Tests(BaseModel):
     kind: typing.Literal["init", "warmup", "inference"]
 
 
-hn = socket.gethostname()
 mp.set_start_method("spawn", force=True)
 logger_setup(None)
 
 
 async def main():
     logger.info("starting cool server majig")
-    logger.info(hn)
     await assert_downloads()
     cfg = Config()
     cfg.bind = "0.0.0.0:52415"
@@ -82,19 +80,26 @@ async def assert_downloads():
     sd = exo_shard_downloader()
     # await sd.ensure_shard(await build_full_shard(MODEL_CARDS["qwen3-0.6b"].model_id))
     await sd.ensure_shard(await build_full_shard(MODEL_CARDS["llama-3.2-1b"].model_id))
+    await sd.ensure_shard(await build_full_shard(MODEL_CARDS["qwen3-30b"].model_id))
 
 
 async def ring_backend(test: Tests):
     iid = InstanceId(str(hash(str(test.devs))))
-    return await execute_test(test, ring_instance(test, iid))
+    weird_hn = socket.gethostname()
+    for dev in test.devs:
+        if weird_hn.startswith(dev[0]) or dev[0].startswith(weird_hn):
+            hn = dev[0]
+            break
+    else:
+        raise ValueError(f"{weird_hn} not in {test.devs}")
+    return await execute_test(test, ring_instance(test, iid, hn), hn)
 
 
-def ring_instance(test: Tests, iid: InstanceId) -> Instance:
-    global hn
+def ring_instance(test: Tests, iid: InstanceId, hn: str) -> Instance:
     hbn = [Host(ip="i dont care", port=52416) for _ in test.devs]
     world_size = len(test.devs)
     for i in range(world_size):
-        if hn.startswith(test.devs[i][0]):
+        if test.devs[i][0] == hn:
             hn = test.devs[i][0]
             if i - 1 >= 0:
                 hbn[i - 1] = Host(ip=test.devs[i - 1][1], port=52416)
@@ -102,6 +107,8 @@ def ring_instance(test: Tests, iid: InstanceId) -> Instance:
                 hbn[i + 1] = Host(ip=test.devs[i + 1][1], port=52416)
             hbn[i] = Host(ip="0.0.0.0", port=52416)
             break
+    else:
+        raise ValueError(f"{hn} not in {test.devs}")
 
     meta = MODEL_CARDS[test.model_id].metadata
     instance = MlxRingInstance(
@@ -131,10 +138,10 @@ def ring_instance(test: Tests, iid: InstanceId) -> Instance:
     return instance
 
 
-async def execute_test(test: Tests, instance: Instance):
+async def execute_test(test: Tests, instance: Instance, hn: str):
     world_size = len(test.devs)
     iid = InstanceId(str(hash(str(test.devs))))
-    _handle, recv, send = new_runner(instance)
+    _handle, recv, send = new_runner(instance, hn)
     if world_size > 1:
         send.send(ConnectToGroup(instance_id=iid))
     send.send(LoadModel(instance_id=iid))
@@ -181,17 +188,20 @@ async def execute_test(test: Tests, instance: Instance):
 
 async def jaccl_backend(test: Tests):
     iid = InstanceId(str(hash(str(test.devs))))
-    return await execute_test(test, jaccl_instance(test, iid))
+    weird_hn = socket.gethostname()
+    for dev in test.devs:
+        if weird_hn.startswith(dev[0]) or dev[0].startswith(weird_hn):
+            hn = dev[0]
+            break
+    else:
+        raise ValueError(f"{weird_hn} not in {test.devs}")
+    return await execute_test(test, jaccl_instance(test, iid, hn), hn)
 
 
-def jaccl_instance(test: Tests, iid: InstanceId):
-    global hn
+def jaccl_instance(test: Tests, iid: InstanceId, hn: str):
     meta = MODEL_CARDS[test.model_id].metadata
     world_size = len(test.devs)
-    for name, _ in test.devs:
-        if hn.startswith(name):
-            hn = name
-            break
+
 
     return MlxJacclInstance(
         instance_id=iid,
@@ -219,7 +229,7 @@ def jaccl_instance(test: Tests, iid: InstanceId):
 
 
 def new_runner(
-    instance: Instance,
+    instance: Instance, hn: str,
 ) -> tuple[mp.Process, MpReceiver[Event], MpSender[Task]]:
     bound_instance = BoundInstance(
         instance=instance, bound_runner_id=RunnerId(hn), bound_node_id=NodeId(hn)
