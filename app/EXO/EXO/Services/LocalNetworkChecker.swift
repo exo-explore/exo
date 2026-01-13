@@ -43,7 +43,8 @@ final class LocalNetworkChecker: ObservableObject {
     @Published private(set) var lastConnectionState: String = "none"
 
     /// True if we've ever had a successful connection (persisted across launches)
-    @Published private(set) var hasWorkedBefore: Bool = UserDefaults.standard.bool(forKey: hasWorkedBeforeKey)
+    @Published private(set) var hasWorkedBefore: Bool = UserDefaults.standard.bool(
+        forKey: hasWorkedBeforeKey)
 
     private var connection: NWConnection?
     private var checkTask: Task<Void, Never>?
@@ -65,7 +66,9 @@ final class LocalNetworkChecker: ObservableObject {
                 UserDefaults.standard.set(true, forKey: Self.hasWorkedBeforeKey)
             }
 
-            Self.logger.info("Local network check complete: \(result.displayText), hasWorkedBefore: \(self.hasWorkedBefore)")
+            Self.logger.info(
+                "Local network check complete: \(result.displayText), hasWorkedBefore: \(self.hasWorkedBefore)"
+            )
         }
     }
 
