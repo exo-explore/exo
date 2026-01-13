@@ -21,6 +21,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    dream2nix = {
+      url = "github:nix-community/dream2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
     nixpkgs-swift.url = "github:NixOS/nixpkgs/08dacfca559e1d7da38f3cf05f1f45ee9bfd213c";
   };
@@ -41,6 +46,7 @@
 
       imports = [
         inputs.treefmt-nix.flakeModule
+        ./dashboard/parts.nix
         ./rust/parts.nix
       ];
 
