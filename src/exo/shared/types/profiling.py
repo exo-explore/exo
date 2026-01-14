@@ -4,7 +4,7 @@ from typing import Self
 import psutil
 
 from exo.shared.types.memory import Memory
-from exo.shared.types.thunderbolt import TBIdentifier
+from exo.shared.types.thunderbolt import ThunderboltIdentifier
 from exo.utils.pydantic_ext import CamelCaseModel
 
 
@@ -61,9 +61,5 @@ class NodePerformanceProfile(CamelCaseModel):
         ram_total=0, ram_available=0, swap_total=0, swap_available=0
     )
     network_interfaces: Sequence[NetworkInterfaceInfo] = []
-    tb_interfaces: Sequence[TBIdentifier] = []
+    tb_interfaces: Sequence[ThunderboltIdentifier] = []
     system: SystemPerformanceProfile = SystemPerformanceProfile()
-
-
-class ConnectionProfile(CamelCaseModel):
-    pass

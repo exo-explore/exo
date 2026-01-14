@@ -8,7 +8,7 @@ from exo.shared.types.profiling import (
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
-from exo.shared.types.topology import SocketConnection
+from exo.shared.types.topology import SocketConnection, Connection
 
 
 @pytest.fixture
@@ -50,14 +50,14 @@ def test_add_node(topology: Topology):
     assert topology.node_is_leaf(node_id)
 
 
-def test_add_connection(topology: Topology, connection: SocketConnection):
+def test_add_connection(topology: Topology, connection: Connection):
     # arrange
     node_a = NodeId()
     node_b = NodeId()
 
     topology.add_node(node_a)
     topology.add_node(node_b)
-    topology.add_connection(node_a, node_b, connection)
+    topology.add_connection(connection)
 
     # act
     data = list(conn for _, _, conn in topology.list_connections())
@@ -70,31 +70,33 @@ def test_add_connection(topology: Topology, connection: SocketConnection):
 
 
 def test_remove_connection_still_connected(
-    topology: Topology, connection: SocketConnection
+    topology: Topology, socket_connection: SocketConnection
 ):
     # arrange
     node_a = NodeId()
     node_b = NodeId()
+    conn = Connection(source=node_a, sink=node_b, edge=socket_connection)
 
     topology.add_node(node_a)
     topology.add_node(node_b)
-    topology.add_connection(node_a, node_b, connection)
+    topology.add_connection(conn)
 
     # act
-    topology.remove_connection(node_a, node_b, connection)
+    topology.remove_connection(conn)
 
     # assert
     assert list(topology.get_all_connections_between(node_a, node_b)) == []
 
 
-def test_remove_node_still_connected(topology: Topology, connection: SocketConnection):
+def test_remove_node_still_connected(topology: Topology, socket_connection: SocketConnection):
     # arrange
     node_a = NodeId()
     node_b = NodeId()
+    conn = Connection(source=node_a, sink=node_b, edge=socket_connection)
 
     topology.add_node(node_a)
     topology.add_node(node_b)
-    topology.add_connection(node_a, node_b, connection)
+    topology.add_connection(conn)
     assert list(topology.out_edges(node_a)) == [(node_b, connection)]
 
     # act
@@ -104,14 +106,15 @@ def test_remove_node_still_connected(topology: Topology, connection: SocketConne
     assert list(topology.out_edges(node_a)) == []
 
 
-def test_list_nodes(topology: Topology, connection: SocketConnection):
+def test_list_nodes(topology: Topology, socket_connection: SocketConnection):
     # arrange
     node_a = NodeId()
     node_b = NodeId()
+    conn = Connection(source=node_a, sink=node_b, edge=socket_connection)
 
     topology.add_node(node_a)
     topology.add_node(node_b)
-    topology.add_connection(node_a, node_b, connection)
+    topology.add_connection(conn)
     assert list(topology.out_edges(node_a)) == [(node_b, connection)]
 
     # act

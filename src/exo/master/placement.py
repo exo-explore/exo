@@ -6,7 +6,7 @@ from typing import Sequence
 from loguru import logger
 
 from exo.master.placement_utils import (
-    NodeWithProfile,
+    Cycle,
     filter_cycles_by_memory,
     get_mlx_jaccl_coordinators,
     get_mlx_jaccl_devices_matrix,
@@ -56,9 +56,7 @@ def place_instance(
     current_instances: Mapping[InstanceId, Instance],
     node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> dict[InstanceId, Instance]:
-    all_nodes = list(topology.list_nodes())
-
-    cycles = topology.get_cycles() + [[node] for node in all_nodes]
+    cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
     cycles_with_sufficient_memory = filter_cycles_by_memory(
         candidate_cycles, node_profiles, command.model_meta.storage_size
@@ -91,36 +89,32 @@ def place_instance(
     smallest_cycles = get_smallest_cycles(cycles_with_sufficient_memory)
 
     smallest_tb_cycles = [
-        cycle
-        for cycle in smallest_cycles
-        if topology.get_subgraph_from_nodes(
-            [node.node_id for node in cycle]
-        ).is_thunderbolt_cycle([node.node_id for node in cycle])
+        cycle for cycle in smallest_cycles if topology.is_thunderbolt_cycle(cycle)
     ]
 
     if smallest_tb_cycles != []:
         smallest_cycles = smallest_tb_cycles
 
-    cycles_with_leaf_nodes: list[list[NodeWithProfile]] = [
+    cycles_with_leaf_nodes: list[Cycle] = [
         cycle
         for cycle in smallest_cycles
-        if any(topology.node_is_leaf(node.node_id) for node in cycle)
+        if any(topology.node_is_leaf(node_id) for node_id in cycle)
     ]
 
     selected_cycle = max(
         cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
         key=lambda cycle: sum(
-            (node.node_profile.memory.ram_available for node in cycle),
+            (node_profiles[node_id].memory.ram_available for node_id in cycle),
             start=Memory(),
         ),
     )
 
     shard_assignments = get_shard_assignments(
-        command.model_meta, selected_cycle, command.sharding
+        command.model_meta, selected_cycle, command.sharding, node_profiles
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(
-        [node.node_id for node in selected_cycle]
+        [node_id for node_id in selected_cycle]
     )
 
     instance_id = InstanceId()
@@ -137,13 +131,14 @@ def place_instance(
     match command.instance_meta:
         case InstanceMeta.MlxJaccl:
             mlx_jaccl_devices = get_mlx_jaccl_devices_matrix(
-                [node.node_id for node in selected_cycle],
+                [node_id for node_id in selected_cycle],
                 cycle_digraph,
             )
             mlx_jaccl_coordinators = get_mlx_jaccl_coordinators(
-                coordinator=selected_cycle[0].node_id,
+                coordinator=selected_cycle.node_ids[0],
                 coordinator_port=random_ephemeral_port(),
                 cycle_digraph=cycle_digraph,
+                node_profiles=node_profiles,
             )
             target_instances[instance_id] = MlxJacclInstance(
                 instance_id=instance_id,
@@ -157,6 +152,7 @@ def place_instance(
                 selected_cycle=selected_cycle,
                 cycle_digraph=cycle_digraph,
                 ephemeral_port=ephemeral_port,
+                node_profiles=node_profiles,
             )
             target_instances[instance_id] = MlxRingInstance(
                 instance_id=instance_id,
