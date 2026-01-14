@@ -56,12 +56,13 @@ struct ContentView: View {
     }
 
     private var shouldShowLocalNetworkWarning: Bool {
-        // Only show warning if:
-        // 1. Local network is not working
-        // 2. EXO is running
-        // 3. We've had a successful connection before (avoids false positive on fresh install)
+        // Show warning if local network is not working and EXO is running.
+        // The checker uses a longer timeout on first launch to allow time for
+        // the permission prompt, so this correctly handles both:
+        // 1. User denied permission on first launch
+        // 2. Permission broke after restart (macOS TCC bug)
         if case .notWorking = localNetworkChecker.status {
-            return controller.status != .stopped && localNetworkChecker.hasWorkedBefore
+            return controller.status != .stopped
         }
         return false
     }
