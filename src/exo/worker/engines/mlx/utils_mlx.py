@@ -188,7 +188,9 @@ def mlx_distributed_init(
             case MlxJacclInstance(
                 jaccl_devices=jaccl_devices, jaccl_coordinators=jaccl_coordinators
             ):
-                assert all(jaccl_devices[i][i] is None for i in range(len(jaccl_devices)))
+                assert all(
+                    jaccl_devices[i][i] is None for i in range(len(jaccl_devices))
+                )
                 # Use RDMA connectivity matrix
                 coordination_file = (
                     f"./hosts_{bound_instance.instance.instance_id}_{rank}.json"
@@ -201,7 +203,9 @@ def mlx_distributed_init(
                 jaccl_coordinator = jaccl_coordinators[bound_instance.bound_node_id]
 
                 # TODO: update once upstream fixes
-                logger.info(f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}")
+                logger.info(
+                    f"rank {rank} MLX_IBV_DEVICES: {coordination_file} with devices: {jaccl_devices_json}"
+                )
                 logger.info(f"rank {rank} MLX_JACCL_COORDINATOR: {jaccl_coordinator}")
                 os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)

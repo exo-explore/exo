@@ -418,4 +418,7 @@ def get_mlx_jaccl_coordinators(
             "Current jaccl backend requires all participating devices to be able to communicate"
         )
 
-    return {n: f"{get_ip_for_node(n)}:{coordinator_port}" for n in cycle_digraph.list_nodes()}
+    return {
+        n: f"{get_ip_for_node(n)}:{coordinator_port}"
+        for n in cycle_digraph.list_nodes()
+    }
