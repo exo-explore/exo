@@ -217,7 +217,9 @@ class Worker:
                     )
                     if initial_progress.status == "complete":
                         progress = DownloadCompleted(
-                            shard_metadata=shard, node_id=self.node_id
+                            shard_metadata=shard,
+                            node_id=self.node_id,
+                            total_bytes=initial_progress.total_bytes,
                         )
                         self.download_status[shard.model_meta.model_id] = progress
                         await self.event_sender.send(
@@ -364,7 +366,11 @@ class Worker:
             nonlocal self
             nonlocal last_progress_time
             if progress.status == "complete":
-                status = DownloadCompleted(shard_metadata=shard, node_id=self.node_id)
+                status = DownloadCompleted(
+                    shard_metadata=shard,
+                    node_id=self.node_id,
+                    total_bytes=progress.total_bytes,
+                )
                 self.download_status[shard.model_meta.model_id] = status
                 # Footgun!
                 self.event_sender.send_nowait(
@@ -457,7 +463,9 @@ class Worker:
                 ) in self.shard_downloader.get_shard_download_status():
                     if progress.status == "complete":
                         status = DownloadCompleted(
-                            node_id=self.node_id, shard_metadata=progress.shard
+                            node_id=self.node_id,
+                            shard_metadata=progress.shard,
+                            total_bytes=progress.total_bytes,
                         )
                     elif progress.status in ["in_progress", "not_started"]:
                         if progress.downloaded_bytes_this_session.in_bytes == 0:

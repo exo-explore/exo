@@ -593,7 +593,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 		// Unwrap the instance
 		const [instanceTag, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { isDownloading: false, progress: null, statusText: 'UNKNOWN', perNode: [] };
+			return { isDownloading: false, progress: null, statusText: 'PREPARING', perNode: [] };
 		}
 
 		const inst = instance as { shardAssignments?: { nodeToRunner?: Record<string, string>; runnerToShard?: Record<string, unknown>; modelId?: string } };
@@ -706,7 +706,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 	function deriveInstanceStatus(instanceWrapped: unknown): { statusText: string; statusClass: string } {
 		const [, instance] = getTagged(instanceWrapped);
 		if (!instance || typeof instance !== 'object') {
-			return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+			return { statusText: 'PREPARING', statusClass: 'inactive' };
 		}
 		
 		const inst = instance as { shardAssignments?: { runnerToShard?: Record<string, unknown> } };
@@ -735,7 +735,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 
 		const has = (s: string) => statuses.includes(s);
 
-		if (statuses.length === 0) return { statusText: 'UNKNOWN', statusClass: 'inactive' };
+		if (statuses.length === 0) return { statusText: 'PREPARING', statusClass: 'inactive' };
 		if (has('Failed')) return { statusText: 'FAILED', statusClass: 'failed' };
 		if (has('Shutdown')) return { statusText: 'SHUTDOWN', statusClass: 'inactive' };
 		if (has('Loading')) return { statusText: 'LOADING', statusClass: 'starting' };
@@ -1267,9 +1267,9 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 							<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
 						</div>
 						
-						<div 
+						<div
 							bind:this={instancesContainerRef}
-							class="max-h-72 space-y-3 overflow-y-auto"
+							class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
 						>
 								{#each Object.entries(instanceData) as [id, instance]}
 									{@const downloadInfo = getInstanceDownloadStatus(id, instance)}
@@ -1773,7 +1773,7 @@ function toggleInstanceDownloadDetails(nodeId: string): void {
 								<h3 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase">Instances</h3>
 								<div class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"></div>
 							</div>
-								<div class="space-y-3 max-h-72 overflow-y-auto pr-1">
+								<div class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1">
 									{#each Object.entries(instanceData) as [id, instance]}
 										{@const downloadInfo = getInstanceDownloadStatus(id, instance)}
 										{@const statusText = downloadInfo.statusText}

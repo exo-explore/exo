@@ -34,19 +34,23 @@ done
 devs_raw=$(printf "[\"%s\", \"%s\"], " "${weaved[@]}")
 devs="[${devs_raw%, }]"
 
-for i in "${!ips[@]}"; do  
-  { 
-    req="{
-      \"model_id\": \"llama-3.2-1b\",
-      \"devs\": ${devs},
-      \"kind\": \"inference\"
-     }"
-    echo "req $req"
-    curl -sN \
-      -X POST "http://${ips[$i]}:52415/${kind}" \
-      -H "Content-Type: application/json" -d "$req" \
-    2>&1 | sed "s/^/\n${hostnames[$i]}@${ips[$i]}: /" || echo "curl to ${hostnames[$i]} failed"
-  } &
+model_ids=("qwen3-30b" "gpt-oss-120b-MXFP4-Q8" "kimi-k2-thinking")
+
+for model_id in "${model_ids[@]}"; do
+  for i in "${!ips[@]}"; do  
+    { 
+      req="{
+        \"model_id\": \"${model_id}\",
+        \"devs\": ${devs},
+        \"kind\": \"inference\"
+       }"
+      echo "req $req"
+      curl -sN \
+        -X POST "http://${ips[$i]}:52415/${kind}" \
+        -H "Content-Type: application/json" -d "$req" \
+      2>&1 | sed "s/^/\n${hostnames[$i]}@${ips[$i]}: /" || echo "curl to ${hostnames[$i]} failed" && exit 1
+    } &
+  done
+  wait
 done
 
-wait

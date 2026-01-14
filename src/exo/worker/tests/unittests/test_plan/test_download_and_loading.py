@@ -1,5 +1,6 @@
 import exo.worker.plan as plan_mod
 from exo.shared.types.common import NodeId
+from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId
 from exo.shared.types.tasks import LoadModel
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadProgress
@@ -94,13 +95,23 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
 
     # Local node has already marked its shard as downloaded (not actually used by _load_model)
     local_download_status = {
-        MODEL_A_ID: DownloadCompleted(shard_metadata=shard1, node_id=NODE_A)
+        MODEL_A_ID: DownloadCompleted(
+            shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
+        )
     }
 
     # Global view has completed downloads for both nodes
     global_download_status = {
-        NODE_A: [DownloadCompleted(shard_metadata=shard1, node_id=NODE_A)],
-        NODE_B: [DownloadCompleted(shard_metadata=shard2, node_id=NODE_B)],
+        NODE_A: [
+            DownloadCompleted(
+                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
+            )
+        ],
+        NODE_B: [
+            DownloadCompleted(
+                shard_metadata=shard2, node_id=NODE_B, total_bytes=Memory()
+            )
+        ],
     }
 
     result = plan_mod.plan(
@@ -140,7 +151,9 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
 
     # Local status claims the shard is downloaded already
     local_download_status = {
-        MODEL_A_ID: DownloadCompleted(shard_metadata=shard, node_id=NODE_A)
+        MODEL_A_ID: DownloadCompleted(
+            shard_metadata=shard, node_id=NODE_A, total_bytes=Memory()
+        )
     }
 
     # Global view hasn't caught up yet (no completed shards recorded for NODE_A)
@@ -192,10 +205,16 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
 
     # Only NODE_A's shard is recorded as downloaded globally
     local_download_status = {
-        MODEL_A_ID: DownloadCompleted(shard_metadata=shard1, node_id=NODE_A)
+        MODEL_A_ID: DownloadCompleted(
+            shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
+        )
     }
     global_download_status = {
-        NODE_A: [DownloadCompleted(shard_metadata=shard1, node_id=NODE_A)],
+        NODE_A: [
+            DownloadCompleted(
+                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
+            )
+        ],
         NODE_B: [],  # NODE_B has no downloads completed yet
     }
 
@@ -212,9 +231,15 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
     assert result is None
 
     global_download_status = {
-        NODE_A: [DownloadCompleted(shard_metadata=shard1, node_id=NODE_A)],
+        NODE_A: [
+            DownloadCompleted(
+                shard_metadata=shard1, node_id=NODE_A, total_bytes=Memory()
+            )
+        ],
         NODE_B: [
-            DownloadCompleted(shard_metadata=shard2, node_id=NODE_B)
+            DownloadCompleted(
+                shard_metadata=shard2, node_id=NODE_B, total_bytes=Memory()
+            )
         ],  # NODE_B has no downloads completed yet
     }
 
