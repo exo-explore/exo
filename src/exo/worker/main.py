@@ -32,7 +32,7 @@ from exo.shared.types.tasks import (
     Task,
     TaskStatus,
 )
-from exo.shared.types.topology import SocketConnection
+from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadOngoing,
@@ -253,22 +253,26 @@ class Worker:
         match msg.connection_type:
             case ConnectionMessageType.Connected:
                 return TopologyEdgeCreated(
-                    source=self.node_id,
-                    sink=msg.node_id,
-                    edge=SocketConnection(
-                        sink_multiaddr=Multiaddr(
-                            address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
+                    conn=Connection(
+                        source=self.node_id,
+                        sink=msg.node_id,
+                        edge=SocketConnection(
+                            sink_multiaddr=Multiaddr(
+                                address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
+                            ),
                         ),
                     ),
                 )
 
             case ConnectionMessageType.Disconnected:
                 return TopologyEdgeDeleted(
-                    source=self.node_id,
-                    sink=msg.node_id,
-                    edge=SocketConnection(
-                        sink_multiaddr=Multiaddr(
-                            address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
+                    conn=Connection(
+                        source=self.node_id,
+                        sink=msg.node_id,
+                        edge=SocketConnection(
+                            sink_multiaddr=Multiaddr(
+                                address=f"/ip4/{msg.remote_ipv4}/tcp/{msg.remote_tcp_port}"
+                            ),
                         ),
                     ),
                 )
@@ -401,8 +405,7 @@ class Worker:
 
     async def _poll_connection_updates(self):
         while True:
-            # TODO: EdgeDeleted
-            edges = set(self.state.topology.list_connections())
+            edges = set(conn.edge for conn in self.state.topology.list_connections())
             conns = await check_reachable(
                 self.state.topology, self.state.node_profiles, self.node_id
             )
@@ -424,20 +427,22 @@ class Worker:
                         logger.debug(f"ping discovered {edge=}")
                         await self.event_sender.send(
                             TopologyEdgeCreated(
-                                source=self.node_id, sink=nid, edge=edge
+                                conn=Connection(
+                                    source=self.node_id, sink=nid, edge=edge
+                                )
                             )
                         )
 
-            for nid, conn in self.state.topology.out_edges(self.node_id):
-                if not isinstance(conn, SocketConnection):
+            for conn in self.state.topology.out_edges(self.node_id):
+                if not isinstance(conn.edge, SocketConnection):
                     continue
-                if nid not in conns or conn.sink_multiaddr.ip_address not in conns.get(
-                    nid, set()
+                if (
+                    conn.source not in conns
+                    or conn.edge.sink_multiaddr.ip_address
+                    not in conns.get(conn.source, set())
                 ):
                     logger.debug(f"ping failed to discover {conn=}")
-                    await self.event_sender.send(
-                        TopologyEdgeDeleted(source=self.node_id, sink=nid, edge=conn)
-                    )
+                    await self.event_sender.send(TopologyEdgeDeleted(conn=conn))
 
             await anyio.sleep(10)
 

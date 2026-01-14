@@ -1,14 +1,13 @@
 from collections.abc import Generator, Mapping
 
 from loguru import logger
-from pydantic import BaseModel
 
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelMetadata
 from exo.shared.types.profiling import NodePerformanceProfile
-from exo.shared.types.topology import RDMAConnection, SocketConnection
+from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
     PipelineShardMetadata,
@@ -18,37 +17,28 @@ from exo.shared.types.worker.shards import (
 )
 
 
-class NodeWithProfile(BaseModel):
-    node_id: NodeId
-    node_profile: NodePerformanceProfile
-
-
 def filter_cycles_by_memory(
-    cycles: list[list[NodeId]],
+    cycles: list[Cycle],
     node_profiles: Mapping[NodeId, NodePerformanceProfile],
     required_memory: Memory,
-) -> list[list[NodeWithProfile]]:
-    filtered_cycles: list[list[NodeWithProfile]] = []
+) -> list[Cycle]:
+    filtered_cycles: list[Cycle] = []
     for cycle in cycles:
         if not all(node in node_profiles for node in cycle):
             continue
 
         total_mem = sum(
-            (node_profiles[node].memory.ram_available for node in cycle), start=Memory()
+            (node_profiles[node_id].memory.ram_available for node_id in cycle.node_ids),
+            start=Memory(),
         )
         if total_mem >= required_memory:
-            filtered_cycles.append(
-                [
-                    NodeWithProfile(node_id=node, node_profile=node_profiles[node])
-                    for node in cycle
-                ]
-            )
+            filtered_cycles.append(cycle)
     return filtered_cycles
 
 
 def get_smallest_cycles(
-    cycles: list[list[NodeWithProfile]],
-) -> list[list[NodeWithProfile]]:
+    cycles: list[Cycle],
+) -> list[Cycle]:
     min_nodes = min(len(cycle) for cycle in cycles)
     return [cycle for cycle in cycles if len(cycle) == min_nodes]
 
@@ -86,13 +76,14 @@ def allocate_layers_proportionally(
 
 def get_shard_assignments_for_pipeline_parallel(
     model_meta: ModelMetadata,
-    selected_cycle: list[NodeWithProfile],
+    cycle: Cycle,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ):
-    if not selected_cycle:
+    if not cycle.node_ids:
         raise ValueError("Cannot create shard assignments for empty node cycle")
 
     cycle_memory = sum(
-        (node.node_profile.memory.ram_available for node in selected_cycle),
+        (node_profiles[node_id].memory.ram_available for node_id in cycle.node_ids),
         start=Memory(),
     )
 
@@ -100,35 +91,35 @@ def get_shard_assignments_for_pipeline_parallel(
         raise ValueError("Cannot create shard assignments: total available memory is 0")
 
     total_layers = model_meta.n_layers
-    world_size = len(selected_cycle)
+    world_size = len(cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
     layer_allocations = allocate_layers_proportionally(
         total_layers=total_layers,
         memory_fractions=[
-            node.node_profile.memory.ram_available.in_bytes / cycle_memory.in_bytes
-            for node in selected_cycle
+            node_profiles[node_id].memory.ram_available.in_bytes / cycle_memory.in_bytes
+            for node_id in cycle.node_ids
         ],
     )
 
     # Validate each node has sufficient memory for its assigned layers
     memory_per_layer = model_meta.storage_size.in_bytes / total_layers
-    for i, (node, node_layers) in enumerate(
-        zip(selected_cycle, layer_allocations, strict=True)
+    for i, (node_id, node_layers) in enumerate(
+        zip(cycle.node_ids, layer_allocations, strict=True)
     ):
         required_memory = node_layers * memory_per_layer
-        available_memory = node.node_profile.memory.ram_available.in_bytes
+        available_memory = node_profiles[node_id].memory.ram_available.in_bytes
         if required_memory > available_memory:
             raise ValueError(
-                f"Node {i} ({node.node_id}) has insufficient memory: "
+                f"Node {i} ({node_id}) has insufficient memory: "
                 f"requires {required_memory / (1024**3):.2f} GB for {node_layers} layers, "
                 f"but only has {available_memory / (1024**3):.2f} GB available"
             )
 
     layers_assigned = 0
-    for i, (node, node_layers) in enumerate(
-        zip(selected_cycle, layer_allocations, strict=True)
+    for i, (node_id, node_layers) in enumerate(
+        zip(cycle.node_ids, layer_allocations, strict=True)
     ):
         runner_id = RunnerId()
 
@@ -142,7 +133,7 @@ def get_shard_assignments_for_pipeline_parallel(
         )
 
         runner_to_shard[runner_id] = shard
-        node_to_runner[node.node_id] = runner_id
+        node_to_runner[node_id] = runner_id
         layers_assigned += node_layers
 
     shard_assignments = ShardAssignments(
@@ -156,14 +147,14 @@ def get_shard_assignments_for_pipeline_parallel(
 
 def get_shard_assignments_for_tensor_parallel(
     model_meta: ModelMetadata,
-    selected_cycle: list[NodeWithProfile],
+    cycle: Cycle,
 ):
     total_layers = model_meta.n_layers
-    world_size = len(selected_cycle)
+    world_size = len(cycle)
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
-    for i, node in enumerate(selected_cycle):
+    for i, node_id in enumerate(cycle):
         shard = TensorShardMetadata(
             model_meta=model_meta,
             device_rank=i,
@@ -176,7 +167,7 @@ def get_shard_assignments_for_tensor_parallel(
         runner_id = RunnerId()
 
         runner_to_shard[runner_id] = shard
-        node_to_runner[node.node_id] = runner_id
+        node_to_runner[node_id] = runner_id
 
     shard_assignments = ShardAssignments(
         model_id=model_meta.model_id,
@@ -189,19 +180,21 @@ def get_shard_assignments_for_tensor_parallel(
 
 def get_shard_assignments(
     model_meta: ModelMetadata,
-    selected_cycle: list[NodeWithProfile],
+    cycle: Cycle,
     sharding: Sharding,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
             return get_shard_assignments_for_pipeline_parallel(
                 model_meta=model_meta,
-                selected_cycle=selected_cycle,
+                cycle=cycle,
+                node_profiles=node_profiles,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
                 model_meta=model_meta,
-                selected_cycle=selected_cycle,
+                cycle=cycle,
             )
 
 
@@ -225,8 +218,8 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
     cycle = cycles[0]
     hosts: list[Host] = []
     for i in range(len(cycle)):
-        current_node = cycle[i]
-        next_node = cycle[(i + 1) % len(cycle)]
+        current_node = cycle.node_ids[i]
+        next_node = cycle.node_ids[(i + 1) % len(cycle)]
 
         for src, sink, connection in cycle_digraph.list_connections():
             if not isinstance(connection, SocketConnection):
@@ -286,18 +279,16 @@ def _find_connection_ip(
     cycle_digraph: Topology,
 ) -> Generator[tuple[str, bool]]:
     """Find all IP addresses that connect node i to node j."""
-    # TODO: Prioritise ETHERNET > ??WIFI > TB for coordinator
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):
             yield connection.sink_multiaddr.ip_address, connection.is_thunderbolt()
 
 
 def _find_interface_name_for_ip(
-    ip_address: str,
-    node_info: NodeWithProfile,
+    ip_address: str, node_profile: NodePerformanceProfile
 ) -> str | None:
     """Find the interface name for an IP address on a node (any interface)."""
-    for interface in node_info.node_profile.network_interfaces:
+    for interface in node_profile.network_interfaces:
         if interface.ip_address == ip_address:
             return interface.name
 
@@ -305,7 +296,10 @@ def _find_interface_name_for_ip(
 
 
 def _find_ip_prioritised(
-    node: NodeWithProfile, other_node: NodeWithProfile, cycle_digraph: Topology
+    node_id: NodeId,
+    other_node_id: NodeId,
+    cycle_digraph: Topology,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> str | None:
     # TODO: Actually prioritize in the correct Ethernet > Wifi > Non-TB > TB order.
     """Find an IP address between nodes with prioritization.
@@ -316,9 +310,12 @@ def _find_ip_prioritised(
     3. Non-Thunderbolt connections
     4. Any other IP address
     """
-    ips = list(_find_connection_ip(node.node_id, other_node.node_id, cycle_digraph))
+    ips = list(_find_connection_ip(node_id, other_node_id, cycle_digraph))
     # We expect a unique iface -> ip mapping
-    iface_map = {_find_interface_name_for_ip(ip, other_node): ip for ip, _ in ips}
+    iface_map = {
+        _find_interface_name_for_ip(ip, node_profiles[other_node_id]): ip
+        for ip, _ in ips
+    }
 
     en0_ip = iface_map.get("en0")
     if en0_ip:
@@ -342,9 +339,10 @@ def _find_ip_prioritised(
 
 
 def get_mlx_ring_hosts_by_node(
-    selected_cycle: list[NodeWithProfile],
+    selected_cycle: Cycle,
     cycle_digraph: Topology,
     ephemeral_port: int,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> dict[NodeId, list[Host]]:
     """Generate per-node host lists for MLX ring backend.
 
@@ -359,14 +357,13 @@ def get_mlx_ring_hosts_by_node(
 
     hosts_by_node: dict[NodeId, list[Host]] = {}
 
-    for rank, node in enumerate(selected_cycle):
-        node_id = node.node_id
+    for rank, node_id in enumerate(selected_cycle):
         left_rank = (rank - 1) % world_size
         right_rank = (rank + 1) % world_size
 
         hosts_for_node: list[Host] = []
 
-        for idx, other_node in enumerate(selected_cycle):
+        for idx, other_node_id in enumerate(selected_cycle):
             if idx == rank:
                 hosts_for_node.append(Host(ip="0.0.0.0", port=ephemeral_port))
                 continue
@@ -376,10 +373,12 @@ def get_mlx_ring_hosts_by_node(
                 hosts_for_node.append(Host(ip="198.51.100.1", port=0))
                 continue
 
-            connection_ip = _find_ip_prioritised(node, other_node, cycle_digraph)
+            connection_ip = _find_ip_prioritised(
+                node_id, other_node_id, cycle_digraph, node_profiles
+            )
             if connection_ip is None:
                 logger.warning(
-                    f"Failed to find prioritised connection IP between {node_id} and {other_node}"
+                    f"Failed to find prioritised connection IP between {node_id} and {other_node_id}"
                 )
                 raise ValueError(
                     "MLX ring backend requires connectivity between neighbouring nodes"
@@ -396,6 +395,7 @@ def get_mlx_jaccl_coordinators(
     coordinator: NodeId,
     coordinator_port: int,
     cycle_digraph: Topology,
+    node_profiles: Mapping[NodeId, NodePerformanceProfile],
 ) -> dict[NodeId, str]:
     """Get the coordinator addresses for MLX JACCL (rank 0 device).
 
@@ -408,7 +408,8 @@ def get_mlx_jaccl_coordinators(
         if n == coordinator:
             return "0.0.0.0"
 
-        for ip, _ in _find_connection_ip(n, coordinator, cycle_digraph):
+        ip = _find_ip_prioritised(n, coordinator, cycle_digraph, node_profiles)
+        if ip is not None:
             return ip
 
         logger.warning(

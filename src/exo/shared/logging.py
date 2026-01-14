@@ -11,9 +11,6 @@ class InterceptLogger(HypercornLogger):
     def __init__(self, config: Config):
         super().__init__(config)
         assert self.error_logger
-        # TODO: Decide if we want to provide access logs
-        # assert self.access_logger
-        # self.access_logger.handlers = [_InterceptHandler()]
         self.error_logger.handlers = [_InterceptHandler()]
 
 
@@ -23,8 +20,6 @@ class _InterceptHandler(logging.Handler):
             level = logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-
-        return
 
         logger.opt(depth=3, exception=record.exc_info).log(level, record.getMessage())
 

@@ -28,14 +28,14 @@ from exo.shared.types.events import (
 from exo.shared.types.profiling import NodePerformanceProfile
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
-from exo.shared.types.topology import RDMAConnection
+from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import (
     MacmonMetrics,
-    MacTBConnections,
-    MacTBIdentifiers,
+    MacThunderboltConnections,
+    MacThunderboltIdentifiers,
     MemoryUsage,
     MiscData,
     NodeConfig,
@@ -218,7 +218,6 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
     topology.add_node(event.node_id)
     info = event.info
     profile = state.node_profiles.get(event.node_id, NodePerformanceProfile())
-    # TODO: should be broken up into individual events instead of this monster
     match info:
         case MacmonMetrics():
             profile.system = info.system_profile
@@ -232,21 +231,21 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
         case StaticNodeInformation():
             profile.model_id = info.model
             profile.chip_id = info.chip
-        # TODO: makes me slightly sad
         case NodeNetworkInterfaces():
             profile.network_interfaces = info.ifaces
-        case MacTBIdentifiers():
+        case MacThunderboltIdentifiers():
             profile.tb_interfaces = info.idents
-        case MacTBConnections():
+        case MacThunderboltConnections():
             conn_map = {
                 tb_ident.domain_uuid: (nid, tb_ident.rdma_interface)
                 for nid in state.node_profiles
                 for tb_ident in state.node_profiles[nid].tb_interfaces
             }
             as_rdma_conns = [
-                (
-                    conn_map[tb_conn.sink_uuid][0],
-                    RDMAConnection(
+                Connection(
+                    source=event.node_id,
+                    sink=conn_map[tb_conn.sink_uuid][0],
+                    edge=RDMAConnection(
                         source_rdma_iface=conn_map[tb_conn.source_uuid][1],
                         sink_rdma_iface=conn_map[tb_conn.sink_uuid][1],
                     ),
@@ -255,7 +254,7 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 if tb_conn.source_uuid in conn_map
                 if tb_conn.sink_uuid in conn_map
             ]
-            topology.replace_all_out_tb_connections(event.node_id, as_rdma_conns)
+            topology.replace_all_out_rdma_connections(event.node_id, as_rdma_conns)
 
     last_seen = {**state.last_seen, event.node_id: datetime.fromisoformat(event.when)}
     new_profiles = {**state.node_profiles, event.node_id: profile}
@@ -270,12 +269,12 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
 
 def apply_topology_edge_created(event: TopologyEdgeCreated, state: State) -> State:
     topology = copy.deepcopy(state.topology)
-    topology.add_connection(event.source, event.sink, event.edge)
+    topology.add_connection(event.conn)
     return state.model_copy(update={"topology": topology})
 
 
 def apply_topology_edge_deleted(event: TopologyEdgeDeleted, state: State) -> State:
     topology = copy.deepcopy(state.topology)
-    topology.remove_connection(event.sink, event.source, event.edge)
+    topology.remove_connection(event.conn)
     # TODO: Clean up removing the reverse connection
     return state.model_copy(update={"topology": topology})

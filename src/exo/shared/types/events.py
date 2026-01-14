@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from exo.shared.topology import SocketConnection
+from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk
 from exo.shared.types.common import CommandId, Id, NodeId, SessionId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
@@ -80,11 +80,11 @@ class NodeTimedOut(BaseEvent):
     node_id: NodeId
 
 
-# TODO: bikeshed this naem
+# TODO: bikeshed this name
 class NodeGatheredInfo(BaseEvent):
     node_id: NodeId
     when: str  # this is a manually cast datetime overrode by the master when the event is indexed, rather than the local time on the device
-    info: GatheredInfo  # NB: this model is UNTAGGED!!! be warned for ser/de errors.
+    info: GatheredInfo
 
 
 class NodeDownloadProgress(BaseEvent):
@@ -97,15 +97,11 @@ class ChunkGenerated(BaseEvent):
 
 
 class TopologyEdgeCreated(BaseEvent):
-    source: NodeId
-    sink: NodeId
-    edge: SocketConnection
+    conn: Connection
 
 
 class TopologyEdgeDeleted(BaseEvent):
-    source: NodeId
-    sink: NodeId
-    edge: SocketConnection
+    conn: Connection
 
 
 Event = (

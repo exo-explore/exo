@@ -20,7 +20,11 @@ from exo.shared.types.profiling import (
     MemoryUsage,
     NetworkInterfaceInfo,
 )
-from exo.shared.types.thunderbolt import TBConnection, TBConnectivity, TBIdentifier
+from exo.shared.types.thunderbolt import (
+    ThunderboltConnection,
+    ThunderboltConnectivity,
+    ThunderboltIdentifier,
+)
 from exo.utils.channels import Sender
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -46,18 +50,17 @@ class NodeNetworkInterfaces(TaggedModel):
     ifaces: Sequence[NetworkInterfaceInfo]
 
 
-class MacTBIdentifiers(TaggedModel):
-    idents: Sequence[TBIdentifier]
+class MacThunderboltIdentifiers(TaggedModel):
+    idents: Sequence[ThunderboltIdentifier]
 
 
-class MacTBConnections(TaggedModel):
-    conns: Sequence[TBConnection]
+class MacThunderboltConnections(TaggedModel):
+    conns: Sequence[ThunderboltConnection]
 
 
 class NodeConfig(TaggedModel):
     """Node configuration from EXO_CONFIG_FILE, reloaded from the file only at startup. Other changes should come in through the API and propagate from there"""
 
-    # TODO
     @classmethod
     async def gather(cls) -> Self | None:
         cfg_file = anyio.Path(EXO_CONFIG_FILE)
@@ -106,8 +109,8 @@ GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
     | NodeNetworkInterfaces
-    | MacTBIdentifiers
-    | MacTBConnections
+    | MacThunderboltIdentifiers
+    | MacThunderboltConnections
     | NodeConfig
     | MiscData
     | StaticNodeInformation
@@ -126,10 +129,10 @@ class InfoGatherer:
 
     async def run(self):
         async with self._tg as tg:
-            if (macmon_path := shutil.which("macmon")) is not None:
-                tg.start_soon(self._monitor_macmon, macmon_path)
             if IS_DARWIN:
-                tg.start_soon(self._monitor_system_profiler)
+                if (macmon_path := shutil.which("macmon")) is not None:
+                    tg.start_soon(self._monitor_macmon, macmon_path)
+                tg.start_soon(self._monitor_system_profiler_thunderbolt_data)
             tg.start_soon(self._watch_system_info)
             tg.start_soon(self._monitor_memory_usage)
             tg.start_soon(self._monitor_misc)
@@ -155,7 +158,7 @@ class InfoGatherer:
                 await self.info_sender.send(curr)
             await anyio.sleep(self.misc_poll_interval)
 
-    async def _monitor_system_profiler(self):
+    async def _monitor_system_profiler_thunderbolt_data(self):
         if self.system_profiler_interval is None:
             return
         iface_map = await _gather_iface_map()
@@ -164,16 +167,16 @@ class InfoGatherer:
 
         old_idents = []
         while True:
-            data = await TBConnectivity.gather()
+            data = await ThunderboltConnectivity.gather()
             assert data is not None
 
             idents = [it for i in data if (it := i.ident(iface_map)) is not None]
             if idents != old_idents:
-                await self.info_sender.send(MacTBIdentifiers(idents=idents))
+                await self.info_sender.send(MacThunderboltIdentifiers(idents=idents))
             old_idents = idents
 
             conns = [it for i in data if (it := i.conn()) is not None]
-            await self.info_sender.send(MacTBConnections(conns=conns))
+            await self.info_sender.send(MacThunderboltConnections(conns=conns))
 
             await anyio.sleep(self.system_profiler_interval)
 
