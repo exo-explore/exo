@@ -25,6 +25,7 @@ dependencies = [
     "openai-harmony>=0.0.8",
     "pillow>=11.0,<12.0", # compatibility with mflux
     "mflux>=0.12.1",
+    "python-multipart>=0.0.21",
 ]
 
 [project.scripts]
