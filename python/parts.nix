@@ -84,11 +84,51 @@
               --set DASHBOARD_DIR ${self'.packages.dashboard}
           done
         '';
+
+      pyinstallerPackage =
+        let
+          venv = pythonSet.mkVirtualEnv "exo-pyinstaller-env" (
+            workspace.deps.default
+            // {
+              # Include pyinstaller in the environment
+              exo = [ "dev" ];
+            }
+          );
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = "exo-pyinstaller";
+          version = "0.3.0";
+
+          src = inputs.self;
+
+          nativeBuildInputs = [ venv pkgs.makeWrapper pkgs.macmon pkgs.darwin.system_cmds ];
+
+          buildPhase = ''
+            # macmon must be in PATH for PyInstaller to bundle it
+            export PATH="${pkgs.macmon}/bin:$PATH"
+            # HOME must be writable for PyInstaller's cache
+            export HOME="$TMPDIR"
+
+            # Copy dashboard to expected location
+            mkdir -p dashboard/build
+            cp -r ${self'.packages.dashboard}/* dashboard/build/
+
+            # Run PyInstaller
+            ${venv}/bin/python -m PyInstaller packaging/pyinstaller/exo.spec
+          '';
+
+          installPhase = ''
+            cp -r dist/exo $out
+          '';
+        };
     in
     {
-      # Python package only available on macOS (requires MLX/Metal)
+      # Python package only available on macOS for now due to the dependency on
+      # mlx/mlx-cpu being tricky to build on Linux. We can either remove this
+      # dependency in the PyProject or build it with Nix.
       packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
         exo = exoPackage;
+        exo-pyinstaller = pyinstallerPackage;
       };
 
       checks = {

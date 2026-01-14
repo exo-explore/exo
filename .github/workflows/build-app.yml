@@ -102,17 +102,6 @@ jobs:
       - name: Install Homebrew packages
         run: brew install just awscli macmon
 
-      - name: Install UV
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Setup Python
-        run: |
-          uv python install
-          uv sync --locked
-
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:
@@ -123,12 +112,6 @@ jobs:
         with:
           name: exo
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-
-      - name: Build dashboard
-        run: |
-          DASHBOARD_OUT=$(nix build .#dashboard --print-build-logs --no-link --print-out-paths)
-          mkdir -p dashboard/build
-          cp -r "$DASHBOARD_OUT"/* dashboard/build/
 
       - name: Install Sparkle CLI
         run: |
@@ -185,7 +168,10 @@ jobs:
       # ============================================================
 
       - name: Build PyInstaller bundle
-        run: uv run pyinstaller packaging/pyinstaller/exo.spec
+        run: |
+          PYINSTALLER_OUT=$(nix build .#exo-pyinstaller --print-build-logs --no-link --print-out-paths)
+          mkdir -p dist
+          cp -r "$PYINSTALLER_OUT" dist/exo
 
       - name: Build Swift app
         env:
