@@ -1,6 +1,6 @@
 import time
 from collections.abc import AsyncGenerator
-from typing import cast
+from typing import Any, cast
 
 import anyio
 from anyio import create_task_group
@@ -642,7 +642,7 @@ class API:
         ranks_per_node: int = 1,
         min_nodes: int = 1,
         hosts: str = "",
-    ) -> dict:
+    ) -> dict[str, str]:
         """Launch a FLASH MPI simulation across the cluster.
 
         Args:
@@ -666,7 +666,7 @@ class API:
             "simulation_name": simulation_name,
         }
 
-    async def stop_flash(self, instance_id: InstanceId) -> dict:
+    async def stop_flash(self, instance_id: InstanceId) -> dict[str, str]:
         """Stop a running FLASH simulation."""
         if instance_id not in self.state.instances:
             raise HTTPException(status_code=404, detail="Instance not found")
@@ -686,13 +686,13 @@ class API:
             "instance_id": str(instance_id),
         }
 
-    async def list_flash_instances(self) -> list[dict]:
+    async def list_flash_instances(self) -> list[dict[str, Any]]:
         """List all FLASH simulation instances."""
-        flash_instances = []
+        flash_instances: list[dict[str, Any]] = []
         for instance_id, instance in self.state.instances.items():
             if isinstance(instance, FLASHInstance):
                 # Get runner statuses for this instance
-                runner_statuses = {}
+                runner_statuses: dict[str, str | None] = {}
                 for (
                     node_id,
                     runner_id,

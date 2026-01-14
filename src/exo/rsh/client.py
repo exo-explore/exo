@@ -10,6 +10,7 @@ It connects to the target node's RSH server (port 52416) and executes the comman
 import json
 import socket
 import sys
+from typing import Any, cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -66,18 +67,23 @@ def main():
 
     try:
         req = Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urlopen(req, timeout=300) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        with urlopen(req, timeout=300) as response:  # pyright: ignore[reportAny]
+            response_body: bytes = cast(bytes, response.read())  # pyright: ignore[reportAny]
+            result: dict[str, Any] = json.loads(response_body.decode("utf-8"))  # pyright: ignore[reportAny]
 
         # Output stdout/stderr
-        if result.get("stdout"):
-            sys.stdout.write(result["stdout"])
+        stdout: str = cast(str, result.get("stdout", ""))
+        stderr: str = cast(str, result.get("stderr", ""))
+        exit_code: int = cast(int, result.get("exit_code", 0))
+
+        if stdout:
+            sys.stdout.write(stdout)
             sys.stdout.flush()
-        if result.get("stderr"):
-            sys.stderr.write(result["stderr"])
+        if stderr:
+            sys.stderr.write(stderr)
             sys.stderr.flush()
 
-        sys.exit(result.get("exit_code", 0))
+        sys.exit(exit_code)
 
     except URLError as e:
         print(

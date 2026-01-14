@@ -20,7 +20,7 @@ from exo.shared.types.commands import (
     LaunchFLASH,
     PlaceInstance,
 )
-from exo.shared.types.common import Host
+from exo.shared.types.common import Host, NodeId
 from exo.shared.types.events import Event, InstanceCreated, InstanceDeleted
 from exo.shared.types.memory import Memory
 from exo.shared.types.models import ModelId, ModelMetadata
@@ -169,6 +169,9 @@ def place_instance(
                 hosts_by_node=hosts_by_node,
                 ephemeral_port=ephemeral_port,
             )
+        case InstanceMeta.FLASH:
+            # FLASH instances are handled by place_flash_instance()
+            raise ValueError("FLASH instances should use place_flash_instance()")
 
     return target_instances
 
@@ -214,7 +217,7 @@ def place_flash_instance(
 
     # Build shard assignments (one runner per node for FLASH)
     runner_to_shard: dict[RunnerId, PipelineShardMetadata] = {}
-    node_to_runner: dict = {}
+    node_to_runner: dict[NodeId, RunnerId] = {}
 
     # Create a dummy ModelMetadata for FLASH (required by ShardMetadata interface)
     flash_model_meta = ModelMetadata(
@@ -245,7 +248,7 @@ def place_flash_instance(
     )
 
     # Build hosts_by_node - get hostnames/IPs for MPI hostfile generation
-    hosts_by_node: dict = {}
+    hosts_by_node: dict[NodeId, list[Host]] = {}
 
     # If explicit hosts are provided, use them directly
     if command.hosts:
@@ -301,8 +304,8 @@ def place_flash_instance(
     total_ranks = len(selected_nodes) * command.ranks_per_node
 
     # Determine coordinator IP - first node's first host IP
-    first_node_id = list(hosts_by_node.keys())[0]
-    coordinator_ip = (
+    first_node_id: NodeId = next(iter(hosts_by_node.keys()))
+    coordinator_ip: str = (
         hosts_by_node[first_node_id][0].ip
         if hosts_by_node[first_node_id]
         else "127.0.0.1"

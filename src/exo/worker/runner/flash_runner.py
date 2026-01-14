@@ -44,9 +44,10 @@ from exo.worker.runner.bootstrap import logger
 MPIRUN_PATH = shutil.which("mpirun") or "/opt/homebrew/bin/mpirun"
 
 # exo-rsh is installed as console script by exo package
-EXO_RSH_PATH = shutil.which("exo-rsh")
-if not EXO_RSH_PATH:
+_exo_rsh_path = shutil.which("exo-rsh")
+if not _exo_rsh_path:
     raise RuntimeError("exo-rsh not found in PATH - this should be installed with exo")
+EXO_RSH_PATH: str = _exo_rsh_path
 
 
 def get_my_rank(instance: FLASHInstance, my_node_id: str) -> int:
@@ -139,7 +140,7 @@ def main(
     )
     logger.info(f"FLASH coordinator IP: {coordinator_ip}")
 
-    process: subprocess.Popen | None = None
+    process: subprocess.Popen[bytes] | None = None
     current_status: RunnerStatus = RunnerIdle()
     shutdown_requested = False
 
@@ -147,7 +148,7 @@ def main(
         RunnerStatusUpdated(runner_id=runner_id, runner_status=current_status)
     )
 
-    def monitor_output(proc: subprocess.Popen):
+    def monitor_output(proc: subprocess.Popen[bytes]) -> None:
         """Monitor FLASH stdout for progress updates."""
         if proc.stdout is None:
             return
@@ -155,7 +156,7 @@ def main(
             if shutdown_requested:
                 break
             try:
-                decoded = line.decode("utf-8", errors="replace").strip()
+                decoded: str = line.decode("utf-8", errors="replace").strip()
                 if decoded:
                     logger.info(f"[FLASH] {decoded}")
             except Exception as e:

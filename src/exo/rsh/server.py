@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from hypercorn.asyncio import serve
+from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
 from loguru import logger
 from pydantic import BaseModel
@@ -34,12 +34,12 @@ def create_rsh_app() -> FastAPI:
     app = FastAPI(title="Exo RSH Server")
 
     @app.get("/health")
-    async def health():
+    async def health():  # pyright: ignore[reportUnusedFunction]
         """Health check endpoint."""
         return {"status": "ok"}
 
     @app.post("/execute")
-    async def execute(request: ExecuteRequest) -> ExecuteResponse:
+    async def execute(request: ExecuteRequest) -> ExecuteResponse:  # pyright: ignore[reportUnusedFunction]
         """Execute a command and return the result."""
         cmd_str = " ".join(request.command)
         logger.info(f"RSH executing: {cmd_str}")
@@ -103,7 +103,7 @@ def create_rsh_app() -> FastAPI:
             )
 
     @app.post("/execute_streaming")
-    async def execute_streaming(request: ExecuteRequest):
+    async def execute_streaming(request: ExecuteRequest):  # pyright: ignore[reportUnusedFunction]
         """Execute a command and stream the output."""
         logger.info(f"RSH streaming execute: {' '.join(request.command)}")
 
