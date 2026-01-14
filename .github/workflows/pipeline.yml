@@ -113,6 +113,28 @@ jobs:
         with:
           lfs: false
 
+      - name: Select Xcode
+        if: startsWith(matrix.runner, 'macos-')
+        run: |
+          XCODE_BASEDIR="$(printf '%s\n' /Applications/Xcode_*.app | sort -V | tail -n 1)"
+          [[ -z "$XCODE_BASEDIR" ]] && exit 1
+          sudo mv "$XCODE_BASEDIR" /Applications/Xcode.app
+
+          ls -ld "/Applications/Xcode.app"
+          sudo /usr/bin/xcode-select -s "/Applications/Xcode.app"
+          /usr/bin/xcode-select -p || true
+          /usr/bin/xcrun --toolchain default --find xcodebuild || true
+
+      - name: Install Metal toolchain component
+        if: startsWith(matrix.runner, 'macos-')
+        run: |
+          set -e
+          if ! xcrun --find metal >/dev/null 2>&1; then
+            sudo xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --find metal
+          xcrun --find metallib
+
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
