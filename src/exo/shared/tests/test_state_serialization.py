@@ -21,6 +21,11 @@ def test_state_serialization_roundtrip() -> None:
     json_repr = state.model_dump_json()
     restored_state = State.model_validate_json(json_repr)
 
-    assert state.topology.to_snapshot().nodes == restored_state.topology.to_snapshot().nodes
-    assert set(state.topology.to_snapshot().connections) == set(restored_state.topology.to_snapshot().connections)
+    assert (
+        state.topology.to_snapshot().nodes
+        == restored_state.topology.to_snapshot().nodes
+    )
+    assert set(state.topology.to_snapshot().connections) == set(
+        restored_state.topology.to_snapshot().connections
+    )
     assert restored_state.model_dump_json() == json_repr

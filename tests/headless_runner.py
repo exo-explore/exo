@@ -220,16 +220,16 @@ async def jaccl_backend(test: Tests):
             break
     else:
         raise ValueError(f"{weird_hn} not in {test.devs}")
-    return await execute_test(test, jaccl_instance(test, iid, hn), hn)
+    return await execute_test(test, jaccl_instance(test, iid), hn)
 
 
-def jaccl_instance(test: Tests, iid: InstanceId, hn: str):
+def jaccl_instance(test: Tests, iid: InstanceId):
     meta = MODEL_CARDS[test.model_id].metadata
     world_size = len(test.devs)
 
     return MlxJacclInstance(
         instance_id=iid,
-        ibv_devices=[[None, "rdma_en3"], ["rdma_en3", None]],
+        jaccl_devices=[[None, "rdma_en3"], ["rdma_en3", None]],
         # rank 0 is always coordinator
         jaccl_coordinators={
             NodeId(host[0]): test.devs[0][1] + ":52416" for host in test.devs
