@@ -228,17 +228,7 @@ def tensor_auto_parallel(
         group=group,
     )
 
-    logger.info(f"tensor_auto_parallel: model type = {type(model).__name__}, has shard = {hasattr(model, 'shard')}")
-
-    if hasattr(model, "shard"):
-        try:
-            logger.info("Using model's built-in shard method")
-            model.shard(group)  # type: ignore
-            logger.info("model.shard(group) completed")
-            return model
-        except (AttributeError, TypeError, NameError) as e:
-            logger.info(f"model.shard failed with {e}, falling back to manual sharding")
-            pass
+    logger.info(f"tensor_auto_parallel: model type = {type(model).__name__}")
 
     if isinstance(model, (LlamaModel, Ministral3Model)):
         logger.info("Using LlamaShardingStrategy")
