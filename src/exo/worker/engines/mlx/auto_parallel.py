@@ -228,6 +228,8 @@ def tensor_auto_parallel(
         group=group,
     )
 
+    logger.info(f"tensor_auto_parallel: model type = {type(model).__name__}, has shard = {hasattr(model, 'shard')}")
+
     if hasattr(model, "shard"):
         try:
             logger.info("Using model's built-in shard method")
@@ -239,7 +241,7 @@ def tensor_auto_parallel(
             pass
 
     if isinstance(model, (LlamaModel, Ministral3Model)):
-        logger.warning("shouldn't be hit - upstream sharding exists")
+        logger.info("Using LlamaShardingStrategy")
         tensor_parallel_sharding_strategy = LlamaShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -248,7 +250,7 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
     elif isinstance(model, (DeepseekV3Model, DeepseekV32Model)):
-        logger.warning("shouldn't be hit - upstream sharding exists")
+        logger.info("Using DeepSeekShardingStrategy")
         tensor_parallel_sharding_strategy = DeepSeekShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -257,6 +259,7 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
     elif isinstance(model, MiniMaxModel):
+        logger.info("Using MiniMaxShardingStrategy")
         tensor_parallel_sharding_strategy = MiniMaxShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -265,6 +268,7 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
     elif isinstance(model, (Qwen3MoeModel, Glm4MoeModel, Qwen3NextModel)):
+        logger.info("Using QwenShardingStrategy")
         tensor_parallel_sharding_strategy = QwenShardingStrategy(
             group,
             all_to_sharded_linear,
