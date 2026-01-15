@@ -162,7 +162,9 @@ def mlx_distributed_init(
                 os.environ["MLX_IBV_DEVICES"] = coordination_file
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
+                logger.info(f"rank {rank} BEFORE mx.distributed.init(backend='jaccl')")
                 group = mx.distributed.init(backend="jaccl", strict=True)
+                logger.info(f"rank {rank} AFTER mx.distributed.init - group created")
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
@@ -199,10 +201,12 @@ def load_mlx_items(
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
 
     else:
-        logger.info("Starting distributed init")
+        logger.info("Starting distributed shard_and_load")
         start_time = time.perf_counter()
+        logger.info(f"BEFORE shard_and_load for model {bound_instance.bound_shard.model_meta.model_id}")
         model, tokenizer = shard_and_load(bound_instance.bound_shard, group=group)
         end_time = time.perf_counter()
+        logger.info(f"AFTER shard_and_load completed")
         logger.info(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
         )
@@ -217,8 +221,10 @@ def shard_and_load(
     group: Group,
 ) -> tuple[nn.Module, TokenizerWrapper]:
     model_path = build_model_path(shard_metadata.model_meta.model_id)
-
+    logger.info(f"shard_and_load: model_path={model_path}")
+    logger.info("BEFORE load_model (lazy=True)")
     model, _ = load_model(model_path, lazy=True, strict=False)
+    logger.info("AFTER load_model")
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
@@ -246,21 +252,29 @@ def shard_and_load(
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")
+            logger.info("BEFORE tensor_auto_parallel")
             model = tensor_auto_parallel(model, group)
+            logger.info("AFTER tensor_auto_parallel")
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = pipeline_auto_parallel(model, group, shard_metadata)
 
+    logger.info("BEFORE mx.eval(model.parameters())")
     mx.eval(model.parameters())
+    logger.info("AFTER mx.eval(model.parameters())")
 
     # TODO: Do we need this?
+    logger.info("BEFORE mx.eval(model)")
     mx.eval(model)
+    logger.info("AFTER mx.eval(model)")
 
     logger.debug("SHARDED")
     logger.debug(model)
 
     # Synchronize processes before generation to avoid timeout
+    logger.info("BEFORE mx_barrier(group)")
     mx_barrier(group)
+    logger.info("AFTER mx_barrier(group)")
 
     return model, tokenizer
 

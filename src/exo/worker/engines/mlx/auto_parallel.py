@@ -230,9 +230,12 @@ def tensor_auto_parallel(
 
     if hasattr(model, "shard"):
         try:
+            logger.info("Using model's built-in shard method")
             model.shard(group)  # type: ignore
+            logger.info("model.shard(group) completed")
             return model
-        except (AttributeError, TypeError, NameError):
+        except (AttributeError, TypeError, NameError) as e:
+            logger.info(f"model.shard failed with {e}, falling back to manual sharding")
             pass
 
     if isinstance(model, (LlamaModel, Ministral3Model)):
@@ -270,6 +273,7 @@ def tensor_auto_parallel(
             sharded_to_all_linear_in_place,
         )
     elif isinstance(model, GptOssModel):
+        logger.info("Using GptOssShardingStrategy for tensor parallelism")
         tensor_parallel_sharding_strategy = GptOssShardingStrategy(
             group,
             all_to_sharded_linear,
@@ -481,8 +485,8 @@ class ShardedQwenMoE(CustomMlxLayer):
 class GptOssShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(self, model: nn.Module) -> nn.Module:
         model = cast(GptOssMoeModel, model)
-
-        for layer in model.layers:
+        logger.info(f"GptOssShardingStrategy.shard_model: {len(model.layers)} layers")
+        for i, layer in enumerate(model.layers):
             layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
             layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
             layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
@@ -507,7 +511,10 @@ class GptOssShardingStrategy(TensorParallelShardingStrategy):
 
             layer.mlp = ShardedGptOssMoE(layer.mlp)  # type: ignore
             layer.mlp.sharding_group = self.group
+            if i % 8 == 0:
+                logger.info(f"GptOssShardingStrategy: sharded layer {i}/{len(model.layers)}")
 
+        logger.info("GptOssShardingStrategy: all layers sharded")
         return model
 
 
