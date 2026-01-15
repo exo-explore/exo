@@ -205,13 +205,12 @@ class Topology:
         return cycles
 
     def get_subgraph_from_nodes(self, node_ids: list[NodeId]) -> "Topology":
-        rx_idxs = [self._vertex_indices[idx] for idx in node_ids]
         topology = Topology()
-        for rx_idx in rx_idxs:
-            topology.add_node(self._graph[rx_idx])
+        for node_id in node_ids:
+            topology.add_node(node_id)
         for connection in self.list_connections():
             if connection.source in node_ids and connection.sink in node_ids:
-                self.add_connection(connection)
+                topology.add_connection(connection)
         return topology
 
     def is_thunderbolt_cycle(self, cycle: Cycle) -> bool:

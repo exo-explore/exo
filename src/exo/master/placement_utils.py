@@ -209,31 +209,34 @@ def get_hosts_from_subgraph(cycle_digraph: Topology) -> list[Host]:
             )
         return []
 
+    cycle = cycles[0]
+
     get_thunderbolt = False
-    if cycle_digraph.is_thunderbolt_cycle(cycles[0]):
+    if cycle_digraph.is_thunderbolt_cycle(cycle):
         get_thunderbolt = True
 
     logger.info(f"Using thunderbolt cycle: {get_thunderbolt}")
 
-    cycle = cycles[0]
     hosts: list[Host] = []
     for i in range(len(cycle)):
         current_node = cycle.node_ids[i]
         next_node = cycle.node_ids[(i + 1) % len(cycle)]
 
-        for src, sink, connection in cycle_digraph.list_connections():
+        for connection in cycle_digraph.get_all_connections_between(
+            source=current_node, sink=next_node
+        ):
             if not isinstance(connection, SocketConnection):
                 continue
 
-            if src == current_node and sink == next_node:
-                if get_thunderbolt and not connection.is_thunderbolt():
-                    continue
-                host = Host(
-                    ip=connection.sink_multiaddr.ip_address,
-                    port=connection.sink_multiaddr.port,
-                )
-                hosts.append(host)
-                break
+            if get_thunderbolt and not connection.is_thunderbolt():
+                continue
+
+            host = Host(
+                ip=connection.sink_multiaddr.ip_address,
+                port=connection.sink_multiaddr.port,
+            )
+            hosts.append(host)
+            break
 
     return hosts
 

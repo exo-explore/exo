@@ -113,9 +113,7 @@ def place_instance(
         command.model_meta, selected_cycle, command.sharding, node_profiles
     )
 
-    cycle_digraph: Topology = topology.get_subgraph_from_nodes(
-        [node_id for node_id in selected_cycle]
-    )
+    cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)
 
     instance_id = InstanceId()
     target_instances = dict(deepcopy(current_instances))

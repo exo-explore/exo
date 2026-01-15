@@ -1,6 +1,7 @@
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     MemoryUsage,
+    NetworkInterfaceInfo,
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
@@ -18,13 +19,15 @@ def create_node_profile(memory: int) -> NodePerformanceProfile:
             swap_total=1000,
             swap_available=1000,
         ),
-        network_interfaces=[],
+        network_interfaces=[
+            NetworkInterfaceInfo(name="en0", ip_address=f"169.254.0.{i}")
+            for i in range(10)
+        ],
         system=SystemPerformanceProfile(),
     )
 
 
-# TODO: this is a hack to get the port for the send_back_multiaddr
-def create_connection(ip: int, sink_port: int = 1234) -> SocketConnection:
+def create_socket_connection(ip: int, sink_port: int = 1234) -> SocketConnection:
     return SocketConnection(
         sink_multiaddr=Multiaddr(address=f"/ip4/169.254.0.{ip}/tcp/{sink_port}"),
     )

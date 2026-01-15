@@ -8,7 +8,7 @@ from exo.shared.types.profiling import (
     NodePerformanceProfile,
     SystemPerformanceProfile,
 )
-from exo.shared.types.topology import SocketConnection, Connection
+from exo.shared.types.topology import Connection, SocketConnection
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def topology() -> Topology:
 
 
 @pytest.fixture
-def connection() -> SocketConnection:
+def socket_connection() -> SocketConnection:
     return SocketConnection(
         sink_multiaddr=Multiaddr(address="/ip4/127.0.0.1/tcp/1235"),
     )
@@ -50,17 +50,18 @@ def test_add_node(topology: Topology):
     assert topology.node_is_leaf(node_id)
 
 
-def test_add_connection(topology: Topology, connection: Connection):
+def test_add_connection(topology: Topology, socket_connection: SocketConnection):
     # arrange
     node_a = NodeId()
     node_b = NodeId()
+    connection = Connection(source=node_a, sink=node_b, edge=socket_connection)
 
     topology.add_node(node_a)
     topology.add_node(node_b)
     topology.add_connection(connection)
 
     # act
-    data = list(conn for _, _, conn in topology.list_connections())
+    data = list(topology.list_connections())
 
     # assert
     assert data == [connection]
@@ -88,7 +89,9 @@ def test_remove_connection_still_connected(
     assert list(topology.get_all_connections_between(node_a, node_b)) == []
 
 
-def test_remove_node_still_connected(topology: Topology, socket_connection: SocketConnection):
+def test_remove_node_still_connected(
+    topology: Topology, socket_connection: SocketConnection
+):
     # arrange
     node_a = NodeId()
     node_b = NodeId()
@@ -97,7 +100,7 @@ def test_remove_node_still_connected(topology: Topology, socket_connection: Sock
     topology.add_node(node_a)
     topology.add_node(node_b)
     topology.add_connection(conn)
-    assert list(topology.out_edges(node_a)) == [(node_b, connection)]
+    assert list(topology.out_edges(node_a)) == [conn]
 
     # act
     topology.remove_node(node_b)
@@ -115,7 +118,7 @@ def test_list_nodes(topology: Topology, socket_connection: SocketConnection):
     topology.add_node(node_a)
     topology.add_node(node_b)
     topology.add_connection(conn)
-    assert list(topology.out_edges(node_a)) == [(node_b, connection)]
+    assert list(topology.out_edges(node_a)) == [conn]
 
     # act
     nodes = list(topology.list_nodes())
@@ -123,4 +126,4 @@ def test_list_nodes(topology: Topology, socket_connection: SocketConnection):
     # assert
     assert len(nodes) == 2
     assert all(isinstance(node, NodeId) for node in nodes)
-    assert {node for node in nodes} == {node_a, node_b}
+    assert set(node for node in nodes) == set([node_a, node_b])
