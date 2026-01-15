@@ -20,7 +20,7 @@ except ImportError:
 
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3Model
-from mlx_lm.models.gpt_oss import Model as GptOSsModel
+from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.worker.engines.mlx.constants import (
@@ -398,9 +398,9 @@ def make_kv_cache(
     assert hasattr(model, "layers")
 
     # TODO: Do this for all models
-    if hasattr(model, "make_cache") and isinstance(model, GPTOssModel):
+    if hasattr(model, "make_cache") and isinstance(model, GptOssModel):
         logger.info("Using MLX LM's make cache")
-        return model.make_cache()
+        return model.make_cache()  # type: ignore
 
     if max_kv_size is None:
         if KV_CACHE_BITS is None:
