@@ -276,24 +276,23 @@ class BatchGenerator:
         logprobs: mx.array
         finish_reason: Optional[str]
 
+    unprocessed_prompts: List[Any]
+
     def __init__(
         self,
-        model,
+        model: nn.Module,
         max_tokens: int = ...,
-        stop_tokens: Optional[set] = ...,
+        stop_tokens: Optional[set[int]] = ...,
         sampler: Optional[Callable[[mx.array], mx.array]] = ...,
         completion_batch_size: int = ...,
         prefill_batch_size: int = ...,
         prefill_step_size: int = ...,
     ) -> None: ...
     def insert(
-        self, prompts, max_tokens: Union[List[int], int, None] = ...
-    ):  # -> list[Any]:
-        ...
-    def stats(self):  # -> BatchStats:
-        ...
-    def next(self):  # -> list[Any]:
-        ...
+        self, prompts: List[List[int]], max_tokens: Union[List[int], int, None] = ...
+    ) -> List[int]: ...
+    def stats(self) -> BatchStats: ...
+    def next(self) -> List[Response]: ...
 
 def batch_generate(
     model,

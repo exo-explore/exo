@@ -105,7 +105,7 @@ class RunnerSupervisor:
             return
 
         # This is overkill but it's not technically bad, just unnecessary.
-        logger.warning("Runner process didn't shutdown succesfully, terminating")
+        logger.warning("Runner process didn't shutdown successfully, terminating")
         self.runner_process.terminate()
         await to_thread.run_sync(self.runner_process.join, 5)
         if not self.runner_process.is_alive():
@@ -128,9 +128,11 @@ class RunnerSupervisor:
 
     async def start_task(self, task: Task):
         if task.task_id in self.completed:
-            logger.info(
-                f"Skipping invalid task {task} as it has already been completed"
-            )
+            logger.info(f"Skipping task {task.task_id} - already completed")
+            return
+        if task.task_id in self.pending:
+            logger.info(f"Skipping task {task.task_id} - already pending")
+            return
         logger.info(f"Starting task {task}")
         event = anyio.Event()
         self.pending[task.task_id] = event
@@ -149,13 +151,17 @@ class RunnerSupervisor:
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
                     if isinstance(event, TaskAcknowledged):
-                        self.pending.pop(event.task_id).set()
+                        # Just set the event to unblock start_task, but keep in pending
+                        # to prevent duplicate forwarding until completion
+                        if event.task_id in self.pending:
+                            self.pending[event.task_id].set()
                         continue
-                    if (
-                        isinstance(event, TaskStatusUpdated)
-                        and event.task_status == TaskStatus.Complete
+                    if isinstance(event, TaskStatusUpdated) and event.task_status in (
+                        TaskStatus.Complete,
+                        TaskStatus.TimedOut,
+                        TaskStatus.Failed,
                     ):
-                        # If a task has just been completed, we should be working on it.
+                        # If a task has just finished, we should be working on it.
                         assert isinstance(
                             self.status,
                             (
@@ -166,6 +172,8 @@ class RunnerSupervisor:
                                 RunnerShuttingDown,
                             ),
                         )
+                        # Now safe to remove from pending and add to completed
+                        self.pending.pop(event.task_id, None)
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
             except (ClosedResourceError, BrokenResourceError) as e:

@@ -291,12 +291,14 @@ def _pending_tasks(
             # I have a design point here; this is a state race in disguise as the task status doesn't get updated to completed fast enough
             # however, realistically the task status should be set to completed by the LAST runner, so this is a true race
             # the actual solution is somewhat deeper than this bypass - TODO!
-            if task.task_id in runner.completed:
+            # Also skip tasks in pending to prevent duplicate forwarding with continuous batching
+            if task.task_id in runner.completed or task.task_id in runner.pending:
                 continue
 
             # TODO: Check ordering aligns with MLX distributeds expectations.
 
-            if isinstance(runner.status, RunnerReady) and all(
+            # Allow forwarding tasks when runner is Ready or Running (for continuous batching)
+            if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
                 isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
                 for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
             ):

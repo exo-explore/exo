@@ -116,6 +116,45 @@ From .cursorrules:
 - Catch exceptions only where you can handle them meaningfully
 - Use `@final` and immutability wherever applicable
 
+## Model Storage
+
+Downloaded models are stored in `~/.exo/models/` (not the standard HuggingFace cache location).
+
+## Creating Model Instances via API
+
+When testing with the API, you must first create a model instance before sending chat completions:
+
+```bash
+# 1. Get instance previews for a model
+curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b"
+
+# 2. Create an instance from the first valid preview
+INSTANCE=$(curl -s "http://localhost:52415/instance/previews?model_id=llama-3.2-1b" | jq -c '.previews[] | select(.error == null) | .instance' | head -n1)
+curl -X POST http://localhost:52415/instance -H 'Content-Type: application/json' -d "{\"instance\": $INSTANCE}"
+
+# 3. Wait for the runner to become ready (check logs for "runner ready")
+
+# 4. Send chat completions using the full model ID
+curl -X POST http://localhost:52415/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "mlx-community/Llama-3.2-1B-Instruct-4bit", "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 50}'
+```
+
+## Logs
+
+Exo logs are stored in `~/.exo/exo.log`. This is useful for debugging runner crashes and distributed issues.
+
 ## Testing
 
 Tests use pytest-asyncio with `asyncio_mode = "auto"`. Tests are in `tests/` subdirectories alongside the code they test. The `EXO_TESTS=1` env var is set during tests.
+
+### Distributed Testing
+
+When running distributed tests across multiple machines, use `EXO_LIBP2P_NAMESPACE` to isolate your test cluster from other exo instances on the same network:
+
+```bash
+# On each machine in the test cluster, use the same unique namespace
+EXO_LIBP2P_NAMESPACE=my-test-cluster uv run exo
+```
+
+This prevents your test cluster from discovering and interfering with production or other developers' exo clusters.
